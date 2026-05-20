@@ -27,6 +27,7 @@ class Clauderelay < Formula
   service do
     run opt_bin/"claude-relay-server"
     keep_alive true
+    restart_delay 5
     log_path var/"log/claude-relay/stdout.log"
     error_log_path var/"log/claude-relay/stderr.log"
     working_dir Dir.home

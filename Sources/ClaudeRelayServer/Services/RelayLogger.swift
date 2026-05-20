@@ -1,4 +1,5 @@
 import os
+import Foundation
 
 // MARK: - RelayLogger
 
@@ -14,11 +15,16 @@ import os
 /// Security: This logger must NEVER emit tokens, secrets, or raw terminal I/O.
 public enum RelayLogger {
     private static let subsystem = "com.coderemote.relay"
+    private static let timestampFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 
     /// In-memory log store queryable via the admin `/logs` endpoint.
     public private(set) static var store = LogStore()
 
-    /// Log to both os.Logger and the in-memory LogStore.
+    /// Log to os.Logger, stderr, and the in-memory LogStore.
     public static func log(
         _ level: OSLogType = .info,
         category: String,
@@ -34,6 +40,10 @@ public enum RelayLogger {
         case .fault: levelString = "fault"
         default: levelString = "info"
         }
+
+        let timestamp = timestampFormatter.string(from: Date())
+        fputs("[\(timestamp)] [\(levelString.uppercased())] [\(category)] \(message)\n", stderr)
+
         store.append(level: levelString, category: category, message: message)
     }
 }

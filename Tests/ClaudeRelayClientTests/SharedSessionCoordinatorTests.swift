@@ -366,24 +366,64 @@ final class SharedSessionCoordinatorTests: XCTestCase {
     /// `ownedSessionIds`, so the sidebar still listed it. Attaching "Gendry" on
     /// the iPad left Gendry in the iPhone's local session list.
     ///
-    /// TODO: Learner — implement this test.
-    ///
-    /// Shape:
-    /// 1. Construct a SharedSessionCoordinator with a mock RelayConnection.
-    /// 2. Call `coordinator.claimSession(sessionId)` to set up local state,
-    ///    then push a `SessionInfo` for that id through the sessions list
-    ///    (or expose a test helper) so `activeSessions` initially includes it.
-    /// 3. Fire `connection.onSessionStolen?(sessionId)` and wait for the
-    ///    MainActor dispatch (see the timing pattern in
-    ///    `testSessionStolenNotificationClearsActiveSession`).
-    /// 4. Assert: `coordinator.ownedSessionIds.contains(sessionId) == false`,
-    ///    and `coordinator.activeSessions` no longer contains the session.
-    ///
-    /// Optional: also assert that a preexisting TerminalViewModel for the
-    /// session has `isSendingSuppressed == true` after the steal. That covers
-    /// the secondary defense against stale view references.
+    /// Asserts the full cleanup contract:
+    ///   1. `ownedSessionIds` no longer contains the stolen id (sidebar drops it)
+    ///   2. `activeSessions` no longer surfaces it (the public derived list)
+    ///   3. The stolen session's `TerminalViewModel.isSendingSuppressed == true`
+    ///      so any view still holding a reference can't write to the wire
+    ///   4. `agentSessions` and `sessionsAwaitingInput` no longer reference it
     func testSessionStolenRemovesFromOwnedSessions() {
-        // TODO
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+
+        let stolenId = UUID()
+        let keepId = UUID()
+
+        // Set up local state: claim both sessions, populate sessions list,
+        // wire up agent + awaiting-input state, and instantiate a VM for the
+        // stolen session so we can assert on `isSendingSuppressed`.
+        coordinator.claimSession(stolenId)
+        coordinator.claimSession(keepId)
+        coordinator.activeSessionId = stolenId
+        coordinator.sessions = [
+            SessionInfo(id: stolenId, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
+            SessionInfo(id: keepId,   state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
+        ]
+        coordinator.agentSessions[stolenId] = "claude"
+        coordinator.sessionsAwaitingInput.insert(stolenId)
+        let stolenVM = TerminalViewModel(sessionId: stolenId, connection: connection)
+        coordinator.terminalViewModels[stolenId] = stolenVM
+
+        // Sanity-check the precondition: both sessions are owned and surfaced.
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(stolenId))
+        XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
+
+        // Trigger the steal callback (the connection invokes this on the
+        // MainActor — same dispatch-and-wait pattern as the sibling test).
+        connection.onSessionStolen?(stolenId)
+        let exp = expectation(description: "stolen callback dispatched")
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 1.0)
+
+        // The stolen session must be fully evicted from local ownership state.
+        XCTAssertFalse(coordinator.ownedSessionIds.contains(stolenId),
+                       "Stolen session must be removed from ownedSessionIds")
+        XCTAssertFalse(coordinator.activeSessions.contains(where: { $0.id == stolenId }),
+                       "Stolen session must not appear in activeSessions")
+        XCTAssertNil(coordinator.agentSessions[stolenId])
+        XCTAssertFalse(coordinator.sessionsAwaitingInput.contains(stolenId))
+
+        // Defense-in-depth: the VM must refuse further writes even if a view
+        // still holds a reference to it.
+        XCTAssertTrue(stolenVM.isSendingSuppressed,
+                      "VM for stolen session must suppress sends")
+
+        // The other session must be untouched.
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(keepId))
+        XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == keepId }))
     }
 
     // MARK: - Session Renamed Handling

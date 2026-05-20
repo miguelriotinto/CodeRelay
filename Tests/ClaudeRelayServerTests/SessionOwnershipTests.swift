@@ -277,29 +277,54 @@ final class SessionOwnershipTests: SessionManagerTestCase {
     // asserts that the mock saw a `clearOutputHandler()` call as part of
     // the second attach (the steal). See SessionManager.attachSession.
 
-    /// TODO: Learner — implement this test.
+    /// The server's steal path MUST clear the PTY output handler before
+    /// `attachSession` returns, so the displaced device stops receiving
+    /// output the moment the new attach lands. Without this, the old
+    /// `outputHandler` would keep firing until the new device's
+    /// `wirePTYOutput` call (a separate, unstructured Task) finally
+    /// overwrote it — racy with the PTY's read dispatch source.
     ///
-    /// Shape:
-    /// 1. Create two tokens (A, B). Create a session under A (auto-attaches A).
-    /// 2. Install a sentinel output handler on the PTY so you can detect
-    ///    if output still routes anywhere (see `MockPTYSession.deliverOutput`
-    ///    and `hasOutputHandler`).
-    /// 3. Attach from token B (cross-device steal).
-    /// 4. Assert: the PTY's `clearOutputHandlerCallCount` incremented during
-    ///    the steal, and `hasOutputHandler` is false *immediately after*
-    ///    `attachSession` returns (before anyone calls `wirePTYOutput`).
-    ///
-    /// Reaching the PTY inside the manager's `sessions[id]` dictionary
-    /// requires a test hook — you can add one to `SessionManager` (e.g.
-    /// `func _testOnly_pty(for: UUID) -> (any PTYSessionProtocol)?`), or
-    /// capture the PTY from the `(SessionInfo, PTY)` tuple returned by
-    /// the first `attachSession` call.
-    ///
-    /// Decide: do you want to also assert a steal observer fired? That
-    /// behavior is already covered by testChainStealAcrossThreeDevices —
-    /// keep this test narrowly focused on the output-handler invariant.
+    /// Stays narrowly focused on the output-handler invariant; steal
+    /// observer fan-out is covered by `testChainStealAcrossThreeDevices`.
     func testAttachStealClearsOutputHandlerBeforeReturn() async throws {
-        // TODO
+        let (_, tokenA) = try await createTestToken()
+        let (_, tokenB) = try await tokenStore.create(label: "device-b")
+        let manager = makeManager()
+
+        // Create the session under token A. createSession returns SessionInfo
+        // only; we need the PTY itself, so attach as A to fetch it. (This
+        // first attach also sees state==activeAttached and bumps the clear
+        // counter to 1 — that's fine, we re-baseline after.)
+        let info = try await manager.createSession(tokenId: tokenA.id)
+        let (_, ptyAny) = try await manager.attachSession(id: info.id, tokenId: tokenA.id)
+        let pty = try XCTUnwrap(ptyAny as? MockPTYSession)
+
+        // Install the sentinel output handler that the displaced device
+        // would hold. After the steal, this must be gone.
+        await pty.setOutputHandler { _ in }
+        let hasHandlerBefore = await pty.hasOutputHandler
+        XCTAssertTrue(hasHandlerBefore, "Sentinel handler must be installed before the steal")
+
+        // Re-baseline so we measure only the steal's clear, not the bookkeeping
+        // calls on the way in.
+        let clearsBefore = await pty.clearOutputHandlerCallCount
+
+        // Steal: device B attaches to a session currently attached to A.
+        let (stolenInfo, _) = try await manager.attachSession(id: info.id, tokenId: tokenB.id)
+
+        // The invariant: by the time `attachSession` returns, the output
+        // handler is gone. No "next actor turn" needed — and no handler
+        // means no output reaches the displaced device, even if its
+        // RelayMessageHandler still has a reference to the PTY.
+        let clearsAfter = await pty.clearOutputHandlerCallCount
+        let hasHandlerAfter = await pty.hasOutputHandler
+        XCTAssertEqual(clearsAfter, clearsBefore + 1,
+                       "Steal must call clearOutputHandler exactly once")
+        XCTAssertFalse(hasHandlerAfter,
+                       "Output handler must be cleared before attachSession returns")
+
+        // Sanity: ownership transferred so the new device can wire its own.
+        XCTAssertEqual(stolenInfo.tokenId, tokenB.id)
     }
 
     func testConcurrentAttachSameSessionProducesSingleOwner() async throws {

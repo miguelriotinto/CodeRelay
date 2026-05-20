@@ -57,6 +57,72 @@ final class EscapeResponseFilterTests: XCTestCase {
         let input = Data([0x1B, 0x5B, 0x32, 0x34])
         XCTAssertEqual(EscapeResponseFilter.filter(input), input)
     }
+
+    // MARK: - OSC Response Stripping
+
+    func testStripsOSC4PaletteResponse() {
+        // ESC ] 4 ; 0 ; r g b : 0 0 0 0 / 0 0 0 0 / 0 0 0 0 ESC \
+        let osc = Data([0x1B, 0x5D]) + Data("4;0;rgb:0000/0000/0000".utf8) + Data([0x1B, 0x5C])
+        let input = osc + Data("after".utf8)
+        XCTAssertEqual(EscapeResponseFilter.filter(input), Data("after".utf8))
+    }
+
+    func testStripsOSC10ForegroundResponse() {
+        let osc = Data([0x1B, 0x5D]) + Data("10;rgb:ffff/ffff/ffff".utf8) + Data([0x1B, 0x5C])
+        let input = Data("before".utf8) + osc + Data("after".utf8)
+        XCTAssertEqual(EscapeResponseFilter.filter(input), Data("beforeafter".utf8))
+    }
+
+    func testStripsOSC11BackgroundResponse() {
+        let osc = Data([0x1B, 0x5D]) + Data("11;rgb:0000/0000/0000".utf8) + Data([0x07])
+        let input = osc + Data("rest".utf8)
+        XCTAssertEqual(EscapeResponseFilter.filter(input), Data("rest".utf8))
+    }
+
+    func testStripsMultipleOSCResponses() {
+        let osc4 = Data([0x1B, 0x5D]) + Data("4;1;rgb:cccc/0000/0000".utf8) + Data([0x1B, 0x5C])
+        let osc10 = Data([0x1B, 0x5D]) + Data("10;rgb:ffff/ffff/ffff".utf8) + Data([0x1B, 0x5C])
+        let input = osc4 + Data("x".utf8) + osc10 + Data("y".utf8)
+        XCTAssertEqual(EscapeResponseFilter.filter(input), Data("xy".utf8))
+    }
+
+    func testLeavesNonResponseOSCAlone() {
+        // OSC 0 (set window title) should NOT be stripped.
+        let osc = Data([0x1B, 0x5D]) + Data("0;My Title".utf8) + Data([0x07])
+        XCTAssertEqual(EscapeResponseFilter.filter(osc), osc)
+    }
+
+    func testStripsKittyKeyboardResponse() {
+        // ESC [ ? 1 u — kitty keyboard protocol (private-mode)
+        let input = Data([0x1B, 0x5B, 0x3F, 0x31, 0x75]) + Data("ok".utf8)
+        XCTAssertEqual(EscapeResponseFilter.filter(input), Data("ok".utf8))
+    }
+
+    func testPreservesRestoreCursor() {
+        // ESC [ u — SCORC (restore cursor position), must NOT be stripped
+        let input = Data([0x1B, 0x5B, 0x75]) + Data("ok".utf8)
+        XCTAssertEqual(EscapeResponseFilter.filter(input), input)
+    }
+
+    func testPreservesTitleStackPush() {
+        // ESC [ 2 2 t — push title to stack, must NOT be stripped
+        let input = Data([0x1B, 0x5B, 0x32, 0x32, 0x74]) + Data("z".utf8)
+        XCTAssertEqual(EscapeResponseFilter.filter(input), input)
+    }
+
+    func testStripsXTWINOPSPrivateModeResponse() {
+        // ESC [ ? 8 ; 24 ; 80 t — private-mode window size report
+        let input = Data([0x1B, 0x5B, 0x3F, 0x38, 0x3B, 0x32, 0x34, 0x3B, 0x38, 0x30, 0x74]) + Data("z".utf8)
+        XCTAssertEqual(EscapeResponseFilter.filter(input), Data("z".utf8))
+    }
+
+    func testStripsMixedCSIAndOSCResponses() {
+        let da = Data([0x1B, 0x5B, 0x3F, 0x36, 0x32, 0x63]) // ESC [ ? 6 2 c
+        let osc4 = Data([0x1B, 0x5D]) + Data("4;0;rgb:0000/0000/0000".utf8) + Data([0x1B, 0x5C])
+        let decrpm = Data([0x1B, 0x5B, 0x3F, 0x32, 0x30, 0x30, 0x34, 0x3B, 0x32, 0x24, 0x79]) // DECRPM
+        let input = da + osc4 + Data("keep".utf8) + decrpm
+        XCTAssertEqual(EscapeResponseFilter.filter(input), Data("keep".utf8))
+    }
 }
 
 private extension Data {

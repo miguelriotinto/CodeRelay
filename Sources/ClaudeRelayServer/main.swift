@@ -7,8 +7,20 @@ import ClaudeRelayKit
 import Foundation
 
 // Ensure config directory exists
-try ConfigManager.ensureDirectory()
-let config = try ConfigManager.load()
+do {
+    try ConfigManager.ensureDirectory()
+} catch {
+    fputs("FATAL: Cannot create config directory: \(error.localizedDescription)\n", stderr)
+    Foundation.exit(1)
+}
+
+let config: RelayConfig
+do {
+    config = try ConfigManager.load()
+} catch {
+    fputs("FATAL: Cannot load config: \(error.localizedDescription)\n", stderr)
+    Foundation.exit(1)
+}
 
 let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
 
@@ -42,8 +54,26 @@ let adminServer = AdminHTTPServer(
     rateLimiter: rateLimiter
 )
 
-try await wsServer.start()
-try await adminServer.start()
+do {
+    try await wsServer.start()
+} catch {
+    fputs("FATAL: WebSocket server failed to start on port \(config.wsPort): \(error.localizedDescription)\n", stderr)
+    RelayLogger.log(.fault, category: "server",
+        "WebSocket bind failed on port \(config.wsPort): \(error.localizedDescription)")
+    try? await group.shutdownGracefully()
+    Foundation.exit(1)
+}
+
+do {
+    try await adminServer.start()
+} catch {
+    fputs("FATAL: Admin server failed to start on port \(config.adminPort): \(error.localizedDescription)\n", stderr)
+    RelayLogger.log(.fault, category: "server",
+        "Admin bind failed on port \(config.adminPort): \(error.localizedDescription)")
+    try? await wsServer.stop()
+    try? await group.shutdownGracefully()
+    Foundation.exit(1)
+}
 
 let wsHost = config.bindAll ? "0.0.0.0" : "127.0.0.1"
 RelayLogger.log(category: "server", "Server started — WebSocket: \(wsHost):\(config.wsPort), Admin: 127.0.0.1:\(config.adminPort)")
