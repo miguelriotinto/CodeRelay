@@ -67,15 +67,17 @@ struct QRScannerSheet: View {
 private final class CameraPreviewView: NSView {
     override init(frame: CGRect) {
         super.init(frame: frame)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
+        let rootLayer = CALayer()
+        rootLayer.backgroundColor = NSColor.black.cgColor
+        self.layer = rootLayer
+        self.wantsLayer = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func layout() {
         super.layout()
-        layer?.sublayers?.first { $0 is AVCaptureVideoPreviewLayer }?.frame = bounds
+        layer?.sublayers?.forEach { $0.frame = bounds }
     }
 }
 
