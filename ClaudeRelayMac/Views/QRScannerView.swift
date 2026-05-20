@@ -78,36 +78,26 @@ private struct QRScannerRepresentable: NSViewRepresentable {
         containerView.wantsLayer = true
         containerView.layer?.backgroundColor = NSColor.black.cgColor
 
-        let session = AVCaptureSession()
-        context.coordinator.session = session
-
-        guard let device = AVCaptureDevice.default(for: .video) else {
-            onError("No camera available.")
-            return containerView
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            context.coordinator.setupSession(in: containerView)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        context.coordinator.setupSession(in: containerView)
+                    } else {
+                        context.coordinator.onError("Camera access denied. Grant permission in System Settings → Privacy & Security → Camera.")
+                    }
+                }
+            }
+        case .denied, .restricted:
+            onError("Camera access denied. Grant permission in System Settings → Privacy & Security → Camera.")
+        @unknown default:
+            onError("Unable to access camera.")
         }
 
-        do {
-            let input = try AVCaptureDeviceInput(device: device)
-            if session.canAddInput(input) { session.addInput(input) }
-
-            let output = AVCaptureMetadataOutput()
-            if session.canAddOutput(output) { session.addOutput(output) }
-            output.setMetadataObjectsDelegate(context.coordinator, queue: .main)
-            output.metadataObjectTypes = [.qr]
-        } catch {
-            onError("Camera setup failed: \(error.localizedDescription)")
-            return containerView
-        }
-
-        let previewLayer = AVCaptureVideoPreviewLayer(session: session)
-        previewLayer.videoGravity = .resizeAspectFill
-        previewLayer.frame = containerView.bounds
-        containerView.layer?.addSublayer(previewLayer)
-        context.coordinator.previewLayer = previewLayer
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            session.startRunning()
-        }
         return containerView
     }
 
@@ -128,6 +118,39 @@ private struct QRScannerRepresentable: NSViewRepresentable {
         init(onScan: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
             self.onScan = onScan
             self.onError = onError
+        }
+
+        func setupSession(in containerView: NSView) {
+            let session = AVCaptureSession()
+            self.session = session
+
+            guard let device = AVCaptureDevice.default(for: .video) else {
+                onError("No camera available.")
+                return
+            }
+
+            do {
+                let input = try AVCaptureDeviceInput(device: device)
+                if session.canAddInput(input) { session.addInput(input) }
+
+                let output = AVCaptureMetadataOutput()
+                if session.canAddOutput(output) { session.addOutput(output) }
+                output.setMetadataObjectsDelegate(self, queue: .main)
+                output.metadataObjectTypes = [.qr]
+            } catch {
+                onError("Camera setup failed: \(error.localizedDescription)")
+                return
+            }
+
+            let previewLayer = AVCaptureVideoPreviewLayer(session: session)
+            previewLayer.videoGravity = .resizeAspectFill
+            previewLayer.frame = containerView.bounds
+            containerView.layer?.addSublayer(previewLayer)
+            self.previewLayer = previewLayer
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                session.startRunning()
+            }
         }
 
         func metadataOutput(_ output: AVCaptureMetadataOutput,
