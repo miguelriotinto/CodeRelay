@@ -129,18 +129,25 @@ private struct QRScannerRepresentable: NSViewRepresentable {
                 return
             }
 
+            let output = AVCaptureMetadataOutput()
+
             do {
                 let input = try AVCaptureDeviceInput(device: device)
+                session.beginConfiguration()
                 if session.canAddInput(input) { session.addInput(input) }
-
-                let output = AVCaptureMetadataOutput()
                 if session.canAddOutput(output) { session.addOutput(output) }
-                output.setMetadataObjectsDelegate(self, queue: .main)
-                output.metadataObjectTypes = [.qr]
+                session.commitConfiguration()
             } catch {
                 onError("Camera setup failed: \(error.localizedDescription)")
                 return
             }
+
+            guard output.availableMetadataObjectTypes.contains(.qr) else {
+                onError("QR code scanning is not supported on this device.")
+                return
+            }
+            output.setMetadataObjectsDelegate(self, queue: .main)
+            output.metadataObjectTypes = [.qr]
 
             let previewLayer = AVCaptureVideoPreviewLayer(session: session)
             previewLayer.videoGravity = .resizeAspectFill
