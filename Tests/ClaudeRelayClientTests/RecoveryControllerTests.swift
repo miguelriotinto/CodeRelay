@@ -66,6 +66,27 @@ final class RecoveryControllerTests: XCTestCase {
         XCTAssertNil(coordinator.recoveryTask)
     }
 
+    /// Regression: a previous fast-path skipped recovery when
+    /// `connection.state == .connected`, but on macOS the WebSocket can be
+    /// silently broken by sleep without flipping state. The wake-up
+    /// `triggerUserRecovery` call must always dispatch the recovery task —
+    /// `handleForegroundTransition` itself short-circuits via a real ping
+    /// when the socket is genuinely alive.
+    func testTriggerUserRecoveryDispatchesEvenWhenStateAppearsConnected() {
+        let (coordinator, controller) = makeCoordinatorAndController()
+        // Force-set state to .connected through the test seam to mimic the
+        // wake-from-sleep window where state is stale (the socket is dead at
+        // the OS level but `state` was never flipped back to .disconnected).
+        coordinator.connection._testOnly_setState(.connected)
+
+        controller.triggerUserRecovery()
+
+        XCTAssertNotNil(
+            coordinator.recoveryTask,
+            "triggerUserRecovery must dispatch recovery on wake even when state appears connected"
+        )
+    }
+
     // MARK: - cancel
 
     func testCancelBumpsGenerationAndSuspends() {

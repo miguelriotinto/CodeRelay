@@ -8,6 +8,7 @@ build/
 DerivedData/
 *.xcarchive
 .asc/artifacts/
+.asc/config.json
 .DS_Store
 ExportOptions.plist
 # Added by code-review-graph

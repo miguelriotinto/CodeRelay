@@ -106,6 +106,15 @@ final class RecoveryController {
     /// Explicit user-initiated recovery: foreground, network restored, QR
     /// rescan, etc. Clears the auto-suspend circuit breaker so auto-retry
     /// resumes after this attempt.
+    ///
+    /// Always routes through `handleForegroundTransition`, which probes the
+    /// socket with a real ping (`isAlive()`) before deciding whether to
+    /// reconnect. A previous fast-path here trusted `connection.state ==
+    /// .connected` and called `fetchSessions()` directly — but on macOS sleep
+    /// the system suspends the WebSocket without flipping `state` to
+    /// `.disconnected`, so the fast-path silently skipped reconnect on wake.
+    /// The overhead of one ping per foreground/wake hop is negligible
+    /// compared to the user-visible cost of a missed reconnect.
     func triggerUserRecovery() {
         guard !coordinator.isTornDown else { return }
         guard !isRecoveryDispatched else {
@@ -114,15 +123,6 @@ final class RecoveryController {
         }
         if Date().timeIntervalSince(lastCancelledAt) < 1 {
             recoveryLog.debug("triggerUserRecovery: within cancel debounce, ignoring")
-            return
-        }
-        // If the transport is already up and we're not mid-recovery, skip
-        // the full handleForegroundTransition path — it would just call
-        // fetchSessions() anyway. handleForegroundTransition still verifies
-        // with a real ping when reached via other entry points; this just
-        // fast-paths the very common scenePhase .active → .active hop.
-        if connection.state == .connected && !coordinator.isRecovering {
-            Task { @MainActor [weak coordinator] in await coordinator?.fetchSessions() }
             return
         }
         autoRecoverySuspended = false

@@ -521,4 +521,7 @@ public final class RelayConnection: ObservableObject {
     /// Prefix `_testOnly_` is the convention; do not call from production code.
     public func _testOnly_recordRTT(rtt: TimeInterval?) { recordRTT(rtt) }
     public var _testOnly_rttWindowCount: Int { rttWindow.count }
+    /// Force the published `state` for tests that need to mimic stale
+    /// "connected" state after macOS sleep without an actual socket.
+    public func _testOnly_setState(_ newState: ConnectionState) { state = newState }
 }
