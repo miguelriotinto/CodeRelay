@@ -64,6 +64,21 @@ struct QRScannerSheet: View {
     }
 }
 
+private final class CameraPreviewView: NSView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        layer?.sublayers?.first { $0 is AVCaptureVideoPreviewLayer }?.frame = bounds
+    }
+}
+
 /// AVFoundation QR scanner wrapped in NSViewRepresentable.
 private struct QRScannerRepresentable: NSViewRepresentable {
     let onScan: (String) -> Void
@@ -73,10 +88,8 @@ private struct QRScannerRepresentable: NSViewRepresentable {
         Coordinator(onScan: onScan, onError: onError)
     }
 
-    func makeNSView(context: Context) -> NSView {
-        let containerView = NSView()
-        containerView.wantsLayer = true
-        containerView.layer?.backgroundColor = NSColor.black.cgColor
+    func makeNSView(context: Context) -> CameraPreviewView {
+        let containerView = CameraPreviewView()
 
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
@@ -101,11 +114,9 @@ private struct QRScannerRepresentable: NSViewRepresentable {
         return containerView
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.previewLayer?.frame = nsView.bounds
-    }
+    func updateNSView(_ nsView: CameraPreviewView, context: Context) {}
 
-    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+    static func dismantleNSView(_ nsView: CameraPreviewView, coordinator: Coordinator) {
         coordinator.session?.stopRunning()
     }
 
@@ -113,14 +124,13 @@ private struct QRScannerRepresentable: NSViewRepresentable {
         let onScan: (String) -> Void
         let onError: (String) -> Void
         var session: AVCaptureSession?
-        var previewLayer: AVCaptureVideoPreviewLayer?
 
         init(onScan: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
             self.onScan = onScan
             self.onError = onError
         }
 
-        func setupSession(in containerView: NSView) {
+        func setupSession(in containerView: CameraPreviewView) {
             let session = AVCaptureSession()
             self.session = session
 
@@ -151,9 +161,8 @@ private struct QRScannerRepresentable: NSViewRepresentable {
 
             let previewLayer = AVCaptureVideoPreviewLayer(session: session)
             previewLayer.videoGravity = .resizeAspectFill
-            previewLayer.frame = containerView.bounds
             containerView.layer?.addSublayer(previewLayer)
-            self.previewLayer = previewLayer
+            previewLayer.frame = containerView.bounds
 
             DispatchQueue.global(qos: .userInitiated).async {
                 session.startRunning()
