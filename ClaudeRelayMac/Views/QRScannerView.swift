@@ -64,118 +64,119 @@ struct QRScannerSheet: View {
     }
 }
 
-private final class CameraPreviewView: NSView {
-    var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
-
-    override func makeBackingLayer() -> CALayer {
-        let layer = AVCaptureVideoPreviewLayer()
-        layer.videoGravity = .resizeAspectFill
-        layer.backgroundColor = NSColor.black.cgColor
-        return layer
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-}
-
-/// AVFoundation QR scanner wrapped in NSViewRepresentable.
-private struct QRScannerRepresentable: NSViewRepresentable {
+/// Uses NSViewControllerRepresentable (mirrors the working iOS UIViewController pattern).
+private struct QRScannerRepresentable: NSViewControllerRepresentable {
     let onScan: (String) -> Void
     let onError: (String) -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onScan: onScan, onError: onError)
+    func makeNSViewController(context: Context) -> QRScannerViewController {
+        let vc = QRScannerViewController()
+        vc.onScan = onScan
+        vc.onError = onError
+        return vc
     }
 
-    func makeNSView(context: Context) -> CameraPreviewView {
-        let view = CameraPreviewView()
+    func updateNSViewController(_ nsViewController: QRScannerViewController, context: Context) {}
+}
 
-        let status = AVCaptureDevice.authorizationStatus(for: .video)
-        switch status {
+private final class QRScannerViewController: NSViewController, AVCaptureMetadataOutputObjectsDelegate {
+    var onScan: ((String) -> Void)?
+    var onError: ((String) -> Void)?
+    private var captureSession: AVCaptureSession?
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var hasScanned = false
+
+    override func loadView() {
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 360))
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.black.cgColor
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        checkAuthorizationAndSetup()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        previewLayer?.frame = view.bounds
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        captureSession?.stopRunning()
+    }
+
+    private func checkAuthorizationAndSetup() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            context.coordinator.setupSession(in: view)
+            setupCamera()
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { granted in
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 DispatchQueue.main.async {
                     if granted {
-                        context.coordinator.setupSession(in: view)
+                        self?.setupCamera()
                     } else {
-                        context.coordinator.onError("Camera access denied. Grant permission in System Settings → Privacy & Security → Camera.")
+                        self?.onError?("Camera access denied. Grant permission in System Settings → Privacy & Security → Camera.")
                     }
                 }
             }
         case .denied, .restricted:
-            onError("Camera access denied. Grant permission in System Settings → Privacy & Security → Camera.")
+            onError?("Camera access denied. Grant permission in System Settings → Privacy & Security → Camera.")
         @unknown default:
-            onError("Unable to access camera.")
+            onError?("Unable to access camera.")
         }
-
-        return view
     }
 
-    func updateNSView(_ nsView: CameraPreviewView, context: Context) {}
+    private func setupCamera() {
+        let session = AVCaptureSession()
+        session.sessionPreset = .high
 
-    static func dismantleNSView(_ nsView: CameraPreviewView, coordinator: Coordinator) {
-        coordinator.session?.stopRunning()
+        guard let device = AVCaptureDevice.default(for: .video) else {
+            onError?("No camera available.")
+            return
+        }
+
+        let metadataOutput = AVCaptureMetadataOutput()
+
+        do {
+            let input = try AVCaptureDeviceInput(device: device)
+            session.beginConfiguration()
+            if session.canAddInput(input) { session.addInput(input) }
+            if session.canAddOutput(metadataOutput) { session.addOutput(metadataOutput) }
+            session.commitConfiguration()
+        } catch {
+            onError?("Camera setup failed: \(error.localizedDescription)")
+            return
+        }
+
+        guard metadataOutput.availableMetadataObjectTypes.contains(.qr) else {
+            onError?("QR code scanning is not supported on this device.")
+            return
+        }
+        metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
+        metadataOutput.metadataObjectTypes = [.qr]
+
+        let layer = AVCaptureVideoPreviewLayer(session: session)
+        layer.videoGravity = .resizeAspectFill
+        layer.frame = view.bounds
+        view.layer?.addSublayer(layer)
+        previewLayer = layer
+        captureSession = session
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            session.startRunning()
+        }
     }
 
-    final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
-        let onScan: (String) -> Void
-        let onError: (String) -> Void
-        var session: AVCaptureSession?
-
-        init(onScan: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
-            self.onScan = onScan
-            self.onError = onError
-        }
-
-        func setupSession(in view: CameraPreviewView) {
-            let session = AVCaptureSession()
-            self.session = session
-
-            guard let device = AVCaptureDevice.default(for: .video) else {
-                onError("No camera available.")
-                return
-            }
-
-            let output = AVCaptureMetadataOutput()
-
-            do {
-                let input = try AVCaptureDeviceInput(device: device)
-                session.beginConfiguration()
-                if session.canAddInput(input) { session.addInput(input) }
-                if session.canAddOutput(output) { session.addOutput(output) }
-                session.commitConfiguration()
-            } catch {
-                onError("Camera setup failed: \(error.localizedDescription)")
-                return
-            }
-
-            guard output.availableMetadataObjectTypes.contains(.qr) else {
-                onError("QR code scanning is not supported on this device.")
-                return
-            }
-            output.setMetadataObjectsDelegate(self, queue: .main)
-            output.metadataObjectTypes = [.qr]
-
-            view.previewLayer.session = session
-
-            DispatchQueue.global(qos: .userInitiated).async {
-                session.startRunning()
-            }
-        }
-
-        func metadataOutput(_ output: AVCaptureMetadataOutput,
-                            didOutput metadataObjects: [AVMetadataObject],
-                            from connection: AVCaptureConnection) {
-            guard let obj = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
-                  let value = obj.stringValue else { return }
-            session?.stopRunning()
-            onScan(value)
-        }
+    func metadataOutput(_ output: AVCaptureMetadataOutput,
+                        didOutput metadataObjects: [AVMetadataObject],
+                        from connection: AVCaptureConnection) {
+        guard !hasScanned,
+              let obj = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+              let value = obj.stringValue else { return }
+        hasScanned = true
+        captureSession?.stopRunning()
+        onScan?(value)
     }
 }
