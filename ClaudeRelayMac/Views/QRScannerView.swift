@@ -65,20 +65,21 @@ struct QRScannerSheet: View {
 }
 
 private final class CameraPreviewView: NSView {
+    var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+
+    override func makeBackingLayer() -> CALayer {
+        let layer = AVCaptureVideoPreviewLayer()
+        layer.videoGravity = .resizeAspectFill
+        layer.backgroundColor = NSColor.black.cgColor
+        return layer
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
-        let rootLayer = CALayer()
-        rootLayer.backgroundColor = NSColor.black.cgColor
-        self.layer = rootLayer
-        self.wantsLayer = true
+        wantsLayer = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() {
-        super.layout()
-        layer?.sublayers?.forEach { $0.frame = bounds }
-    }
 }
 
 /// AVFoundation QR scanner wrapped in NSViewRepresentable.
@@ -91,17 +92,17 @@ private struct QRScannerRepresentable: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> CameraPreviewView {
-        let containerView = CameraPreviewView()
+        let view = CameraPreviewView()
 
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
         case .authorized:
-            context.coordinator.setupSession(in: containerView)
+            context.coordinator.setupSession(in: view)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 DispatchQueue.main.async {
                     if granted {
-                        context.coordinator.setupSession(in: containerView)
+                        context.coordinator.setupSession(in: view)
                     } else {
                         context.coordinator.onError("Camera access denied. Grant permission in System Settings → Privacy & Security → Camera.")
                     }
@@ -113,7 +114,7 @@ private struct QRScannerRepresentable: NSViewRepresentable {
             onError("Unable to access camera.")
         }
 
-        return containerView
+        return view
     }
 
     func updateNSView(_ nsView: CameraPreviewView, context: Context) {}
@@ -132,7 +133,7 @@ private struct QRScannerRepresentable: NSViewRepresentable {
             self.onError = onError
         }
 
-        func setupSession(in containerView: CameraPreviewView) {
+        func setupSession(in view: CameraPreviewView) {
             let session = AVCaptureSession()
             self.session = session
 
@@ -161,10 +162,7 @@ private struct QRScannerRepresentable: NSViewRepresentable {
             output.setMetadataObjectsDelegate(self, queue: .main)
             output.metadataObjectTypes = [.qr]
 
-            let previewLayer = AVCaptureVideoPreviewLayer(session: session)
-            previewLayer.videoGravity = .resizeAspectFill
-            containerView.layer?.addSublayer(previewLayer)
-            previewLayer.frame = containerView.bounds
+            view.previewLayer.session = session
 
             DispatchQueue.global(qos: .userInitiated).async {
                 session.startRunning()
