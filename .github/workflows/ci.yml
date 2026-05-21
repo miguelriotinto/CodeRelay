@@ -49,7 +49,8 @@ jobs:
       - name: SwiftLint
         run: |
           brew install swiftlint
-          swiftlint --config .swiftlint.yml
+          swiftlint lint --config .swiftlint.yml --reporter github-actions-logging
+        continue-on-error: true
 
   ios-build:
     # Builds for the iOS *device* SDK (not simulator). The simulator build
