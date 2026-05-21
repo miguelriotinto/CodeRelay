@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import AppKit
+import Vision
 
 struct QRScannerSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -79,12 +80,13 @@ private struct QRScannerRepresentable: NSViewControllerRepresentable {
     func updateNSViewController(_ nsViewController: QRScannerViewController, context: Context) {}
 }
 
-private final class QRScannerViewController: NSViewController, AVCaptureMetadataOutputObjectsDelegate {
+private final class QRScannerViewController: NSViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
     var onScan: ((String) -> Void)?
     var onError: ((String) -> Void)?
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var hasScanned = false
+    private let videoOutputQueue = DispatchQueue(label: "com.claude.relay.qrscanner")
 
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 360))
@@ -138,13 +140,12 @@ private final class QRScannerViewController: NSViewController, AVCaptureMetadata
             session.beginConfiguration()
             if session.canAddInput(input) { session.addInput(input) }
 
-            let metadataOutput = AVCaptureMetadataOutput()
-            if session.canAddOutput(metadataOutput) {
-                session.addOutput(metadataOutput)
-                metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
-                if metadataOutput.availableMetadataObjectTypes.contains(.qr) {
-                    metadataOutput.metadataObjectTypes = [.qr]
-                }
+            let videoOutput = AVCaptureVideoDataOutput()
+            videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+            videoOutput.alwaysDiscardsLateVideoFrames = true
+            videoOutput.setSampleBufferDelegate(self, queue: videoOutputQueue)
+            if session.canAddOutput(videoOutput) {
+                session.addOutput(videoOutput)
             }
 
             session.commitConfiguration()
@@ -172,14 +173,26 @@ private final class QRScannerViewController: NSViewController, AVCaptureMetadata
         }
     }
 
-    func metadataOutput(_ output: AVCaptureMetadataOutput,
-                        didOutput metadataObjects: [AVMetadataObject],
-                        from connection: AVCaptureConnection) {
+    func captureOutput(_ output: AVCaptureOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
         guard !hasScanned,
-              let obj = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
-              let value = obj.stringValue else { return }
-        hasScanned = true
-        captureSession?.stopRunning()
-        onScan?(value)
+              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        let request = VNDetectBarcodesRequest { [weak self] request, _ in
+            guard let self, !self.hasScanned,
+                  let results = request.results as? [VNBarcodeObservation],
+                  let barcode = results.first(where: { $0.symbology == .qr }),
+                  let value = barcode.payloadStringValue else { return }
+
+            self.hasScanned = true
+            DispatchQueue.main.async {
+                self.captureSession?.stopRunning()
+                self.onScan?(value)
+            }
+        }
+        request.symbologies = [.qr]
+
+        try? VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:]).perform([request])
     }
 }
