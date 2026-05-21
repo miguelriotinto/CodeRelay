@@ -90,16 +90,12 @@ private final class QRScannerViewController: NSViewController, AVCaptureMetadata
         view = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 360))
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.black.cgColor
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
         checkAuthorizationAndSetup()
     }
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        previewLayer?.frame = view.bounds
+        previewLayer?.frame = view.layer?.bounds ?? view.bounds
     }
 
     override func viewWillDisappear() {
@@ -130,7 +126,6 @@ private final class QRScannerViewController: NSViewController, AVCaptureMetadata
 
     private func setupCamera() {
         let session = AVCaptureSession()
-        session.sessionPreset = .high
 
         guard let device = AVCaptureDevice.default(for: .video) else {
             onError?("No camera available.")
@@ -138,11 +133,13 @@ private final class QRScannerViewController: NSViewController, AVCaptureMetadata
         }
 
         let metadataOutput = AVCaptureMetadataOutput()
+        let videoOutput = AVCaptureVideoDataOutput()
 
         do {
             let input = try AVCaptureDeviceInput(device: device)
             session.beginConfiguration()
             if session.canAddInput(input) { session.addInput(input) }
+            if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
             if session.canAddOutput(metadataOutput) { session.addOutput(metadataOutput) }
             session.commitConfiguration()
         } catch {
@@ -150,16 +147,15 @@ private final class QRScannerViewController: NSViewController, AVCaptureMetadata
             return
         }
 
-        guard metadataOutput.availableMetadataObjectTypes.contains(.qr) else {
-            onError?("QR code scanning is not supported on this device.")
-            return
+        if metadataOutput.availableMetadataObjectTypes.contains(.qr) {
+            metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
+            metadataOutput.metadataObjectTypes = [.qr]
         }
-        metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
-        metadataOutput.metadataObjectTypes = [.qr]
 
         let layer = AVCaptureVideoPreviewLayer(session: session)
         layer.videoGravity = .resizeAspectFill
-        layer.frame = view.bounds
+        layer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+        layer.frame = view.layer?.bounds ?? view.bounds
         view.layer?.addSublayer(layer)
         previewLayer = layer
         captureSession = session
