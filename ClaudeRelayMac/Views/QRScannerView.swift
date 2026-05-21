@@ -126,30 +126,37 @@ private final class QRScannerViewController: NSViewController, AVCaptureMetadata
 
     private func setupCamera() {
         let session = AVCaptureSession()
+        session.sessionPreset = .high
 
         guard let device = AVCaptureDevice.default(for: .video) else {
             onError?("No camera available.")
             return
         }
 
-        let metadataOutput = AVCaptureMetadataOutput()
-        let videoOutput = AVCaptureVideoDataOutput()
-
         do {
             let input = try AVCaptureDeviceInput(device: device)
             session.beginConfiguration()
             if session.canAddInput(input) { session.addInput(input) }
-            if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
-            if session.canAddOutput(metadataOutput) { session.addOutput(metadataOutput) }
+
+            let metadataOutput = AVCaptureMetadataOutput()
+            if session.canAddOutput(metadataOutput) {
+                session.addOutput(metadataOutput)
+                metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
+                if metadataOutput.availableMetadataObjectTypes.contains(.qr) {
+                    metadataOutput.metadataObjectTypes = [.qr]
+                }
+            }
+
             session.commitConfiguration()
         } catch {
             onError?("Camera setup failed: \(error.localizedDescription)")
             return
         }
 
-        if metadataOutput.availableMetadataObjectTypes.contains(.qr) {
-            metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
-            metadataOutput.metadataObjectTypes = [.qr]
+        if device.isFocusModeSupported(.continuousAutoFocus) {
+            try? device.lockForConfiguration()
+            device.focusMode = .continuousAutoFocus
+            device.unlockForConfiguration()
         }
 
         let layer = AVCaptureVideoPreviewLayer(session: session)
