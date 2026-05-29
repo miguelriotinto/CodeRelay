@@ -55,9 +55,6 @@ public final class WakeWordDetector {
         }
     }
 
-    /// Exposed for logging — number of accumulated samples.
-    public var accumulatorCount: Int { accumulator.count }
-
     /// Run transcription and check for the wake word. Applies preprocessing
     /// (gain normalization + silence padding) before transcription so Whisper
     /// sees a clip closer to the distribution it was trained on.
@@ -341,11 +338,6 @@ public final class WakeWordDetector {
         }
 
         return out
-    }
-
-    private static func isAsciiLetter(_ scalar: Unicode.Scalar) -> Bool {
-        (scalar.value >= 0x61 && scalar.value <= 0x7A) ||
-        (scalar.value >= 0x41 && scalar.value <= 0x5A)
     }
 
     /// Classic Levenshtein edit distance. Exposed for testing.
