@@ -341,7 +341,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                     RelayLogger.log(.error, category: "auth",
                         "Version mismatch from \(remote): client protocol v\(clientVersion), server requires >= v\(ClaudeRelayKit.minProtocolVersion)")
                     handler.sendServerMessage(.authFailure(
-                        reason: "This iOS app is not compatible with the server version running on the backend. "
+                        reason: "This app is not compatible with the server version running on the backend. "
                             + "Client protocol: v\(clientVersion), server requires: v\(ClaudeRelayKit.minProtocolVersion)+."
                     ), context: ctx)
                     ctx.close(promise: nil)

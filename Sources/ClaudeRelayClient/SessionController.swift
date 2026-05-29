@@ -18,7 +18,7 @@ public final class SessionController: ObservableObject {
             case .authenticationFailed(let reason):
                 return "Authentication failed: \(reason)"
             case .versionIncompatible:
-                return "This iOS app is not compatible with the server version running on the backend."
+                return "This app is not compatible with the server version running on the backend."
             case .unexpectedResponse(let detail):
                 return "Unexpected server response: \(detail)"
             case .timeout:
