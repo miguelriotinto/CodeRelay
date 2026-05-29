@@ -15,3 +15,5 @@ ExportOptions.plist
 .code-review-graph/
 AGENTS.md
 .venv-*/
+# Local working notes (CLAUDE.md task/lesson tracking)
+tasks/
