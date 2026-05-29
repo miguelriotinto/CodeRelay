@@ -12,7 +12,6 @@ struct MainWindow: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var coordinator: SessionCoordinator?
     @State private var showServerList = false
-    @State private var showSettings = false
     @State private var loadFailure: String?
 
     var body: some View {
@@ -48,7 +47,7 @@ struct MainWindow: View {
                 }
             }
         }
-        .task { await attemptAutoConnect() }
+        .task { await presentServerList() }
         .onAppear { speechEngine.preloadInBackground() }
         .sheet(isPresented: $showServerList) {
             NavigationStack {
@@ -59,10 +58,6 @@ struct MainWindow: View {
             }
             .background(.black)
             .presentationBackground(.black)
-        }
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
-                .presentationBackground(.black)
         }
         .onDisappear {
             coordinator?.tearDown()
@@ -75,7 +70,7 @@ struct MainWindow: View {
         .focusedValue(\.sessionCoordinator, coordinator)
     }
 
-    private func attemptAutoConnect() async {
+    private func presentServerList() async {
         showServerList = true
     }
 

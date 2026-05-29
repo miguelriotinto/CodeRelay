@@ -127,19 +127,6 @@ final class SessionCoordinator: SharedSessionCoordinator {
 
     // MARK: - Mac-Only Operations
 
-    func resumeActiveSession() async {
-        guard let activeId = activeSessionId else { return }
-        terminalViewModels[activeId]?.resetForReplay()
-        do {
-            try await withAuth { controller in
-                try await controller.resumeSession(id: activeId)
-            }
-            wireTerminalOutput(to: activeId)
-        } catch {
-            presentError(error.localizedDescription)
-        }
-    }
-
     func detachSession(id: UUID) async {
         do {
             try await withAuth { controller in
