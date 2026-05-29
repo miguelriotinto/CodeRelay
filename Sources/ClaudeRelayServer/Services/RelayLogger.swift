@@ -7,8 +7,11 @@ import Foundation
 ///
 /// Categories:
 ///  - `connection` : WebSocket connect / disconnect events
+///  - `websocket`  : WebSocket frame-level handling
 ///  - `session`    : Session state transitions and lifecycle
+///  - `activity`   : Coding-agent activity monitoring
 ///  - `auth`       : Authentication attempts (NEVER log tokens)
+///  - `tokens`     : Token store CRUD
 ///  - `admin`      : Admin API requests
 ///  - `server`     : Server lifecycle (start, stop)
 ///

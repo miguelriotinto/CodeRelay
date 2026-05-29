@@ -464,8 +464,9 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     // MARK: - Paste Image
 
     /// Handles an image paste from the iOS client.
-    /// Decodes the base64 PNG, writes it to the macOS pasteboard,
-    /// then sends Cmd+V to the PTY so Claude Code picks it up.
+    /// Decodes the base64 PNG, writes it to the macOS pasteboard, then sends
+    /// an empty bracketed-paste sequence to the PTY so Claude Code inspects
+    /// the clipboard (see the inline note below for why a keystroke is wrong).
     private func handlePasteImage(base64Data: String, context: ChannelHandlerContext) {
         guard let pty = attachedPTY else {
             sendServerMessage(.error(code: 400, message: "No session attached"), context: context)

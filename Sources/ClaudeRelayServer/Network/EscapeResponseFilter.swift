@@ -14,7 +14,8 @@ import Foundation
 /// Handles two classes of responses:
 /// - **CSI** (`ESC [`) — DA, CPR, DSR, DECRPM, kitty keyboard protocol
 /// - **OSC** (`ESC ]`) — color palette (4), foreground (10), background (11),
-///   cursor color (12), and kitty graphics (Gi) responses
+///   cursor color (12), highlight color (17), highlight foreground (19),
+///   and kitty graphics (Gi) responses
 enum EscapeResponseFilter {
 
     /// Final bytes of CSI responses we strip unconditionally:

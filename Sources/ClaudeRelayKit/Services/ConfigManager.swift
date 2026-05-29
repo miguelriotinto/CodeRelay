@@ -3,7 +3,7 @@ import Foundation
 /// Manages loading and saving of RelayConfig from disk.
 public final class ConfigManager: Sendable {
 
-    // Shared to avoid re-allocating per encode/decode on hot paths (WebSocket message handling).
+    // Shared to avoid re-allocating a coder per config load/save.
     private static let sharedDecoder = JSONDecoder()
     private static let sharedEncoder: JSONEncoder = {
         let encoder = JSONEncoder()

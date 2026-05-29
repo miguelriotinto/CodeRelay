@@ -1,7 +1,8 @@
 import Foundation
 import ClaudeRelayKit
 
-/// Manages token CRUD operations with JSON file persistence and file locking.
+/// Manages token CRUD operations with JSON file persistence (serialized via
+/// actor isolation; writes are atomic).
 public actor TokenStore {
 
     // MARK: - Properties

@@ -647,8 +647,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     // MARK: - Terminal View Cache (thin forwarders over TerminalCache)
 
     /// Called by the platform host when it creates (or retrieves) a native
-    /// terminal view for a session. After the first call for a given id, any
-    /// subsequent `switchToSession` will ask the server to skip the replay.
+    /// terminal view for a session, so the cache can reuse it on switch.
     public func registerLiveTerminal(for sessionId: UUID, view: AnyObject) {
         terminalCache.register(view: view, for: sessionId, activeSessionId: activeSessionId)
     }

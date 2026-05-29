@@ -20,8 +20,7 @@ public final class TerminalCache {
     public var _testOnly_lruOrder: [UUID] { lru }
 
     /// Snapshot of the set of sessions the cache has ever registered a live
-    /// terminal for. `SharedSessionCoordinator` reads this to decide whether
-    /// the next resume should skip the server's ring-buffer replay.
+    /// terminal for. Exposed for tests only; production code does not read this.
     public var liveSessionIds: Set<UUID> { liveSessions }
 
     // MARK: - Storage
