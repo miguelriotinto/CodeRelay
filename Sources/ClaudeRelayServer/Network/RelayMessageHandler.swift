@@ -285,12 +285,14 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                 let stealId = await manager.addStealObserver(tokenId: info.id) { [weak self] sessionId in
                     observerCtx.value.eventLoop.execute {
                         guard let self else { return }
-                        // Only notify if this connection is the one that lost the session.
+                        // Always forward the stolen notification so the client
+                        // removes the session from its sidebar. If it happens to
+                        // be the actively-attached session, also clear local state.
                         if self.attachedSessionId == sessionId {
                             self.attachedSessionId = nil
                             self.attachedPTY = nil
-                            self.sendServerMessage(.sessionStolen(sessionId: sessionId), context: observerCtx.value)
                         }
+                        self.sendServerMessage(.sessionStolen(sessionId: sessionId), context: observerCtx.value)
                     }
                 }
                 let renameId = await manager.addRenameObserver(tokenId: info.id) { [weak self] sessionId, name in

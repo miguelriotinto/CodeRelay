@@ -599,16 +599,22 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     }
 
     private func handleSessionStolen(sessionId: UUID) {
-        _ = activityCoordinator.handleSessionStolen(
-            sessionId: sessionId,
-            nameLookup: { [weak self] id in
-                self?.name(for: id) ?? id.uuidString.prefix(8).description
-            }
-        )
+        let wasActive = activeSessionId == sessionId
 
-        if activeSessionId == sessionId {
+        // Only show the alert when the user's focused terminal is displaced.
+        // Sidebar-only sessions disappear silently on the next list refresh.
+        if wasActive {
+            _ = activityCoordinator.handleSessionStolen(
+                sessionId: sessionId,
+                nameLookup: { [weak self] id in
+                    self?.name(for: id) ?? id.uuidString.prefix(8).description
+                }
+            )
             activeSessionId = nil
+        } else {
+            activityCoordinator.forgetSession(sessionId)
         }
+
         // Suppress any in-flight sends from a VM that a view may still hold
         // a reference to, then release this device's claim so the sidebar
         // stops listing the session as locally owned.

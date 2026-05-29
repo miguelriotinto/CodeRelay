@@ -153,8 +153,12 @@ public actor SessionManager {
             // source runs on its own dispatch queue, not serialized with the
             // unstructured Task that wirePTYOutput uses to call setOutputHandler.
             await pty.clearOutputHandler()
-            reportSessionStolen(sessionId: id, tokenId: oldTokenId, excludeObserver: excludeObserver)
         }
+
+        // Always notify the old token's observers so that the source device
+        // removes the session from its sidebar — not just when displacing a
+        // live attachment.
+        reportSessionStolen(sessionId: id, tokenId: oldTokenId, excludeObserver: excludeObserver)
 
         // Transfer ownership to the attaching token (enables cross-device attach).
         let newInfo = managed.info.with(tokenId: tokenId).transitioning(to: newState)
