@@ -125,5 +125,5 @@ Each app's `SessionCoordinator` is a thin subclass of `SharedSessionCoordinator`
 
 - **"No camera available" when scanning QR** — grant camera permission in System Settings → Privacy & Security → Camera.
 - **Microphone not recording** — grant mic permission in System Settings → Privacy & Security → Microphone.
-- **Can't connect via `ws://`** — the Info.plist includes `NSAllowsArbitraryLoads=true` to permit non-TLS WebSockets. If you rebuild with sandbox enabled, you may also need `com.apple.security.network.client` in the entitlements (already present).
+- **Can't connect via `ws://`** — the Info.plist includes `NSAllowsLocalNetworking=true`, which permits non-TLS WebSockets only to LAN/loopback addresses (see the main README's "When TLS is required"). If you rebuild with sandbox enabled, you may also need `com.apple.security.network.client` in the entitlements (already present).
 - **Menu bar icon missing after launch-at-login** — make sure the app finished registering with `SMAppService.mainApp`. Toggle "Launch at login" off and on in Preferences once.

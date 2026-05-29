@@ -56,7 +56,7 @@ ClaudeRelayApp/
       KeyCaptureView.swift          -- Live key combination capture
       MicButton.swift               -- Speech-to-text mic + recording state
       QRCodeComponents.swift        -- QRCodeGenerator + QRCodeOverlay for session sharing
-      RelayTerminalView.swift       -- SwiftTerm NSViewRepresentable wrapper (uses terminalScrollbackLines)
+      RelayTerminalView.swift       -- SwiftTerm UIViewRepresentable wrapper (uses terminalScrollbackLines)
 ```
 
 Shared types that previously lived here (`TerminalViewModel`, `ServerStatusChecker`,

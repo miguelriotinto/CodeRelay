@@ -224,7 +224,7 @@ swift build
 ### Run Tests
 
 ```bash
-swift test                                    # All SPM tests (677 tests across 5 targets)
+swift test                                    # All SPM tests (703 tests across 5 targets)
 swift test --filter ClaudeRelayKitTests       # Specific suite
 swift test --filter testTokenGeneration       # Specific test
 ```
@@ -235,9 +235,11 @@ actors (`SessionManager`, `TokenStore`, `PTYSession` via `MockPTYSession`,
 `SessionActivityMonitor`, `RateLimiter`, `RingBuffer`, `LogStore`,
 `AdminRoutes` endpoints, config validation), the client (auth coordinator,
 saved connections, session naming, session ownership, terminal view model +
-LRU cache, recovery controller, WebSocket integration round-trip), and the
-CLI (output formatter, admin client). Tests that require the speech pipeline,
-UIKit/AppKit, or the Keychain live in the Xcode test bundles
+LRU cache, recovery controller, WebSocket integration round-trip), the CLI
+(output formatter, admin client), and the speech pipeline
+(`ClaudeRelaySpeechTests` — text cleaning, wake-word matching, turn-end
+heuristics, and other UIKit/Keychain-free units). Tests that require
+UIKit/AppKit or the Keychain live in the Xcode test bundles
 (`ClaudeRelayAppTests` on iOS) — build the `ClaudeRelayApp` scheme and run
 tests in Xcode to exercise them.
 
@@ -290,7 +292,8 @@ ClaudeRelay/
 │   ├── ClaudeRelayKitTests/    # Protocol, CodingAgent, ActivityState, SessionState, TokenGenerator, ConnectionQuality, RelayConfig, MessageEnvelope
 │   ├── ClaudeRelayServerTests/ # SessionManager, TokenStore, RateLimiter, RingBuffer, ConfigValidation, ActivityMonitor, AdminRoutesEndpoint
 │   ├── ClaudeRelayCLITests/    # OutputFormatter, AdminClient
-│   └── ClaudeRelayClientTests/ # Auth, Connection, SessionNaming, TerminalViewModel, LRU cache, RecoveryController
+│   ├── ClaudeRelayClientTests/ # Auth, Connection, SessionNaming, TerminalViewModel, LRU cache, RecoveryController
+│   └── ClaudeRelaySpeechTests/ # TextCleaner, WakeWordDetector, turn-end heuristics, speech post-processing
 ├── ClaudeRelayAppTests/        # iOS app unit tests (AppSettings, SpeechEngineState, WhisperHallucination, TextCleaner, OnDeviceSpeechEngine)
 ├── Formula/
 │   └── clauderelay.rb          # Homebrew formula
@@ -412,7 +415,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
    paths, and any backward-compat decoding (see how `RelayConfigTests`
    pins defaults across missing-field JSON)
 3. Update documentation (README, CHANGELOG, CLAUDE.md)
-4. Run `swift test` before submitting (all 677 SPM tests must pass; the
+4. Run `swift test` before submitting (all 703 SPM tests must pass; the
    pre-existing Keychain-dependent `AuthManagerTests` and one timing
    `SessionActivityMonitor` test may fail in sandboxed environments —
    they're environmental, not regressions)
