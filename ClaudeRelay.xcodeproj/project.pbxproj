@@ -36,6 +36,7 @@
 		5FA509C701D58494DCC05471 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BA02853D523E6DAF7B5CD68D /* Assets.xcassets */; };
 		60B5CBCAA01CABA8AC289702 /* MenuBarDropdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97EFAD8FF50D4650290995A /* MenuBarDropdown.swift */; };
 		63E3BCC85F93A4D12B9436B1 /* ServerListWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCEC36B4A1645DB4968FE179 /* ServerListWindow.swift */; };
+		6428BE79BBFA9B0F1E74AC1E /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7615D1873F507B37D13B528 /* TerminalPalette.swift */; };
 		6529F1CAC9948761A14893E9 /* AddEditServerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 338CD3ED0482F3AB64117CF9 /* AddEditServerViewModel.swift */; };
 		6D09056ADDB5D682689F7DDF /* ServerListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1481B919F081FD62AD2BBD9A /* ServerListViewModel.swift */; };
 		7C1BDD714B65C5AEFBCD74D6 /* QRCodeComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3014236A9153620618B1A7 /* QRCodeComponents.swift */; };
@@ -46,6 +47,7 @@
 		8D0F21B7F585FDF16CF11CB7 /* AppSettingsContinuousTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFA0F04426C58852C4530707 /* AppSettingsContinuousTests.swift */; };
 		914AF6D14CDFD92EF3E05D54 /* ModifierFlagsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CE8732910310E2EB40DAF34 /* ModifierFlagsTests.swift */; };
 		938D018C46C19AA652D25CBC /* OnDeviceSpeechEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D056FB2ADC91419A5B818866 /* OnDeviceSpeechEngineTests.swift */; };
+		93CC9977B295F2833335A855 /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1848CC51EF450982C0B741A1 /* TerminalPalette.swift */; };
 		9971C020B99AC4E90062CFBC /* SleepWakeObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76DAF1C22B93D5299F03C3F5 /* SleepWakeObserver.swift */; };
 		9A7F9C483B24172C474D4202 /* KeyCaptureInterceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72BFC5D12AAF286591F874C3 /* KeyCaptureInterceptor.swift */; };
 		9ADD58276B77C25D003DC541 /* ClaudeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = 0DCA66CBFE9754D57666DA1D /* ClaudeRelaySpeech */; };
@@ -100,6 +102,7 @@
 		0CE8732910310E2EB40DAF34 /* ModifierFlagsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModifierFlagsTests.swift; sourceTree = "<group>"; };
 		1070882CC08139377A3E6C5B /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		1481B919F081FD62AD2BBD9A /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
+		1848CC51EF450982C0B741A1 /* TerminalPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPalette.swift; sourceTree = "<group>"; };
 		203B7144359F258D91797C4E /* ClaudeRelayApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRelayApp.swift; sourceTree = "<group>"; };
 		2BC85F57C078BD1CFAAFED7C /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		2ECDDEFC7B5354014FB3BFCA /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
@@ -136,6 +139,7 @@
 		AE187F4CD17DE18B5927964D /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
 		B2BA4095B6DFC9164DB8C74D /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
 		B5B785672A5F0D293AC7BF84 /* TerminalContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalContainerView.swift; sourceTree = "<group>"; };
+		B7615D1873F507B37D13B528 /* TerminalPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPalette.swift; sourceTree = "<group>"; };
 		BA02853D523E6DAF7B5CD68D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BCEC36B4A1645DB4968FE179 /* ServerListWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListWindow.swift; sourceTree = "<group>"; };
 		BFA0F04426C58852C4530707 /* AppSettingsContinuousTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsContinuousTests.swift; sourceTree = "<group>"; };
@@ -333,6 +337,7 @@
 				508D7CD8DCA41375E993CDA2 /* MicButton.swift */,
 				CB3014236A9153620618B1A7 /* QRCodeComponents.swift */,
 				9AE2628EFBF436099BE3C66E /* RelayTerminalView.swift */,
+				B7615D1873F507B37D13B528 /* TerminalPalette.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -385,6 +390,7 @@
 				DD7FCEC509175BD571CE89C2 /* SettingsView.swift */,
 				CF311DE62F36AF5A19AB87E9 /* StatusBarView.swift */,
 				B5B785672A5F0D293AC7BF84 /* TerminalContainerView.swift */,
+				1848CC51EF450982C0B741A1 /* TerminalPalette.swift */,
 				F24C7FBC4DE7530956495715 /* Components */,
 			);
 			path = Views;
@@ -581,6 +587,7 @@
 				9971C020B99AC4E90062CFBC /* SleepWakeObserver.swift in Sources */,
 				EFFCA49EDD9553791CAADCB9 /* StatusBarView.swift in Sources */,
 				AE20EB3A429DA20B6284117C /* TerminalContainerView.swift in Sources */,
+				93CC9977B295F2833335A855 /* TerminalPalette.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -620,6 +627,7 @@
 				0877BB8EA417A60F1F577800 /* SessionSidebarView.swift in Sources */,
 				4644DE3ED2824ABC39E387F8 /* SettingsView.swift in Sources */,
 				B5928FFA4B1500FD2062C36C /* SplashScreenView.swift in Sources */,
+				6428BE79BBFA9B0F1E74AC1E /* TerminalPalette.swift in Sources */,
 				7E9F091C0D22BC8F83E18092 /* WorkspaceView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
