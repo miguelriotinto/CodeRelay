@@ -19,9 +19,9 @@ final class WakeWordAudioPreprocessorTests: XCTestCase {
         let result = WakeWordAudioPreprocessor.peakNormalize(samples)
 
         // Scale factor is 0.95 / 0.1 = 9.5
-        XCTAssertEqual(result[0],  0.95, accuracy: 0.001)
+        XCTAssertEqual(result[0], 0.95, accuracy: 0.001)
         XCTAssertEqual(result[1], -0.475, accuracy: 0.001)
-        XCTAssertEqual(result[2],  0.19, accuracy: 0.001)
+        XCTAssertEqual(result[2], 0.19, accuracy: 0.001)
         XCTAssertEqual(result[3], -0.95, accuracy: 0.001)
     }
 

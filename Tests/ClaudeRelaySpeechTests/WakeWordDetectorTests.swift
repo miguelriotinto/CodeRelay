@@ -147,8 +147,8 @@ final class WakeWordDetectorTests: XCTestCase {
     func testMetaphonePrimitivesForCommonWords() {
         // "claude" and acoustic neighbors should share a phonetic code.
         XCTAssertEqual(WakeWordDetector.metaphone("claude"), "KLT")
-        XCTAssertEqual(WakeWordDetector.metaphone("cloud"),  "KLT")
-        XCTAssertEqual(WakeWordDetector.metaphone("clod"),   "KLT")
+        XCTAssertEqual(WakeWordDetector.metaphone("cloud"), "KLT")
+        XCTAssertEqual(WakeWordDetector.metaphone("clod"), "KLT")
         XCTAssertEqual(WakeWordDetector.metaphone("clawed"), "KLT")
     }
 

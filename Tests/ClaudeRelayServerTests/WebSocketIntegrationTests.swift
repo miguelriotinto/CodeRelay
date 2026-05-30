@@ -348,7 +348,7 @@ final class WebSocketIntegrationTests: XCTestCase {
         // Write scrollback data into the session's mock PTY buffer so attach
         // has something to replay.
         let (_, pty) = try await sessionManager.attachSession(id: sessionInfo.id, tokenId: tokenInfo.id)
-        let mockPTY = pty as! MockPTYSession
+        let mockPTY = try XCTUnwrap(pty as? MockPTYSession)
         let scrollbackData = Data(repeating: 0x41, count: 1024)
         await mockPTY.writeToBuffer(scrollbackData)
         try await sessionManager.detachSession(id: sessionInfo.id)

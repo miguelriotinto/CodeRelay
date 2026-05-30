@@ -10,10 +10,10 @@ final class SmartTurnTurnEndDetectorTests: XCTestCase {
     }
 
     func testPadOrTruncateHandlesExactSize() {
-        let n = SmartTurnTurnEndDetector.requiredSampleCount
-        let arr = Array(repeating: Float(0.7), count: n)
-        let result = SmartTurnTurnEndDetector.padOrTruncate(arr, toCount: n)
-        XCTAssertEqual(result.count, n)
+        let sampleCount = SmartTurnTurnEndDetector.requiredSampleCount
+        let arr = Array(repeating: Float(0.7), count: sampleCount)
+        let result = SmartTurnTurnEndDetector.padOrTruncate(arr, toCount: sampleCount)
+        XCTAssertEqual(result.count, sampleCount)
         XCTAssertEqual(result.first, 0.7)
     }
 
@@ -57,9 +57,9 @@ final class SmartTurnTurnEndDetectorTests: XCTestCase {
         }
         let result = await detector.predict(utteranceAudio: audio)
         switch result {
-        case .speakerDone(let p), .speakerContinuing(let p):
-            XCTAssertGreaterThanOrEqual(p, 0.0)
-            XCTAssertLessThanOrEqual(p, 1.0)
+        case .speakerDone(let probability), .speakerContinuing(let probability):
+            XCTAssertGreaterThanOrEqual(probability, 0.0)
+            XCTAssertLessThanOrEqual(probability, 1.0)
         }
     }
 }
