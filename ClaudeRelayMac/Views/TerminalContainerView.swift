@@ -99,7 +99,7 @@ struct TerminalContainerView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let host = NSView(frame: .zero)
         host.wantsLayer = true
-        host.layer?.backgroundColor = NSColor(deviceRed: 0.1, green: 0.1, blue: 0.1, alpha: 1).cgColor
+        host.layer?.backgroundColor = NSColor.black.cgColor
         return host
     }
 
@@ -168,7 +168,7 @@ struct TerminalContainerView: NSViewRepresentable {
         terminal.onImagePaste = { [weak viewModel] data in
             viewModel?.sendPasteImage(data)
         }
-        terminal.nativeBackgroundColor = NSColor(deviceRed: 0.1, green: 0.1, blue: 0.1, alpha: 1)
+        terminal.nativeBackgroundColor = .black
         terminal.nativeForegroundColor = .white
         terminal.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         terminal.installColors(TerminalPalette.colors)

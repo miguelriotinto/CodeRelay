@@ -152,7 +152,7 @@ struct TerminalHostView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIView {
         let host = UIView(frame: .zero)
-        host.backgroundColor = UIColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1)
+        host.backgroundColor = .black
         context.coordinator.installKeyboardObservers()
         context.coordinator.installFocusObservers { [weak host] in
             (host?.subviews.first { !$0.isHidden }) as? RelayTerminalView
@@ -259,7 +259,7 @@ struct TerminalHostView: UIViewRepresentable {
         let delegate = IOSTerminalCoordinator(viewModel: viewModel)
         let terminal = RelayTerminalView(frame: host.bounds)
         terminal.terminalDelegate = delegate
-        terminal.nativeBackgroundColor = UIColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1)
+        terminal.nativeBackgroundColor = .black
         terminal.nativeForegroundColor = .white
         terminal.font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         terminal.installColors(TerminalPalette.colors)
