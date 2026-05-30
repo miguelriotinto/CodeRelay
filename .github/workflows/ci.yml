@@ -14,7 +14,7 @@ jobs:
     name: swift build + test + lint
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select newest Xcode 16
         run: |
@@ -62,7 +62,7 @@ jobs:
     name: iOS app build (device SDK)
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select newest Xcode 16
         run: |
@@ -94,7 +94,7 @@ jobs:
     name: macOS app build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select newest Xcode 16
         run: |
