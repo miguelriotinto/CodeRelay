@@ -1,6 +1,7 @@
 import XCTest
 @testable import ClaudeRelaySpeech
 
+// swiftlint:disable file_length type_body_length
 @MainActor
 final class ContinuousListeningEngineTests: XCTestCase {
 
