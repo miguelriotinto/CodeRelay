@@ -12,7 +12,8 @@ import ObjectiveC
 /// SwiftTerm implements the `copy(_:)` / `paste(_:)` methods but does not
 /// register key commands, so the system never dispatches them on iOS.
 class RelayTerminalView: TerminalView {
-    // UIKit stops firing deleteBackward when text buffer is empty; override hasText to always return true so key-repeat works in the terminal
+    // UIKit stops firing deleteBackward when text buffer is empty;
+    // override hasText to always return true so key-repeat works.
     private static var hasTextOverrideInstalled = false
     private static func installRuntimeOverrides() {
         guard !hasTextOverrideInstalled else { return }

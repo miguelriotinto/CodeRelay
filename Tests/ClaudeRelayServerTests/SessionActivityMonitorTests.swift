@@ -1,8 +1,10 @@
+// swiftlint:disable file_length
 import XCTest
 import Foundation
 @testable import ClaudeRelayServer
 @testable import ClaudeRelayKit
 
+// swiftlint:disable:next type_body_length
 final class SessionActivityMonitorTests: XCTestCase {
 
     private func makeMonitor(

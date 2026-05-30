@@ -1,7 +1,7 @@
 import XCTest
 @testable import ClaudeRelayKit
 
-/// Encoding, decoding, and round-trip tests for `ServerMessage`.
+// swiftlint:disable:next type_body_length
 final class ServerMessageTests: ProtocolTestCase {
 
     // MARK: - ServerMessage Encoding Structure

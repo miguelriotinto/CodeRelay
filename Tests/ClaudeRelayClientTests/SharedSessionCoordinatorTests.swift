@@ -387,7 +387,7 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         coordinator.activeSessionId = stolenId
         coordinator.sessions = [
             SessionInfo(id: stolenId, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
-            SessionInfo(id: keepId,   state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
+            SessionInfo(id: keepId, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
         ]
         coordinator.agentSessions[stolenId] = "claude"
         coordinator.sessionsAwaitingInput.insert(stolenId)

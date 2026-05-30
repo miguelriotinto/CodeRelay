@@ -155,7 +155,7 @@ public final class SileroVoiceActivityDetector: VoiceActivityDetecting, @uncheck
             let provider = try MLDictionaryFeatureProvider(dictionary: [
                 "audio_input": audioInput,
                 "hidden_state": hInput,
-                "cell_state": cInput,
+                "cell_state": cInput
             ])
             let output = try model.prediction(from: provider)
 

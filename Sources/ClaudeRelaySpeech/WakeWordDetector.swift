@@ -180,13 +180,9 @@ public final class WakeWordDetector {
 
     // MARK: - Metaphone (phonetic encoding)
 
-    /// English Metaphone encoding (Lawrence Philips, 1990). Returns a
-    /// short string representing how the word sounds. Words that sound
-    /// alike produce the same code.
-    ///
-    /// Examples: "claude", "cloud", "clod", "clawed" → "KLT".
-    /// Exposed for testing.
-    // swiftlint:disable:next cyclomatic_complexity
+    // English Metaphone encoding (Lawrence Philips, 1990). Returns a
+    // short string representing how the word sounds. Words that sound
+    // alike produce the same code ("claude", "cloud", "clod" → "KLT").
     static func metaphone(_ word: String) -> String {
         let ctx = MetaphoneContext(word)
         guard !ctx.chars.isEmpty else { return "" }
@@ -242,7 +238,7 @@ public final class WakeWordDetector {
             return 0
         }
 
-        // swiftlint:disable:next cyclomatic_complexity function_body_length
+        // swiftlint:disable:next cyclomatic_complexity
         func emit(_ ch: UInt8, at idx: Int, into out: inout String) {
             let prev = get(idx - 1)
             let next = get(idx + 1)
@@ -290,14 +286,19 @@ public final class WakeWordDetector {
         }
 
         private func emitC(next: UInt8?, nextNext: UInt8?, into out: inout String) {
-            if next == 0x69, nextNext == 0x61 { out.append("X") }
-            else if next == 0x68 { out.append("X") }
-            else if next == 0x69 || next == 0x65 || next == 0x79 { out.append("S") }
-            else { out.append("K") }
+            if next == 0x69, nextNext == 0x61 {
+                out.append("X")
+            } else if next == 0x68 {
+                out.append("X")
+            } else if next == 0x69 || next == 0x65 || next == 0x79 {
+                out.append("S")
+            } else {
+                out.append("K")
+            }
         }
 
         private func emitD(next: UInt8?, nextNext: UInt8?, into out: inout String) {
-            if next == 0x67, let nn = nextNext, (nn == 0x65 || nn == 0x69 || nn == 0x79) {
+            if next == 0x67, let nn = nextNext, nn == 0x65 || nn == 0x69 || nn == 0x79 {
                 out.append("J")
             } else {
                 out.append("T")
@@ -310,7 +311,7 @@ public final class WakeWordDetector {
                 if !(isVowel(prev) && idx > 0) { out.append("F") }
             } else if next == 0x6E {
                 if idx != count - 2 { out.append("K") }
-            } else if let nx = next, (nx == 0x65 || nx == 0x69 || nx == 0x79) {
+            } else if let nx = next, nx == 0x65 || nx == 0x69 || nx == 0x79 {
                 out.append("J")
             } else {
                 out.append("K")
@@ -325,18 +326,25 @@ public final class WakeWordDetector {
         }
 
         private func emitS(next: UInt8?, nextNext: UInt8?, into out: inout String) {
-            if next == 0x68 { out.append("X") }
-            else if next == 0x69, let nn = nextNext, (nn == 0x61 || nn == 0x6F) {
+            if next == 0x68 {
                 out.append("X")
-            } else { out.append("S") }
+            } else if next == 0x69, let nn = nextNext, nn == 0x61 || nn == 0x6F {
+                out.append("X")
+            } else {
+                out.append("S")
+            }
         }
 
         private func emitT(next: UInt8?, nextNext: UInt8?, into out: inout String) {
-            if next == 0x68 { out.append("0") }
-            else if next == 0x69, let nn = nextNext, (nn == 0x61 || nn == 0x6F) {
+            if next == 0x68 {
+                out.append("0")
+            } else if next == 0x69, let nn = nextNext, nn == 0x61 || nn == 0x6F {
                 out.append("X")
-            } else if next == 0x63, nextNext == 0x68 { return }
-            else { out.append("T") }
+            } else if next == 0x63, nextNext == 0x68 {
+                return
+            } else {
+                out.append("T")
+            }
         }
     }
 
@@ -344,26 +352,26 @@ public final class WakeWordDetector {
     static func levenshtein(_ a: String, _ b: String) -> Int {
         let aChars = Array(a)
         let bChars = Array(b)
-        let n = aChars.count
-        let m = bChars.count
-        if n == 0 { return m }
-        if m == 0 { return n }
+        let aLen = aChars.count
+        let bLen = bChars.count
+        if aLen == 0 { return bLen }
+        if bLen == 0 { return aLen }
 
-        var previous = Array(0...m)
-        var current = Array(repeating: 0, count: m + 1)
+        var previous = Array(0...bLen)
+        var current = Array(repeating: 0, count: bLen + 1)
 
-        for i in 1...n {
+        for i in 1...aLen {
             current[0] = i
-            for j in 1...m {
+            for j in 1...bLen {
                 let cost = aChars[i - 1] == bChars[j - 1] ? 0 : 1
                 current[j] = min(
-                    previous[j] + 1,       // deletion
-                    current[j - 1] + 1,    // insertion
-                    previous[j - 1] + cost // substitution
+                    previous[j] + 1,
+                    current[j - 1] + 1,
+                    previous[j - 1] + cost
                 )
             }
             swap(&previous, &current)
         }
-        return previous[m]
+        return previous[bLen]
     }
 }

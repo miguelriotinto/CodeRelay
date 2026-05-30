@@ -261,12 +261,12 @@ final class SessionOwnershipTests: SessionManagerTestCase {
 
     // MARK: - Concurrent Attach Race
 
-    /// When two tokens race to attach the same session, the actor must serialize
-    /// the calls — one attaches first (transferring ownership), the other
-    /// steals from the first. Final ownership must be exactly one of the two
-    /// tokens, never a third value or a split/torn state.
+    // When two tokens race to attach the same session, the actor must serialize
+    // the calls — one attaches first (transferring ownership), the other
+    // steals from the first. Final ownership must be exactly one of the two
+    // tokens, never a third value or a split/torn state.
+
     // MARK: - Output-Handler Lifecycle on Steal
-    //
     // The server's steal path MUST clear the PTY output handler before
     // returning, so the displaced device stops receiving output. Without
     // this, `outputHandler` still points at the old device's send closure

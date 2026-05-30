@@ -12,7 +12,7 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
         body: [String: Any]? = nil,
         manager: SessionManager? = nil
     ) async -> (status: Int, json: [String: Any]?) {
-        var buf: ByteBuffer? = nil
+        var buf: ByteBuffer?
         if let body {
             if let data = try? JSONSerialization.data(withJSONObject: body) {
                 var buffer = ByteBufferAllocator().buffer(capacity: data.count)
