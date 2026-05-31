@@ -36,7 +36,7 @@ ClaudeRelay consists of six main components:
 ### Homebrew (macOS)
 
 ```bash
-brew install miguelriotinto/clauderelay/clauderelay
+brew install miguelriotinto/claude-relay/clauderelay
 ```
 
 ### From Source
@@ -428,5 +428,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Links
 
 - **GitHub**: https://github.com/miguelriotinto/ClaudeRelay
-- **Homebrew Tap**: https://github.com/miguelriotinto/homebrew-clauderelay
+- **Homebrew Tap**: https://github.com/miguelriotinto/homebrew-claude-relay
 - **Issues**: https://github.com/miguelriotinto/ClaudeRelay/issues
