@@ -313,11 +313,13 @@ class WakeWordTest {
 - Create: `speech/src/main/kotlin/relay/speech/turnend/SmartTurnTurnEndDetector.kt`
 
 > Build the conversion pipeline and the ONNX-backed detectors now; **do not enable SmartTurn in the shipped engine until M4's parity gate passes.** This task is research/tooling — verification is the parity report, not a unit test.
+>
+> **Monorepo payoff:** because the Android app lives in this repo, the conversion + validation scripts read the iOS CoreML originals and the speech fixtures by direct relative path — no copy/submodule. Source models: `Sources/ClaudeRelaySpeech/Resources/{SileroVAD.mlmodelc,WhisperLogMel8s.mlpackage,SmartTurnV3.mlpackage}`. Reference audio: `Tests/ClaudeRelaySpeechTests/Fixtures`. Conversion tooling lives under `ClaudeRelayAndroid/ml/`.
 
-- [ ] **Step 1: Convert Silero VAD** — prefer public Silero v6 ONNX weights; else introspect `SileroVAD.mlmodelc` with `coremltools` and rebuild in ONNX. Output `ml/out/silero_vad.onnx`.
-- [ ] **Step 2: Convert WhisperLogMel8s** — `coremltools` introspection → ONNX; verify output shape `[1,80,800]` for 8s @16kHz. Output `ml/out/whisper_logmel8s.onnx`.
-- [ ] **Step 3: Convert SmartTurn v3** — Whisper-Tiny encoder + linear head → ONNX; sigmoid output, 0.5 threshold. Output `ml/out/smartturn_v3.onnx`.
-- [ ] **Step 4: `validate_parity.py`** — feed a reference audio set through BOTH the iOS CoreML models (via `coremltools` on a Mac) and the ONNX models; assert: Silero probability relative error < 0.1%; SmartTurn turn-end TPR ≥ 90% / FPR ≤ 10% vs labels; LogMel output max-abs diff within tolerance. **Emit a parity report.**
+- [ ] **Step 1: Convert Silero VAD** — prefer public Silero v6 ONNX weights; else introspect `Sources/ClaudeRelaySpeech/Resources/SileroVAD.mlmodelc` with `coremltools` and rebuild in ONNX. Output `ClaudeRelayAndroid/ml/out/silero_vad.onnx`.
+- [ ] **Step 2: Convert WhisperLogMel8s** — `coremltools` introspection of `Sources/ClaudeRelaySpeech/Resources/WhisperLogMel8s.mlpackage` → ONNX; verify output shape `[1,80,800]` for 8s @16kHz. Output `ClaudeRelayAndroid/ml/out/whisper_logmel8s.onnx`.
+- [ ] **Step 3: Convert SmartTurn v3** — from `Sources/ClaudeRelaySpeech/Resources/SmartTurnV3.mlpackage`: Whisper-Tiny encoder + linear head → ONNX; sigmoid output, 0.5 threshold. Output `ClaudeRelayAndroid/ml/out/smartturn_v3.onnx`.
+- [ ] **Step 4: `validate_parity.py`** — feed the reference audio set (`Tests/ClaudeRelaySpeechTests/Fixtures`) through BOTH the iOS CoreML models (via `coremltools` on a Mac, reading the `Sources/ClaudeRelaySpeech/Resources/` originals) and the converted ONNX models; assert: Silero probability relative error < 0.1%; SmartTurn turn-end TPR ≥ 90% / FPR ≤ 10% vs labels; LogMel output max-abs diff within tolerance. **Emit a parity report.**
 - [ ] **Step 5: Implement `SmartTurnTurnEndDetector.kt`** — ONNX Runtime Mobile two-stage (LogMel → SmartTurn), `raceTurnEnd` returning `TurnEndDecision`, 8s timer safety-net (classifier authoritative). Fall back to `HeuristicTurnEndDetector` if models fail to load. **Leave it un-wired in `makeDefault` until M4.**
 - [ ] **Step 6: Commit** `feat(speech): CoreML->ONNX conversion pipeline + SmartTurn detector (gated)`
 

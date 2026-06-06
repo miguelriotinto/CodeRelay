@@ -13,6 +13,8 @@
 - `Sources/ClaudeRelayKit/Models/SessionInfo.swift`, `SessionState.swift`, `ActivityState.swift`, `ConnectionQuality.swift`
 - `Sources/ClaudeRelayClient/RelayConnection.swift`, `SessionController.swift`, `ConnectionConfig.swift`, `AuthManager.swift`
 
+> **Monorepo:** all paths below are inside `ClaudeRelayAndroid/`, a top-level directory in **this** repository (alongside `Sources/`, `ClaudeRelayApp/`, `ClaudeRelayMac/`). The Swift source-of-truth files above are reachable directly from the same repo — no clone/submodule. `ClaudeRelayAndroid/` gets its own Gradle build and its own CI workflow.
+
 ---
 
 ## File Structure (created in M1)
@@ -71,9 +73,11 @@ ClaudeRelayAndroid/
 - Create: `ClaudeRelayAndroid/gradle/libs.versions.toml`
 - Create: `ClaudeRelayAndroid/core-protocol/build.gradle.kts`
 
-- [ ] **Step 1: Create the Android project in Android Studio**
+- [ ] **Step 1: Create the Android project in Android Studio (in-repo)**
 
-Use Android Studio → New Project → "No Activity", name `ClaudeRelayAndroid`, package `relay`, language Kotlin, build config Kotlin DSL, **minSdk = 28** (pin the spec's 26–28 range to 28 for simpler Keystore + foreground-service-type behavior), targetSdk = latest stable.
+Use Android Studio → New Project → "No Activity", name `ClaudeRelayAndroid`, package `relay`, language Kotlin, build config Kotlin DSL, **minSdk = 28** (pin the spec's 26–28 range to 28 for simpler Keystore + foreground-service-type behavior), targetSdk = latest stable. **Save it as a `ClaudeRelayAndroid/` directory at the root of this existing repository** (do NOT create a new git repo — it shares this one). Add a `.gitignore` for the Android tree (`ClaudeRelayAndroid/.gradle/`, `**/build/`, `local.properties`, `*.keystore`). Open the nested `ClaudeRelayAndroid/` as a Gradle root in Android Studio; the Swift tooling at the repo root is unaffected.
+
+Add a separate CI workflow `.github/workflows/android.yml` (its own job — Gradle build + unit tests on `ClaudeRelayAndroid/**` changes), kept independent of the Swift workflow.
 
 - [ ] **Step 2: Define the version catalog**
 

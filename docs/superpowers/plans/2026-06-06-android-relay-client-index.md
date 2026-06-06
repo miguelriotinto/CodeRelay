@@ -18,7 +18,7 @@ This work is decomposed into **four milestone plans**, each producing working, t
 ## Conventions used across all plans
 
 - **Reference repo (Swift source of truth):** the existing iOS/Mac codebase in this repo. When a plan says "port `RelayConnection.swift`", the canonical behavior is the Swift file at `Sources/ClaudeRelayClient/RelayConnection.swift`.
-- **New Android project location:** a sibling repo/directory `ClaudeRelayAndroid/` (NOT inside this Swift repo). Plans use paths relative to that Android project root.
+- **Android project location (monorepo):** a top-level `ClaudeRelayAndroid/` directory **inside this existing repository**, alongside `Sources/`, `ClaudeRelayApp/`, and `ClaudeRelayMac/`. It has its own Gradle build and its own CI workflow (separate GitHub Actions job — not entangled with the Swift pipeline). Plan paths are relative to `ClaudeRelayAndroid/` unless they reference a Swift artifact (e.g. `Sources/ClaudeRelaySpeech/Resources/…`), which is reachable directly because it's the same repo. See the spec's "Repository layout" section for the rationale.
 - **Language/build:** Kotlin, Gradle (Kotlin DSL), Jetpack Compose, Hilt, JUnit5 + Turbine + MockK for tests, kotlinx.serialization.
 - **TDD:** every behavioral task writes a failing test first. UI-only and JNI-glue tasks that cannot be unit-tested note this explicitly and specify a manual verification step instead.
 - **Commits:** frequent, one per task (or per logical step within a large task).

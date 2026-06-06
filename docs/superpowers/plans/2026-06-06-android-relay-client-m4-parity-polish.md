@@ -32,7 +32,7 @@
 
 > Spec success metric: ≤0.5% CER vs iOS.
 
-- [ ] **Step 1:** Build a fixed reference audio set (reuse `Tests/ClaudeRelaySpeechTests/Fixtures` from the Swift repo if usable). Transcribe on Android (whisper.cpp) and compare to iOS transcripts; compute CER.
+- [ ] **Step 1:** Build a fixed reference audio set (reuse `Tests/ClaudeRelaySpeechTests/Fixtures` — same repo, direct path — if usable). Transcribe on Android (whisper.cpp) and compare to iOS transcripts; compute CER.
 - [ ] **Step 2:** Run the same transcripts through `TextCleaner` on both platforms; spot-check cleanup quality parity.
 - [ ] **Step 3:** Record results; if CER > 0.5%, investigate quantization/weights mismatch before launch.
 - [ ] **Step 4: Commit** `test(speech): transcription + cleanup parity audit`

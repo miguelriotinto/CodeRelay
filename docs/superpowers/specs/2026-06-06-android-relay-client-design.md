@@ -39,6 +39,34 @@ ClaudeRelayAndroid/
 └── :app               ← Application, navigation, deep links, DI wiring (Hilt)
 ```
 
+### Repository layout (monorepo)
+
+The Android app lives **inside this existing repository**, in a top-level
+`ClaudeRelayAndroid/` directory alongside `Sources/`, `ClaudeRelayApp/`, and
+`ClaudeRelayMac/` — not in a separate repo. Rationale:
+
+- This repo is already a deliberate multi-platform monorepo (server + CLI +
+  iOS + macOS, the latter two being Xcode/XcodeGen projects, not SwiftPM). The
+  graph already spans `swift, c, python, bash, ruby`; adding Kotlin/Gradle is
+  consistent, not a category change.
+- The hardest Android work depends on artifacts that live here: the
+  CoreML→ONNX conversion + parity validation (§5, M3/M4) need the bundled
+  models in `Sources/ClaudeRelaySpeech/Resources/` and the speech test fixtures
+  in `Tests/ClaudeRelaySpeechTests/Fixtures` side-by-side with their ONNX
+  outputs. Co-location keeps these as direct file references rather than a
+  submodule/copy.
+- `protocolVersion` exists because the wire protocol *will* evolve. A monorepo
+  lets a protocol change land atomically across server + iOS + macOS + Android
+  in one PR, with the contract test (M1) catching drift.
+- The spec and plan docs already live in this repo; the code they describe
+  belongs alongside them.
+
+`ClaudeRelayAndroid/` has its **own** Gradle build (root `settings.gradle.kts`)
+and its **own** CI workflow (a separate GitHub Actions job, not entangled with
+the Swift build/test pipeline). Android Studio opens the nested Gradle root
+directly. The Swift tooling (`.code-review-graph`, SwiftLint, the launchd/brew
+flows) is unaffected — it simply ignores the Kotlin tree.
+
 ### Tech stack
 
 | Concern | iOS | Android |
@@ -376,4 +404,6 @@ Material 3 `WindowSizeClass` via `currentWindowAdaptiveInfo()`:
 - Any server-side change (protocol frozen).
 - Kotlin Multiplatform shared core (explicitly deferred; contract is the wire
   protocol).
-- macOS/iOS app changes.
+- macOS/iOS app changes (other than, eventually, atomic protocol-version bumps
+  that the monorepo makes possible — none planned in M1–M4).
+- A separate Android repository (decided against — see "Repository layout").
