@@ -142,6 +142,44 @@ final class SessionObserverTests: SessionManagerTestCase {
         await manager.removeStealObserver(id: observerId)
     }
 
+    /// Cross-device displacement via resume. When a session is currently
+    /// `.activeAttached` (held by another connection sharing the same token)
+    /// and a second connection resumes it, the original holder MUST receive a
+    /// steal notification — otherwise it keeps showing a session it no longer
+    /// owns. This mirrors `attachSession`'s behaviour. The resuming connection
+    /// excludes its own observer so it doesn't get told it stole from itself.
+    func testStealObserverFiresOnResumeFromActiveAttached() async throws {
+        let (_, tokenInfo) = try await createTestToken()
+        let manager = makeManager()
+
+        // createSession leaves the session in .activeAttached.
+        let session = try await manager.createSession(tokenId: tokenInfo.id)
+
+        let displaced = XCTestExpectation(description: "displaced observer fires")
+        let displacedId = await manager.addStealObserver(tokenId: tokenInfo.id) { sessionId in
+            XCTAssertEqual(sessionId, session.id)
+            displaced.fulfill()
+        }
+
+        var resumerCalls = 0
+        let resumerId = await manager.addStealObserver(tokenId: tokenInfo.id) { _ in
+            resumerCalls += 1
+        }
+
+        // Resume from .activeAttached, excluding the resuming connection's own
+        // observer — the displaced holder must still be notified.
+        _ = try await manager.resumeSession(
+            id: session.id,
+            tokenId: tokenInfo.id,
+            excludeObserver: resumerId
+        )
+
+        await fulfillment(of: [displaced], timeout: 1.0)
+        XCTAssertEqual(resumerCalls, 0, "Resuming connection must not be told it stole from itself")
+        await manager.removeStealObserver(id: displacedId)
+        await manager.removeStealObserver(id: resumerId)
+    }
+
     func testStealObserverMultipleObserversOnlyNonExcludedFire() async throws {
         let (_, tokenInfo) = try await createTestToken()
         let manager = makeManager()

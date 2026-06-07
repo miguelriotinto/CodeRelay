@@ -8,6 +8,14 @@ import ClaudeRelayKit
 import Foundation
 
 public final class WebSocketServer {
+    /// Read-idle window after which a silent connection is closed. Healthy
+    /// clients ping every 10 s (`RelayConnection.pingInterval`), so 60 s is
+    /// 6 missed pings — well above jitter, and it reaps half-open sockets
+    /// from clients that vanished without a TCP FIN (mobile app-kill,
+    /// NAT/CGNAT eviction) before they leak fds to `EMFILE`. See
+    /// `IdleConnectionReaper`.
+    static let readIdleTimeout: TimeAmount = .seconds(60)
+
     private let group: EventLoopGroup
     private let sessionManager: SessionManager
     private let tokenStore: TokenStore
@@ -95,6 +103,16 @@ public final class WebSocketServer {
                 }
 
                 return sslFuture.flatMap {
+                    // Reap connections that go silent. Installed before the
+                    // HTTP/WebSocket handlers so it observes raw inbound
+                    // activity across the whole connection lifetime (HTTP
+                    // handshake + upgraded WebSocket). Without this, clients
+                    // that vanish without a FIN leak fds until EMFILE.
+                    channel.pipeline.addHandlers([
+                        IdleStateHandler(readTimeout: Self.readIdleTimeout),
+                        IdleConnectionReaper()
+                    ])
+                }.flatMap {
                     let config: NIOHTTPServerUpgradeConfiguration = (
                         upgraders: [upgrader],
                         completionHandler: { _ in

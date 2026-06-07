@@ -104,11 +104,12 @@ extension RelayMessageHandler {
     func handleSessionResume(sessionId: UUID, skipReplay: Bool, context: ChannelHandlerContext) {
         guard let tokenId = authenticatedTokenId else { return }
         let mgr = self.sessionManager
+        let myStealId = self.stealObserverId
         bridgeToEventLoopWithCtx(
             context: context,
             work: { [weak self] ctx -> (any PTYSessionProtocol, Data, ActivityState, CodingAgent?) in
                 await self?.autoDetachIfNeeded(ctx: ctx)
-                let (_, _, pty) = try await mgr.resumeSession(id: sessionId, tokenId: tokenId)
+                let (_, _, pty) = try await mgr.resumeSession(id: sessionId, tokenId: tokenId, excludeObserver: myStealId)
                 RelayLogger.log(category: "session", "Session resumed: \(sessionId) (skipReplay=\(skipReplay))")
                 // Read scrollback history to send to client, unless the client
                 // already has a live terminal with full scrollback (tab switch).

@@ -212,10 +212,15 @@ public actor SessionManager {
     }
 
     /// Resume a detached session.
+    /// - Parameter excludeObserver: Observer ID to exclude from steal
+    ///   notifications (the connection doing the resume should not receive its
+    ///   own stolen push). Only relevant when the resume displaces another
+    ///   connection that currently holds the session live.
     public func resumeSession(
         id: UUID,
-        tokenId: String
-    ) throws -> (SessionInfo, Data, any PTYSessionProtocol) {
+        tokenId: String,
+        excludeObserver: UUID? = nil
+    ) async throws -> (SessionInfo, Data, any PTYSessionProtocol) {
         guard var managed = sessions[id] else {
             throw SessionError.notFound(id)
         }
@@ -228,8 +233,19 @@ public actor SessionManager {
 
         var currentState = managed.info.state
 
-        // If still attached (client didn't detach cleanly), detach first.
+        // If still attached, another connection holds this session live.
+        // Resuming displaces it — exactly like a cross-device attach — so we
+        // must tear down the old handler and notify the displaced connection.
+        // Without this, a device sharing the same token keeps showing (and can
+        // keep driving) a session it no longer owns. Same-device tab switches
+        // resume from .activeDetached and skip this path entirely.
         if currentState == .activeAttached {
+            // Clear the displaced connection's output handler before the new
+            // one wires up, mirroring attachSession. The PTY read source runs
+            // on its own queue, so awaiting here serializes the handover.
+            await pty.clearOutputHandler()
+            reportSessionStolen(sessionId: id, tokenId: tokenId, excludeObserver: excludeObserver)
+
             managed.info = managed.info.transitioning(to: .activeDetached)
             currentState = .activeDetached
         }
