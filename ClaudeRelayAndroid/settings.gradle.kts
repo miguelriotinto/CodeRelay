@@ -25,5 +25,6 @@ rootProject.name = "ClaudeRelayAndroid"
 include(":core-protocol")
 include(":core-net")
 include(":core-storage")
+include(":core-session")
 include(":terminal")
 include(":app")
