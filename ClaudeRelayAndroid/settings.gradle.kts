@@ -23,3 +23,4 @@ dependencyResolutionManagement {
 rootProject.name = "ClaudeRelayAndroid"
 
 include(":core-protocol")
+include(":core-net")
