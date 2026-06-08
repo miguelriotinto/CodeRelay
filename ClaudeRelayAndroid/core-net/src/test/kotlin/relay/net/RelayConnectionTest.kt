@@ -10,10 +10,15 @@ import okio.ByteString.Companion.toByteString
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import relay.protocol.ServerMessage
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 class RelayConnectionTest {
@@ -70,7 +75,7 @@ class RelayConnectionTest {
 
         assert(received.await(5, TimeUnit.SECONDS)) { "onTerminalOutput was not invoked" }
         assertArrayEquals(payload, got)
-        conn.disconnect()
+        runBlocking { conn.disconnect() }
     }
 
     @Test
@@ -87,6 +92,122 @@ class RelayConnectionTest {
         runBlocking { conn.connectRaw(wsUrlFor()) }
         assertEquals(2L, conn.generation)
 
-        conn.disconnect()
+        runBlocking { conn.disconnect() }
+    }
+
+    @Test
+    fun `undecodable text frame is dropped without tearing down the connection`() {
+        val opened = CountDownLatch(1)
+        val serverRef = enqueueServerSocket(opened)
+
+        val conn = RelayConnection()
+        // Records every server message that reaches a subscriber, in order.
+        val delivered = mutableListOf<ServerMessage>()
+        val sawValid = CountDownLatch(1)
+        conn.addServerMessageSubscriber { msg ->
+            synchronized(delivered) { delivered.add(msg) }
+            if (msg is ServerMessage.SessionDetached) sawValid.countDown()
+        }
+
+        runBlocking { conn.connectRaw(wsUrlFor()) }
+        assert(opened.await(5, TimeUnit.SECONDS)) { "server socket never opened" }
+
+        // Garbage text: decodeServer throws → runCatching drops it. No subscriber,
+        // no teardown.
+        serverRef.get().send("not json {")
+
+        // A valid frame sent AFTER the garbage proves the connection is still live
+        // and that the bad frame was a silent drop (not a tear-down). Because the
+        // confinement dispatcher processes frames in order, once the valid frame
+        // surfaces we know the garbage frame was fully handled (and dropped).
+        serverRef.get().send("""{"type":"session_detached","payload":{}}""")
+        assert(sawValid.await(5, TimeUnit.SECONDS)) { "valid frame after garbage was not delivered" }
+
+        // The ONLY thing that reached a subscriber is the valid frame.
+        val snapshot = synchronized(delivered) { delivered.toList() }
+        assertEquals(listOf<ServerMessage>(ServerMessage.SessionDetached), snapshot) {
+            "garbage frame must not reach a subscriber"
+        }
+        assertEquals(RelayConnection.ConnectionState.CONNECTED, conn.state)
+        assertEquals(1L, conn.generation) { "garbage frame must not bump generation" }
+
+        runBlocking { conn.disconnect() }
+    }
+
+    @Test
+    fun `pong text frame routes to measurePingRtt and not to subscribers`() {
+        // Server-side listener that echoes a pong as soon as it sees the client's
+        // ping text frame, so measurePingRtt resolves via the pendingPong slot.
+        val opened = CountDownLatch(1)
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                opened.countDown()
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains("\"type\":\"ping\"")) {
+                    webSocket.send("""{"type":"pong","payload":{}}""")
+                }
+            }
+        }
+        server.enqueue(MockResponse().withWebSocketUpgrade(listener))
+
+        val conn = RelayConnection()
+        val subscriberFired = AtomicBoolean(false)
+        conn.addServerMessageSubscriber { subscriberFired.set(true) }
+
+        runBlocking { conn.connectRaw(wsUrlFor()) }
+        assert(opened.await(5, TimeUnit.SECONDS)) { "server socket never opened" }
+
+        val rtt = runBlocking { conn.measurePingRtt() }
+
+        assertNotNull(rtt) { "pong should resolve the in-flight ping" }
+        assertTrue(rtt!! >= 0.0)
+        assertFalse(subscriberFired.get()) { "pong must not reach a server-message subscriber" }
+
+        runBlocking { conn.disconnect() }
+    }
+
+    @Test
+    fun `frame from a superseded generation is dropped`() {
+        val openedA = CountDownLatch(1)
+        val serverRefA = enqueueServerSocket(openedA)
+        val openedB = CountDownLatch(1)
+        val serverRefB = enqueueServerSocket(openedB)
+
+        val conn = RelayConnection()
+        val terminalBytes = AtomicReference<ByteArray?>(null)
+        val gotOutput = CountDownLatch(1)
+        conn.onTerminalOutput = { bytes ->
+            terminalBytes.set(bytes)
+            gotOutput.countDown()
+        }
+
+        // First connection — generation 1. Capture its server-side socket.
+        runBlocking { conn.connectRaw(wsUrlFor()) }
+        assert(openedA.await(5, TimeUnit.SECONDS)) { "socket A never opened" }
+        val socketA = serverRefA.get()
+
+        // Second connection supersedes the first — generation becomes 2 and the
+        // gen-1 listener's captured `gen` no longer matches.
+        runBlocking { conn.connectRaw(wsUrlFor()) }
+        assert(openedB.await(5, TimeUnit.SECONDS)) { "socket B never opened" }
+        assertEquals(2L, conn.generation)
+
+        // A frame arriving on the OLD socket carries the stale gen-1 callback and
+        // must be dropped by the `gen != generation` bail.
+        socketA.send(byteArrayOf(9, 9, 9).toByteString())
+
+        // The frame should NOT surface. Wait briefly to give a (wrongly) delivered
+        // frame time to arrive, then assert nothing came through.
+        assertFalse(gotOutput.await(750, TimeUnit.MILLISECONDS)) {
+            "stale-generation frame must not reach onTerminalOutput"
+        }
+        // A live frame on the CURRENT socket still works, proving the conn is fine.
+        serverRefB.get().send(byteArrayOf(1, 2, 3).toByteString())
+        assert(gotOutput.await(5, TimeUnit.SECONDS)) { "current-gen frame was not delivered" }
+        assertArrayEquals(byteArrayOf(1, 2, 3), terminalBytes.get())
+
+        runBlocking { conn.disconnect() }
     }
 }

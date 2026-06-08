@@ -1,6 +1,11 @@
 package relay.net
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -14,7 +19,9 @@ import java.util.UUID
  * Test double for [ConnectionSurface]. [autoRespond] feeds a canned server
  * message to the installed subscriber synchronously on `send`, so the "response
  * beats the await" path (the race the real code defends against) is exercised
- * without any real socket or timer.
+ * without any real socket or timer. [deliver] feeds the installed subscribers a
+ * message out-of-band (after the awaiter has suspended) for the async/duplicate
+ * delivery paths.
  */
 private class FakeConnection(
     var autoRespond: ((ClientMessage) -> ServerMessage?)? = null,
@@ -40,8 +47,14 @@ private class FakeConnection(
             subscribers.values.toList().forEach { it(response) }
         }
     }
+
+    /** Fans [response] out to every installed subscriber (out-of-band delivery). */
+    fun deliver(response: ServerMessage) {
+        subscribers.values.toList().forEach { it(response) }
+    }
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SessionControllerTest {
 
     @Test
@@ -100,5 +113,73 @@ class SessionControllerTest {
         val sent = conn.sentMessages.single() as ClientMessage.SessionRename
         assertEquals(id, sent.sessionId)
         assertEquals("renamed", sent.name)
+    }
+
+    @Test
+    fun `response arriving after await suspends resolves exactly once`() = runTest {
+        // No autoRespond, so the request suspends at guard.await(). A separate
+        // launch delivers the response only after the awaiter has parked.
+        val id = UUID.randomUUID()
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        var deliveries = 0
+        val request = launch {
+            val result = controller.createSession("late")
+            assertEquals(id, result)
+        }
+        // Let the request install its subscriber, send, and suspend on await().
+        yield()
+        runCurrent()
+        assertEquals(1, conn.sentMessages.size) { "request should have sent before we deliver" }
+
+        conn.deliver(ServerMessage.SessionCreated(id, cols = 80u, rows = 24u).also { deliveries++ })
+        request.join()
+
+        assertEquals(id, controller.sessionId)
+        assertEquals(1, deliveries)
+    }
+
+    @Test
+    fun `duplicate delivery is a no-op and the awaiter returns the first response`() = runTest {
+        val firstId = UUID.randomUUID()
+        val secondId = UUID.randomUUID()
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        val request = launch {
+            val result = controller.createSession("dup")
+            // First delivery wins; the duplicate must not change the resolved value.
+            assertEquals(firstId, result)
+        }
+        yield()
+        runCurrent()
+
+        conn.deliver(ServerMessage.SessionCreated(firstId, cols = 80u, rows = 24u))
+        // Second, conflicting response for the SAME request: must be dropped.
+        conn.deliver(ServerMessage.SessionCreated(secondId, cols = 80u, rows = 24u))
+        request.join()
+
+        assertEquals(firstId, controller.sessionId)
+    }
+
+    @Test
+    fun `no response hits the timeout path with the expected message`() = runTest {
+        // Virtual time: never deliver a response, advance past the 10 s timeout.
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        var thrown: Throwable? = null
+        val request = launch {
+            thrown = runCatching { controller.createSession("never") }.exceptionOrNull()
+        }
+        yield()
+        runCurrent()
+
+        advanceTimeBy(SessionController.RESPONSE_TIMEOUT_MS + 1)
+        request.join()
+
+        val ex = thrown as SessionException
+        assertEquals("The operation timed out.", ex.message)
     }
 }

@@ -23,6 +23,7 @@ import relay.protocol.ConnectionQuality
 import relay.protocol.MessageEnvelope
 import relay.protocol.ServerMessage
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Minimal surface a [SessionController] needs from a connection. Defining it as
@@ -45,12 +46,16 @@ interface ConnectionSurface {
  * auto-reconnects on its own. When the socket dies it fires [onSendFailed] and
  * lets the coordinator drive recovery.
  *
- * All mutable state is confined to [NetworkConfinement.dispatcher] (the Kotlin
- * analogue of Swift's `@MainActor`), so the receive loop, ping bookkeeping, and
- * subscriber map need no additional locking. Every OkHttp listener callback is
- * marshalled onto that dispatcher and dropped if its captured [generation] no
- * longer matches the live one — the "stale-callback bail" from the Swift
- * receive loop.
+ * All mutable state except the subscriber map is confined to
+ * [NetworkConfinement.dispatcher] (the Kotlin analogue of Swift's `@MainActor`),
+ * so the receive loop and ping bookkeeping need no additional locking. The
+ * subscriber map is a [ConcurrentHashMap] because [SessionController]
+ * adds/removes subscribers from the caller's thread (off the confinement
+ * dispatcher) while the receive loop iterates it on the dispatcher — a genuine
+ * cross-thread access that the dispatcher alone cannot serialize. Every OkHttp
+ * listener callback is marshalled onto the dispatcher and dropped if its captured
+ * [generation] no longer matches the live one — the "stale-callback bail" from
+ * the Swift receive loop.
  */
 class RelayConnection(
     private val scope: CoroutineScope = CoroutineScope(NetworkConfinement.dispatcher),
@@ -95,7 +100,16 @@ class RelayConnection(
 
     // MARK: - Subscribers
 
-    private val subscribers = LinkedHashMap<UUID, (ServerMessage) -> Unit>()
+    /**
+     * Server-message fan-out targets. A [ConcurrentHashMap] — not a plain map —
+     * because [SessionController.sendAndWaitForResponse] adds/removes subscribers
+     * on the *caller's* thread (off [NetworkConfinement.dispatcher]) while the
+     * receive loop iterates this map on the dispatcher. Fan-out order is not
+     * load-bearing (each subscriber self-filters by response type), so CHM's
+     * lock-free, weakly-consistent iteration is exactly what we want, and
+     * add/remove stay non-suspend for future push-callback adders.
+     */
+    private val subscribers = ConcurrentHashMap<UUID, (ServerMessage) -> Unit>()
 
     override fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID {
         val id = UUID.randomUUID()
@@ -148,6 +162,8 @@ class RelayConnection(
     suspend fun connectRaw(wsUrl: String) = withContext(scope.coroutineContext) {
         // Resolve any stale pong from a previous connection before we tear down.
         resolvePendingPong(false)
+        activePing?.cancel()
+        activePing = null
 
         webSocket?.cancel()
         webSocket = null
@@ -167,19 +183,23 @@ class RelayConnection(
         startQualityMonitor(gen)
     }
 
-    /** Disconnects from the server. Does not attempt reconnection. */
-    fun disconnect() {
-        scope.launch {
-            cancelKeepalive()
-            resolvePendingPong(false)
-            activePing?.cancel()
-            activePing = null
-            generation += 1
-            webSocket?.cancel()
-            webSocket = null
-            state = ConnectionState.DISCONNECTED
-            connectionQuality = ConnectionQuality.DISCONNECTED
-        }
+    /**
+     * Disconnects from the server. Does not attempt reconnection. A `suspend fun`
+     * wrapped in `withContext(scope.coroutineContext)` — symmetric with [connectRaw]
+     * — so the teardown completes before the call returns and a caller that
+     * immediately reconnects observes a fully torn-down state (no `scope.launch`
+     * fire-and-forget interleaving with the next [connect]).
+     */
+    suspend fun disconnect(): Unit = withContext(scope.coroutineContext) {
+        cancelKeepalive()
+        resolvePendingPong(false)
+        activePing?.cancel()
+        activePing = null
+        generation += 1
+        webSocket?.cancel()
+        webSocket = null
+        state = ConnectionState.DISCONNECTED
+        connectionQuality = ConnectionQuality.DISCONNECTED
     }
 
     /**
@@ -385,9 +405,10 @@ class RelayConnection(
                     resolvePendingPong(true)
                     return@launch
                 }
-                // Snapshot so a handler that removes itself mid-dispatch doesn't
-                // mutate the collection we're iterating.
-                for (handler in subscribers.values.toList()) {
+                // ConcurrentHashMap iteration is weakly consistent and safe even
+                // if a handler removes itself (or another subscriber is added on a
+                // caller thread) mid-dispatch — no snapshot needed.
+                for (handler in subscribers.values) {
                     handler(message)
                 }
             }
