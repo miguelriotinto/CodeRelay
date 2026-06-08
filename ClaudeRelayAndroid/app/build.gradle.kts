@@ -54,6 +54,11 @@ dependencies {
     // listed explicitly here too for clarity (M2 nav graph wires the coordinator).
     implementation(project(":core-session"))
 
+    // feature-workspace owns DeepLinks (the clauderelay://session parser) consumed
+    // by MainActivity's intent handling, plus the QR sheet/scanner the nav graph
+    // wires in Task 11.
+    implementation(project(":feature-workspace"))
+
     implementation(libs.kotlinx.coroutines.android)
 
     // core-net keeps okhttp `implementation` (not exposed transitively), but

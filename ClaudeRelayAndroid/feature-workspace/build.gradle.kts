@@ -62,6 +62,15 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
 
+    // QR share: pure-JVM encode → BitMatrix (we rasterize to a Bitmap ourselves).
+    implementation(libs.zxing.core)
+
+    // QR scan (DEVICE-DEFERRED): CameraX preview + image analysis → ML Kit detect.
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.mlkit.barcode.scanning)
+
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)
 }

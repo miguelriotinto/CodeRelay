@@ -3,6 +3,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- QR scanner (Task 9): runtime CAMERA permission; camera is optional so the
+         app installs on cameraless devices (the scanner is just unavailable). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
     <application
         android:name="relay.app.RelayApplication"
         android:allowBackup="true"
@@ -15,10 +20,20 @@
             android:name="relay.app.MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.ClaudeRelayM1">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- clauderelay://session/<uuid> deep links (Task 9). Matches the iOS
+                 URL scheme so a QR scanned on iOS opens the Android app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="clauderelay" />
             </intent-filter>
         </activity>
     </application>
