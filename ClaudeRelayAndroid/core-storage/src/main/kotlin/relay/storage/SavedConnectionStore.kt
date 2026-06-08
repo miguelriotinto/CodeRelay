@@ -20,22 +20,12 @@ import java.util.UUID
  * `[ConnectionConfig]`. On Android there is no `UserDefaults`, so we use a
  * Preferences [DataStore] (`saved_connections`) holding the list as a single JSON
  * string, encoded via [WireJson] + `ListSerializer(ConnectionConfig.serializer())`.
- *
- * ## Legacy-key migration (best-effort hook)
- *
- * Swift migrates from an older `UserDefaults` key when the current key is empty,
- * copying it forward while **leaving the legacy entry intact** so a downgrade
- * still sees bookmarks (SavedConnectionStore.swift `loadAll()`).
- *
- * On Android there has never been a prior storage location, so there is no real
- * iOS legacy store to read from — `UserDefaults` is not shared with an Android
- * process. We therefore implement the migration as a faithful **hook** keyed by
- * the corrected legacy constant [LEGACY_KEY] (`com.coderemote.savedConnections`):
- * when [CURRENT_KEY] is empty we read [LEGACY_KEY] from the *same* DataStore,
- * copy any value forward, and leave the legacy entry intact for downgrade safety.
- * With no legacy Android data present this is a clean no-op — we deliberately do
- * NOT fabricate a migration from a store that never existed on Android.
  */
+// Legacy-migration hook: if the current key is empty, copy forward any value
+// stored under the legacy key, leaving the legacy entry intact (downgrade safety).
+// On a fresh Android install nothing wrote LEGACY_KEY, so this is a no-op today;
+// it exists so a future Android import/backup-restore that seeds LEGACY_KEY migrates cleanly.
+// (iOS migrates the analogous UserDefaults key — see ClaudeRelayApp.swift legacyKeys.)
 class SavedConnectionStore(private val context: Context) {
 
     private val dataStore: DataStore<Preferences> get() = context.savedConnectionsDataStore

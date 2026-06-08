@@ -36,27 +36,30 @@ class TokenStore(context: Context) {
     )
 
     /** Saves [token] for [connectionId], replacing any existing entry. */
-    fun saveToken(token: String, connectionId: UUID) =
+    fun saveToken(token: String, connectionId: UUID) {
         prefs.edit().putString(connectionId.toString(), token).apply()
+    }
 
     /** Returns the token for [connectionId], or `null` if none is stored. */
     fun loadToken(connectionId: UUID): String? =
         prefs.getString(connectionId.toString(), null)
 
     /** Removes the token for [connectionId]. No-op when absent. */
-    fun deleteToken(connectionId: UUID) =
+    fun deleteToken(connectionId: UUID) {
         prefs.edit().remove(connectionId.toString()).apply()
+    }
 
     /**
      * Saves the Bedrock bearer [token]. An empty string deletes the entry,
      * mirroring `AuthManager.saveBedrockToken(_:)`.
      */
-    fun saveBedrockToken(token: String) =
+    fun saveBedrockToken(token: String) {
         if (token.isEmpty()) {
             prefs.edit().remove(BEDROCK_KEY).apply()
         } else {
             prefs.edit().putString(BEDROCK_KEY, token).apply()
         }
+    }
 
     /** Returns the Bedrock bearer token, or `null` if none is stored. */
     fun loadBedrockToken(): String? = prefs.getString(BEDROCK_KEY, null)

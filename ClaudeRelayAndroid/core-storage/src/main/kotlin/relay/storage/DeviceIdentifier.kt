@@ -26,11 +26,12 @@ object DeviceIdentifier {
      * Returns the persisted device id, generating and storing one on first call.
      * Subsequent calls return the same value for the lifetime of the install.
      */
-    fun get(context: Context): String {
+    fun get(context: Context): String = synchronized(this) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return prefs.getString(KEY, null)
+        prefs.getString(KEY, null)
             ?: UUID.randomUUID().toString().also {
-                prefs.edit().putString(KEY, it).apply()
+                // commit() (not apply()) so a crash right after generation can't lose it.
+                prefs.edit().putString(KEY, it).commit()
             }
     }
 }
