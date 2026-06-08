@@ -63,6 +63,12 @@ import kotlin.coroutines.cancellation.CancellationException
  * isolated. Callers must confine entry points to a single (main) dispatcher;
  * the [isRecoveryDispatched] sync entry-lock relies on that confinement.
  *
+ * @param scope The coroutine scope recovery passes launch on. It MUST use a
+ *   serial / confined dispatcher (e.g. `Dispatchers.Main.immediate`) — the
+ *   [isRecoveryDispatched] sync entry-lock and the single-flight generation
+ *   guards assume entry points and the recovery body never run concurrently,
+ *   faithful to the Swift `@MainActor` model. The Task-6 coordinator wiring is
+ *   responsible for providing such a scope.
  * @param isAlive Probes the socket; wraps a 5 s pong wait at the call site.
  * @param reconnect Forces a transport reconnect; throws on failure (only this
  *   failure retries the backoff array).
@@ -74,8 +80,14 @@ import kotlin.coroutines.cancellation.CancellationException
  *   gone) vs transport-level. App-level errors set [sessionAttachFailed]
  *   instead of [connectionTimedOut].
  * @param sleepMs Backoff sleep; injectable for virtual-time tests.
- * @param nowMs Monotonic-ish clock for cooldown/debounce stamps; injectable so
- *   tests control time. Never stamped as 0L.
+ * @param nowMs Clock for cooldown/debounce stamps; injectable so tests control
+ *   time. The default `System.currentTimeMillis()` is WALL-CLOCK and
+ *   non-monotonic — an NTP correction or manual clock change can move it
+ *   backwards and corrupt the 3 s cooldown / 1 s cancel-debounce windows. The
+ *   Task-6 coordinator wiring MUST inject the Android-correct monotonic source
+ *   `android.os.SystemClock.elapsedRealtime()` instead. This module stays
+ *   pure-JVM (no Android dependency), so the monotonic clock is injected from
+ *   the Android layer rather than referenced here. Never stamped as 0L.
  */
 class RecoveryController(
     private val scope: CoroutineScope,
@@ -217,7 +229,7 @@ class RecoveryController(
      * dispatch. Sets the dispatch lock so re-entry is blocked, just like the real
      * entry points.
      */
-    fun launchRecovery(userInitiated: Boolean) {
+    internal fun launchRecovery(userInitiated: Boolean) {
         if (isRecoveryDispatched) return
         isRecoveryDispatched = true
         recoveryJob = scope.launch { handleForegroundTransition(userInitiated) }
@@ -255,10 +267,19 @@ class RecoveryController(
                 runReconnectThenRestore(myGeneration, userInitiated)
             } finally {
                 // Inner defer (RecoveryController.swift:166-170): idempotent even
-                // on a mid-await cancel.
-                _isRecovering.value = false
-                suppressSends(false)
-                lastRecoveryEndedAt = nowMs()
+                // on a mid-await cancel. Generation-guarded so a stale gen-N
+                // coroutine's finally can never clobber a mid-flight gen-(N+1)'s
+                // freshly-set state. Under the current serial/confined dispatcher
+                // (faithful to Swift's @MainActor) this guard is a no-op — gen-N's
+                // body fully unwinds before gen-(N+1) is dispatched — but it is
+                // cheap insurance against a future re-entrant ordering change.
+                // The OUTER `isRecoveryDispatched` clear stays ungated (matches
+                // Swift, and gating it would risk stranding the dispatch lock).
+                if (myGeneration == recoveryGeneration) {
+                    _isRecovering.value = false
+                    suppressSends(false)
+                    lastRecoveryEndedAt = nowMs()
+                }
             }
         } finally {
             // Outer defer (RecoveryController.swift:144).
@@ -375,6 +396,13 @@ class RecoveryController(
         recoveryJob?.cancel()
         recoveryJob = null
         _isRecovering.value = false
+        // The cancelled pass's inner `finally` is generation-guarded (I2), so it
+        // will NOT run its own `suppressSends(false)` (its captured generation no
+        // longer matches the just-bumped value). Swift relies on the cancelled
+        // Task's UNGATED defer to undo suppression; with the Android guard that
+        // cleanup must happen here so a cancel can never strand
+        // `suppressAllViewModelSends(true)`.
+        suppressSends(false)
         isRecoveryDispatched = false
         recoveryFailed = true
         val now = nowMs()
@@ -392,10 +420,10 @@ class RecoveryController(
     // MARK: - Test hooks
 
     /** Read of the internal breaker failure counter (test parity assertions). */
-    val consecutiveAutoFailuresForTest: Int get() = consecutiveAutoRecoveryFailures
+    internal val consecutiveAutoFailuresForTest: Int get() = consecutiveAutoRecoveryFailures
 
     /** Seeds the breaker state for tests (Swift `_testOnly_setAutoRecoverySuspended`). */
-    fun setBreakerForTest(suspended: Boolean, failures: Int) {
+    internal fun setBreakerForTest(suspended: Boolean, failures: Int) {
         _autoRecoverySuspended.value = suspended
         consecutiveAutoRecoveryFailures = failures
     }

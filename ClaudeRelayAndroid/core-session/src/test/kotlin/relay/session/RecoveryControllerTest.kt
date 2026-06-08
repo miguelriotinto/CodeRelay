@@ -298,7 +298,77 @@ class RecoveryControllerTest {
         advanceUntilIdle()
 
         assertFalse(env.controller.isRecovering.value, "isRecovering cleared after cancel mid-backoff")
-        // suppressSends must have been toggled back to false by the defer.
+        // suppressSends must have been toggled back to false (cancel() does this
+        // directly now that the inner finally is generation-guarded).
         assertEquals(false, env.suppressLog.last())
+    }
+
+    // I2: the generation-guarded inner finally must NOT let a stale gen-1 pass
+    // clobber a genuinely mid-flight gen-2 pass's recovery state. We park gen-1
+    // inside reconnect, cancel + re-trigger to start gen-2, park gen-2 inside ITS
+    // reconnect, then release gen-1 so its finally runs while gen-2 is still
+    // parked. The guarded finally skips its StateFlow writes because gen-1's
+    // captured generation no longer matches, leaving gen-2's state intact.
+    //
+    // CAVEAT (documented per the I2 brief): under the serial test dispatcher this
+    // assertion passes WITH OR WITHOUT the guard. `cancel()` eagerly resumes the
+    // cancelled gen-1 coroutine, so gen-1's inner finally fully unwinds BEFORE
+    // gen-2 commits `isRecovering=true` — the `isRecoveryDispatched` entry-lock
+    // structurally prevents gen-1's finally from interleaving AFTER gen-2's
+    // commit. The clobber is therefore not exercisable under faithful serial /
+    // @MainActor ordering; the guard is cheap insurance against a future
+    // re-entrant ordering change. This test still pins the intended invariant
+    // (gen-2's mid-flight state survives a stale finally) as a regression guard.
+    @Test
+    fun `gen-guarded finally does not clobber a mid-flight newer generation`() = runTest {
+        val gen1Reconnect = CompletableDeferred<Unit>()
+        val gen2Reconnect = CompletableDeferred<Unit>()
+        val env = RecoveryTestEnv(this)
+        env.alive = false
+        var call = 0
+        env.reconnectBehavior = {
+            when (call++) {
+                0 -> gen1Reconnect.await() // gen-1 parks here
+                else -> gen2Reconnect.await() // gen-2 parks here, stays mid-flight
+            }
+        }
+
+        // gen-1 starts and parks inside reconnect with isRecovering=true.
+        env.controller.launchRecovery(userInitiated = true)
+        advanceUntilIdle()
+        assertTrue(env.controller.isRecovering.value, "gen-1 committed to recovery")
+
+        // Cancel gen-1 (bumps generation to 2) and start gen-2.
+        env.controller.cancel()
+        env.clockMs += 2_000 // clear the 1 s cancel debounce
+        env.controller.triggerUserRecovery()
+        advanceUntilIdle() // gen-2 now parked inside its own reconnect
+
+        assertTrue(env.controller.isRecovering.value, "gen-2 is mid-flight and recovering")
+        // suppressSends was driven true again by gen-2 entering recovery.
+        assertEquals(true, env.suppressLog.last(), "gen-2 re-suppressed sends")
+
+        // Release gen-1: its (cancelled) coroutine runs its generation-guarded
+        // finally. Because gen-1's captured generation (1) != current (2), the
+        // guarded writes are skipped — gen-2's state is left intact.
+        gen1Reconnect.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(
+            env.controller.isRecovering.value,
+            "gen-1's stale finally must NOT clear gen-2's isRecovering",
+        )
+        assertEquals(
+            true,
+            env.suppressLog.last(),
+            "gen-1's stale finally must NOT toggle suppressSends(false) under gen-2",
+        )
+
+        // Sanity: let gen-2 finish cleanly so its OWN (matching-generation) finally
+        // performs the real cleanup.
+        gen2Reconnect.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(env.controller.isRecovering.value, "gen-2's own finally clears recovery")
+        assertEquals(false, env.suppressLog.last(), "gen-2's own finally restores sends")
     }
 }

@@ -53,10 +53,10 @@ class TerminalCache<T : Any>(
     val cachedIds: Set<UUID> get() = views.keys.toSet()
 
     /** Set of sessions a live view was ever registered for (test/diagnostic). */
-    val liveSessionIds: Set<UUID> get() = liveSessions.toSet()
+    internal val liveSessionIds: Set<UUID> get() = liveSessions.toSet()
 
     /** Cached ids in LRU order, oldest first (test-only mirror of `lru`). */
-    val lruOrder: List<UUID> get() = lru.toList()
+    internal val lruOrder: List<UUID> get() = lru.toList()
 
     /**
      * Register a native terminal view for a session. Marks the session as the

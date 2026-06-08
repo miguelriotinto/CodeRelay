@@ -24,10 +24,13 @@ class NotAuthenticatedException : Exception("not authenticated")
  *    (AuthCoordinator.swift:92-101).
  *
  * The Swift original threads a `SessionController` through; on Android that
- * coupling lives in the coordinator, so this port is parameterised by two
- * injected lambdas — [authenticate] (performs the auth round-trip and updates
- * whatever state [isAuthValid] reads) and [isAuthValid] (the local "is the
- * cached auth still valid for the current connection generation" bit).
+ * coupling lives in the coordinator, so this port is parameterised by injected
+ * lambdas — [authenticate] (performs the auth round-trip and updates whatever
+ * state [isAuthValid] reads), [isAuthValid] (the local "is the cached auth
+ * still valid for the current connection generation" bit), and [resetAuth]
+ * (clears the local auth bit so the next [ensureAuthenticated] re-authenticates;
+ * parity with Swift's `sessionController?.resetAuth()` at
+ * AuthCoordinator.swift:97).
  *
  * Not thread-safe across dispatchers — the Swift original is `@MainActor`
  * isolated. Callers must confine access to a single (main) dispatcher; the
@@ -36,6 +39,7 @@ class NotAuthenticatedException : Exception("not authenticated")
 class AuthCoordinator(
     private val authenticate: suspend () -> Unit,
     private val isAuthValid: () -> Boolean,
+    private val resetAuth: () -> Unit = {},
 ) {
     /**
      * Single-flight handle. Concurrent callers await the same `CompletableDeferred`
@@ -79,11 +83,18 @@ class AuthCoordinator(
         return try {
             body()
         } catch (e: NotAuthenticatedException) {
-            // Swift resets the stale auth bit then re-runs ensureAuthenticated();
-            // forcing a fresh authenticate() here is the faithful equivalent —
-            // it bypasses the isAuthValid short-circuit so the retry runs
-            // against fresh auth rather than the stale-valid flag.
-            authenticate()
+            // Swift: `sessionController?.resetAuth(); ensureAuthenticated()`
+            // (AuthCoordinator.swift:97-98). resetAuth() clears the local
+            // auth bit so the following ensureAuthenticated() can't short-circuit
+            // on a stale-valid flag and instead routes through the single-flight
+            // `inFlight` slot. Calling ensureAuthenticated() — NOT authenticate()
+            // directly — is the load-bearing detail: when two concurrent withAuth
+            // bodies both throw NotAuthenticated (the post-reconnect
+            // mass-invalidation case), both retries dedupe through the shared
+            // in-flight authentication instead of each racing its own
+            // auth_request.
+            resetAuth()
+            ensureAuthenticated()
             body()
         }
     }

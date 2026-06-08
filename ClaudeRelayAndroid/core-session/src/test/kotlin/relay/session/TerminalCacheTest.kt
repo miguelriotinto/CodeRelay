@@ -72,19 +72,52 @@ class TerminalCacheTest {
     }
 
     @Test
-    fun `stays one over the limit when every entry is the active session`() {
-        // The only way enforceLimit cannot find a victim is when every cached
-        // entry is the active session — i.e. re-registering the same active id
-        // does not evict it, and the cache can momentarily hold limit entries
-        // that are all protected. With a single id this collapses to one entry,
-        // so we verify the guard returns without evicting the active session.
+    fun `limit one with two distinct ids never evicts the active LRU-oldest entry`() {
+        // limit=1, TWO DISTINCT ids. The active session is the LRU-OLDEST entry.
+        // Registering the second id pushes the cache one over the limit;
+        // enforceLimit(active) must NOT pick the active session (it is filtered
+        // out by `it != activeSessionId`) and instead evicts the only legal
+        // victim, the non-active entry — leaving the active one cached. This
+        // exercises the real filter with two genuinely distinct ids, not a
+        // same-id refresh.
+        val cache = TerminalCache<String>(limit = 1)
+        val active = UUID.randomUUID()
+        val other = UUID.randomUUID()
+        cache.register(view = "active", sessionId = active) // lru [active]
+        // register(other, active): views size 2 (over limit 1), lru [active, other].
+        // enforceLimit(active): firstOrNull{ it != active } == other -> evict other.
+        cache.register(view = "other", sessionId = other, activeSessionId = active)
+
+        assertEquals(1, cache.count)
+        assertNotNull(cache.view(active)) // the active LRU-oldest survived
+        assertNull(cache.view(other))     // the non-active entry was the victim
+        assertEquals(listOf(active), cache.lruOrder)
+    }
+
+    @Test
+    fun `enforceLimit early-returns without evicting the active session`() {
+        // The `lru.firstOrNull { it != activeSessionId } ?: return` early-return:
+        // when the ONLY cached entry that is over the limit is the active session,
+        // enforceLimit finds no legal victim and returns, leaving the active
+        // session intact rather than dropping the user's visible terminal. With
+        // distinct ids the active is always filtered out and a non-active victim
+        // is chosen instead (covered above), so the `?: return` branch is reached
+        // when every remaining candidate IS the active session — modelled here by
+        // a same-id refresh under a limit-1 cache.
         val cache = TerminalCache<String>(limit = 1)
         val active = UUID.randomUUID()
         cache.register(view = "active-1", sessionId = active, activeSessionId = active)
-        // Re-register the same active session (view refresh) — no eviction.
+        // A view refresh for the same active session: still one entry, the guard
+        // must never evict it.
         cache.register(view = "active-2", sessionId = active, activeSessionId = active)
         assertEquals(1, cache.count)
         assertEquals("active-2", cache.view(active))
+
+        // Direct call: enforceLimit while the sole entry is the active session is
+        // a no-op (never enters the loop; if forced, the `?: return` fires).
+        cache.enforceLimit(activeSessionId = active)
+        assertEquals(1, cache.count)
+        assertNotNull(cache.view(active))
     }
 
     @Test
