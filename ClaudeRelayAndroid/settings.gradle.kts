@@ -25,3 +25,4 @@ rootProject.name = "ClaudeRelayAndroid"
 include(":core-protocol")
 include(":core-net")
 include(":core-storage")
+include(":terminal")
