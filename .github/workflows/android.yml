@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  core-protocol:
-    name: core-protocol test
+  build-and-test:
+    name: build + unit tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,8 +31,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run :core-protocol tests
-        run: ./gradlew :core-protocol:test --no-daemon
+      - name: Run JVM unit tests (pure-JVM + Android-lib unit tests)
+        run: ./gradlew :core-protocol:test :core-net:test :terminal:testDebugUnitTest --no-daemon
+
+      - name: Compile deferred instrumented test sources (storage needs a device to run)
+        run: ./gradlew :core-storage:compileDebugAndroidTestKotlin --no-daemon
+
+      - name: Assemble the whole project (verifies the full module graph links)
+        run: ./gradlew assembleDebug --no-daemon
