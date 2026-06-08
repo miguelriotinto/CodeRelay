@@ -10,6 +10,13 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 
 /**
+ * Canonical lowercase, hyphenated wire string for a [UUID] — matching Swift's
+ * `Codable` `UUID` representation on the WebSocket path. Single source of truth
+ * for the UUID→wire rule, shared by [UuidSerializer] and [MessageEnvelope].
+ */
+internal fun UUID.toWireString(): String = toString().lowercase()
+
+/**
  * Serializes [UUID] as a canonical lowercase, hyphenated string — matching
  * Swift's `Codable` `UUID` representation on the WebSocket path.
  */
@@ -18,7 +25,7 @@ object UuidSerializer : KSerializer<UUID> {
         PrimitiveSerialDescriptor("relay.protocol.UUID", PrimitiveKind.STRING)
 
     override fun serialize(encoder: Encoder, value: UUID) {
-        encoder.encodeString(value.toString().lowercase())
+        encoder.encodeString(value.toWireString())
     }
 
     override fun deserialize(decoder: Decoder): UUID = UUID.fromString(decoder.decodeString())

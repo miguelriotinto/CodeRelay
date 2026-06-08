@@ -40,18 +40,18 @@ object MessageEnvelope {
                 is ClientMessage.SessionCreate ->
                     message.name?.let { put("name", JsonPrimitive(it)) }
                 is ClientMessage.SessionAttach ->
-                    put("sessionId", JsonPrimitive(message.sessionId.wire))
+                    put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
                 is ClientMessage.SessionResume -> {
-                    put("sessionId", JsonPrimitive(message.sessionId.wire))
+                    put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
                     if (message.skipReplay) put("skipReplay", JsonPrimitive(true))
                 }
                 ClientMessage.SessionDetach -> Unit
                 is ClientMessage.SessionTerminate ->
-                    put("sessionId", JsonPrimitive(message.sessionId.wire))
+                    put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
                 ClientMessage.SessionList -> Unit
                 ClientMessage.SessionListAll -> Unit
                 is ClientMessage.SessionRename -> {
-                    put("sessionId", JsonPrimitive(message.sessionId.wire))
+                    put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
                     put("name", JsonPrimitive(message.name))
                 }
                 is ClientMessage.Resize -> {
@@ -74,13 +74,20 @@ object MessageEnvelope {
 
     /**
      * Decodes a server-sent `{"type":..,"payload":..}` wire string into a
-     * [ServerMessage]. Throws [IllegalArgumentException] for an unknown type.
+     * [ServerMessage].
+     *
+     * Throws [IllegalArgumentException] on ANY malformed input: an unknown
+     * `type`, a missing/wrong-typed field, a non-object `payload`, or any other
+     * parse/decode failure. The unknown-type case keeps its original message
+     * (`"Unknown server message type: <type>"`); every other failure is
+     * rethrown as `"malformed server message: <cause>"`. Callers in the net
+     * layer wrap this in `runCatching`.
      */
-    fun decodeServer(text: String): ServerMessage {
+    fun decodeServer(text: String): ServerMessage = try {
         val root = WireJson.instance.parseToJsonElement(text).jsonObject
         val type = root.getValue("type").jsonPrimitive.content
         val payload = root["payload"]?.jsonObject ?: JsonObject(emptyMap())
-        return when (type) {
+        when (type) {
             "auth_success" -> ServerMessage.AuthSuccess(payload.intOrNull("protocolVersion"))
             "auth_failure" -> ServerMessage.AuthFailure(payload.string("reason"))
             "session_created" -> ServerMessage.SessionCreated(
@@ -116,17 +123,24 @@ object MessageEnvelope {
             "error" -> ServerMessage.Error(payload.int("code"), payload.string("message"))
             else -> throw IllegalArgumentException("Unknown server message type: $type")
         }
+    } catch (e: IllegalArgumentException) {
+        // Unknown-type (and any other IllegalArgumentException) propagates as-is — never double-wrapped.
+        throw e
+    } catch (e: Exception) {
+        // Missing/wrong-typed fields, non-object payload, parse errors, etc.
+        throw IllegalArgumentException("malformed server message: ${e.message}", e)
     }
 
     // MARK: - JsonObject field helpers
-
-    private val UUID.wire: String get() = toString().lowercase()
 
     private fun JsonObject.string(key: String): String = getValue(key).jsonPrimitive.content
     private fun JsonObject.stringOrNull(key: String): String? = this[key]?.jsonPrimitive?.content
     private fun JsonObject.int(key: String): Int = getValue(key).jsonPrimitive.int
     private fun JsonObject.intOrNull(key: String): Int? = this[key]?.jsonPrimitive?.int
     private fun JsonObject.uuid(key: String): UUID = UUID.fromString(string(key))
+
+    // Trusted source: the server only emits valid UInt16 cols/rows, so we narrow Int→UShort
+    // without range validation — adding it could reject otherwise-valid frames.
     private fun JsonObject.uShort(key: String): UShort = getValue(key).jsonPrimitive.int.toUShort()
     private fun JsonObject.sessions(key: String): List<SessionInfo> =
         WireJson.instance.decodeFromJsonElement(ListSerializer(SessionInfo.serializer()), getValue(key))
