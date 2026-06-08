@@ -76,6 +76,18 @@ class TerminalCache<T : Any>(
     fun view(sessionId: UUID): T? = views[sessionId]
 
     /**
+     * Stores [view] for [sessionId] without touching LRU or enforcing the limit.
+     * Mirrors the Swift `terminalViewModels[id] = vm` dictionary assignment used
+     * by the create/switch/attach ops, which `touch` + `enforceLimit` separately
+     * AFTER the active session is set. Use [register] when the caller has nothing
+     * more to sequence and wants the touch/enforce in one shot.
+     */
+    fun put(sessionId: UUID, view: T) {
+        views[sessionId] = view
+        liveSessions.add(sessionId)
+    }
+
+    /**
      * Record that the given session is now the most-recently-used without
      * changing the cached view (TerminalCache.swift:62-65). Call this when the
      * user switches to a session whose view is already cached.

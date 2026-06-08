@@ -1,6 +1,7 @@
 package relay.session
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Thrown by a `withAuth` body when the server reports the handler is not
@@ -97,5 +98,19 @@ class AuthCoordinator(
             ensureAuthenticated()
             body()
         }
+    }
+
+    /**
+     * Cancels the in-flight single-flight authentication, if any, so a blocked
+     * [ensureAuthenticated] caller unblocks instead of awaiting an auth that the
+     * coordinator is abandoning. Wired to recovery cancellation — Swift
+     * RecoveryController.swift:289 calls
+     * `coordinator.authCoordinator.cancelInFlight()` when recovery is cancelled.
+     * Idempotent and a no-op when no authentication is in flight.
+     */
+    fun cancelInFlight() {
+        val deferred = inFlight ?: return
+        inFlight = null
+        deferred.completeExceptionally(CancellationException("auth cancelled"))
     }
 }

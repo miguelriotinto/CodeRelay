@@ -191,6 +191,18 @@ class RecoveryController(
         _autoRecoverySuspended.value = false
     }
 
+    /**
+     * Clears the terminal recovery flags ([connectionTimedOut] /
+     * [sessionAttachFailed]). These are set-only by the recovery flow; the
+     * coordinator/UI resets them on a fresh foreground transition or when the
+     * user dismisses the recovery error. Mirrors the Swift reset on WorkspaceView
+     * / SharedSessionCoordinator.
+     */
+    fun clearTerminalFlags() {
+        _connectionTimedOut.value = false
+        _sessionAttachFailed.value = false
+    }
+
     // MARK: - Entry points
 
     /**

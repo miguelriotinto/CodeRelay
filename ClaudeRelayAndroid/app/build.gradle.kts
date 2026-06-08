@@ -50,6 +50,9 @@ dependencies {
     implementation(project(":core-net"))
     implementation(project(":core-storage"))
     implementation(project(":terminal"))
+    // :core-session api-exposes core-net / core-storage / terminal transitively;
+    // listed explicitly here too for clarity (M2 nav graph wires the coordinator).
+    implementation(project(":core-session"))
 
     implementation(libs.kotlinx.coroutines.android)
 
