@@ -14,6 +14,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import relay.feature.settings.AppSettings
 import relay.feature.workspace.DeepLinks
@@ -110,10 +111,24 @@ class MainActivity : ComponentActivity() {
      * Resolves [_autoConnectConfig] from the persisted auto-connect setting +
      * last-connected server id. No-op (stays null) when auto-connect is off or the
      * id no longer maps to a saved bookmark.
+     *
+     * **AWAITs the persisted values with `.first()`, not `.value`.** At cold start
+     * the StateFlow `.value` is still the seed default (`false` / `""`) because the
+     * Preferences DataStore disk read is async — reading `.value` synchronously
+     * would make auto-connect never fire. `.first()` suspends until the first real
+     * emission (the on-disk value), so the decision is made against persisted data.
+     * Runs in [appScope] (a coroutine), so suspending here is safe.
+     *
+     * After Fix C2, the resolved config flows into the nav-graph auto-connect
+     * LaunchedEffect → `connectAndOpen` → `coordinator.connect` →
+     * `RelayConnection.connect`, which enforces the cleartext gate. So an
+     * auto-connect to a non-private cleartext host now correctly fails the gate
+     * (surfaced as a "Failed to connect" snackbar) instead of connecting in clear.
      */
     private suspend fun resolveAutoConnect() {
-        if (!settings.autoConnectEnabled.value) return
-        val lastId = settings.lastConnectedServerId.value
+        if (!settings.autoConnectEnabled.first()) return
+        val lastId = settings.lastConnectedServerId.first()
+        if (lastId.isBlank()) return
         val uuid = runCatching { UUID.fromString(lastId) }.getOrNull() ?: return
         val saved = SavedConnectionStore(applicationContext).loadAll()
         _autoConnectConfig.value = saved.firstOrNull { it.id == uuid }

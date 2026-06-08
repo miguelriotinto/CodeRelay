@@ -1,5 +1,17 @@
 package relay.net
 
+import relay.protocol.ConnectionConfig
+
+/**
+ * Thrown by the connect chokepoint when a [ConnectionConfig] would open a
+ * plaintext `ws://` socket to a non-private host. This is the authoritative,
+ * unbypassable enforcement of the iOS `NSAllowsLocalNetworking` scope — every
+ * connect path (manual tap, auto-connect, deep-link attach, status probe) routes
+ * through [RelayConnection.connect], which calls [CleartextPolicy.requireAllowed]
+ * before opening the socket.
+ */
+class CleartextPolicyException(message: String) : Exception(message)
+
 /**
  * Decides whether plaintext `ws://` is permitted to a given host, mirroring the
  * iOS/macOS apps' `NSAllowsLocalNetworking` ATS scope.
@@ -15,6 +27,23 @@ package relay.net
  * README ("Tailscale CGNAT, IPv6 ULA, and public hostnames require TLS").
  */
 object CleartextPolicy {
+
+    /**
+     * The single, pure cleartext-policy decision for a whole [ConnectionConfig].
+     * Throws [CleartextPolicyException] iff [config] would open plaintext `ws://`
+     * to a non-private host. TLS (`useTLS = true`) is always allowed (including to
+     * public hosts); cleartext is allowed only to private-network hosts.
+     *
+     * This is the seam the connect chokepoint ([RelayConnection.connect]) calls
+     * before opening the socket, and the seam the unit test exercises directly.
+     */
+    fun requireAllowed(config: ConnectionConfig) {
+        if (!config.useTLS && !isPrivateNetworkHost(config.host)) {
+            throw CleartextPolicyException(
+                "TLS required: ${config.host} is not a private-network host",
+            )
+        }
+    }
 
     /** True iff cleartext `ws://` is allowed to [host]. */
     fun isPrivateNetworkHost(host: String): Boolean {

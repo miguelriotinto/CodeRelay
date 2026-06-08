@@ -61,10 +61,15 @@ import relay.session.ServerStatus
  *  - an empty-state when no bookmarks exist;
  *  - a "+" FAB opens the add sheet.
  *
- * Tapping a row routes to [onConnect] — but only after the cleartext gate
- * (`CleartextPolicy.isPrivateNetworkHost`): a non-private host over plain `ws://`
- * is refused with a snackbar, never connected. This replicates the iOS/macOS ATS
- * behaviour explicitly (Android has no platform-level cleartext scoping).
+ * Tapping a row routes to [onConnect] — but only after a friendly inline
+ * cleartext pre-check (`CleartextPolicy.isPrivateNetworkHost`): a non-private host
+ * over plain `ws://` is refused with a snackbar here, never connected. This is a
+ * nicer early-UX message — it is NOT the only line of defense. The authoritative,
+ * unbypassable gate now lives at the connect chokepoint
+ * ([RelayConnection.connect] → `CleartextPolicy.requireAllowed`), so auto-connect,
+ * deep-link attach, and the status probe are gated too even though they never go
+ * through this screen. This replicates the iOS/macOS ATS behaviour explicitly
+ * (Android's network-security-config can't express RFC1918 CIDR ranges).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +89,9 @@ fun ServersScreen(
     var isRefreshing by remember { mutableStateOf(false) }
 
     fun attemptConnect(config: ConnectionConfig) {
+        // Friendly early-UX pre-check. The authoritative enforcement is the connect
+        // chokepoint (RelayConnection.connect → CleartextPolicy.requireAllowed);
+        // this just surfaces a clearer message before we even try.
         if (!config.useTLS && !CleartextPolicy.isPrivateNetworkHost(config.host)) {
             coroutineScope.launch {
                 snackbarHostState.showMessage(
