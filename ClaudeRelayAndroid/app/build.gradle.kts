@@ -14,12 +14,14 @@ android {
         applicationId = "relay.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1-m1"
+        versionCode = 2
+        versionName = "0.2-m2"
     }
 
     buildFeatures {
         compose = true
+        // The Settings "About" section reads version/build from BuildConfig.
+        buildConfig = true
     }
 
     compileOptions {
@@ -27,8 +29,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // M1 ships a debug-only throwaway demo (replaced by the real nav graph in
-    // M2). No release signing config is wired here.
+    // M2 ships the real nav graph (Splash → Servers → Workspace + Settings).
+    // No release signing config is wired here yet.
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -45,11 +47,19 @@ kotlin {
 }
 
 dependencies {
-    // The full M1 stack — this is the module that proves the whole graph links.
+    // The full stack — this is the module that proves the whole graph links.
     implementation(project(":core-protocol"))
     implementation(project(":core-net"))
     implementation(project(":core-storage"))
     implementation(project(":terminal"))
+    // :core-session api-exposes core-net / core-storage / terminal transitively;
+    // listed explicitly here too for clarity (the nav graph wires the coordinator).
+    implementation(project(":core-session"))
+
+    // The three feature modules the nav graph hosts.
+    implementation(project(":feature-servers"))
+    implementation(project(":feature-workspace"))
+    implementation(project(":feature-settings"))
 
     implementation(libs.kotlinx.coroutines.android)
 
@@ -63,7 +73,15 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.activity.compose)
+
+    // Navigation-Compose drives the Splash → Servers → Workspace + Settings graph.
+    implementation(libs.androidx.navigation.compose)
+
+    // collectAsStateWithLifecycle() + LifecycleEventEffect (ON_RESUME → recovery).
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
 }

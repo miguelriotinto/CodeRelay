@@ -12,9 +12,11 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import relay.protocol.ConnectionConfig
 import relay.protocol.ServerMessage
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -209,5 +211,88 @@ class RelayConnectionTest {
         assertArrayEquals(byteArrayOf(1, 2, 3), terminalBytes.get())
 
         runBlocking { conn.disconnect() }
+    }
+
+    // MARK: - Cleartext gate (Fix C2)
+    //
+    // The unbypassable chokepoint: `connect` enforces CleartextPolicy BEFORE
+    // opening the socket. Every connect path (auto-connect, deep-link attach,
+    // status probe) funnels through here, so none can skip the gate.
+
+    @Test
+    fun `connect refuses cleartext to a public host`() {
+        val conn = RelayConnection()
+        val config = ConnectionConfig(name = "public", host = "8.8.8.8", useTLS = false)
+        assertThrows(CleartextPolicyException::class.java) {
+            runBlocking { conn.connect(config, "tok") }
+        }
+        // Gate ran before any socket work — state is still untouched.
+        assertEquals(RelayConnection.ConnectionState.DISCONNECTED, conn.state)
+        assertEquals(0L, conn.generation) { "rejected config must not open a socket" }
+    }
+
+    @Test
+    fun `connect refuses cleartext to a CGNAT host`() {
+        val conn = RelayConnection()
+        // Tailscale CGNAT 100.64/10 is NON-private → cleartext rejected.
+        val config = ConnectionConfig(name = "cgnat", host = "100.64.0.1", useTLS = false)
+        assertThrows(CleartextPolicyException::class.java) {
+            runBlocking { conn.connect(config, "tok") }
+        }
+        assertEquals(0L, conn.generation)
+    }
+
+    @Test
+    fun `connect to a private host does not throw the policy exception`() {
+        // A private host that won't actually accept a socket — but the cleartext
+        // gate must NOT be what stops it. We assert the thrown type (if any) is
+        // never CleartextPolicyException. 192.0.2.0/24 is TEST-NET-1 but we use a
+        // private RFC1918 host the policy permits; the connect attempt against a
+        // dead port fails at the transport layer, not the gate.
+        val conn = RelayConnection()
+        val config = ConnectionConfig(name = "lan", host = "192.168.1.5", port = 1u, useTLS = false)
+        try {
+            runBlocking { conn.connect(config, "tok") }
+        } catch (e: Throwable) {
+            assertTrue(e !is CleartextPolicyException) {
+                "private host must pass the cleartext gate, got: $e"
+            }
+        }
+        runBlocking { conn.disconnect() }
+    }
+
+    @Test
+    fun `connect over TLS to a public host does not throw the policy exception`() {
+        // useTLS=true is allowed to ANY host (including public) — TLS makes
+        // cleartext scoping moot.
+        val conn = RelayConnection()
+        val config = ConnectionConfig(name = "tls", host = "8.8.8.8", port = 1u, useTLS = true)
+        try {
+            runBlocking { conn.connect(config, "tok") }
+        } catch (e: Throwable) {
+            assertTrue(e !is CleartextPolicyException) {
+                "TLS to a public host must pass the cleartext gate, got: $e"
+            }
+        }
+        runBlocking { conn.disconnect() }
+    }
+
+    @Test
+    fun `requireAllowed seam enforces the policy directly`() {
+        // The pure decision the chokepoint delegates to — unit-tested without a socket.
+        // Private cleartext: ok.
+        CleartextPolicy.requireAllowed(ConnectionConfig(name = "a", host = "192.168.0.10", useTLS = false))
+        CleartextPolicy.requireAllowed(ConnectionConfig(name = "b", host = "127.0.0.1", useTLS = false))
+        CleartextPolicy.requireAllowed(ConnectionConfig(name = "c", host = "mac.local", useTLS = false))
+        // TLS to public: ok.
+        CleartextPolicy.requireAllowed(ConnectionConfig(name = "d", host = "relay.example.com", useTLS = true))
+        // Public cleartext: throws.
+        assertThrows(CleartextPolicyException::class.java) {
+            CleartextPolicy.requireAllowed(ConnectionConfig(name = "e", host = "relay.example.com", useTLS = false))
+        }
+        // CGNAT cleartext: throws.
+        assertThrows(CleartextPolicyException::class.java) {
+            CleartextPolicy.requireAllowed(ConnectionConfig(name = "f", host = "100.64.0.1", useTLS = false))
+        }
     }
 }

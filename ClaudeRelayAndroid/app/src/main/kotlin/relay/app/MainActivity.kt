@@ -1,20 +1,152 @@
 package relay.app
 
+import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.Composable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import relay.feature.settings.AppSettings
+import relay.feature.workspace.DeepLinks
+import relay.protocol.ConnectionConfig
+import relay.session.NetworkObserver
+import relay.storage.SavedConnectionStore
+import java.util.UUID
+
+private const val TAG = "MainActivity"
 
 /**
- * Single-activity host for the M1 demo. Sets the Compose content to
- * [M1DemoScreen]; there is no nav graph (deferred to M2).
+ * Single-activity host for the real M2 nav graph ([RelayNavGraph]), replacing the
+ * M1 demo. Ported in role from `ClaudeRelayApp.swift`:
+ *  - sets the Compose content to [RelayNavGraph] (Splash → Servers → Workspace +
+ *    Settings);
+ *  - parses `clauderelay://session/<uuid>` deep links on cold start (`onCreate`)
+ *    and warm start (`onNewIntent`, `launchMode="singleTop"`), storing the id in
+ *    [pendingSessionId] which the nav graph consumes on workspace entry;
+ *  - owns the long-lived [AppSettings] + [AndroidConnectivitySource] +
+ *    [NetworkObserver], and resolves the auto-connect target before the splash
+ *    completes.
  *
- * THROWAWAY: M2 replaces this with the real app entry point.
+ * `launchMode` is `singleTop` so warm deep links re-deliver to the existing
+ * instance via [onNewIntent] instead of stacking a new activity.
  */
 class MainActivity : ComponentActivity() {
+
+    /** App-lifetime scope for settings flows + auto-connect resolution. */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private lateinit var settings: AppSettings
+    private lateinit var connectivitySource: AndroidConnectivitySource
+    private lateinit var networkObserver: NetworkObserver
+
+    /**
+     * The most recent session id parsed from a `clauderelay://session/<uuid>`
+     * deep link, or null. The nav graph collects this on workspace entry, calls
+     * `SessionCoordinator.attachRemoteSession(id)`, then clears it via
+     * [clearPendingSession].
+     */
+    val pendingSessionId: StateFlow<UUID?> get() = _pendingSessionId.asStateFlow()
+    private val _pendingSessionId = MutableStateFlow<UUID?>(null)
+
+    /** The server to auto-connect to on launch, or null when auto-connect is off. */
+    private val _autoConnectConfig = MutableStateFlow<ConnectionConfig?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        settings = AppSettings.create(this, appScope)
+        connectivitySource = AndroidConnectivitySource(this)
+        networkObserver = NetworkObserver(connectivitySource)
+        connectivitySource.start()
+
+        // Resolve the auto-connect target (ClaudeRelayApp.swift auto-connect): when
+        // enabled AND lastConnectedServerId resolves to a saved bookmark.
+        appScope.launch { resolveAutoConnect() }
+
+        // Cold-start deep link (app launched from the link).
+        handleDeepLink(intent)
+
         setContent {
-            M1DemoScreen()
+            RelayNavGraph(
+                settings = settings,
+                connectivity = networkObserver,
+                pendingSessionId = pendingSessionId,
+                clearPendingSession = ::clearPendingSession,
+                autoConnectConfig = collectAutoConnect(),
+                appVersion = BuildConfig.VERSION_NAME,
+                buildNumber = BuildConfig.VERSION_CODE.toString(),
+            )
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Warm-start deep link (app already running).
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    override fun onDestroy() {
+        connectivitySource.stop()
+        appScope.cancel()
+        super.onDestroy()
+    }
+
+    /** Clears the pending session once the nav graph has consumed it. */
+    fun clearPendingSession() {
+        _pendingSessionId.value = null
+    }
+
+    /**
+     * Resolves [_autoConnectConfig] from the persisted auto-connect setting +
+     * last-connected server id. No-op (stays null) when auto-connect is off or the
+     * id no longer maps to a saved bookmark.
+     *
+     * **AWAITs the persisted values with `.first()`, not `.value`.** At cold start
+     * the StateFlow `.value` is still the seed default (`false` / `""`) because the
+     * Preferences DataStore disk read is async — reading `.value` synchronously
+     * would make auto-connect never fire. `.first()` suspends until the first real
+     * emission (the on-disk value), so the decision is made against persisted data.
+     * Runs in [appScope] (a coroutine), so suspending here is safe.
+     *
+     * After Fix C2, the resolved config flows into the nav-graph auto-connect
+     * LaunchedEffect → `connectAndOpen` → `coordinator.connect` →
+     * `RelayConnection.connect`, which enforces the cleartext gate. So an
+     * auto-connect to a non-private cleartext host now correctly fails the gate
+     * (surfaced as a "Failed to connect" snackbar) instead of connecting in clear.
+     */
+    private suspend fun resolveAutoConnect() {
+        if (!settings.autoConnectEnabled.first()) return
+        val lastId = settings.lastConnectedServerId.first()
+        if (lastId.isBlank()) return
+        val uuid = runCatching { UUID.fromString(lastId) }.getOrNull() ?: return
+        val saved = SavedConnectionStore(applicationContext).loadAll()
+        _autoConnectConfig.value = saved.firstOrNull { it.id == uuid }
+    }
+
+    /** Bridges [_autoConnectConfig] into Compose state for the nav graph. */
+    @Composable
+    private fun collectAutoConnect(): ConnectionConfig? =
+        _autoConnectConfig.collectAsStateWithLifecycle().value
+
+    private fun handleDeepLink(intent: Intent?) {
+        val data = intent?.data?.toString() ?: return
+        val sessionId = DeepLinks.parseSessionId(data)
+        if (sessionId == null) {
+            Log.w(TAG, "Ignoring unparseable deep link: $data")
+            return
+        }
+        Log.i(TAG, "Deep link → pending session $sessionId")
+        _pendingSessionId.value = sessionId
     }
 }

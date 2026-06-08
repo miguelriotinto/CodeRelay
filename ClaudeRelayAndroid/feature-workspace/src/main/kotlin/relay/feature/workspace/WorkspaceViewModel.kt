@@ -1,0 +1,109 @@
+package relay.feature.workspace
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import relay.protocol.ConnectionQuality
+import relay.session.SessionCoordinator
+import java.util.UUID
+
+/**
+ * Thin wrapper over [SessionCoordinator] for the workspace screen. The
+ * coordinator already exposes every session/recovery/activity [StateFlow] the UI
+ * collects; this view model only adds the two reactive surfaces the coordinator
+ * does NOT publish:
+ *
+ *  1. **Connection quality.** [SessionCoordinator.connection] is a
+ *     `CoordinatorConnection` interface that does not surface quality, and the
+ *     concrete `RelayConnection.connectionQuality` is a plain `var` with no flow.
+ *     So we poll a [qualityProvider] on a fixed cadence and republish as a
+ *     [StateFlow] for the status-bar dot. The `:app` layer injects
+ *     `{ relayConnection.connectionQuality }`; tests inject a fake.
+ *
+ *  2. **Active-session uptime.** We record a monotonic start instant the first
+ *     time a session id becomes active and tick [uptimeSeconds] every second
+ *     while it stays active. This avoids depending on the server `createdAt`
+ *     reference-date epoch, whose Android conversion is not validated until
+ *     Task 9 (see ReferenceDateDoubleSerializer). The Swift status bar uses the
+ *     server `createdAt`; the displayed format is identical
+ *     (WorkspaceLogic.formatUptime).
+ *
+ * Owning these as flows keeps the screen purely declarative (collect-only) and
+ * the polling lifecycle tied to [viewModelScope].
+ *
+ * @param coordinator the session orchestrator (constructed by `:app` in Task 11)
+ * @param qualityProvider reads the current [ConnectionQuality] from the live
+ *   connection; polled, not observed
+ * @param sendBinary the relay binary-input sink. Terminal keystrokes are RAW
+ *   binary frames (NOT the envelope protocol), and the `CoordinatorConnection`
+ *   interface only exposes the envelope `send(...)`, so the concrete
+ *   `RelayConnection.sendBinary` is injected here. `:app` wires
+ *   `{ bytes -> connection.sendBinary(bytes) }`; tests inject a recorder.
+ * @param nowMs monotonic clock for uptime (inject `SystemClock.elapsedRealtime`
+ *   from `:app`; defaults to wall-clock for pure-JVM construction)
+ */
+class WorkspaceViewModel(
+    val coordinator: SessionCoordinator,
+    private val qualityProvider: () -> ConnectionQuality,
+    private val sendBinary: suspend (ByteArray) -> Unit = {},
+    private val nowMs: () -> Long = { System.currentTimeMillis() },
+) : ViewModel() {
+
+    /**
+     * Fire-and-forget terminal input. The screen calls this from the
+     * [TerminalHost] / [KeyboardAccessory] onInput callbacks; the bytes go out as
+     * a raw binary WebSocket frame on [viewModelScope].
+     */
+    fun sendInput(bytes: ByteArray) {
+        viewModelScope.launch { runCatching { sendBinary(bytes) } }
+    }
+
+    private val _connectionQuality = MutableStateFlow(ConnectionQuality.DISCONNECTED)
+    val connectionQuality: StateFlow<ConnectionQuality> = _connectionQuality.asStateFlow()
+
+    private val _uptimeSeconds = MutableStateFlow(0L)
+    val uptimeSeconds: StateFlow<Long> = _uptimeSeconds.asStateFlow()
+
+    /** Monotonic start instant for the currently-active session id, or null. */
+    private var activeSince: Long? = null
+    private var trackedActiveId: UUID? = null
+
+    init {
+        // Poll connection quality for the status-bar dot.
+        viewModelScope.launch {
+            while (true) {
+                _connectionQuality.value = qualityProvider()
+                delay(QUALITY_POLL_MS)
+            }
+        }
+        // Uptime ticker. Re-anchors whenever the active session changes, then
+        // ticks once per second while a session is active.
+        viewModelScope.launch {
+            while (true) {
+                val activeId = coordinator.activeSessionId.value
+                if (activeId == null) {
+                    activeSince = null
+                    trackedActiveId = null
+                    _uptimeSeconds.value = 0L
+                } else {
+                    if (activeId != trackedActiveId) {
+                        trackedActiveId = activeId
+                        activeSince = nowMs()
+                    }
+                    val since = activeSince ?: nowMs().also { activeSince = it }
+                    _uptimeSeconds.value = ((nowMs() - since) / 1000L).coerceAtLeast(0L)
+                }
+                delay(UPTIME_TICK_MS)
+            }
+        }
+    }
+
+    private companion object {
+        const val QUALITY_POLL_MS = 2_000L
+        const val UPTIME_TICK_MS = 1_000L
+    }
+}

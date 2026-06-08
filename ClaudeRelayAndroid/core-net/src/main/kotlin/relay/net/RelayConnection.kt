@@ -147,8 +147,19 @@ class RelayConnection(
      * Connects to the server described by [config], storing [token] for later
      * [forceReconnect]. Does NOT enable any auto-reconnect — the coordinator owns
      * recovery.
+     *
+     * **Cleartext gate (unbypassable).** Before opening the socket this enforces
+     * [CleartextPolicy.requireAllowed]: a plaintext `ws://` connection to a
+     * non-private host throws [CleartextPolicyException]. Because *every* connect
+     * path — manual tap, auto-connect, deep-link attach, and the status probe —
+     * funnels through here, the gate cannot be skipped. This is the Android analog
+     * of iOS enforcing `NSAllowsLocalNetworking` at the platform layer; Android's
+     * `network_security_config` cannot express RFC1918 CIDR ranges, so this code
+     * gate is the authoritative enforcer. The check runs first so a rejected
+     * config never mutates [config]/[token] or touches the socket.
      */
     suspend fun connect(config: ConnectionConfig, token: String) {
+        CleartextPolicy.requireAllowed(config)
         this.config = config
         this.token = token
         connectRaw(config.wsUrl)
