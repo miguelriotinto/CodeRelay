@@ -1,6 +1,7 @@
 package relay.terminal
 
 import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 /**
@@ -45,5 +46,33 @@ class SpecialKeysTest {
         assertArrayEquals(byteArrayOf(0x7E), SpecialKeys.literal('~'))
         assertArrayEquals(byteArrayOf(0x2D), SpecialKeys.literal('-'))
         assertArrayEquals(byteArrayOf(0x5F), SpecialKeys.literal('_'))
+    }
+
+    // Verifies the iOS `delete.backward` button's clearToPrompt() — 16x
+    // (Ctrl-U, DEL) = 32 bytes — against KeyboardAccessory.swift.
+    @Test
+    fun `clearToPrompt is 16x ctrl-u + del`() {
+        val bytes = SpecialKeys.clearToPrompt()
+        assertEquals(16, SpecialKeys.MAX_CONTINUATION_CLEAR_CYCLES)
+        assertEquals(32, bytes.size, "16 cycles of (Ctrl-U, DEL) = 32 bytes")
+
+        // The whole buffer is the (0x15, 0x7F) pattern repeated 16 times.
+        for (cycle in 0 until 16) {
+            assertEquals(
+                0x15.toByte(), bytes[cycle * 2],
+                "byte ${cycle * 2} must be Ctrl-U (0x15)"
+            )
+            assertEquals(
+                0x7F.toByte(), bytes[cycle * 2 + 1],
+                "byte ${cycle * 2 + 1} must be DEL (0x7F)"
+            )
+        }
+
+        val expected = ByteArray(32)
+        for (cycle in 0 until 16) {
+            expected[cycle * 2] = 0x15
+            expected[cycle * 2 + 1] = 0x7F
+        }
+        assertArrayEquals(expected, bytes)
     }
 }

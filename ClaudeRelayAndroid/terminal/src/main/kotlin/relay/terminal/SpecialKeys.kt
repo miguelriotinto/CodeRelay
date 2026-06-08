@@ -41,4 +41,30 @@ object SpecialKeys {
      * symbols those buttons emit.
      */
     fun literal(ch: Char): ByteArray = byteArrayOf(ch.code.toByte())
+
+    /**
+     * Sixteen cycles is empirically enough to clear any reasonable multi-line
+     * continuation. Extra cycles are harmless — Ctrl-U and Backspace both
+     * become no-ops once the cursor is at the prompt start. Mirrors Swift
+     * `KeyboardAccessory.maxContinuationClearCycles`.
+     */
+    const val MAX_CONTINUATION_CLEAR_CYCLES = 16
+
+    /**
+     * Clears all input back to the prompt, including across continuation lines.
+     *
+     * Each cycle emits Ctrl-U (`0x15`, kill line) followed by Backspace
+     * (`0x7F`, DEL — removes a continuation newline). Repeated
+     * [MAX_CONTINUATION_CLEAR_CYCLES] times for 32 bytes total. The iOS
+     * `delete.backward` keyboard-bar button calls this, NOT a bare backspace —
+     * verified against `KeyboardAccessory.swift.clearToPrompt()`.
+     */
+    fun clearToPrompt(): ByteArray {
+        val bytes = ByteArray(MAX_CONTINUATION_CLEAR_CYCLES * 2)
+        for (cycle in 0 until MAX_CONTINUATION_CLEAR_CYCLES) {
+            bytes[cycle * 2] = 0x15     // Ctrl-U kills the line
+            bytes[cycle * 2 + 1] = 0x7F // Backspace removes continuation newline
+        }
+        return bytes
+    }
 }
