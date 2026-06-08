@@ -5,47 +5,86 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.Composable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import relay.feature.settings.AppSettings
 import relay.feature.workspace.DeepLinks
+import relay.protocol.ConnectionConfig
+import relay.session.NetworkObserver
+import relay.storage.SavedConnectionStore
 import java.util.UUID
 
 private const val TAG = "MainActivity"
 
 /**
- * Single-activity host for the M1 demo. Sets the Compose content to
- * [M1DemoScreen]; there is no nav graph (deferred to M2's Task 11).
- *
- * THROWAWAY UI: Task 11 replaces [M1DemoScreen] with the real nav graph. The
- * deep-link plumbing below (Task 9) is NOT throwaway — it parses
- * `clauderelay://session/<uuid>` links from both a cold start (`onCreate`'s
- * intent) and a warm start (`onNewIntent`, enabled by `launchMode="singleTop"`)
- * and stores the result in [pendingSessionId].
+ * Single-activity host for the real M2 nav graph ([RelayNavGraph]), replacing the
+ * M1 demo. Ported in role from `ClaudeRelayApp.swift`:
+ *  - sets the Compose content to [RelayNavGraph] (Splash → Servers → Workspace +
+ *    Settings);
+ *  - parses `clauderelay://session/<uuid>` deep links on cold start (`onCreate`)
+ *    and warm start (`onNewIntent`, `launchMode="singleTop"`), storing the id in
+ *    [pendingSessionId] which the nav graph consumes on workspace entry;
+ *  - owns the long-lived [AppSettings] + [AndroidConnectivitySource] +
+ *    [NetworkObserver], and resolves the auto-connect target before the splash
+ *    completes.
  *
  * `launchMode` is `singleTop` so warm deep links re-deliver to the existing
  * instance via [onNewIntent] instead of stacking a new activity.
  */
 class MainActivity : ComponentActivity() {
 
+    /** App-lifetime scope for settings flows + auto-connect resolution. */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private lateinit var settings: AppSettings
+    private lateinit var connectivitySource: AndroidConnectivitySource
+    private lateinit var networkObserver: NetworkObserver
+
     /**
      * The most recent session id parsed from a `clauderelay://session/<uuid>`
-     * deep link, or null if none is pending.
-     *
-     * Task 11 consumes [pendingSessionId] on workspace entry — the nav graph
-     * collects this, calls `SessionCoordinator.attachRemoteSession(id)`, then
-     * clears it via [clearPendingSession]. For M2-G this is parse + store + log
-     * only; nothing consumes it yet.
+     * deep link, or null. The nav graph collects this on workspace entry, calls
+     * `SessionCoordinator.attachRemoteSession(id)`, then clears it via
+     * [clearPendingSession].
      */
     val pendingSessionId: StateFlow<UUID?> get() = _pendingSessionId.asStateFlow()
     private val _pendingSessionId = MutableStateFlow<UUID?>(null)
 
+    /** The server to auto-connect to on launch, or null when auto-connect is off. */
+    private val _autoConnectConfig = MutableStateFlow<ConnectionConfig?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        settings = AppSettings.create(this, appScope)
+        connectivitySource = AndroidConnectivitySource(this)
+        networkObserver = NetworkObserver(connectivitySource)
+        connectivitySource.start()
+
+        // Resolve the auto-connect target (ClaudeRelayApp.swift auto-connect): when
+        // enabled AND lastConnectedServerId resolves to a saved bookmark.
+        appScope.launch { resolveAutoConnect() }
+
         // Cold-start deep link (app launched from the link).
         handleDeepLink(intent)
+
         setContent {
-            M1DemoScreen()
+            RelayNavGraph(
+                settings = settings,
+                connectivity = networkObserver,
+                pendingSessionId = pendingSessionId,
+                clearPendingSession = ::clearPendingSession,
+                autoConnectConfig = collectAutoConnect(),
+                appVersion = BuildConfig.VERSION_NAME,
+                buildNumber = BuildConfig.VERSION_CODE.toString(),
+            )
         }
     }
 
@@ -56,10 +95,34 @@ class MainActivity : ComponentActivity() {
         handleDeepLink(intent)
     }
 
-    /** Clears the pending session once Task 11's nav graph has consumed it. */
+    override fun onDestroy() {
+        connectivitySource.stop()
+        appScope.cancel()
+        super.onDestroy()
+    }
+
+    /** Clears the pending session once the nav graph has consumed it. */
     fun clearPendingSession() {
         _pendingSessionId.value = null
     }
+
+    /**
+     * Resolves [_autoConnectConfig] from the persisted auto-connect setting +
+     * last-connected server id. No-op (stays null) when auto-connect is off or the
+     * id no longer maps to a saved bookmark.
+     */
+    private suspend fun resolveAutoConnect() {
+        if (!settings.autoConnectEnabled.value) return
+        val lastId = settings.lastConnectedServerId.value
+        val uuid = runCatching { UUID.fromString(lastId) }.getOrNull() ?: return
+        val saved = SavedConnectionStore(applicationContext).loadAll()
+        _autoConnectConfig.value = saved.firstOrNull { it.id == uuid }
+    }
+
+    /** Bridges [_autoConnectConfig] into Compose state for the nav graph. */
+    @Composable
+    private fun collectAutoConnect(): ConnectionConfig? =
+        _autoConnectConfig.collectAsStateWithLifecycle().value
 
     private fun handleDeepLink(intent: Intent?) {
         val data = intent?.data?.toString() ?: return
@@ -70,6 +133,5 @@ class MainActivity : ComponentActivity() {
         }
         Log.i(TAG, "Deep link → pending session $sessionId")
         _pendingSessionId.value = sessionId
-        // Task 11 consumes pendingSessionId on workspace entry → attachRemoteSession.
     }
 }

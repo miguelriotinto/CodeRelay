@@ -3,6 +3,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Network connectivity callbacks: the AndroidConnectivitySource registers a
+         NetworkCallback so the coordinator can trigger recovery when the network
+         comes back (the NWPathMonitor analog). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- QR scanner (Task 9): runtime CAMERA permission; camera is optional so the
          app installs on cameraless devices (the scanner is just unavailable). -->
     <uses-permission android:name="android.permission.CAMERA" />
