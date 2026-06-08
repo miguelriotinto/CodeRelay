@@ -2,9 +2,14 @@ package relay.net
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -112,6 +117,16 @@ class RelayConnection(
     private var pendingPong: CompletableDeferred<Boolean>? = null
     private var keepaliveJob: Job? = null
 
+    /** Sliding window of recent ping RTTs (seconds); null entries are failures. */
+    private val rttWindow = ArrayDeque<Double?>()
+    private var consecutiveFailures = 0
+
+    /**
+     * Dedups concurrent [measurePingRtt] callers onto a single in-flight ping,
+     * so overlapping pings don't stomp the single [pendingPong] slot.
+     */
+    private var activePing: Deferred<Double?>? = null
+
     // MARK: - Public API
 
     /**
@@ -157,6 +172,8 @@ class RelayConnection(
         scope.launch {
             cancelKeepalive()
             resolvePendingPong(false)
+            activePing?.cancel()
+            activePing = null
             generation += 1
             webSocket?.cancel()
             webSocket = null
@@ -215,6 +232,52 @@ class RelayConnection(
     /** Sends base64-encoded image data to be pasted on the server's clipboard. */
     suspend fun sendPasteImage(base64Data: String) = send(ClientMessage.PasteImage(base64Data))
 
+    // MARK: - Liveness
+
+    /** Checks whether the WebSocket is still alive by sending a ping. */
+    suspend fun isAlive(): Boolean = measurePingRtt() != null
+
+    /**
+     * Sends an application-level ping and returns the round-trip time in seconds,
+     * or null on failure. Concurrent callers share a single in-flight ping so the
+     * single [pendingPong] slot is never stomped by overlapping pings.
+     */
+    suspend fun measurePingRtt(): Double? = withContext(scope.coroutineContext) {
+        activePing?.let { return@withContext it.await() }
+        val task = scope.async { performPing() }
+        activePing = task
+        val result = task.await()
+        if (activePing === task) activePing = null
+        result
+    }
+
+    /**
+     * Performs a single ping/pong exchange. Called only from [measurePingRtt] —
+     * dedup is enforced by [activePing]. Installs a fresh [pendingPong], sends the
+     * ping, and awaits the pong with a 5 s timeout.
+     */
+    private suspend fun performPing(): Double? {
+        if (webSocket == null || state != ConnectionState.CONNECTED) return null
+
+        // Evict any prior pong slot (defensive — activePing dedup should prevent it).
+        resolvePendingPong(false)
+        val deferred = CompletableDeferred<Boolean>()
+        pendingPong = deferred
+
+        val start = System.nanoTime()
+        try {
+            sendInternal(ClientMessage.Ping)
+        } catch (_: Exception) {
+            resolvePendingPong(false)
+            return null
+        }
+
+        val gotPong = withTimeoutOrNull(PONG_TIMEOUT_MS) { deferred.await() } ?: false
+        // Clear the slot if the timeout (not a real pong) resolved us.
+        if (pendingPong === deferred) pendingPong = null
+        return if (gotPong) (System.nanoTime() - start) / 1_000_000_000.0 else null
+    }
+
     // MARK: - Pong routing
 
     /** Resolves the pending pong, if any, with [gotPong]. Idempotent. */
@@ -229,12 +292,82 @@ class RelayConnection(
         keepaliveJob = null
     }
 
+    // MARK: - Quality monitor
+
     /**
-     * Placeholder until the ping/pong health task wires up the keepalive loop.
-     * [connectRaw] always calls it so the call site is stable.
+     * Starts the keepalive loop for connection [gen]. Pings every 10 s, records
+     * the RTT, fires the death detector at three consecutive failures, and
+     * otherwise republishes [connectionQuality]. The loop captures [gen] and bails
+     * the moment a newer connection supersedes it.
      */
     private fun startQualityMonitor(gen: Long) {
-        // Filled in by the ping/pong health monitor task.
+        cancelKeepalive()
+        rttWindow.clear()
+        consecutiveFailures = 0
+        connectionQuality = ConnectionQuality.EXCELLENT
+
+        keepaliveJob = scope.launch {
+            while (isActive) {
+                delay(PING_INTERVAL_MS)
+                if (!isActive || gen != generation || state != ConnectionState.CONNECTED) return@launch
+
+                val rtt = measurePingRtt()
+                if (!isActive || gen != generation) return@launch
+
+                recordRtt(rtt)
+
+                if (consecutiveFailures >= DEATH_THRESHOLD) {
+                    markConnectionDead()
+                    return@launch
+                }
+
+                connectionQuality = computeQuality()
+            }
+        }
+    }
+
+    /**
+     * Appends an RTT sample to the sliding window, enforces the window cap, and
+     * updates the consecutive-failure counter. A non-null sample resets failures
+     * and reports a healthy ping so the coordinator can clear its recovery breaker.
+     */
+    private fun recordRtt(rtt: Double?) {
+        rttWindow.addLast(rtt)
+        if (rttWindow.size > WINDOW_SIZE) rttWindow.removeFirst()
+        if (rtt == null) {
+            consecutiveFailures += 1
+        } else {
+            consecutiveFailures = 0
+            onHealthyPing?.invoke()
+        }
+    }
+
+    private fun computeQuality(): ConnectionQuality {
+        if (rttWindow.isEmpty()) return ConnectionQuality.EXCELLENT
+        val successes = rttWindow.filterNotNull()
+        val successRate = successes.size.toDouble() / rttWindow.size.toDouble()
+        if (successes.isEmpty()) return ConnectionQuality.VERY_POOR
+        val sorted = successes.sorted()
+        val median = sorted[sorted.size / 2]
+        return ConnectionQuality.of(median, successRate)
+    }
+
+    /**
+     * Marks the current connection as dead: cancels the keepalive, bumps the
+     * generation so stale callbacks are rejected, tears down the socket, and
+     * notifies the coordinator. The coordinator owns recovery — never self-reconnect.
+     */
+    private fun markConnectionDead() {
+        cancelKeepalive()
+        resolvePendingPong(false)
+        activePing?.cancel()
+        activePing = null
+        generation += 1
+        webSocket?.cancel()
+        webSocket = null
+        state = ConnectionState.DISCONNECTED
+        connectionQuality = ConnectionQuality.DISCONNECTED
+        onSendFailed?.invoke()
     }
 
     // MARK: - OkHttp listener
@@ -290,13 +423,36 @@ class RelayConnection(
     private fun handleReceiveFailure() {
         cancelKeepalive()
         resolvePendingPong(false)
+        activePing?.cancel()
+        activePing = null
         webSocket = null
         state = ConnectionState.DISCONNECTED
         connectionQuality = ConnectionQuality.DISCONNECTED
         onSendFailed?.invoke()
     }
 
+    // MARK: - Test seams
+    //
+    // Exposed only for tests so the RTT/quality/death bookkeeping can be exercised
+    // without waiting on the real 10 s keepalive interval or 5 s pong timeout.
+    // Mirrors Swift's `_testOnly_*` hooks. Not for production use.
+
+    internal fun testRecordRtt(rtt: Double?) = recordRtt(rtt)
+    internal val testRttWindowCount: Int get() = rttWindow.size
+    internal val testConsecutiveFailures: Int get() = consecutiveFailures
+    internal fun testComputeQuality(): ConnectionQuality = computeQuality()
+
+    /** Replicates the keepalive loop's death decision: fire the detector iff at threshold. */
+    internal fun testMarkDeadIfNeeded() {
+        if (consecutiveFailures >= DEATH_THRESHOLD) markConnectionDead()
+    }
+
     companion object {
+        const val PING_INTERVAL_MS = 10_000L
+        const val PONG_TIMEOUT_MS = 5_000L
+        const val WINDOW_SIZE = 6
+        const val DEATH_THRESHOLD = 3
+
         private val defaultClient: OkHttpClient by lazy { OkHttpClient() }
     }
 }
