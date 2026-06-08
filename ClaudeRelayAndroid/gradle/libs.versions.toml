@@ -14,6 +14,7 @@ mockk = "1.13.13"
 androidx-test-ext-junit = "1.2.1"
 androidx-test-runner = "1.6.2"
 androidx-activity-compose = "1.9.3"
+androidx-lifecycle = "2.8.7"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -38,8 +39,16 @@ androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
 androidx-compose-ui = { module = "androidx.compose.ui:ui" }
 androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 
+# Material icons (pencil/trash for swipe actions, server.rack empty-state). Version via BOM.
+androidx-compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
+
 # Compose Activity host — versioned independently of the Compose BOM.
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
+
+# Lifecycle Compose integration — viewModel() + collectAsStateWithLifecycle().
+# Versioned independently of the Compose BOM; 2.8.x is compatible with compileSdk 34.
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
