@@ -187,6 +187,9 @@ class SessionCoordinator(
     val sessionNames: StateFlow<Map<UUID, String>> = _sessionNames.asStateFlow()
 
     private val _terminalTitles = MutableStateFlow<Map<UUID, String>>(emptyMap())
+    // M4: populated by the OSC-title → terminalTitles wiring in wireTerminalOutput
+    // once TerminalSessionVm gains an `onTitleChanged` callback
+    // (SharedSessionCoordinator.swift:642-644). Today only terminate clears it.
     val terminalTitles: StateFlow<Map<UUID, String>> = _terminalTitles.asStateFlow()
 
     private val _ownedSessionIds = MutableStateFlow<Set<UUID>>(emptySet())
@@ -194,6 +197,10 @@ class SessionCoordinator(
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    private val _isLoading = MutableStateFlow(false)
+    /** True while a [fetchSessions] pass is in flight (Swift `isLoading`, :312-313). */
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     // MARK: - Recovery state (delegated to RecoveryController)
 
@@ -224,6 +231,14 @@ class SessionCoordinator(
     /** Subscription id for the server-message fan-in, removed on [tearDown]. */
     private var subscriberId: UUID? = null
 
+    /**
+     * Timestamp (from [nowMs]) of the last [fetchSessions] entry, the 0.5 s
+     * debounce anchor (Swift `lastFetchTime`, :116, :308-310). Null means "never
+     * fetched" (Swift `Date.distantPast`), so the first fetch always passes the
+     * gate — avoids the `now - MIN_VALUE` overflow a sentinel Long would cause.
+     */
+    private var lastFetchMs: Long? = null
+
     init {
         authCoordinator = AuthCoordinator(
             authenticate = { sessionController.authenticate(token) },
@@ -247,6 +262,7 @@ class SessionCoordinator(
             fetchSessions = { fetchSessions() },
             suppressSends = { on -> sendsSuppressed = on },
             isApplicationLevelError = { isApplicationLevelError(it) },
+            onAppLevelRestoreFailure = { handleAppLevelRestoreFailure() },
             nowMs = nowMs,
         )
 
@@ -259,6 +275,21 @@ class SessionCoordinator(
         // Transport health → recovery breaker, matching the Swift init wiring.
         connection.onSendFailed = { recoveryController.scheduleAutoRecovery() }
         connection.onHealthyPing = { recoveryController.resetAutoRecoveryBreaker() }
+    }
+
+    /**
+     * Coordinator-side handler for an app-level recovery (restore) failure. Swift
+     * does this evict + clear inline inside `RecoveryController.restoreSession`
+     * (RecoveryController.swift:263-266); the pure-JVM controller delegates the
+     * coordinator mutation back via the `onAppLevelRestoreFailure` hook so the
+     * controller stays Android-free. Runs before the controller sets
+     * `sessionAttachFailed`.
+     */
+    private fun handleAppLevelRestoreFailure() {
+        _activeSessionId.value?.let { activeId ->
+            evictTerminal(activeId)
+            _activeSessionId.value = null
+        }
     }
 
     // MARK: - Connect
@@ -324,6 +355,24 @@ class SessionCoordinator(
      * forget its activity state. A non-critical refresh — failures are swallowed.
      */
     suspend fun fetchSessions() {
+        // 0.5 s debounce keyed on the injected [nowMs] clock (Swift :308-310).
+        // The first fetch (lastFetchMs == null, Swift `.distantPast`) always
+        // passes; subsequent calls within 500 ms are dropped. There is no `force`
+        // parameter — every caller (connect, post-op, recovery) shares this gate,
+        // matching Swift, which also has no force path.
+        val last = lastFetchMs
+        if (last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
+        lastFetchMs = nowMs()
+
+        _isLoading.value = true
+        try {
+            doFetchSessions()
+        } finally {
+            _isLoading.value = false
+        }
+    }
+
+    private suspend fun doFetchSessions() {
         val list = runCatching { authCoordinator.withAuth { sessionController.listSessions() } }
             .getOrElse { return }
         _sessions.value = list
@@ -531,12 +580,27 @@ class SessionCoordinator(
 
     private fun onSessionStolen(sessionId: UUID) {
         val wasActive = _activeSessionId.value == sessionId
-        // ActivityCoordinator.sessionStolen already relinquishes ownership
-        // (unclaim) — do NOT double-unclaim here (M2-C note).
-        activityCoordinator.sessionStolen(sessionId) { name(it) }
+
+        // Only raise the "Session Moved" alert when the user's focused terminal
+        // is displaced; sidebar-only sessions disappear silently on the next list
+        // refresh (SharedSessionCoordinator.swift:601-625).
         if (wasActive) {
+            // sessionStolen() raises the alert AND relinquishes ownership
+            // (unclaims internally) — do NOT double-unclaim here.
+            activityCoordinator.sessionStolen(sessionId) { name(it) }
             _activeSessionId.value = null
+        } else {
+            // Silent path: forget activity state WITHOUT raising the alert.
+            // forgetSession() does NOT unclaim (only sessionStolen() does), so
+            // unclaim explicitly to match Swift, which unclaims in both branches
+            // (SharedSessionCoordinator.swift:615, :622).
+            activityCoordinator.forgetSession(sessionId)
+            unclaimSession(sessionId)
         }
+
+        // Refresh the owned-id mirror (covers the active branch's internal
+        // unclaim), then evict + fetch in BOTH branches
+        // (SharedSessionCoordinator.swift:622-625).
         _ownedSessionIds.value = ownershipStore.owned
         evictTerminal(sessionId)
         scope.launch { fetchSessions() }
@@ -547,8 +611,11 @@ class SessionCoordinator(
     }
 
     private fun onReplayComplete(sessionId: UUID) {
-        // The replay_complete signal targets whichever VM is the active terminal.
-        terminalCache.view(_activeSessionId.value ?: sessionId)?.endReplay()
+        // Key strictly on the message's sessionId, not the active session
+        // (SharedSessionCoordinator.swift:211-214). A late replay_complete during
+        // a fast switch must end replay on the VM it names, not on whichever VM
+        // happens to be active by the time it arrives.
+        terminalCache.view(sessionId)?.endReplay()
     }
 
     private fun onSessionState(sessionId: UUID, state: String) {
@@ -566,24 +633,35 @@ class SessionCoordinator(
      * (SharedSessionCoordinator.swift:635-645).
      */
     fun wireTerminalOutput(sessionId: UUID) {
+        // M4: Swift also primes `isAgentActive` from agentSessions
+        // (SharedSessionCoordinator.swift:636-638) and wires
+        // `onTitleChanged → terminalTitles` (:642-644). TerminalSessionVm has
+        // neither `isAgentActive` nor `onTitleChanged` yet, so both are deferred
+        // to M4 when the Termux bridge lands those callbacks.
         connection.onTerminalOutput = { data ->
             terminalCache.view(sessionId)?.receiveOutput(data)
         }
     }
 
     /**
-     * The recovery `resumeActive` collaborator. Reproduces Swift restoreSession's
-     * pre-resume work: reset the active VM for replay, re-wire output, then resume
-     * the active session (no-op when there is no active session).
+     * The recovery `resumeActive` collaborator. Mirrors Swift `restoreSession`'s
+     * resume block exactly (RecoveryController.swift:243-248):
+     *   resetForReplay() → resumeSession → wireTerminalOutput (wire AFTER resume).
+     *
+     * This deliberately does NOT use the SWITCH semantics (prepareForReplay +
+     * beginReplay + wire-BEFORE). Recovery resumes the SAME already-active
+     * session whose output handler is still wired, so `resetForReplay()` blanks
+     * the live terminal with RIS (ESC c) via the current handler, the resume
+     * replays scrollback, and we re-affirm the wire after resume. We do not enter
+     * buffering mode (`beginReplay`) here because Swift does not — the scrollback
+     * arrives on the live handler and renders directly, matching the source of
+     * truth. No-op when there is no active session.
      */
     private suspend fun resumeActiveForRecovery() {
         val activeId = _activeSessionId.value ?: return
-        terminalCache.view(activeId)?.let { vm ->
-            vm.prepareForReplay()
-            vm.beginReplay()
-        }
-        wireTerminalOutput(activeId)
+        terminalCache.view(activeId)?.resetForReplay()
         sessionController.resumeSession(activeId, skipReplay = false)
+        wireTerminalOutput(activeId)
     }
 
     // MARK: - Terminal cache forwarders
@@ -688,5 +766,10 @@ class SessionCoordinator(
         connection.onHealthyPing = null
         terminalCache.removeAll()
         connection.disconnect()
+    }
+
+    private companion object {
+        /** fetchSessions debounce window, ms (Swift `0.5` s, :309). */
+        const val FETCH_DEBOUNCE_MS = 500L
     }
 }

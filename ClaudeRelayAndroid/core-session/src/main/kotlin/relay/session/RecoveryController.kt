@@ -79,6 +79,12 @@ import kotlin.coroutines.cancellation.CancellationException
  * @param isApplicationLevelError Classifies a restore error: app-level (session
  *   gone) vs transport-level. App-level errors set [sessionAttachFailed]
  *   instead of [connectionTimedOut].
+ * @param onAppLevelRestoreFailure Invoked when [restoreSession] fails with an
+ *   app-level error (connection intact, session gone). Swift does the matching
+ *   evict-active-terminal + clear-active inline because its controller holds a
+ *   coordinator back-reference (RecoveryController.swift:263-266); the pure-JVM
+ *   controller delegates that coordinator mutation back via this hook. Runs
+ *   BEFORE [sessionAttachFailed] is set, mirroring the Swift ordering.
  * @param sleepMs Backoff sleep; injectable for virtual-time tests.
  * @param nowMs Clock for cooldown/debounce stamps; injectable so tests control
  *   time. The default `System.currentTimeMillis()` is WALL-CLOCK and
@@ -98,6 +104,7 @@ class RecoveryController(
     private val fetchSessions: suspend () -> Unit,
     private val suppressSends: (Boolean) -> Unit = {},
     private val isApplicationLevelError: (Throwable) -> Boolean = { false },
+    private val onAppLevelRestoreFailure: () -> Unit = {},
     private val sleepMs: suspend (Long) -> Unit = { delay(it) },
     private val nowMs: () -> Long = { System.currentTimeMillis() },
 ) {
@@ -382,6 +389,11 @@ class RecoveryController(
             // App-level errors leave the connection intact; transport-level
             // errors time the connection out (RecoveryController.swift:257-271).
             if (isApplicationLevelError(error)) {
+                // Session no longer exists / invalid transition / etc. The socket
+                // is fine — evict the stale active terminal + clear active via the
+                // coordinator hook, then surface a recoverable error
+                // (RecoveryController.swift:263-266).
+                onAppLevelRestoreFailure()
                 _sessionAttachFailed.value = true
             } else {
                 _connectionTimedOut.value = true

@@ -6,6 +6,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -475,5 +476,208 @@ class SessionCoordinatorTest {
         )
         assertTrue(coord.isApplicationLevelError(SessionException("Unexpected server response: session not found")))
         assertFalse(coord.isApplicationLevelError(SessionException("The operation timed out.")))
+    }
+
+    // -------------------------------------------------------------------------
+    // FIX 1 — onSessionStolen branches on wasActive (SharedSessionCoordinator.swift:601-625).
+    //   Active steal   → raise the alert + clear active + unclaim + evict + fetch.
+    //   Inactive steal → SILENT (no alert) + unclaim + evict + fetch.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `onSessionStolen of the ACTIVE session raises the alert and clears active`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedNames = mapOf(target to "Arya"), seedOwned = setOf(target))
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        // Make `target` the active session.
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertEquals(target, coord.activeSessionId.value)
+
+        conn.deliver(ServerMessage.SessionStolen(target))
+        advanceUntilIdle()
+
+        // The displaced focused terminal → alert raised, active cleared.
+        assertNull(coord.activeSessionId.value, "active cleared on steal of active session")
+        assertEquals(target, coord.stolenAlert.value?.sessionId, "stolen alert raised for the active session")
+        assertTrue(coord.sessionsStolen.value.contains(target), "session marked stolen")
+        // Both branches: unclaim (sessionStolen unclaims internally here) + evict.
+        assertFalse(store.owned.contains(target), "session unclaimed")
+        assertNull(coord.terminalCache.view(target), "terminal evicted")
+    }
+
+    @Test
+    fun `onSessionStolen of a NON-active session is silent but still unclaims and evicts`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val active = UUID.randomUUID()
+        val stolen = UUID.randomUUID()
+        val store = FakeOwnershipStore(
+            log,
+            seedNames = mapOf(active to "Arya", stolen to "Bran"),
+            seedOwned = setOf(active, stolen),
+        )
+        surface.sessionsOnServer = listOf(session(active, "Arya"), session(stolen, "Bran"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        // Make `active` the focused session; `stolen` is owned but only in the sidebar.
+        coord.switchToSession(active)
+        advanceUntilIdle()
+        // Seed a cached terminal for the non-active stolen session.
+        coord.terminalCache.put(stolen, relay.terminal.TerminalSessionVm())
+        assertEquals(active, coord.activeSessionId.value)
+
+        conn.deliver(ServerMessage.SessionStolen(stolen))
+        advanceUntilIdle()
+
+        // SILENT: no alert, not added to the stolen set; active is untouched.
+        assertNull(coord.stolenAlert.value, "no stolen alert for a non-active session")
+        assertFalse(coord.sessionsStolen.value.contains(stolen), "non-active steal does not mark the stolen set")
+        assertEquals(active, coord.activeSessionId.value, "active session unchanged")
+        // But ownership IS relinquished and the cached terminal evicted.
+        assertFalse(store.owned.contains(stolen), "non-active stolen session unclaimed")
+        assertNull(coord.terminalCache.view(stolen), "non-active stolen terminal evicted")
+    }
+
+    // -------------------------------------------------------------------------
+    // FIX 2 — onReplayComplete keys on the message's sessionId, NOT the active VM
+    //   (SharedSessionCoordinator.swift:211-214). A late replay_complete for idA
+    //   while idB is active must end replay on idA, not idB.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `onReplayComplete keys on the message session id not the active vm`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val idA = UUID.randomUUID()
+        val idB = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedOwned = setOf(idA, idB))
+        surface.sessionsOnServer = listOf(session(idA, "Arya"), session(idB, "Bran"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        // idB becomes active (and is put into replay mode by switch).
+        coord.switchToSession(idB)
+        advanceUntilIdle()
+        assertEquals(idB, coord.activeSessionId.value)
+
+        // idA: a separate cached VM left mid-replay (e.g. a fast switch away).
+        val vmA = relay.terminal.TerminalSessionVm()
+        coord.terminalCache.put(idA, vmA)
+        vmA.beginReplay()
+
+        // Install sinks + size both VMs, then buffer distinct output in each.
+        val flushedA = ArrayList<ByteArray>()
+        val flushedB = ArrayList<ByteArray>()
+        vmA.onTerminalOutput = { flushedA.add(it) }
+        vmA.terminalReady()
+        val vmB = coord.terminalCache.view(idB)!!
+        vmB.onTerminalOutput = { flushedB.add(it) }
+        vmB.terminalReady()
+        flushedA.clear()
+        flushedB.clear()
+        vmA.receiveOutput(byteArrayOf(10, 11)) // buffered while replaying
+        vmB.receiveOutput(byteArrayOf(20, 21)) // buffered while replaying
+
+        // Deliver replay_complete for the NON-active idA.
+        conn.deliver(ServerMessage.ReplayComplete(idA))
+        advanceUntilIdle()
+
+        assertEquals(1, flushedA.size, "idA endReplay flushed (it is the message's session)")
+        assertEquals(listOf<Byte>(10, 11), flushedA[0].toList())
+        assertTrue(flushedB.isEmpty(), "active idB did NOT flush on a replay_complete for idA")
+    }
+
+    // -------------------------------------------------------------------------
+    // FIX 4 — app-level recovery (restore) failure evicts the active terminal +
+    //   clears active (RecoveryController.swift:263-266). Drive a full recovery
+    //   pass where reconnect+reauth succeed but the resume RPC returns an Error
+    //   (→ app-level SessionException).
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `app-level restore failure evicts and clears the active session`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        // Establish `target` as the active session.
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertEquals(target, coord.activeSessionId.value)
+        assertNotNull(coord.terminalCache.view(target))
+
+        // Now stage recovery: the socket is dead, reconnect+reauth succeed, but the
+        // resume RPC during restoreSession returns an Error → app-level failure.
+        conn.alive = false
+        surface.responder = { msg ->
+            when (msg) {
+                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
+                is ClientMessage.SessionResume -> ServerMessage.Error(404, "session not found")
+                is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
+                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
+                else -> null
+            }
+        }
+
+        // Trigger an auto-recovery pass (reconnect at backoff[0]=0s succeeds).
+        conn.onSendFailed?.invoke()
+        advanceUntilIdle()
+
+        // App-level branch fired: active cleared, stale terminal evicted, flag set.
+        assertNull(coord.activeSessionId.value, "app-level restore failure cleared active")
+        assertNull(coord.terminalCache.view(target), "stale active terminal evicted")
+        assertTrue(coord.sessionAttachFailed.value, "sessionAttachFailed surfaced")
+        assertFalse(coord.connectionTimedOut.value, "transport stayed up — not a connection timeout")
+    }
+
+    // -------------------------------------------------------------------------
+    // FIX 5 — fetchSessions 0.5 s debounce keyed on the injected clock + isLoading.
+    //   First fetch passes; a second within 500 ms is skipped; advancing the clock
+    //   past 500 ms lets it through again.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `fetchSessions debounces within 500ms and toggles isLoading`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val clock = newClock()
+        val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
+        val store = FakeOwnershipStore(log, seedOwned = setOf(a))
+        surface.sessionsOnServer = listOf(session(a, "Arya"))
+        val coord = SessionCoordinator(
+            this, conn, SessionController(surface), "tok", store, config,
+            nowMs = { clock.ms },
+        )
+
+        // First fetch always passes the gate (lastFetchMs == null).
+        coord.fetchSessions()
+        advanceUntilIdle()
+        assertFalse(coord.isLoading.value, "isLoading is false after the fetch returns")
+        val firstCount = log.entries.count { it == "rpc:session_list" }
+        assertEquals(1, firstCount, "first fetch issued one list RPC")
+
+        // Second fetch only 200 ms later → debounced (no new RPC).
+        clock.ms += 200
+        coord.fetchSessions()
+        advanceUntilIdle()
+        assertEquals(firstCount, log.entries.count { it == "rpc:session_list" }, "debounced fetch issued no RPC")
+
+        // Advance past the 500 ms window → the next fetch goes through.
+        clock.ms += 400 // total 600 ms since the first fetch
+        coord.fetchSessions()
+        advanceUntilIdle()
+        assertEquals(firstCount + 1, log.entries.count { it == "rpc:session_list" }, "fetch past the window issued an RPC")
     }
 }
