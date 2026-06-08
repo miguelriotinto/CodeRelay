@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  M1 DEMO ONLY. This config permits cleartext (ws://) broadly so the throwaway
+  M1 demo can reach a local relay server over plain WebSocket during development.
+
+  The REAL gate is `relay.net.CleartextPolicy.isPrivateNetworkHost(host)`, which
+  the demo screen calls in code before every connect: ws:// is rejected to any
+  non-private host (CGNAT, IPv6 ULA, public hostnames) unless useTLS is set. The
+  iOS/macOS apps enforce the same scope via `NSAllowsLocalNetworking`, but
+  Android's network-security-config has no CIDR-allowlist equivalent, so the
+  policy lives in Kotlin and this file stays permissive for the dev demo.
+
+  M2 ships the real app with a tightened policy.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
