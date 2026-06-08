@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Minimal Material3 theme so the manifest/activity resolve. The demo's UI
+         is entirely Compose; this only needs to be a valid app theme. -->
+    <style name="Theme.ClaudeRelayM1" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

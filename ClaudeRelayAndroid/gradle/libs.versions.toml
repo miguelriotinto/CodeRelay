@@ -13,6 +13,7 @@ turbine = "1.2.0"
 mockk = "1.13.13"
 androidx-test-ext-junit = "1.2.1"
 androidx-test-runner = "1.6.2"
+androidx-activity-compose = "1.9.3"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -36,6 +37,9 @@ androidx-compose-foundation = { module = "androidx.compose.foundation:foundation
 androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
 androidx-compose-ui = { module = "androidx.compose.ui:ui" }
 androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+
+# Compose Activity host — versioned independently of the Compose BOM.
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
