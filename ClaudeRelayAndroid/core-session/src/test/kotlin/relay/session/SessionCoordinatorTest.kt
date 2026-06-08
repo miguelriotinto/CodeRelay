@@ -680,4 +680,78 @@ class SessionCoordinatorTest {
         advanceUntilIdle()
         assertEquals(firstCount + 1, log.entries.count { it == "rpc:session_list" }, "fetch past the window issued an RPC")
     }
+
+    // -------------------------------------------------------------------------
+    // computeActiveSessions — pure filter+sort parity with the Swift
+    // `activeSessions` computed property (SharedSessionCoordinator.swift:92-96):
+    //   sessions.filter { !$0.state.isTerminal && ownedSessionIds.contains($0.id) }
+    //           .sorted { $0.createdAt < $1.createdAt }
+    // i.e. keep non-terminal sessions this device owns, sorted by createdAt ASC.
+    // -------------------------------------------------------------------------
+
+    private fun sessionWith(id: UUID, state: SessionState, createdAt: Double): SessionInfo =
+        SessionInfo(
+            id = id,
+            name = null,
+            state = state,
+            tokenId = "tok",
+            createdAt = createdAt,
+            cols = 80u,
+            rows = 24u,
+            activity = null,
+            agent = null,
+        )
+
+    @Test
+    fun `computeActiveSessions keeps only owned non-terminal sessions sorted by createdAt ascending`() {
+        val ownedActiveLate = UUID.fromString("00000000-0000-0000-0000-000000000001")
+        val ownedActiveEarly = UUID.fromString("00000000-0000-0000-0000-000000000002")
+        val ownedActiveMid = UUID.fromString("00000000-0000-0000-0000-000000000003")
+        val ownedTerminal = UUID.fromString("00000000-0000-0000-0000-000000000004")
+        val unownedActive = UUID.fromString("00000000-0000-0000-0000-000000000005")
+
+        val all = listOf(
+            sessionWith(ownedActiveLate, SessionState.ACTIVE_ATTACHED, createdAt = 300.0),
+            sessionWith(ownedActiveEarly, SessionState.ACTIVE_DETACHED, createdAt = 100.0),
+            sessionWith(ownedActiveMid, SessionState.RESUMING, createdAt = 200.0),
+            // Owned but TERMINAL — must be filtered out.
+            sessionWith(ownedTerminal, SessionState.EXITED, createdAt = 50.0),
+            // Non-terminal but NOT owned — must be filtered out.
+            sessionWith(unownedActive, SessionState.ACTIVE_ATTACHED, createdAt = 10.0),
+        )
+        val owned = setOf(ownedActiveLate, ownedActiveEarly, ownedActiveMid, ownedTerminal)
+
+        val result = SessionCoordinator.computeActiveSessions(all, owned)
+
+        // Only the three owned non-terminal sessions survive, ascending by createdAt
+        // (early=100 → mid=200 → late=300). Swift sorts `$0.createdAt < $1.createdAt`.
+        assertEquals(
+            listOf(ownedActiveEarly, ownedActiveMid, ownedActiveLate),
+            result.map { it.id },
+        )
+    }
+
+    @Test
+    fun `computeActiveSessions filters every terminal state even when owned`() {
+        val survivor = UUID.fromString("00000000-0000-0000-0000-0000000000a0")
+        val unowned = UUID.fromString("00000000-0000-0000-0000-0000000000b0")
+        val terminalStates = listOf(
+            SessionState.EXITED, SessionState.FAILED, SessionState.TERMINATED, SessionState.EXPIRED,
+        )
+        // One OWNED session in each terminal state (all must drop despite being owned),
+        // one OWNED non-terminal survivor, plus an unowned non-terminal (must drop).
+        val terminals = terminalStates.mapIndexed { i, st ->
+            sessionWith(UUID.randomUUID(), st, createdAt = i.toDouble())
+        }
+        val all = terminals +
+            sessionWith(unowned, SessionState.ACTIVE_ATTACHED, createdAt = 99.0) +
+            sessionWith(survivor, SessionState.ACTIVE_ATTACHED, createdAt = 5.0)
+        // Own every terminal session and the survivor — but NOT `unowned` — so the
+        // terminal-state filter is the only thing dropping the terminals.
+        val ownedSet = (terminals.map { it.id } + survivor).toSet()
+
+        val result = SessionCoordinator.computeActiveSessions(all, ownedSet)
+
+        assertEquals(listOf(survivor), result.map { it.id })
+    }
 }

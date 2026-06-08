@@ -195,6 +195,37 @@ class SessionCoordinator(
     private val _ownedSessionIds = MutableStateFlow<Set<UUID>>(emptySet())
     val ownedSessionIds: StateFlow<Set<UUID>> = _ownedSessionIds.asStateFlow()
 
+    /**
+     * The filtered + sorted session list the tab bar and sidebar render — NOT the
+     * raw [sessions]. Recomputed from the raw list + owned-id set via the pure
+     * [computeActiveSessions] whenever either changes (see [recomputeActiveSessions],
+     * called from the same mutation points that update [_sessions] / [_ownedSessionIds]).
+     *
+     * Backed by a plain [MutableStateFlow] rather than `combine(...).stateIn(...)`
+     * on purpose: every other flow here is a `MutableStateFlow`, and an eager
+     * `stateIn` collector launched on [scope] never completes, which strands a
+     * coroutine under `runTest` in the coordinator's unit tests. The push model
+     * keeps the same single-(main)-dispatcher confinement the rest of the type uses.
+     *
+     * Source of truth: SharedSessionCoordinator.swift:92-96
+     * ```
+     * public var activeSessions: [SessionInfo] {
+     *     sessions
+     *         .filter { !$0.state.isTerminal && ownedSessionIds.contains($0.id) }
+     *         .sorted { $0.createdAt < $1.createdAt }
+     * }
+     * ```
+     * Filter: keep non-terminal sessions this device owns. Sort: `createdAt`
+     * ASCENDING (Swift `$0.createdAt < $1.createdAt`).
+     */
+    private val _activeSessions = MutableStateFlow<List<SessionInfo>>(emptyList())
+    val activeSessions: StateFlow<List<SessionInfo>> = _activeSessions.asStateFlow()
+
+    /** Re-derives [activeSessions] from the current raw list + owned set. */
+    private fun recomputeActiveSessions() {
+        _activeSessions.value = computeActiveSessions(_sessions.value, _ownedSessionIds.value)
+    }
+
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
@@ -250,6 +281,7 @@ class SessionCoordinator(
         // Hydrate the published mirrors from the persisted store.
         _sessionNames.value = ownershipStore.names
         _ownedSessionIds.value = ownershipStore.owned
+        recomputeActiveSessions()
 
         // Recovery collaborators: real lambdas bound to the connection + controller.
         recoveryController = RecoveryController(
@@ -336,11 +368,13 @@ class SessionCoordinator(
     private fun claimSession(id: UUID) {
         ownershipStore.claim(id)
         _ownedSessionIds.value = ownershipStore.owned
+        recomputeActiveSessions()
     }
 
     private fun unclaimSession(id: UUID) {
         ownershipStore.unclaim(id)
         _ownedSessionIds.value = ownershipStore.owned
+        recomputeActiveSessions()
     }
 
     // MARK: - Session list
@@ -376,6 +410,7 @@ class SessionCoordinator(
         val list = runCatching { authCoordinator.withAuth { sessionController.listSessions() } }
             .getOrElse { return }
         _sessions.value = list
+        recomputeActiveSessions()
 
         // Adopt any server-provided names.
         for (session in list) {
@@ -602,6 +637,7 @@ class SessionCoordinator(
         // unclaim), then evict + fetch in BOTH branches
         // (SharedSessionCoordinator.swift:622-625).
         _ownedSessionIds.value = ownershipStore.owned
+        recomputeActiveSessions()
         evictTerminal(sessionId)
         scope.launch { fetchSessions() }
     }
@@ -768,8 +804,20 @@ class SessionCoordinator(
         connection.disconnect()
     }
 
-    private companion object {
+    companion object {
         /** fetchSessions debounce window, ms (Swift `0.5` s, :309). */
-        const val FETCH_DEBOUNCE_MS = 500L
+        private const val FETCH_DEBOUNCE_MS = 500L
+
+        /**
+         * Pure derivation of the active-session list, factored out so it is
+         * unit-testable without Android or coroutines. Mirrors the Swift
+         * `activeSessions` computed property exactly
+         * (SharedSessionCoordinator.swift:92-96):
+         *  - filter: keep sessions that are NOT terminal AND that [owned] contains.
+         *  - sort: by [SessionInfo.createdAt] ASCENDING (Swift `$0.createdAt < $1.createdAt`).
+         */
+        fun computeActiveSessions(all: List<SessionInfo>, owned: Set<UUID>): List<SessionInfo> =
+            all.filter { !it.state.isTerminal && it.id in owned }
+                .sortedBy { it.createdAt }
     }
 }

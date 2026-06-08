@@ -110,7 +110,11 @@ fun WorkspaceScreen(
     val coordinator = vm.coordinator
     val scope = rememberCoroutineScope()
 
-    val sessions by coordinator.sessions.collectAsStateWithLifecycle()
+    // The tab bar and sidebar render the FILTERED + SORTED active-session list
+    // (non-terminal sessions this device owns, sorted by createdAt), matching the
+    // iOS `coordinator.activeSessions` the SwiftUI sidebar/tabs consume — NOT the
+    // raw `coordinator.sessions`.
+    val sessions by coordinator.activeSessions.collectAsStateWithLifecycle()
     val activeSessionId by coordinator.activeSessionId.collectAsStateWithLifecycle()
     val sessionNames by coordinator.sessionNames.collectAsStateWithLifecycle()
     val agentSessions by coordinator.agentSessions.collectAsStateWithLifecycle()

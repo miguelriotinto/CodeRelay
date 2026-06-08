@@ -261,6 +261,15 @@ private fun SessionRow(
                 )
             }
 
+            // iOS (SessionSidebarView.swift:137-148) stacks a relative-time
+            // subtitle ("2m ago") under the state badge, rendered from
+            // `session.createdAt`. We render the state badge ONLY: `createdAt` is a
+            // reference-date (Apple-epoch 2001) Double whose absolute conversion is
+            // NOT yet validated (M1 ReferenceDateDoubleSerializer is identity), and
+            // the coordinator tracks no per-session locally-observed first-seen
+            // timestamp to substitute, so any wall-clock "ago" would be wrong.
+            // M-future: relative createdAt subtitle needs validated epoch conversion
+            // (see ReferenceDateDoubleSerializer).
             StateBadge(state = session.state)
         }
 
