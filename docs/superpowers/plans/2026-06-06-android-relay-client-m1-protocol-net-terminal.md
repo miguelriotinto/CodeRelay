@@ -1,6 +1,8 @@
 # Android Relay Client — M1: Protocol, Networking & Live Terminal
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **⚠️ Read `docs/superpowers/plans/2026-06-08-android-relay-client-corrections.md` first.** It is a source-verified errata that supersedes any text here it corrects. M1-relevant: ServerMessage has **19** type strings (A1, fixed below); SavedConnectionStore legacy key is `com.coderemote.savedConnections` (B4); the TerminalViewModel tests are a **port** of the existing iOS suite, not net-new (C1).
 
 **Goal:** A working Android app that connects to a Claude Relay server, authenticates, creates/attaches a session, and shows a live, interactive terminal — proving the frozen wire protocol end-to-end.
 
@@ -521,8 +523,8 @@ class MessageTypeTest {
     @Test fun `all 12 client type strings present`() {
         assertEquals(12, ClientMessage.ALL_TYPE_STRINGS.size)
     }
-    @Test fun `all 18 server type strings present`() {
-        assertEquals(18, ServerMessage.ALL_TYPE_STRINGS.size)
+    @Test fun `all 19 server type strings present`() {
+        assertEquals(19, ServerMessage.ALL_TYPE_STRINGS.size)   // verified vs ServerMessage.swift:5-23
         assertTrue("session_list_result" in ServerMessage.ALL_TYPE_STRINGS)
     }
     @Test fun `client and server type strings are disjoint`() {
@@ -1796,7 +1798,7 @@ git add -A && git commit -m "feat(storage): TokenStore, SavedConnectionStore, De
 - Create: `terminal/src/main/kotlin/relay/terminal/TerminalSessionVm.kt`
 - Test: `terminal/src/test/kotlin/relay/terminal/TerminalSessionVmTest.kt`
 
-> Port of `TerminalViewModel.swift` buffering machine — the part with real logic and no SwiftTerm dependency, so it is fully unit-testable. The Termux `TerminalView` wrapper is Task 17. **This closes the iOS test-coverage gap** (the Swift VM has no unit tests here).
+> Port of `TerminalViewModel.swift` buffering machine — the part with real logic and no SwiftTerm dependency, so it is fully unit-testable. The Termux `TerminalView` wrapper is Task 17. **Port the existing iOS suite** (`Tests/ClaudeRelayClientTests/TerminalViewModelTests.swift`) — these are a faithful mirror, not net-new coverage. Cover the same cases: exact-4MB-boundary no-evict, over-cap eviction, resetForReplay-sends-RIS, awaiting-input-cleared-on-send.
 
 - [ ] **Step 1: Configure `:terminal` (pure JVM for the VM; the view wrapper comes in a later Android-only file)**
 
@@ -1935,7 +1937,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A && git commit -m "feat(terminal): buffering + replay state machine (with tests iOS lacks)"
+git add -A && git commit -m "feat(terminal): buffering + replay state machine (ported from iOS suite)"
 ```
 
 ---
@@ -2190,7 +2192,7 @@ git add -A && git commit -m "feat(app): M1 demo — live terminal over the relay
 
 ## M1 Self-Review Checklist (run before declaring M1 complete)
 
-- [ ] All 30 wire type strings present and disjoint (Task 5 test).
+- [ ] All 31 wire type strings present and disjoint — 12 client + 19 server (Task 5 test).
 - [ ] Envelope encode/decode fidelity: empty-payload ping, skipReplay omission, legacy activity decode, unknown-type throw (Task 6 test).
 - [ ] **Contract test passes against a real captured frame; `createdAt` is a Double** (Task 9). If it was a string, the spec correction is wrong for this server — document and adjust.
 - [ ] Ping/pong: window caps at 6, 3 failures → `onSendFailed`, healthy ping resets (Task 12 test).

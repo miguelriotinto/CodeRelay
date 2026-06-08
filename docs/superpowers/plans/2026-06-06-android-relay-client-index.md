@@ -4,6 +4,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-06-android-relay-client-design.md`
 
+**⚠️ Errata (read before implementing):** `docs/superpowers/plans/2026-06-08-android-relay-client-corrections.md`
+— a source-verified corrections pass (95 claims confirmed, ~20 corrected against the canonical
+Swift source). It **supersedes** any spec/plan text it corrects. The inline fixes are applied
+across the spec + M1–M4, but the corrections doc is the single place that explains each change
+with `file:line` citations. Highest-impact: ServerMessage has **19** type strings (not 18);
+AppSettings has **14** `@AppStorage` keys (not 18); `SessionNaming` is random + explicit
+`fallbackIndex`; the four coordinator ops are **distinct sequences**; **RecoveryController is a
+rewrite** (5 s probe, terminal auth/resume failure, cooldown, healthy-ping reset, cancel
+semantics, send-suppression); Qwen is **≈0.5 GB**; add `WakeWordAudioPreprocessor` + `ProcessedText`.
+
 **Goal:** Build an Android client at exact feature parity with the iOS Claude Relay app. The server and WebSocket protocol are frozen; Android is a pure new client.
 
 This work is decomposed into **four milestone plans**, each producing working, testable software on its own. Implement them in order — each builds on the previous.
