@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive launcher icon (API 26+). Background = the brand tan; foreground = the
+  composite "AI" mark (ClaudeRelayApp icon-1024). The mark sits within the inner
+  ~61% safe zone and its margins are the same tan as the background, so any
+  launcher mask (circle/squircle) crops only tan, never the AI — matching the iOS
+  AppIcon. Pre-API-26 launchers fall back to the square ic_launcher.png.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

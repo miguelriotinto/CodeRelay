@@ -7,7 +7,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.ViewCompat
 import org.connectbot.terminal.Terminal
 import relay.terminal.RelayTerminalController
 import relay.terminal.TerminalPalette
@@ -82,13 +84,18 @@ fun TerminalHost(
         ).also { reportSizeHolder[0] = it::reportSize }
     }
 
-    // Re-show the soft keyboard when the user taps the terminal. termlib's tap
-    // handler calls `focusRequester.requestFocus()` but only invokes its internal
-    // `showIme()` from a `LaunchedEffect(shouldShowIme)` — which does NOT re-fire
-    // after a MANUAL keyboard dismiss (swipe-down) because `shouldShowIme` is still
-    // true (its state never changed). So a tap alone left the keyboard down. We
-    // force it back up via the Compose IME controller from `onTerminalTap`.
-    val keyboardController = LocalSoftwareKeyboardController.current
+    // Re-show the soft keyboard when the user taps the terminal. termlib types
+    // through its OWN raw `ImeInputView` (an Android View with a custom
+    // InputConnection), NOT a Compose text field — so `LocalSoftwareKeyboardController`
+    // does nothing here (that only drives the Compose IME). termlib's tap handler
+    // calls `focusRequester.requestFocus()` (focusing the View that hosts the
+    // ImeInputView) but only calls its internal `showIme()` from a
+    // `LaunchedEffect(shouldShowIme)`, which does NOT re-fire after a MANUAL
+    // swipe-down (shouldShowIme stays true). So we force the platform IME up via
+    // the window insets controller from `onTerminalTap`, after termlib has focused
+    // its input view. This is the platform-level API that drives the same IME
+    // termlib's ImeInputView uses (`InputMethodManager.showSoftInput`).
+    val view = LocalView.current
 
     DisposableEffect(controller) {
         onDispose {
@@ -109,7 +116,11 @@ fun TerminalHost(
     Terminal(
         terminalEmulator = engine.emulator,
         keyboardEnabled = true,
-        onTerminalTap = { keyboardController?.show() },
+        // termlib focuses its ImeInputView on tap; we then force the platform IME
+        // up (it stays down on tap after a manual swipe-down otherwise — see above).
+        onTerminalTap = {
+            ViewCompat.getWindowInsetsController(view)?.show(WindowInsetsCompat.Type.ime())
+        },
         backgroundColor = TerminalPalette.background.toComposeColor(),
         foregroundColor = TerminalPalette.foreground.toComposeColor(),
         modifier = modifier

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand tan — the iOS AppIcon / splash background, rgb(204,155,122).
+         Used as the adaptive launcher icon's background layer so the masked icon
+         matches iOS. -->
+    <color name="ic_launcher_background">#CC9B7A</color>
+</resources>

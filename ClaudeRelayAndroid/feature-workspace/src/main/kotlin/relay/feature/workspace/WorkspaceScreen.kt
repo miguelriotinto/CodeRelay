@@ -19,8 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material3.AlertDialog
@@ -45,7 +44,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -345,16 +346,17 @@ private fun TerminalColumn(
                     Icon(Icons.Filled.Menu, contentDescription = "Toggle Sidebar", tint = Color.White)
                 }
             }
+            // Disconnect from the SERVER (iOS `server.rack` icon, ActiveTerminalView).
+            // This leaves the server entirely — it is NOT a per-session close (kill a
+            // session by swiping it in the sidebar). The earlier [X] looked like a
+            // session-close, so it's now the server-rack glyph to match iOS.
             IconButton(onClick = onDisconnect) {
-                Icon(Icons.Filled.Close, contentDescription = "Disconnect", tint = Color.White)
+                Icon(Icons.Filled.Dns, contentDescription = "Disconnect from server", tint = Color.White)
             }
-            IconButton(onClick = onToggleKeyBar) {
-                Icon(
-                    Icons.Filled.Keyboard,
-                    contentDescription = if (showKeyBar) "Hide Key Bar" else "Show Key Bar",
-                    tint = if (showKeyBar) Color.White else Color.White.copy(alpha = 0.5f),
-                )
-            }
+            // Key-bar toggle — iOS uses the literal "fn" SF Symbol; Material has no
+            // "fn" glyph, so we render an "fn" text chip (active = filled white,
+            // inactive = dim), matching the iOS ToolbarIconButton(icon: "fn") look.
+            FnToggleButton(active = showKeyBar, onClick = onToggleKeyBar)
 
             ConnectionQualityDot(quality = quality)
 
@@ -378,10 +380,8 @@ private fun TerminalColumn(
                 )
             }
 
-            // Speech mic button — always visible so the user can enable/disable
-            // continuous listening (or start the model download) even with no
-            // active session; PTT/continuous gating is internal to the button.
-            micButton()
+            // (The speech mic button is NOT here — iOS floats it bottom-right over
+            // the terminal; see the floating Box in the terminal body below.)
 
             if (activeSessionId != null) {
                 IconButton(onClick = { onShareQr(activeSessionId) }) {
@@ -425,6 +425,18 @@ private fun TerminalColumn(
                     )
                 }
             }
+
+            // Floating mic button, bottom-right over the terminal (iOS
+            // ActiveTerminalView floating buttons: 16dp end / 12dp bottom). Always
+            // present so the user can enable/disable continuous listening or kick
+            // off the model download even with no active session.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 12.dp),
+            ) {
+                micButton()
+            }
         }
 
         if (showKeyBar && activeSessionId != null) {
@@ -435,6 +447,32 @@ private fun TerminalColumn(
                 onKey = { bytes -> onKeyHaptic(); onInput(bytes) },
             )
         }
+    }
+}
+
+/**
+ * The key-bar toggle, rendering an "fn" chip (iOS `ToolbarIconButton(icon: "fn")`).
+ * Material ships no "fn" glyph, so this is a small monospace "fn" Text styled like
+ * the iOS toolbar button: filled white when [active] (key bar shown), dim
+ * white-on-translucent when inactive.
+ */
+@Composable
+private fun FnToggleButton(active: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (active) Color.White else Color.White.copy(alpha = 0.12f))
+            .combinedClickable(onClick = onClick, onLongClick = null)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "fn",
+            color = if (active) Color.Black else Color.White.copy(alpha = 0.7f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            fontFamily = FontFamily.Monospace,
+        )
     }
 }
 

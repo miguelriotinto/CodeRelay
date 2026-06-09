@@ -46,6 +46,12 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
+    // Extended Material icons for the special-key glyphs (KeyboardReturn,
+    // KeyboardTab, Backspace, arrows) — the core material3 set lacks return/tab/
+    // backspace. iOS uses SF Symbols (return / arrow.right.to.line / delete.backward);
+    // these are the Material equivalents that actually render (the prior Unicode
+    // glyphs ↵/⇥/⌫ didn't render on some device fonts).
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
 
