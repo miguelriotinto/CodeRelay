@@ -1,2 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Haptic feedback on QR-scan detection (QrScannerScreen) + the gated Haptics helper.
+         Declared at the library level so lint resolves the Vibrator.vibrate call here;
+         it merges with the :app manifest's VIBRATE declaration at build. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+</manifest>
