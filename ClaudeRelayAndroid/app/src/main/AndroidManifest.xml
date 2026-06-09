@@ -8,10 +8,16 @@
          comes back (the NWPathMonitor analog). -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- QR scanner (Task 9): runtime CAMERA permission; camera is optional so the
-         app installs on cameraless devices (the scanner is just unavailable). -->
+    <!-- QR scanner (Task 9): runtime CAMERA permission; camera is OPTIONAL so the app
+         installs on camera-less devices (the scanner is just unavailable). Declaring
+         the CAMERA permission implicitly marks android.hardware.camera +
+         camera.autofocus as REQUIRED unless we explicitly opt out — so all three
+         camera features must be declared required="false", or Play (and some OEM
+         installers) will exclude/refuse devices that report no rear camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <!-- Haptic feedback on QR-scan detection (QrScannerScreen.vibrate). Normal
          (non-dangerous) permission, no runtime request needed. -->
