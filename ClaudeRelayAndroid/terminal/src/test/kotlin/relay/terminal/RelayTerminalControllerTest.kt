@@ -1,5 +1,8 @@
 package relay.terminal
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -12,6 +15,7 @@ import org.junit.jupiter.api.Test
  * `IOSTerminalCoordinator` integration: byte-fidelity output feed, ready-on-
  * first-size, input forwarding, and resize fan-out.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class RelayTerminalControllerTest {
 
     /** Records every interaction so the wiring can be asserted in isolation. */
@@ -33,7 +37,11 @@ class RelayTerminalControllerTest {
 
     private class Harness {
         val engine = FakeTerminalEngine()
-        val vm = TerminalSessionVm()
+        // Inject a test-dispatcher scope so the VM's input-prompt debounce
+        // `scope.launch` doesn't hit the missing JVM `Dispatchers.Main`. These
+        // tests don't advance virtual time, so the debounce never fires and
+        // can't affect the wiring assertions.
+        val vm = TerminalSessionVm(scope = CoroutineScope(UnconfinedTestDispatcher()))
         val sentInput = mutableListOf<ByteArray>()
         val resizes = mutableListOf<Pair<Int, Int>>()
         val controller = RelayTerminalController(

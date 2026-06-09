@@ -1,9 +1,24 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+}
+
+// Release signing is driven from a NON-COMMITTED `keystore.properties` at the
+// Android project root (gitignored — see .gitignore + RELEASE.md). When the file
+// is present (a human ran the keytool setup) we wire a real `release` signing
+// config from it. When it's absent (headless dev / CI without the upload key) we
+// fall back to debug signing in the release buildType so `assembleRelease` still
+// produces an installable — if debug-signed — artifact and never fails on a
+// missing key. The fallback APK/AAB is NOT upload-eligible; it only proves R8 +
+// the keep rules link cleanly.
+val keystorePropsFile = rootProject.file("keystore.properties")
+val hasReleaseKeystore = keystorePropsFile.exists()
+val keystoreProps = Properties().apply {
+    if (hasReleaseKeystore) keystorePropsFile.inputStream().use { load(it) }
 }
 
 android {
@@ -14,8 +29,11 @@ android {
         applicationId = "relay.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2-m2"
+        // M4-final version. Milestone naming ("0.3-m4") chosen over a bare "1.0"
+        // so the version string stays honest about the pre-1.0 milestone cadence;
+        // the App "About" section reads this via BuildConfig (buildConfig = true).
+        versionCode = 3
+        versionName = "0.3-m4"
     }
 
     buildFeatures {
@@ -29,11 +47,41 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // M2 ships the real nav graph (Splash → Servers → Workspace + Settings).
-    // No release signing config is wired here yet.
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
+        }
+        release {
+            // R8 full-mode: shrink + obfuscate code and shrink resources. The
+            // keep rules in proguard-rules.pro protect everything reflection- or
+            // JNI-based (kotlinx.serialization, ONNX Runtime, ML Kit, OkHttp,
+            // coroutines) from being stripped. proguard-android-optimize.txt is
+            // AGP's optimized default ruleset.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            signingConfig =
+                if (hasReleaseKeystore) {
+                    signingConfigs.getByName("release")
+                } else {
+                    // Headless/CI fallback: debug-signed so the build still
+                    // assembles. NOT eligible for Play upload.
+                    signingConfigs.getByName("debug")
+                }
         }
     }
 }

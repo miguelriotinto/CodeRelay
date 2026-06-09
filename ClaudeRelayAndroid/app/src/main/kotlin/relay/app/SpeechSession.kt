@@ -10,8 +10,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import relay.feature.settings.AppSettings
+import relay.feature.workspace.HapticController
 import relay.feature.workspace.MicButton
 import relay.feature.workspace.WorkspaceViewModel
+import relay.feature.workspace.rememberHaptics
 import relay.feature.workspace.shouldResumeAfterOneShot
 import relay.speech.ContinuousListeningEngine
 import relay.speech.OnDeviceSpeechEngine
@@ -99,7 +101,14 @@ class SpeechSession private constructor(
         val smartCleanup by settings.smartCleanupEnabled.collectAsStateWithLifecycle()
         val promptEnhancement by settings.promptEnhancementEnabled.collectAsStateWithLifecycle()
         val wakeWord by settings.wakeWord.collectAsStateWithLifecycle()
+        val hapticsEnabled by settings.hapticFeedbackEnabled.collectAsStateWithLifecycle()
         val composeScope = rememberCoroutineScope()
+
+        // The post-transcription success/warning notification haptics fire here in
+        // the host (the transcription result is async), mirroring iOS firing
+        // UINotificationFeedbackGenerator after `await stopAndProcess`. The tap
+        // impact haptics fire inside MicButton itself (synchronous, on tap).
+        val haptics = rememberHaptics(hapticsEnabled)
 
         // Continuous engine delivers cleaned utterances here (also routed through
         // the foreground service Bridge when the service hosts the engine).
@@ -134,16 +143,17 @@ class SpeechSession private constructor(
             continuousState = continuousEngine.state,
             downloadProgress = modelStore.downloadProgress,
             modelsReady = modelStore.modelsReady,
-            onPttTap = { handlePttTap(composeScope, vm) },
+            hapticsEnabled = hapticsEnabled,
+            onPttTap = { handlePttTap(composeScope, vm, haptics) },
             onContinuousTap = { handleContinuousTap() },
-            onLongPressOneShot = { handleOneShotPtt(composeScope, vm) },
+            onLongPressOneShot = { handleOneShotPtt(composeScope, vm, haptics) },
             onRequestDownload = { startDownload() },
         )
     }
 
     // MARK: - PTT (default-mode tap)
 
-    private fun handlePttTap(composeScope: CoroutineScope, vm: WorkspaceViewModel) {
+    private fun handlePttTap(composeScope: CoroutineScope, vm: WorkspaceViewModel, haptics: HapticController) {
         when (pttEngine.state.value) {
             SpeechEngineState.Idle -> {
                 SpeechPermissions.request()
@@ -151,7 +161,14 @@ class SpeechSession private constructor(
             }
             SpeechEngineState.Recording -> composeScope.launch {
                 val text = pttEngine.stopAndProcess(settings.currentSpeechOptions())
-                if (text != null) vm.sendInput(text) // sendInput(String) blank-skips internally
+                // Swift handlePTTTap fires .success on a non-nil transcription and
+                // .warning on nil (transcription failure) — MicButton.swift:142-151.
+                if (text != null) {
+                    haptics.success()
+                    vm.sendInput(text) // sendInput(String) blank-skips internally
+                } else {
+                    haptics.warning()
+                }
             }
             is SpeechEngineState.Error -> pttEngine.cancel()
             else -> Unit
@@ -179,13 +196,18 @@ class SpeechSession private constructor(
     }
 
     /** One-shot PTT during continuous mode (Swift `beginTemporaryPTT`). */
-    private fun handleOneShotPtt(composeScope: CoroutineScope, vm: WorkspaceViewModel) {
+    private fun handleOneShotPtt(composeScope: CoroutineScope, vm: WorkspaceViewModel, haptics: HapticController) {
         composeScope.launch {
             continuousEngine.disable()
             pttEngine.startRecording()
             kotlinx.coroutines.delay(2_000)
             val text = pttEngine.stopAndProcess(settings.currentSpeechOptions())
-            if (text != null) vm.sendInput(text)
+            // Swift performOneShotPTT fires .success on a non-empty transcription
+            // (no .warning branch here) — MicButton.swift:114-121.
+            if (text != null && text.isNotEmpty()) {
+                haptics.success()
+                vm.sendInput(text)
+            }
             // Only resume continuous if it's enabled AND the user did NOT tap-pause
             // it — exact port of MicButton.swift:97
             // `if settings.continuousListeningEnabled && !continuousPausedByUser`.

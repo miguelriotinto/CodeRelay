@@ -467,7 +467,7 @@ class SessionCoordinator(
             claimSession(sessionId)
             setNameLocal(sessionId, name)
 
-            terminalCache.put(sessionId, TerminalSessionVm())
+            terminalCache.put(sessionId, newTerminalVm())
             wireTerminalOutput(sessionId)
             _activeSessionId.value = sessionId
             terminalCache.touch(sessionId)
@@ -494,7 +494,7 @@ class SessionCoordinator(
             // (SharedSessionCoordinator.swift:433-434).
             val incoming = terminalCache.view(id)
             if (incoming == null) {
-                terminalCache.put(id, TerminalSessionVm())
+                terminalCache.put(id, newTerminalVm())
             } else {
                 incoming.prepareForReplay()
             }
@@ -541,7 +541,7 @@ class SessionCoordinator(
 
             // claim → beginReplay → wire AFTER the RPC (attach wires after).
             claimSession(id)
-            val vm = TerminalSessionVm()
+            val vm = newTerminalVm()
             vm.beginReplay()
             terminalCache.put(id, vm)
             wireTerminalOutput(id)
@@ -610,7 +610,12 @@ class SessionCoordinator(
     }
 
     private fun onSessionActivity(sessionId: UUID, activity: ActivityState, agent: String?) {
-        activityCoordinator.applyActivity(sessionId, activity, agent)
+        // Flip the matching VM's `isAgentActive` on agent entry/exit so the
+        // input-prompt silence detector switches between the 1 s and 2 s
+        // thresholds (SharedSessionCoordinator.swift:595-597).
+        activityCoordinator.applyActivity(sessionId, activity, agent) { id, isActive ->
+            terminalCache.view(id)?.isAgentActive = isActive
+        }
     }
 
     private fun onSessionStolen(sessionId: UUID) {
@@ -663,20 +668,31 @@ class SessionCoordinator(
     // MARK: - Terminal output wiring
 
     /**
+     * Creates a [TerminalSessionVm] on the coordinator's [scope], so its
+     * input-prompt silence debounce launches on the same dispatcher the
+     * coordinator runs on — the Android analogue of Swift's shared `@MainActor`
+     * isolation between the coordinator and its view models.
+     */
+    private fun newTerminalVm() = TerminalSessionVm(scope = scope)
+
+    /**
      * Routes the connection's binary terminal output to the VM for [sessionId].
      * The connection has a single `onTerminalOutput` slot, so wiring a new
      * session replaces the previous routing — exactly the Swift single-slot model
      * (SharedSessionCoordinator.swift:635-645).
      */
     fun wireTerminalOutput(sessionId: UUID) {
-        // M4: Swift also primes `isAgentActive` from agentSessions
-        // (SharedSessionCoordinator.swift:636-638) and wires
-        // `onTitleChanged → terminalTitles` (:642-644). TerminalSessionVm has
-        // neither `isAgentActive` nor `onTitleChanged` yet, so both are deferred
-        // to M4 when the Termux bridge lands those callbacks.
+        // Prime `isAgentActive` from the current agent map so the silence
+        // detector picks the 2 s (agent) threshold immediately on wire, before
+        // the next `sessionActivity` event (SharedSessionCoordinator.swift:636-638).
+        terminalCache.view(sessionId)?.isAgentActive =
+            activityCoordinator.isRunningAgent(sessionId)
         connection.onTerminalOutput = { data ->
             terminalCache.view(sessionId)?.receiveOutput(data)
         }
+        // M4: Swift also wires `onTitleChanged → terminalTitles` (:642-644);
+        // TerminalSessionVm has no `onTitleChanged` yet, so that stays deferred
+        // to when the Termux bridge lands the title callback.
     }
 
     /**

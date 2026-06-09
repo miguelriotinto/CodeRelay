@@ -1,5 +1,8 @@
 package relay.terminal
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -9,13 +12,19 @@ import org.junit.jupiter.api.Test
 /**
  * Ported from the iOS suite `Tests/ClaudeRelayClientTests/TerminalViewModelTests.swift`.
  * Each test name maps to the Swift case it mirrors. Cases that depend on
- * `RelayConnection` (send-suppression, UTF-8 encoding) or the M4 input-prompt
- * silence detector are intentionally NOT ported here — they live in :core-net /
- * are M4 Task 3.
+ * `RelayConnection` (send-suppression, UTF-8 encoding) are intentionally NOT
+ * ported here — they live in :core-net. The input-prompt silence detector is
+ * covered by [TerminalSessionVmInputPromptTest] (virtual-time `runTest`).
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class TerminalSessionVmTest {
 
-    private fun makeVm() = TerminalSessionVm()
+    // These buffering/replay tests assert state that settles synchronously,
+    // before the input-prompt debounce job suspends on its `delay`. We still
+    // inject a real (test) dispatcher so `receiveOutput`'s `scope.launch`
+    // doesn't hit the missing JVM `Dispatchers.Main`; the launched debounce
+    // never advances here (no `advanceTimeBy`), so it can't perturb assertions.
+    private fun makeVm() = TerminalSessionVm(scope = CoroutineScope(UnconfinedTestDispatcher()))
 
     // Mirrors `testBuffersOutputBeforeTerminalReady`.
     @Test

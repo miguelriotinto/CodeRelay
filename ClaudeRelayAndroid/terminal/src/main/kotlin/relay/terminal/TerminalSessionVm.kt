@@ -1,5 +1,27 @@
 package relay.terminal
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+/**
+ * Configures the input-prompt silence detector. Production defaults match the
+ * iOS `InputPromptThresholds` struct (`TerminalViewModel.swift:17-26`): 1000 ms
+ * normal, 2000 ms while a coding agent is running (longer, so API-call /
+ * tool-execution gaps don't trip the detector). Tests pass shorter durations —
+ * here, the same defaults under [TestScope] virtual time, so no wall-clock wait.
+ *
+ * Field names mirror Swift (`normal` / `agentActive`), expressed as
+ * milliseconds for the Kotlin [delay] call.
+ */
+data class InputPromptThresholds(
+    val normalMs: Long = 1000L,
+    val agentActiveMs: Long = 2000L,
+)
+
 /**
  * Manages terminal I/O *buffering* state for a single session.
  *
@@ -23,18 +45,51 @@ package relay.terminal
  * Not thread-safe: like the iOS `@MainActor` original, all calls are expected
  * to come from the single UI/coordinator thread.
  *
- * NOTE: the input-prompt silence detector (the 1000 ms / 2000 ms debounce that
- * drives `awaitingInput`) is M4 Task 3 and is intentionally NOT implemented
- * here. [onAwaitingInputChanged] is declared so the later milestone can wire
- * it without changing this type's surface.
+ * The input-prompt silence detector (the 1000 ms / 2000 ms debounce that drives
+ * [awaitingInput]) is implemented here as a faithful port of Swift
+ * `detectInputPrompt(_:)`. The Swift original uses `Task` + `Task.sleep`; here we
+ * inject a [CoroutineScope] (constructor param) so tests pass a `TestScope` and
+ * drive the debounce with virtual time (`advanceTimeBy`) instead of a real timer.
+ *
+ * @param scope coroutine scope the debounce [Job] launches on. Defaults to a
+ *   `Dispatchers.Main` scope to match the iOS `@MainActor` isolation; tests pass
+ *   a `TestScope` for virtual-time control.
+ * @param promptThresholds silence windows for the input-prompt detector.
  */
-class TerminalSessionVm {
+class TerminalSessionVm(
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Main),
+    private val promptThresholds: InputPromptThresholds = InputPromptThresholds(),
+) {
 
     /** Installed by the terminal view. Receives live bytes after [terminalReady]. */
     var onTerminalOutput: ((ByteArray) -> Unit)? = null
 
-    /** Installed by the terminal view. Fires when `awaitingInput` transitions (M4). */
+    /**
+     * Installed by the terminal view. Fires when [awaitingInput] transitions
+     * (and only on an actual change — see [setAwaitingInput]). Parity with Swift
+     * `onAwaitingInputChanged`: a view-level hook, NOT coordinator-wired. The
+     * server-driven `sessionsAwaitingInput` set (the tab attention-flash) lives
+     * on `ActivityCoordinator` and is a separate signal.
+     */
     var onAwaitingInputChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * True when output has been silent long enough that the session is likely
+     * waiting for user input. Driven by [detectInputPrompt]. Mirrors Swift's
+     * `@Published awaitingInput`.
+     */
+    var awaitingInput: Boolean = false
+        private set
+
+    /**
+     * Set by the coordinator when a coding agent is actively running in this
+     * session (Swift `isAgentActive`). Selects the silence threshold — a longer
+     * window avoids false positives during API-call / tool-execution gaps.
+     */
+    var isAgentActive: Boolean = false
+
+    /** Pending silence-debounce job; cancelled and replaced on each output chunk. */
+    private var promptDebounceJob: Job? = null
 
     private var terminalSized = false
     private var isReplaying = false
@@ -66,7 +121,10 @@ class TerminalSessionVm {
                 pendingOutputBytes -= dropped.size
             }
         }
-        // detectInputPrompt(data) — M4 Task 3, deliberately omitted.
+        // Swift calls detectInputPrompt unconditionally at the end of
+        // receiveOutput — on BOTH the live and buffered paths, and for empty
+        // chunks (TerminalViewModel.swift:130). Match that exactly.
+        detectInputPrompt(data)
     }
 
     /**
@@ -155,6 +213,11 @@ class TerminalSessionVm {
     }
 
     private fun resetState() {
+        // Swift `prepareForSwitch` / `prepareForReplay` cancel + null the
+        // pending debounce (TerminalViewModel.swift:187-188, :204-205) so a
+        // stale timer can't flip awaitingInput after the view is gone.
+        promptDebounceJob?.cancel()
+        promptDebounceJob = null
         onTerminalOutput = null
         onAwaitingInputChanged = null
         terminalSized = false
@@ -162,5 +225,49 @@ class TerminalSessionVm {
         pendingOutput.clear()
         pendingOutputBytes = 0
         didLogPendingCap = false
+    }
+
+    // MARK: - Input Prompt Detection
+
+    /**
+     * Output-silence detector, ported from Swift `detectInputPrompt(_:)`
+     * (TerminalViewModel.swift:245-257). On each output chunk:
+     *  1. cancel any pending debounce job,
+     *  2. if currently [awaitingInput], clear it ([setAwaitingInput] false) —
+     *     fresh output means the session is no longer idle,
+     *  3. pick the threshold ([isAgentActive] ? agentActive : normal),
+     *  4. launch a new debounce job that [delay]s the threshold then, if not
+     *     cancelled, sets [awaitingInput] true.
+     *
+     * The launched job runs on the injected [scope], so under a `TestScope` the
+     * `delay` is virtual and `advanceTimeBy(...)` fires it deterministically.
+     * `data` is unused (Swift ignores its contents too — the mere arrival of a
+     * chunk, empty or not, resets the silence timer).
+     */
+    @Suppress("UNUSED_PARAMETER")
+    private fun detectInputPrompt(data: ByteArray) {
+        promptDebounceJob?.cancel()
+        promptDebounceJob = null
+
+        if (awaitingInput) setAwaitingInput(false)
+
+        val threshold = if (isAgentActive) promptThresholds.agentActiveMs else promptThresholds.normalMs
+        promptDebounceJob = scope.launch {
+            delay(threshold)
+            // `isActive` guard == Swift's `guard !Task.isCancelled` — a job
+            // cancelled mid-delay must not flip the flag.
+            if (isActive) setAwaitingInput(true)
+        }
+    }
+
+    /**
+     * Transitions [awaitingInput] and fires [onAwaitingInputChanged] ONLY on an
+     * actual change (Swift dedupes via `guard awaitingInput != value`,
+     * TerminalViewModel.swift:259-263).
+     */
+    private fun setAwaitingInput(value: Boolean) {
+        if (awaitingInput == value) return
+        awaitingInput = value
+        onAwaitingInputChanged?.invoke(value)
     }
 }

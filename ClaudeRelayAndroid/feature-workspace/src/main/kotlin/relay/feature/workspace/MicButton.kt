@@ -70,6 +70,10 @@ import relay.speech.SpeechEngineState
  * @param continuousState continuous-listening engine state flow
  * @param downloadProgress model-download progress flow (null = not downloading)
  * @param modelsReady whether the on-device models are present (gates PTT start)
+ * @param hapticsEnabled AppSettings.hapticFeedbackEnabled — gates the tap haptics
+ *   (`MicButton.swift`'s `UIImpactFeedbackGenerator(.medium)` on every tap that
+ *   starts/stops a capture or toggles continuous mode). Success/warning
+ *   notification haptics fire from the host after transcription (see SpeechSession).
  * @param onPttTap default-mode tap: toggle record/stop (host runs the engine)
  * @param onContinuousTap continuous-mode tap: enable/disable listening
  * @param onLongPressOneShot continuous-mode long-press: one-shot PTT capture
@@ -83,12 +87,14 @@ fun MicButton(
     continuousState: StateFlow<ContinuousListeningState>,
     downloadProgress: StateFlow<Double?>,
     modelsReady: Boolean,
+    hapticsEnabled: Boolean,
     onPttTap: () -> Unit,
     onContinuousTap: () -> Unit,
     onLongPressOneShot: () -> Unit,
     onRequestDownload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val haptics = rememberHaptics(hapticsEnabled)
     val ptt by pttState.collectAsStateWithLifecycle()
     val continuous by continuousState.collectAsStateWithLifecycle()
     val progress by downloadProgress.collectAsStateWithLifecycle()
@@ -109,19 +115,33 @@ fun MicButton(
                 indication = null,
                 onClick = {
                     if (continuousEnabled) {
+                        // Swift handleContinuousTap fires .medium impact on every tap.
+                        haptics.mediumTap()
                         onContinuousTap()
                     } else {
                         // PTT: gate the very first start behind the download prompt.
                         if (ptt is SpeechEngineState.Idle && !modelsReady) {
+                            // Swift fires NO haptic on the download-prompt branch.
                             showDownloadAlert = true
                         } else {
+                            // Swift handlePTTTap fires .medium impact ONLY on the
+                            // start (.idle) and stop (.recording) branches — NOT on
+                            // the .error (cancel) branch (MicButton.swift:124-160).
+                            if (ptt is SpeechEngineState.Idle || ptt is SpeechEngineState.Recording) {
+                                haptics.mediumTap()
+                            }
                             onPttTap()
                         }
                     }
                 },
                 onLongClick = {
                     // Long-press one-shot PTT only meaningful in continuous mode.
-                    if (continuousEnabled) onLongPressOneShot()
+                    // Swift performOneShotPTT fires .medium impact at start
+                    // (MicButton.swift:108-109).
+                    if (continuousEnabled) {
+                        haptics.mediumTap()
+                        onLongPressOneShot()
+                    }
                 },
             ),
         contentAlignment = Alignment.Center,

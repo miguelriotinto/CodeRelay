@@ -568,7 +568,9 @@ class SessionCoordinatorTest {
         assertEquals(idB, coord.activeSessionId.value)
 
         // idA: a separate cached VM left mid-replay (e.g. a fast switch away).
-        val vmA = relay.terminal.TerminalSessionVm()
+        // Build it on the test scope so its input-prompt debounce launches on
+        // the test scheduler, not the absent JVM `Dispatchers.Main`.
+        val vmA = relay.terminal.TerminalSessionVm(scope = this)
         coord.terminalCache.put(idA, vmA)
         vmA.beginReplay()
 
