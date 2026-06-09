@@ -1,6 +1,8 @@
 package relay.feature.workspace.ui
 
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import relay.protocol.SessionState
 
@@ -68,5 +70,40 @@ class WorkspaceLogicTest {
         assertEquals(WorkspaceLogic.BadgeBucket.RED, WorkspaceLogic.badgeBucket(SessionState.FAILED))
         assertEquals(WorkspaceLogic.BadgeBucket.RED, WorkspaceLogic.badgeBucket(SessionState.TERMINATED))
         assertEquals(WorkspaceLogic.BadgeBucket.RED, WorkspaceLogic.badgeBucket(SessionState.EXPIRED))
+    }
+
+    // MARK: - utteranceInputBytes (the sendInput(String) overload's core logic)
+
+    @Test
+    fun `utteranceInputBytes encodes plain ascii as UTF-8`() {
+        assertArrayEquals("ls -la".toByteArray(Charsets.UTF_8), WorkspaceLogic.utteranceInputBytes("ls -la"))
+    }
+
+    @Test
+    fun `utteranceInputBytes encodes multibyte UTF-8`() {
+        // A non-ASCII utterance must round-trip as multi-byte UTF-8, not be lost.
+        val text = "café — naïve 你好"
+        assertArrayEquals(text.toByteArray(Charsets.UTF_8), WorkspaceLogic.utteranceInputBytes(text))
+    }
+
+    @Test
+    fun `utteranceInputBytes skips empty text`() {
+        assertNull(WorkspaceLogic.utteranceInputBytes(""))
+    }
+
+    @Test
+    fun `utteranceInputBytes skips whitespace-only text`() {
+        // Mirrors the onUtteranceReady blank-skip + iOS `!text.isEmpty` guard.
+        assertNull(WorkspaceLogic.utteranceInputBytes("   "))
+        assertNull(WorkspaceLogic.utteranceInputBytes("\n\t  "))
+    }
+
+    @Test
+    fun `utteranceInputBytes keeps text with surrounding whitespace`() {
+        // Non-blank text is sent VERBATIM (no trim) — leading/trailing spaces in a
+        // real command (e.g. a trailing newline the engine may include) are
+        // preserved; only entirely-blank text is dropped.
+        val text = " echo hi "
+        assertArrayEquals(text.toByteArray(Charsets.UTF_8), WorkspaceLogic.utteranceInputBytes(text))
     }
 }

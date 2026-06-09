@@ -48,4 +48,16 @@ object WorkspaceLogic {
         SessionState.EXITED, SessionState.FAILED,
         SessionState.TERMINATED, SessionState.EXPIRED -> BadgeBucket.RED
     }
+
+    /**
+     * The blank-skip + UTF-8 encode decision for a speech utterance routed to the
+     * terminal, extracted so the `WorkspaceViewModel.sendInput(String)` overload's
+     * load-bearing behaviour is unit-testable without a `SessionCoordinator` or a
+     * coroutine `viewModelScope`. Returns the bytes to send, or `null` when the
+     * text is blank/whitespace-only (emit nothing — mirrors the
+     * `onUtteranceReady → if text.isNotBlank → sendInput` wiring + the iOS
+     * `if let text, !text.isEmpty` guard in `MicButton.swift`).
+     */
+    fun utteranceInputBytes(text: String): ByteArray? =
+        if (text.isBlank()) null else text.toByteArray(Charsets.UTF_8)
 }

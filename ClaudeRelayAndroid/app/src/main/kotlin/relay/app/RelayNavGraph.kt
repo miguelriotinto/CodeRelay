@@ -106,6 +106,7 @@ fun RelayNavGraph(
     // Tears down the current session (cancel recovery, disconnect, cancel scope).
     suspend fun teardownActive() {
         activeSession?.let { session ->
+            session.speech.stop()
             session.coordinator.tearDown()
             session.scope.cancel()
         }
@@ -123,7 +124,7 @@ fun RelayNavGraph(
                 context = context,
                 config = config,
                 token = token,
-                theme = settings.sessionNamingTheme.value,
+                settings = settings,
             )
             session.coordinator.connect()
             activeSession = session
@@ -162,7 +163,11 @@ fun RelayNavGraph(
             SplashScreen(
                 appVersion = appVersion,
                 onComplete = {
-                    // M3: preload speech models here (no-op until M3).
+                    // Best-effort, non-blocking speech-model preload/check (M3 Task 11).
+                    // Re-derives model-readiness from disk so a download finished on a
+                    // previous launch is reflected; does NOT trigger a download (that is
+                    // user-gated behind the mic button's prompt — iOS preload parity).
+                    scope.launch { runCatching { preloadSpeechModels(context) } }
                     navController.navigate(Routes.SERVERS) {
                         popUpTo(Routes.SPLASH) { inclusive = true }
                     }
@@ -316,6 +321,7 @@ private fun WorkspaceRoute(
         onDisconnect = onDisconnect,
         onAttach = { showScanner = true },
         onShareQr = { id -> shareSessionId = id },
+        micButton = { session.speech.MicButtonSlot(session.workspaceViewModel) },
         modifier = Modifier.fillMaxSize(),
     )
 
@@ -360,3 +366,16 @@ private fun SettingsRoute(
 /** Loads the saved token for [connectionId] from the secure store, or null. */
 private fun loadTokenFor(context: android.content.Context, connectionId: UUID): String? =
     relay.storage.TokenStore(context.applicationContext).loadToken(connectionId)
+
+/**
+ * Best-effort splash-time speech-model preload/check (M3 Task 11). Runs on
+ * [kotlinx.coroutines.Dispatchers.IO] (filesystem stat). Constructs a transient
+ * app-rooted [relay.speech.SpeechModelStore] and refreshes its readiness flags
+ * from disk. It is fine if models aren't downloaded yet — this just checks. The
+ * per-connection [SpeechSession] owns the real engines + (user-gated) download.
+ */
+private suspend fun preloadSpeechModels(context: android.content.Context) {
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        relay.speech.SpeechModelStore.create(context.applicationContext).refreshFromDisk()
+    }
+}

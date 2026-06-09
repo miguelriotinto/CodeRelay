@@ -11,6 +11,14 @@ security-crypto = "1.1.0-alpha06"
 junit5 = "5.11.3"
 turbine = "1.2.0"
 mockk = "1.13.13"
+
+# ONNX Runtime Mobile — the AAR backing the GATED M3-E Silero VAD + Smart-Turn
+# detectors. Plain Maven AAR (no CMake/NDK native build). The detectors compile
+# against this API now; they only run once ml/validate_parity.py converts the
+# CoreML source models to ONNX and M4's parity gate passes. 1.20.0 is the chosen
+# stable release (1.22.0 is latest; 1.20.0 has a mature mobile API and resolves
+# cleanly on Maven Central).
+onnxruntime = "1.20.0"
 androidx-test-ext-junit = "1.2.1"
 androidx-test-runner = "1.6.2"
 androidx-activity-compose = "1.9.3"
@@ -39,6 +47,10 @@ junit5-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+
+# ONNX Runtime Mobile (Android AAR) — backs the gated Silero VAD + Smart-Turn
+# ONNX detectors (M3-E). See the [versions] note for the gating rationale.
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 

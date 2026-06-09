@@ -43,6 +43,10 @@ dependencies {
     api(project(":core-protocol"))
     implementation(project(":core-storage"))
 
+    // :speech — currentSpeechOptions() returns a SpeechProcessingOptions snapshot
+    // for the PTT / continuous engines, so the type is part of this module's API.
+    api(project(":speech"))
+
     // DataStore backs the 14 typed settings keys.
     implementation(libs.datastore.preferences)
 

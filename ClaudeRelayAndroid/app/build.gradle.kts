@@ -61,6 +61,12 @@ dependencies {
     implementation(project(":feature-workspace"))
     implementation(project(":feature-settings"))
 
+    // :speech — the SpeechModelStore (splash preload), the ContinuousListeningEngine
+    // (foreground service), and the SpeechProcessingOptions snapshot. This is the
+    // module that finally packages the ONNX Runtime native libs into the APK (the
+    // M3-E concern): :app → :speech → onnxruntime-android AAR → libonnxruntime*.so.
+    implementation(project(":speech"))
+
     implementation(libs.kotlinx.coroutines.android)
 
     // core-net keeps okhttp `implementation` (not exposed transitively), but

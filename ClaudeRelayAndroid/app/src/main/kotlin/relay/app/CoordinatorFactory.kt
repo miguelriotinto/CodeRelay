@@ -5,6 +5,7 @@ import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import relay.feature.settings.AppSettings
 import relay.feature.workspace.WorkspaceViewModel
 import relay.net.RelayConnection
 import relay.protocol.ConnectionConfig
@@ -60,18 +61,20 @@ class ConnectionSession private constructor(
     val coordinator: SessionCoordinator,
     val workspaceViewModel: WorkspaceViewModel,
     val scope: CoroutineScope,
+    /** Speech engines + model store bound to this connection's scope (Task 11). */
+    val speech: SpeechSession,
 ) {
     companion object {
         /**
-         * Constructs the coordinator + workspace VM for [config] using [token].
-         * [theme] auto-names new sessions (the host passes the persisted
-         * `AppSettings.sessionNamingTheme`).
+         * Constructs the coordinator + workspace VM + [SpeechSession] for [config]
+         * using [token]. [settings] supplies the naming [theme] and the speech
+         * options snapshot for the engines.
          */
         fun create(
             context: Context,
             config: ConnectionConfig,
             token: String,
-            theme: SessionNamingTheme,
+            settings: AppSettings,
         ): ConnectionSession {
             val appContext = context.applicationContext
             // Serial confined scope — the @MainActor analog.
@@ -88,7 +91,7 @@ class ConnectionSession private constructor(
                 token = token,
                 ownershipStore = ownership,
                 config = config,
-                theme = theme,
+                theme = settings.sessionNamingTheme.value,
                 nowMs = nowMs,
             )
 
@@ -99,7 +102,9 @@ class ConnectionSession private constructor(
                 nowMs = nowMs,
             )
 
-            return ConnectionSession(coordinator, workspaceViewModel, scope)
+            val speech = SpeechSession.create(appContext, scope, settings)
+
+            return ConnectionSession(coordinator, workspaceViewModel, scope, speech)
         }
     }
 }

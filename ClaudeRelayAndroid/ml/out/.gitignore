@@ -1,0 +1,4 @@
+# Converted ONNX models + parity reports are per-machine build artifacts (M4),
+# not checked in. Keep this directory tracked but ignore its generated contents.
+*
+!.gitignore

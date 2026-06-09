@@ -17,6 +17,19 @@
          (non-dangerous) permission, no runtime request needed. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- On-device speech (M3 Task 10). RECORD_AUDIO is the dangerous runtime
+         permission for mic capture; POST_NOTIFICATIONS (API 33+) is required for the
+         continuous-listening foreground-service notification. FOREGROUND_SERVICE +
+         FOREGROUND_SERVICE_MICROPHONE back the always-on listening service — the
+         documented Android divergence from iOS's foreground-only model. Runtime
+         grants for RECORD_AUDIO + POST_NOTIFICATIONS are requested via
+         ActivityResultContracts (device-deferred). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
     <application
         android:name="relay.app.RelayApplication"
         android:allowBackup="true"
@@ -45,6 +58,14 @@
                 <data android:scheme="clauderelay" />
             </intent-filter>
         </activity>
+
+        <!-- Continuous-listening foreground service (M3 Task 10). microphone type
+             so the OS allows mic capture while foregrounded; not exported (started
+             only from within the app via Context.startForegroundService). -->
+        <service
+            android:name="relay.app.ContinuousListeningService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
     </application>
 
 </manifest>
