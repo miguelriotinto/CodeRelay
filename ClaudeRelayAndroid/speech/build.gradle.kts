@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "relay.speech"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 28

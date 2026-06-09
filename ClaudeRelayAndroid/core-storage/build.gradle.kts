@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "relay.storage"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 28

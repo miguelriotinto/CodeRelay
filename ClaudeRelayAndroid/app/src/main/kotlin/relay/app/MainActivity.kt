@@ -1,13 +1,20 @@
 package relay.app
 
 import android.content.Intent
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -75,6 +82,16 @@ class MainActivity : ComponentActivity() {
     private val _autoConnectConfig = MutableStateFlow<ConnectionConfig?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Draw edge-to-edge with TRANSPARENT system bars so the app content (a
+        // black terminal + dark chrome) fills behind the status bar (top) and
+        // navigation bar (bottom) — those areas read as black, matching the
+        // terminal, instead of the OS default light scrim. `dark(...)` forces
+        // LIGHT bar icons (we're always-dark; see RelayTheme), regardless of the
+        // device's system light/dark setting.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
 
         settings = AppSettings.create(this, appScope)
@@ -93,15 +110,24 @@ class MainActivity : ComponentActivity() {
         handleDeepLink(intent)
 
         setContent {
-            RelayNavGraph(
-                settings = settings,
-                connectivity = networkObserver,
-                pendingSessionId = pendingSessionId,
-                clearPendingSession = ::clearPendingSession,
-                autoConnectConfig = collectAutoConnect(),
-                appVersion = BuildConfig.VERSION_NAME,
-                buildNumber = BuildConfig.VERSION_CODE.toString(),
-            )
+            RelayTheme {
+                // Black root behind everything so the edge-to-edge status/nav-bar
+                // insets paint black (the terminal color), not a stray light gap.
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    RelayNavGraph(
+                        settings = settings,
+                        connectivity = networkObserver,
+                        pendingSessionId = pendingSessionId,
+                        clearPendingSession = ::clearPendingSession,
+                        autoConnectConfig = collectAutoConnect(),
+                        appVersion = BuildConfig.VERSION_NAME,
+                        buildNumber = BuildConfig.VERSION_CODE.toString(),
+                    )
+                }
+            }
         }
     }
 

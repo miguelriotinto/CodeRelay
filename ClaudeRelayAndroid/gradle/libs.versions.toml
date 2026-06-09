@@ -1,10 +1,19 @@
 [versions]
-agp = "8.5.2"
-kotlin = "2.0.21"
-coroutines = "1.9.0"
-serialization = "1.7.3"
+# AGP 8.13.2: required floor for ConnectBot termlib, whose transitive
+# androidx.core(-ktx) 1.18.0 embeds a "requires AGP 8.9.1+ / compileSdk 36"
+# constraint that AGP enforces at configuration time. 8.13.2 clears that floor
+# with margin AND bundles a Kotlin-2.3-aware R8 + Lint, so the former standalone
+# `com.android.tools:r8` buildscript pin and the `android.experimental.lint.version`
+# override (both AGP-8.7.3 era workarounds for Kotlin 2.3.21) are now REMOVED.
+# Pairs with Gradle wrapper 8.14.3 (AGP 8.13 requires Gradle >= 8.13) and
+# compileSdk 36 (platform android-36 + build-tools 36.0.0). targetSdk stays 34,
+# minSdk 28 — no runtime behavior change.
+agp = "8.13.2"
+kotlin = "2.3.21"
+coroutines = "1.11.0"
+serialization = "1.11.0"
 okhttp = "4.12.0"
-compose-bom = "2024.10.00"
+compose-bom = "2026.05.01"
 hilt = "2.52"
 datastore = "1.1.1"
 security-crypto = "1.1.0-alpha06"
@@ -19,6 +28,15 @@ mockk = "1.13.13"
 # stable release (1.22.0 is latest; 1.20.0 has a mature mobile API and resolves
 # cleanly on Maven Central).
 onnxruntime = "1.20.0"
+
+# ConnectBot termlib — a real VT100/xterm terminal emulator (libvterm via JNI) +
+# a Jetpack Compose renderer. Replaces the M2 text-fallback engine that rendered
+# raw ANSI control codes as glyphs. 0.1.0 is the latest Maven Central release and
+# its published floor is Kotlin stdlib 2.3.21 + Compose BOM 2026.05.01 — both
+# matched EXACTLY by our stack, so it resolves cleanly. Ships libjni_cb_term.so
+# for arm64-v8a / armeabi-v7a / x86 / x86_64; Apache-2.0.
+termlib = "0.1.0"
+
 androidx-test-ext-junit = "1.2.1"
 androidx-test-runner = "1.6.2"
 androidx-activity-compose = "1.9.3"
@@ -51,6 +69,10 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 # ONNX Runtime Mobile (Android AAR) — backs the gated Silero VAD + Smart-Turn
 # ONNX detectors (M3-E). See the [versions] note for the gating rationale.
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
+
+# ConnectBot termlib — real VT100/xterm emulator + Compose renderer (see [versions]).
+termlib = { module = "org.connectbot:termlib", version.ref = "termlib" }
+
 androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 

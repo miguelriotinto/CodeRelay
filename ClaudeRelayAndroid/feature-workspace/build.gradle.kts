@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "relay.feature.workspace"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 28
@@ -50,6 +50,14 @@ dependencies {
     // download progress, and routes onUtteranceReady → terminal input. The engines
     // themselves are constructed by :app and handed down to WorkspaceScreen.
     implementation(project(":speech"))
+
+    // ConnectBot termlib — the real VT100/xterm emulator (libvterm/JNI) + its
+    // Compose renderer. TerminalHost renders termlib's `Terminal` composable
+    // backed by a `TerminalEmulator`; TermlibTerminalEngine adapts that emulator
+    // to the :terminal `TerminalEngine` seam (feedOutput→writeInput,
+    // onKeyboardInput→onInput, onResize→reported dims). Replaces the
+    // text-fallback engine.
+    implementation(libs.termlib)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.foundation)

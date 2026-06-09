@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "relay.feature.settings"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 28

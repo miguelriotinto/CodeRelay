@@ -39,10 +39,11 @@ import kotlinx.coroutines.launch
 import relay.feature.servers.ServersScreen
 import relay.feature.servers.ServersViewModel
 import relay.feature.settings.AppSettings
-import relay.feature.workspace.QrScannerScreen
 import relay.feature.workspace.QrShareSheet
 import relay.feature.workspace.WorkspaceScreen
+import relay.feature.workspace.ui.AttachSessionSheet
 import relay.protocol.ConnectionConfig
+import relay.protocol.SessionInfo
 import relay.session.NetworkObserver
 import java.util.UUID
 
@@ -314,15 +315,29 @@ private fun WorkspaceRoute(
         clearPendingSession()
     }
 
-    // QR share / scan sheet state.
+    // QR share sheet state.
     var shareSessionId by remember { mutableStateOf<UUID?>(null) }
-    var showScanner by remember { mutableStateOf(false) }
+    // Attach modal: null = closed; non-null = the fetched attachable-session list
+    // to show (iOS `showAttachSheet` + `attachableSessions`). A fetch runs on
+    // tap-Attach before presenting, so the list is populated when the sheet opens.
+    var attachableSessions by remember { mutableStateOf<List<SessionInfo>?>(null) }
+    var loadingAttachable by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     WorkspaceScreen(
         vm = session.workspaceViewModel,
         onDisconnect = onDisconnect,
-        onAttach = { showScanner = true },
+        onAttach = {
+            // iOS: fetch attachable sessions, THEN present the sheet. Gate on
+            // loadingAttachable so a double tap doesn't fire two fetches.
+            if (!loadingAttachable) {
+                loadingAttachable = true
+                scope.launch {
+                    attachableSessions = coordinator.fetchAttachableSessions()
+                    loadingAttachable = false
+                }
+            }
+        },
         onShareQr = { id -> shareSessionId = id },
         micButton = { session.speech.MicButtonSlot(session.workspaceViewModel) },
         hapticsEnabled = hapticsEnabled,
@@ -337,14 +352,19 @@ private fun WorkspaceRoute(
         )
     }
 
-    if (showScanner) {
-        QrScannerScreen(
-            onSessionScanned = { id ->
-                showScanner = false
+    attachableSessions?.let { list ->
+        AttachSessionSheet(
+            sessions = list,
+            nameFor = { id -> coordinator.name(id) },
+            onAttachSession = { id, name ->
+                attachableSessions = null
+                scope.launch { coordinator.attachRemoteSession(id, name) }
+            },
+            onScannedSession = { id ->
+                attachableSessions = null
                 scope.launch { coordinator.attachRemoteSession(id) }
             },
-            onCancel = { showScanner = false },
-            modifier = Modifier.fillMaxSize(),
+            onDismiss = { attachableSessions = null },
         )
     }
 }
