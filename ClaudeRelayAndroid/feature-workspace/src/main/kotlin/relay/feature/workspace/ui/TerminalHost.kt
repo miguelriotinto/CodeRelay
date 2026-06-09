@@ -82,7 +82,16 @@ fun TerminalHost(
     }
 
     DisposableEffect(controller) {
-        onDispose { controller.detach() }
+        onDispose {
+            controller.detach()
+            // Null the slot so a resize that termlib already posted to the main
+            // looper for THIS engine can't land after dispose and drive a
+            // detached controller's reportSize (which would push this session's
+            // stale grid into whatever session is active next). The engine's
+            // onResize reads `reportSizeHolder[0]?.invoke(...)`, so a null slot
+            // makes the late callback a no-op. Belt-and-suspenders with detach().
+            reportSizeHolder[0] = null
+        }
     }
 
     // The real VT grid. termlib owns sizing (auto-fits cols×rows to the available

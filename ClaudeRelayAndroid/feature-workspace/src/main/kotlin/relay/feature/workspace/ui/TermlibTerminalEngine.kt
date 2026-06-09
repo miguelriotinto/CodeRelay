@@ -49,6 +49,13 @@ import relay.terminal.TerminalPalette
  * scrollback — always fires, even on a screen that happened to measure exactly
  * 80×24.
  *
+ * Why 1×1 and not 0×0: the host renders the `Terminal` composable at `fillMaxSize`,
+ * so its first non-zero layout is always hundreds of character cells wide/tall —
+ * a measured **character grid** of exactly 1×1 cannot occur (it would require the
+ * font to be as large as the whole pane). 1×1 is therefore safely distinct from
+ * every real layout while staying a valid positive grid libvterm accepts at init
+ * (0×0 / negative dims risk a native assert).
+ *
  * ## Palette
  *
  * The canonical 16-color [TerminalPalette] + default fg/bg are installed once via

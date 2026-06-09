@@ -99,8 +99,14 @@ class WorkspaceViewModel(
      * `reportSize` guard).
      */
     fun sendResize(cols: Int, rows: Int) {
-        if (coordinator.sendsSuppressed || cols <= 0 || rows <= 0) return
+        if (cols <= 0 || rows <= 0) return
         viewModelScope.launch {
+            // Re-check suppression INSIDE the coroutine (not before launch): the UI
+            // and the recovery controller both run on Main, so a resize enqueued
+            // while sendsSuppressed was false could otherwise dispatch after
+            // recovery flipped it true. Checking here makes the gate atomic with
+            // the send (parity intent of iOS `guard !isSendingSuppressed`).
+            if (coordinator.sendsSuppressed) return@launch
             runCatching {
                 coordinator.connection.send(ClientMessage.Resize(cols.toUShort(), rows.toUShort()))
             }
