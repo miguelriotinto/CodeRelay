@@ -202,6 +202,7 @@ fun RelayNavGraph(
             } else {
                 WorkspaceRoute(
                     session = session,
+                    settings = settings,
                     connectivity = connectivity,
                     pendingSessionId = pendingSessionId,
                     clearPendingSession = clearPendingSession,
@@ -284,12 +285,14 @@ private fun ServersRoute(
 @Composable
 private fun WorkspaceRoute(
     session: ConnectionSession,
+    settings: AppSettings,
     connectivity: NetworkObserver,
     pendingSessionId: StateFlow<UUID?>,
     clearPendingSession: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     val coordinator = session.coordinator
+    val hapticsEnabled by settings.hapticFeedbackEnabled.collectAsStateWithLifecycle()
 
     // ON_RESUME → handleForegroundTransition (the scenePhase == .active analog).
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
@@ -322,6 +325,7 @@ private fun WorkspaceRoute(
         onAttach = { showScanner = true },
         onShareQr = { id -> shareSessionId = id },
         micButton = { session.speech.MicButtonSlot(session.workspaceViewModel) },
+        hapticsEnabled = hapticsEnabled,
         modifier = Modifier.fillMaxSize(),
     )
 

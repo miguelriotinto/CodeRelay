@@ -113,10 +113,17 @@ fun WorkspaceScreen(
      * before the engines are wired).
      */
     micButton: @Composable () -> Unit = {},
+    /**
+     * `AppSettings.hapticFeedbackEnabled` — gates the `.light`-impact tap haptics
+     * the iOS status bar / session tabs / key bar fire (`ActiveTerminalView.swift`
+     * + `KeyboardAccessory.swift`). Defaults to false so previews stay silent.
+     */
+    hapticsEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val coordinator = vm.coordinator
     val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics(hapticsEnabled)
 
     // The tab bar and sidebar render the FILTERED + SORTED active-session list
     // (non-terminal sessions this device owns, sorted by createdAt), matching the
@@ -182,13 +189,16 @@ fun WorkspaceScreen(
                 uptimeSeconds = uptimeSeconds,
                 showKeyBar = showKeyBar,
                 showSidebarToggle = !twoPane,
-                onToggleSidebar = onToggleSidebar,
-                onToggleKeyBar = { showKeyBar = !showKeyBar },
-                onDisconnect = onDisconnect,
-                onSelectTab = { id -> scope.launch { coordinator.switchToSession(id) } },
+                // Each of these fires the iOS `.light` impact haptic (ActiveTerminalView's
+                // ToolbarIconButton / keyboard toggle / tab button) before its action.
+                onToggleSidebar = { haptics.lightTap(); onToggleSidebar() },
+                onToggleKeyBar = { haptics.lightTap(); showKeyBar = !showKeyBar },
+                onDisconnect = { haptics.lightTap(); onDisconnect() },
+                onSelectTab = { id -> haptics.lightTap(); scope.launch { coordinator.switchToSession(id) } },
                 onInput = { bytes -> vm.sendInput(bytes) },
-                onShareQr = onShareQr,
+                onShareQr = { id -> haptics.lightTap(); onShareQr(id) },
                 onNameLongPress = { renameActive = true },
+                onKeyHaptic = { haptics.lightTap() },
                 nameFor = ::nameFor,
                 micButton = micButton,
             )
@@ -302,6 +312,7 @@ private fun TerminalColumn(
     onInput: (ByteArray) -> Unit,
     onShareQr: (UUID) -> Unit,
     onNameLongPress: () -> Unit,
+    onKeyHaptic: () -> Unit,
     nameFor: (UUID) -> String,
     micButton: @Composable () -> Unit,
 ) {
@@ -406,7 +417,12 @@ private fun TerminalColumn(
         }
 
         if (showKeyBar && activeSessionId != null) {
-            KeyboardAccessory(onKey = onInput)
+            // Every special-key press fires the iOS `.light` impact haptic
+            // (KeyboardAccessory.swift's `haptic()`), routed through the gated
+            // helper via onKeyHaptic before the bytes are sent.
+            KeyboardAccessory(
+                onKey = { bytes -> onKeyHaptic(); onInput(bytes) },
+            )
         }
     }
 }
