@@ -9,11 +9,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -321,7 +324,12 @@ private fun TerminalColumn(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            // Black fills edge-to-edge (incl. behind the status/nav bars), then
+            // safeDrawing insets push the actual content — top toolbar, terminal,
+            // key bar — into the safe area so the OS clock/home-indicator don't
+            // overlap them. The bars themselves read as black (the terminal color).
+            .background(Color.Black)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
         // Status bar (top of the terminal column).
         Row(
