@@ -28,16 +28,18 @@ class SpeechPostProcessorTest {
         }
     }
 
-    /** Mock enhancer: records calls/last-token, returns [resultToReturn] or throws [errorToThrow]. */
+    /** Mock enhancer: records calls/last-token/last-region, returns [resultToReturn] or throws [errorToThrow]. */
     private class MockEnhancer {
         var resultToReturn: String = "enhanced-default"
         var errorToThrow: Throwable? = null
         var callCount: Int = 0
         var lastToken: String? = null
+        var lastRegion: String? = null
 
         suspend fun enhance(text: String, bearerToken: String, region: String): String {
             callCount++
             lastToken = bearerToken
+            lastRegion = region
             errorToThrow?.let { throw it }
             return resultToReturn
         }
@@ -120,12 +122,17 @@ class SpeechPostProcessorTest {
             smartCleanupEnabled = true,
             promptEnhancementEnabled = true,
             bedrockBearerToken = "token",
+            // Non-default region — the AWS Bedrock endpoint construction depends on
+            // it, so assert it reaches enhance() (SpeechPostProcessor.kt:44 passes
+            // `options.bedrockRegion` through).
+            bedrockRegion = "eu-west-1",
         )
         val result = makeProcessor(cleaner, enhancer).process("hello world", opts)
         assertEquals(ProcessedText.Enhanced("enhanced"), result)
         assertEquals(0, cleaner.callCount)
         assertEquals(1, enhancer.callCount)
         assertEquals("token", enhancer.lastToken)
+        assertEquals("eu-west-1", enhancer.lastRegion)
     }
 
     @Test

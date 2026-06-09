@@ -57,6 +57,14 @@ import java.io.IOException
  *
  * Not thread-safe by design beyond the [StateFlow]s — call [downloadAllModels]
  * from a single scope (the app does so from a best-effort background task).
+ *
+ * M4 follow-up: concurrent [downloadAllModels] calls are not serialized. The UI
+ * disables the mic button once [downloadProgress] is non-null, closing the window,
+ * and Swift's store is likewise not thread-safe by design — left as an exact
+ * iOS-parity gap rather than diverging now.
+ * M4 follow-up: no pre-flight disk-space check is performed before download.
+ * [ModelStoreError.InsufficientDiskSpace] is declared (Swift declares it too) but
+ * never thrown — identical gap vs `SpeechModelStore.swift`; do not diverge now.
  */
 class SpeechModelStore(
     private val filesDir: File,
@@ -118,45 +126,61 @@ class SpeechModelStore(
         modelsDirectory.mkdirs()
         _downloadProgress.value = 0.0
 
-        // Phase 1: Whisper ggml small.en (mandatory).
-        if (!_whisperReady.value) {
-            downloadResumable(
-                url = whisperModelUrl,
-                destination = whisperModelPath,
-                onFraction = { f ->
-                    whisperFraction = f
-                    publishCombined()
-                },
-            )
-        }
-        whisperFraction = 1.0
-        _whisperReady.value = true
-        publishCombined()
-
-        // Phase 2: Qwen GGUF (optional — cloud-only fallback on failure).
-        if (!_llmDownloaded.value) {
-            try {
+        // Reset the progress ring on ANY exit — success OR a Whisper throw — so the
+        // UI ring never freezes at a partial value when the (mandatory) Whisper
+        // download fails. Swift only clears `downloadProgress = nil` on its success
+        // path (`SpeechModelStore.swift:96`) and relies on every caller using
+        // `try?`/`catch` to swallow the throw (`ClaudeRelayApp.swift:61`,
+        // `OnDeviceSpeechEngine.swift:99-106`); on Android the launch site is
+        // unguarded, so the store itself guarantees the reset here, then rethrows
+        // for the caller's `try?`-equivalent swallow.
+        try {
+            // Phase 1: Whisper ggml small.en (mandatory).
+            if (!_whisperReady.value) {
                 downloadResumable(
-                    url = llmModelUrl,
-                    destination = llmModelPath,
+                    url = whisperModelUrl,
+                    destination = whisperModelPath,
                     onFraction = { f ->
-                        llmFraction = f
+                        whisperFraction = f
                         publishCombined()
                     },
                 )
-                llmFraction = 1.0
-                _llmDownloaded.value = true
-            } catch (e: Throwable) {
-                // Cloud-only fallback: keep Whisper, surface the failure, leave
-                // llmDownloaded=false so the post-processor degrades gracefully.
-                onLlmFailure(e)
             }
-        } else {
-            llmFraction = 1.0
-        }
+            whisperFraction = 1.0
+            _whisperReady.value = true
+            publishCombined()
 
-        publishCombined()
-        _downloadProgress.value = null
+            // Phase 2: Qwen GGUF (optional — cloud-only fallback on failure).
+            if (!_llmDownloaded.value) {
+                try {
+                    downloadResumable(
+                        url = llmModelUrl,
+                        destination = llmModelPath,
+                        onFraction = { f ->
+                            llmFraction = f
+                            publishCombined()
+                        },
+                    )
+                    llmFraction = 1.0
+                    _llmDownloaded.value = true
+                } catch (e: Throwable) {
+                    // Cloud-only fallback: keep Whisper, surface the failure, leave
+                    // llmDownloaded=false so the post-processor degrades gracefully.
+                    // Qwen failure must NOT abort the Whisper-ready state above.
+                    onLlmFailure(e)
+                }
+            } else {
+                llmFraction = 1.0
+            }
+
+            publishCombined()
+        } finally {
+            // ALWAYS clear the ring before propagating (success or Whisper throw).
+            // M4 follow-up: the `.part` sidecar is intentionally NOT cleaned on a
+            // Whisper failure — resume is safe HTTP Range + size-verify on the next
+            // attempt (exact iOS-parity gap; iOS leaves its temp file too).
+            _downloadProgress.value = null
+        }
     }
 
     /**

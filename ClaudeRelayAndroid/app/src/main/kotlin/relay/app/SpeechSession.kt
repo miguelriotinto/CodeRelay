@@ -2,6 +2,7 @@ package relay.app
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -11,6 +12,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import relay.feature.settings.AppSettings
 import relay.feature.workspace.MicButton
 import relay.feature.workspace.WorkspaceViewModel
+import relay.feature.workspace.shouldResumeAfterOneShot
 import relay.speech.ContinuousListeningEngine
 import relay.speech.OnDeviceSpeechEngine
 import relay.speech.SpeechEngineState
@@ -52,6 +54,15 @@ class SpeechSession private constructor(
 ) {
 
     /**
+     * Tracks whether the user explicitly tap-PAUSED continuous mode. Port of
+     * `MicButton.swift:13` `@State continuousPausedByUser`: enabling sets it false,
+     * a user tap-pause sets it true (`MicButton.swift:80-91`). A one-shot PTT then
+     * only re-enables continuous if NOT paused by the user (`MicButton.swift:97`).
+     * Mutated only from main-thread Compose callbacks, so a plain field is safe.
+     */
+    private var continuousPausedByUser = false
+
+    /**
      * Best-effort, non-blocking model preload/check for the splash hook. Re-derives
      * the model-readiness flags from disk (a previous launch may have completed a
      * download). Does NOT kick off a download — the download is user-gated behind
@@ -62,7 +73,19 @@ class SpeechSession private constructor(
 
     /** Kicks off the (device-deferred) model download. Called from the mic prompt. */
     fun startDownload() {
-        scope.launch { modelStore.downloadAllModels() }
+        scope.launch {
+            try {
+                // onLlmFailure → already handled: Qwen failure degrades to the
+                // cloud-only fallback (Whisper stays ready), so it must NOT abort.
+                modelStore.downloadAllModels(onLlmFailure = { /* cloud-only fallback */ })
+            } catch (e: Throwable) {
+                // Whisper (mandatory) failed. Match iOS's `try?` swallow at every
+                // call site (`ClaudeRelayApp.swift:61` `try? await downloadAllModels()`,
+                // `OnDeviceSpeechEngine.swift:99-106` `do {...} catch { state = .error }`):
+                // never let a network/disk failure crash this coroutine. The store's
+                // `finally` has already cleared the progress ring before rethrowing.
+            }
+        }
     }
 
     /**
@@ -73,6 +96,9 @@ class SpeechSession private constructor(
     @Composable
     fun MicButtonSlot(vm: WorkspaceViewModel) {
         val continuousEnabled by settings.continuousListeningEnabled.collectAsStateWithLifecycle()
+        val smartCleanup by settings.smartCleanupEnabled.collectAsStateWithLifecycle()
+        val promptEnhancement by settings.promptEnhancementEnabled.collectAsStateWithLifecycle()
+        val wakeWord by settings.wakeWord.collectAsStateWithLifecycle()
         val composeScope = rememberCoroutineScope()
 
         // Continuous engine delivers cleaned utterances here (also routed through
@@ -81,6 +107,25 @@ class SpeechSession private constructor(
             continuousEngine.onUtteranceReady = { text -> vm.sendInput(text) }
             ContinuousListeningService.Bridge.onUtterance = { text -> vm.sendInput(text) }
             true
+        }
+
+        // Re-push settings to BOTH the in-process engine and the live
+        // service-hosted engine whenever any speech option changes — mirrors iOS's
+        // `ActiveTerminalView.swift:196-229` `.task(id: optionsHash)`, where
+        // optionsHash folds in continuousListeningEnabled / smartCleanupEnabled /
+        // promptEnhancementEnabled / wakeWord and re-invokes
+        // `continuousEngine.updateOptions(...)` on every change. Without this the
+        // SERVICE engine — constructed once behind `if (engine == null)` — never
+        // learns about a wake-word/cleanup/enhancement change.
+        LaunchedEffect(continuousEnabled, smartCleanup, promptEnhancement, wakeWord) {
+            // continuousEnabled flipping false→true is a fresh enable by the user
+            // → clear the user-pause flag (Swift sets it false on enable,
+            // MicButton.swift:82). A later disable re-sets it via handleContinuousTap.
+            if (continuousEnabled) continuousPausedByUser = false
+
+            val opts = settings.currentSpeechOptions()
+            continuousEngine.updateOptions(opts)
+            ContinuousListeningService.updateOptions(opts)
         }
 
         MicButton(
@@ -118,11 +163,16 @@ class SpeechSession private constructor(
     private fun handleContinuousTap() {
         continuousEngine.updateOptions(settings.currentSpeechOptions())
         if (continuousEngine.state.value == relay.speech.ContinuousListeningState.Idle) {
+            // User-enabled → clear the pause flag (MicButton.swift:82).
+            continuousPausedByUser = false
             SpeechPermissions.request()
             ContinuousListeningService.Bridge.options = settings.currentSpeechOptions()
             ContinuousListeningService.start(appContext)
             continuousEngine.enable()
         } else {
+            // User tap-paused → set the flag so a one-shot PTT does NOT resume it
+            // (MicButton.swift:85).
+            continuousPausedByUser = true
             continuousEngine.disable()
             ContinuousListeningService.stop(appContext)
         }
@@ -136,7 +186,12 @@ class SpeechSession private constructor(
             kotlinx.coroutines.delay(2_000)
             val text = pttEngine.stopAndProcess(settings.currentSpeechOptions())
             if (text != null) vm.sendInput(text)
-            if (settings.continuousListeningEnabled.value) continuousEngine.enable()
+            // Only resume continuous if it's enabled AND the user did NOT tap-pause
+            // it — exact port of MicButton.swift:97
+            // `if settings.continuousListeningEnabled && !continuousPausedByUser`.
+            if (shouldResumeAfterOneShot(settings.continuousListeningEnabled.value, continuousPausedByUser)) {
+                continuousEngine.enable()
+            }
         }
     }
 

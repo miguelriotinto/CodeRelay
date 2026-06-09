@@ -55,6 +55,10 @@ class ContinuousListeningService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var engine: ContinuousListeningEngine? = null
 
+    init {
+        instance = this
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -76,6 +80,7 @@ class ContinuousListeningService : Service() {
     override fun onDestroy() {
         engine?.disable()
         engine = null
+        if (instance === this) instance = null
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -128,6 +133,30 @@ class ContinuousListeningService : Service() {
     companion object {
         private const val CHANNEL_ID = "continuous_listening"
         private const val NOTIFICATION_ID = 0x5EEC // arbitrary stable id
+
+        /**
+         * The live service instance, set in `init` and cleared in [onDestroy].
+         * Used by [updateOptions] to push a settings change to the already-running
+         * engine without restarting the service. `@Volatile` because the service
+         * lifecycle and the workspace caller may be on different dispatchers.
+         */
+        @Volatile
+        private var instance: ContinuousListeningService? = null
+
+        /**
+         * Pushes a settings change (wake word / cleanup / enhancement) to the
+         * already-running service-hosted engine, mirroring iOS's re-push on
+         * `optionsHash` change (`ActiveTerminalView.swift:196-229`,
+         * `.task(id: optionsHash)` → `continuousEngine.updateOptions(...)`). Updates
+         * the [Bridge.options] snapshot so a fresh service start still sees it, and
+         * invokes [ContinuousListeningEngine.updateOptions] on the live engine if
+         * one exists (which rebuilds the wake-word session on a wake-word change).
+         * No-op when the service is not running.
+         */
+        fun updateOptions(opts: SpeechProcessingOptions) {
+            Bridge.options = opts
+            instance?.engine?.updateOptions(opts)
+        }
 
         /** Foregrounds the service (continuous mode on + workspace foreground). */
         fun start(context: Context) {

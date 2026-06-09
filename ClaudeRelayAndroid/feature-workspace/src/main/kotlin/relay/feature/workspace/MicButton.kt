@@ -240,3 +240,13 @@ internal fun isButtonDisabled(ptt: SpeechEngineState, downloadProgress: Double?)
         SpeechEngineState.Cleaning -> true
         else -> downloadProgress != null
     }
+
+/**
+ * Whether continuous listening should be re-enabled after a one-shot PTT capture.
+ * Mirrors `MicButton.swift:97` (`beginTemporaryPTT`):
+ * `if settings.continuousListeningEnabled && !continuousPausedByUser`. A user who
+ * tap-paused continuous mode ([pausedByUser] == true) must NOT have it silently
+ * resumed by a long-press one-shot.
+ */
+fun shouldResumeAfterOneShot(continuousEnabled: Boolean, pausedByUser: Boolean): Boolean =
+    continuousEnabled && !pausedByUser

@@ -175,4 +175,24 @@ class MicButtonStateTest {
         assertFalse(isButtonDisabled(SpeechEngineState.Idle, null))
         assertFalse(isButtonDisabled(SpeechEngineState.Recording, null))
     }
+
+    // MARK: - One-shot PTT resume decision (MicButton.swift:97 parity)
+
+    @Test
+    fun `one-shot resumes continuous when enabled and not user-paused`() {
+        assertTrue(shouldResumeAfterOneShot(continuousEnabled = true, pausedByUser = false))
+    }
+
+    @Test
+    fun `one-shot does NOT resume when user tap-paused continuous`() {
+        // User enabled continuous, then tap-paused it; a long-press one-shot must
+        // respect the pause and leave continuous off (MicButton.swift:85,97).
+        assertFalse(shouldResumeAfterOneShot(continuousEnabled = true, pausedByUser = true))
+    }
+
+    @Test
+    fun `one-shot does NOT resume when continuous disabled in settings`() {
+        assertFalse(shouldResumeAfterOneShot(continuousEnabled = false, pausedByUser = false))
+        assertFalse(shouldResumeAfterOneShot(continuousEnabled = false, pausedByUser = true))
+    }
 }
