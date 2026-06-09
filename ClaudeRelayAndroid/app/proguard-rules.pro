@@ -97,6 +97,26 @@
 }
 
 # ----------------------------------------------------------------------------
+# ConnectBot termlib (org.connectbot.terminal.** → libvterm via JNI)
+# ----------------------------------------------------------------------------
+# The real VT100/xterm terminal engine (:feature-workspace TerminalHost). Its
+# native lib `libjni_cb_term.so` calls BOTH directions across JNI:
+#   - TerminalNative declares the `external fun native*` methods (the generic
+#     `native <methods>` keep above already protects those), AND
+#   - the native layer invokes the TerminalCallbacks implementation
+#     (the internal TerminalEmulatorImpl) BY METHOD NAME — damage / moveCursor /
+#     onKeyboardInput / pushScrollbackLine / setTermProp / bell / etc. R8 cannot
+#     see those native→Java callbacks in the static graph, so without an explicit
+#     keep it would rename or strip them and the bridge would fail at runtime
+#     (terminal creation → UnsatisfiedLinkError / blank screen / crash). The JNI
+#     also reads back data classes by field (ScreenCell, CellRun, CursorPosition,
+#     TermRect). Keep the whole package's members. termlib also @Parcelize-s some
+#     types (kotlin-parcelize); their reflective CREATOR is covered here too.
+-keep class org.connectbot.terminal.** { *; }
+-keepclassmembers class org.connectbot.terminal.** { *; }
+-dontwarn org.connectbot.terminal.**
+
+# ----------------------------------------------------------------------------
 # OkHttp / Okio
 # ----------------------------------------------------------------------------
 # OkHttp + Okio ship consumer rules in their AARs/JARs (AGP merges them). These

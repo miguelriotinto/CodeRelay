@@ -23,7 +23,7 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "relay.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "relay.app"

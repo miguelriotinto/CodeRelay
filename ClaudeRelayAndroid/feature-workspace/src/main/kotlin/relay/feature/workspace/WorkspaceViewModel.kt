@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import relay.feature.workspace.ui.WorkspaceLogic
+import relay.protocol.ClientMessage
 import relay.protocol.ConnectionQuality
 import relay.session.SessionCoordinator
 import java.util.UUID
@@ -78,6 +79,32 @@ class WorkspaceViewModel(
     fun sendInput(text: String) {
         val bytes = WorkspaceLogic.utteranceInputBytes(text) ?: return
         sendInput(bytes)
+    }
+
+    /**
+     * Forwards the terminal's measured grid to the server PTY so its window size
+     * matches what is actually on screen. The real VT engine (the termlib
+     * `Terminal` in [relay.feature.workspace.ui.TerminalHost]) auto-fits cols×rows
+     * to the pane and reports the result through
+     * [relay.terminal.RelayTerminalController.reportSize]; the screen wires that
+     * here.
+     *
+     * Faithful port of iOS `TerminalViewModel.sendResize(cols:rows:)`
+     * (`TerminalViewModel.swift:235`): suppressed while a recovery pass is in
+     * flight (Swift `guard !isSendingSuppressed` → [SessionCoordinator.sendsSuppressed]),
+     * then sent as the envelope [ClientMessage.Resize] — NOT a raw binary frame,
+     * since resize is a control message. The server applies it to the connection's
+     * attached session, so no sessionId is carried (matching iOS + the wire
+     * protocol). Non-positive dims are dropped (parity with the controller's own
+     * `reportSize` guard).
+     */
+    fun sendResize(cols: Int, rows: Int) {
+        if (coordinator.sendsSuppressed || cols <= 0 || rows <= 0) return
+        viewModelScope.launch {
+            runCatching {
+                coordinator.connection.send(ClientMessage.Resize(cols.toUShort(), rows.toUShort()))
+            }
+        }
     }
 
     private val _connectionQuality = MutableStateFlow(ConnectionQuality.DISCONNECTED)

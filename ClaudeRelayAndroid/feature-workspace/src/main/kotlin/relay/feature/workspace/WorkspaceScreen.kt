@@ -196,6 +196,7 @@ fun WorkspaceScreen(
                 onDisconnect = { haptics.lightTap(); onDisconnect() },
                 onSelectTab = { id -> haptics.lightTap(); scope.launch { coordinator.switchToSession(id) } },
                 onInput = { bytes -> vm.sendInput(bytes) },
+                onResize = { cols, rows -> vm.sendResize(cols, rows) },
                 onShareQr = { id -> haptics.lightTap(); onShareQr(id) },
                 onNameLongPress = { renameActive = true },
                 onKeyHaptic = { haptics.lightTap() },
@@ -310,6 +311,7 @@ private fun TerminalColumn(
     onDisconnect: () -> Unit,
     onSelectTab: (UUID) -> Unit,
     onInput: (ByteArray) -> Unit,
+    onResize: (cols: Int, rows: Int) -> Unit,
     onShareQr: (UUID) -> Unit,
     onNameLongPress: () -> Unit,
     onKeyHaptic: () -> Unit,
@@ -404,6 +406,7 @@ private fun TerminalColumn(
                 TerminalHost(
                     vm = activeVm,
                     onInput = onInput,
+                    onResize = onResize,
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
