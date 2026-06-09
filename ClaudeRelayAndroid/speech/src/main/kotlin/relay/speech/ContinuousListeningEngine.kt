@@ -410,10 +410,14 @@ class ContinuousListeningEngine(
         /**
          * Factory: wires the best-available **M3** detectors. For this milestone
          * that is the energy-based [VoiceActivityDetector] and the
-         * [HeuristicTurnEndDetector]. The Silero VAD and Smart-Turn ONNX detectors
-         * are gated to M3-E and substitute in here once their consuming code lands
-         * (mirroring how the Swift `makeDefault` prefers `SileroVoiceActivityDetector`
-         * / `SmartTurnTurnEndDetector` when bundled).
+         * [HeuristicTurnEndDetector].
+         *
+         * GATED to M4 — the ONNX detectors [relay.speech.vad.SileroVoiceActivityDetector]
+         * and [relay.speech.turnend.SmartTurnTurnEndDetector] are BUILT (M3-E) but
+         * deliberately NOT wired in here. They substitute in only after
+         * `ml/validate_parity.py` converts the CoreML source models to ONNX and the M4
+         * parity gate passes (mirroring how the Swift `makeDefault` prefers
+         * `SileroVoiceActivityDetector` / `SmartTurnTurnEndDetector` when bundled).
          *
          * The transcriber + post-processor are the device-deferred whisper.cpp /
          * llama.cpp paths via their interface adapters; the real microphone

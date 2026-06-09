@@ -28,8 +28,9 @@ android {
     // installed in this environment (NDK 27 is present, but neither the SDK
     // cmake nor a system cmake), so a whisper.cpp/llama.cpp native build would
     // fail with "CMake not found". The JNI native builds are a later, deferred
-    // task (M3-C). ONNX Runtime Mobile and Oboe are plain AAR/Maven deps (no
-    // CMake) and will be added when their consuming code lands.
+    // task (M3-C). ONNX Runtime Mobile is a plain AAR/Maven dep (no CMake) and is
+    // now present (see dependencies) to back the gated M3-E detectors; Oboe will
+    // be added when its consuming code lands.
     testOptions {
         unitTests.all { it.useJUnitPlatform() }
     }
@@ -55,6 +56,14 @@ dependencies {
     // avoids Android's unit-test `org.json` stub so the pure helpers are testable).
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
+
+    // ONNX Runtime Mobile (AAR) — backs the GATED M3-E SileroVoiceActivityDetector
+    // + SmartTurnTurnEndDetector. These detectors compile against this API now but
+    // are NOT wired into ContinuousListeningEngine.makeDefault (which keeps the
+    // energy VAD + HeuristicTurnEndDetector). M4 wires them in once
+    // ml/validate_parity.py converts the CoreML models to ONNX and the parity gate
+    // passes. Plain Maven AAR — no CMake/NDK native build required.
+    implementation(libs.onnxruntime.android)
 
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)
