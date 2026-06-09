@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import relay.feature.workspace.ui.WorkspaceLogic
 import relay.protocol.ConnectionQuality
 import relay.session.SessionCoordinator
 import java.util.UUID
@@ -60,6 +61,23 @@ class WorkspaceViewModel(
      */
     fun sendInput(bytes: ByteArray) {
         viewModelScope.launch { runCatching { sendBinary(bytes) } }
+    }
+
+    /**
+     * Text-input overload for the speech pipeline. The continuous-listening engine
+     * and the push-to-talk engine both deliver a cleaned utterance as a `String`
+     * ([relay.speech.ContinuousListeningEngine.onUtteranceReady] /
+     * `OnDeviceSpeechEngine.stopAndProcess`), so this UTF-8-encodes the text and
+     * routes it through the existing raw-binary terminal-input path — exactly the
+     * iOS `vm.sendInput(text)` seam the MicButton calls.
+     *
+     * Blank/whitespace-only text is dropped (the wiring already blank-skips, but
+     * this guards the sink directly too) so a silent utterance never sends an empty
+     * frame to the PTY.
+     */
+    fun sendInput(text: String) {
+        val bytes = WorkspaceLogic.utteranceInputBytes(text) ?: return
+        sendInput(bytes)
     }
 
     private val _connectionQuality = MutableStateFlow(ConnectionQuality.DISCONNECTED)

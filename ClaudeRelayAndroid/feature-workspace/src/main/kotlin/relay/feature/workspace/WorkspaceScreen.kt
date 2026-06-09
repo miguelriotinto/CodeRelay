@@ -105,6 +105,14 @@ fun WorkspaceScreen(
     onDisconnect: () -> Unit,
     onAttach: () -> Unit = {},
     onShareQr: (UUID) -> Unit = {},
+    /**
+     * Speech mic-button slot, placed in the terminal status row. `:app` supplies
+     * the real [MicButton] (constructing the device-deferred PTT / continuous
+     * engines + the model store) and wires `onUtteranceReady → vm.sendInput(text)`.
+     * Defaults to empty so the screen renders without speech (e.g. in previews /
+     * before the engines are wired).
+     */
+    micButton: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val coordinator = vm.coordinator
@@ -182,6 +190,7 @@ fun WorkspaceScreen(
                 onShareQr = onShareQr,
                 onNameLongPress = { renameActive = true },
                 nameFor = ::nameFor,
+                micButton = micButton,
             )
         }
 
@@ -294,6 +303,7 @@ private fun TerminalColumn(
     onShareQr: (UUID) -> Unit,
     onNameLongPress: () -> Unit,
     nameFor: (UUID) -> String,
+    micButton: @Composable () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -346,6 +356,11 @@ private fun TerminalColumn(
                     onSelect = onSelectTab,
                 )
             }
+
+            // Speech mic button — always visible so the user can enable/disable
+            // continuous listening (or start the model download) even with no
+            // active session; PTT/continuous gating is internal to the button.
+            micButton()
 
             if (activeSessionId != null) {
                 IconButton(onClick = { onShareQr(activeSessionId) }) {

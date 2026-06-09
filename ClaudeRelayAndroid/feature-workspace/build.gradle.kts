@@ -45,6 +45,12 @@ dependencies {
     implementation(project(":core-session"))
     implementation(project(":terminal"))
 
+    // :speech — the MicButton observes the PTT / continuous engine state
+    // (SpeechEngineState / ContinuousListeningState) and the SpeechModelStore
+    // download progress, and routes onUtteranceReady → terminal input. The engines
+    // themselves are constructed by :app and handed down to WorkspaceScreen.
+    implementation(project(":speech"))
+
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)

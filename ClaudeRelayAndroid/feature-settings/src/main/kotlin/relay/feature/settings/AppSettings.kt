@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import relay.protocol.SessionNamingTheme
+import relay.speech.SpeechProcessingOptions
 import relay.storage.TokenStore
 
 /**
@@ -193,6 +194,28 @@ class AppSettings(
 
     val wakeWord: StateFlow<String> = stringFlow(WAKE_WORD, "claude")
     fun setWakeWord(value: String) = put(WAKE_WORD, value)
+
+    // MARK: - Speech options snapshot
+
+    /**
+     * Captures the current speech-related settings into a [SpeechProcessingOptions]
+     * snapshot for the PTT / continuous engines. Ported from
+     * `AppSettings.swift:147-155` (`currentSpeechOptions()`): reads the latest
+     * [StateFlow.value] of each contributing setting (the secure Bedrock token
+     * included) so a mid-session change takes effect on the next utterance.
+     *
+     * `turnEndSilenceTimeout` is intentionally NOT pulled from settings — it
+     * defaults from [SpeechProcessingOptions] (8 s), matching iOS, which does not
+     * expose it as a tunable.
+     */
+    fun currentSpeechOptions(): SpeechProcessingOptions =
+        SpeechProcessingOptions(
+            smartCleanupEnabled = smartCleanupEnabled.value,
+            promptEnhancementEnabled = promptEnhancementEnabled.value,
+            bedrockBearerToken = bedrockBearerToken.value,
+            bedrockRegion = bedrockRegion.value,
+            wakeWord = wakeWord.value,
+        )
 
     // MARK: - Bedrock bearer token (secure store, debounced write)
 
