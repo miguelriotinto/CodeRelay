@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -48,6 +49,12 @@ dependencies {
     api(project(":core-protocol"))
 
     implementation(libs.kotlinx.coroutines.android)
+
+    // CloudPromptEnhancer: AWS Bedrock Converse REST call (OkHttp) + JSON
+    // request/response shaping (kotlinx-serialization, the codebase JSON standard;
+    // avoids Android's unit-test `org.json` stub so the pure helpers are testable).
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)
 
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)
