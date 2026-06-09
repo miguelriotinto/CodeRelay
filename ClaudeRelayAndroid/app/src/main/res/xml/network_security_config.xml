@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext (ws://) policy for ClaudeRelay, mirroring iOS ATS
+  (NSAllowsLocalNetworking + the in-code CleartextPolicy check).
+
+  THE AUTHORITATIVE GATE IS IN CODE, NOT HERE.
+  `relay.net.CleartextPolicy.requireAllowed(config)` runs at the connect
+  chokepoint (`RelayConnection.connect`) before any socket opens, on EVERY connect
+  path (manual tap, auto-connect, deep-link attach, status probe). It permits
+  cleartext ONLY to private-network hosts — RFC1918 (10/8, 172.16/12, 192.168/16),
+  loopback (127/8, ::1), link-local (169.254/16, fe80::/10), and `.local` mDNS —
+  and rejects public hosts, Tailscale CGNAT (100.64/10), and IPv6 ULA (fc00::/7)
+  with a CleartextPolicyException unless useTLS is set (wss://).
+
+  WHY THIS FILE STAYS PERMISSIVE AT BASE:
+  Android's network-security-config matches DOMAIN SUFFIXES, not CIDR ranges, so
+  it physically CANNOT express the RFC1918 IP allowance (10.x / 192.168.x /
+  172.16-31.x). If we set base cleartextTrafficPermitted="false", the platform
+  would block plaintext to LAN dev servers (e.g. 192.168.1.x, or 10.0.2.2 from the
+  emulator) that CleartextPolicy legitimately allows — breaking the documented M2
+  LAN dev flow. iOS sidesteps this because ATS DOES understand RFC1918 via
+  NSAllowsLocalNetworking; Android has no equivalent. So we permit cleartext at the
+  platform layer and scope it in code via CleartextPolicy. The two layers together
+  mirror iOS: platform allows local networking, code rejects everything non-private.
+
+  The explicit domain-configs below are documentation/clarity: they pin the
+  cleartext-friendly literals NSC *can* name (localhost, 10.0.2.2 emulator-to-host
+  loopback, and the .local mDNS suffix). Arbitrary RFC1918 IPs (192.168.x, other
+  10.x, 172.16-31.x) are NOT expressible by NSC and rely on the base permission +
+  the CleartextPolicy code gate.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Loopback. -->
+        <domain includeSubdomains="false">localhost</domain>
+        <!-- Android emulator's alias for the host machine's loopback. -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <!-- mDNS / Bonjour (.local). NSC matches the suffix; CleartextPolicy
+             enforces the same .local rule in code. -->
+        <domain includeSubdomains="true">local</domain>
+    </domain-config>
+</network-security-config>

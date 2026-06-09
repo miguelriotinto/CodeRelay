@@ -1,6 +1,8 @@
 # Android Relay Client — M3: On-Device Speech
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. **Depends on M2.**
+>
+> **⚠️ Read `docs/superpowers/plans/2026-06-08-android-relay-client-corrections.md` first.** M3-relevant: Qwen is `qwen35-0.8b-q4km.gguf` ≈ **0.5 GB**, not ~2.4 GB (A6, fixed below); ONNX models are **bundled, not downloaded** (A6); add **`WakeWordAudioPreprocessor`** (peakNormalize 0.95 + pad-to-3s) to Task 3 (A7); port **`ProcessedText`** sealed type + the word<2/silence-hallucination gate (A8); **`VadEvent` is 4 cases** (speechStart/speechContinue/silenceStart/silenceContinue) (B3). Confirmed-verbatim anchors (Silero `[1,576]`+`[1,128]` states, SmartTurn LogMel `[1,80,800]`/0.5/fail-to-done, Bedrock Haiku `us.anthropic.claude-haiku-4-5-20251001-v1:0`/512/0.3, energy VAD 0.015/0.008/250ms/1s, collapseRepetitions `len>20` two-tier) are in corrections §D — port verbatim.
 
 **Goal:** On-device speech input at parity with iOS: microphone capture, whisper.cpp transcription, Silero VAD, the full push-to-talk + continuous-listening (wake-word) state machine, on-device llama.cpp text cleanup, and optional Bedrock Haiku cloud enhancement. The SmartTurn/LogMel turn-end classifier conversion is built here but gated behind parity validation in **M4** (a `HeuristicTurnEndDetector` ships in M3).
 
@@ -29,9 +31,11 @@ speech/src/main/kotlin/relay/speech/
 ├── turnend/SmartTurnTurnEndDetector.kt # ONNX (built M3, ENABLED in M4 behind gate)
 ├── wakeword/WakeWordDetector.kt        # alias->Levenshtein->Metaphone (ported)
 ├── wakeword/Metaphone.kt               # phonetic algorithm (pure Kotlin)
+├── wakeword/WakeWordAudioPreprocessor.kt  # peakNormalize(0.95)+pad-to-3s before transcribe (ported)
 ├── cleanup/TextCleaner.kt              # llama.cpp JNI wrapper
 ├── cleanup/CloudPromptEnhancer.kt      # Bedrock Converse (OkHttp)
-├── cleanup/SpeechPostProcessor.kt      # enhance -> clean -> passthrough (ported)
+├── cleanup/SpeechPostProcessor.kt      # gate -> enhance -> clean -> passthrough; returns ProcessedText
+├── ProcessedText.kt                    # sealed result (Passthrough/Enhanced/Cleaned/Refused/Empty)
 ├── ContinuousListeningState.kt         # enum + color buckets (ported)
 ├── ContinuousListeningEngine.kt        # state machine (ported)
 ├── OnDeviceSpeechEngine.kt             # PTT orchestrator (ported)
@@ -129,7 +133,7 @@ class StreamingAudioBuffer(private val capacitySamples: Int = 16000 * 30) {
 > Port of `VoiceActivityDetector.swift`: RMS hysteresis (speech 0.015 / silence 0.008), debounce 250ms speech-start / 1s silence-start. This is the documented fallback when Silero fails to load — and is pure logic.
 
 - [ ] **Step 1: Write failing tests** asserting: loud RMS chunks past 250ms → `SpeechStart`; quiet chunks past 1s → `SilenceStart`; transient single-chunk dips do NOT flip state.
-- [ ] **Step 2–4:** implement the RMS detector with the exact thresholds/debounce from Swift. `VadEvent` = `SpeechStart | SilenceStart | None`.
+- [ ] **Step 2–4:** implement the RMS detector with the exact thresholds/debounce from Swift. `VadEvent` is a **4-case** enum (port `VADEvent.swift` verbatim): `SpeechStart, SpeechContinue, SilenceStart, SilenceContinue`, with `isSpeech` (start|continue) and `isEdge` (start) helpers. Do **not** collapse the two "continue" cases into `None` — downstream distinguishes `speechContinue` from `silenceContinue` via `isSpeech`.
 - [ ] **Step 5: Commit** `feat(speech): energy VAD fallback (ported thresholds)`
 
 > **EXECUTION NOTE — Silero VAD:** `SileroVoiceActivityDetector` runs the converted Silero v6 ONNX via ONNX Runtime Mobile. Public ONNX weights for Silero exist (low conversion risk — see ml/Task 9). Contract: input `audio_input[1,576]` (64 context + 512 chunk) + `hidden_state[1,128]` + `cell_state[1,128]` → `vad_output[1]` + new states; **thread the LSTM states across calls**. Fall back to the energy VAD (Task 2) if the model fails to load. Validate edge timing in M4.
@@ -140,7 +144,9 @@ class StreamingAudioBuffer(private val capacitySamples: Int = 16000 * 30) {
 
 **Files:**
 - Create: `speech/src/main/kotlin/relay/speech/wakeword/Metaphone.kt`, `WakeWordDetector.kt`
+- Create: `speech/src/main/kotlin/relay/speech/wakeword/WakeWordAudioPreprocessor.kt`
 - Test: `speech/src/test/kotlin/relay/speech/wakeword/WakeWordTest.kt`
+- Test: `speech/src/test/kotlin/relay/speech/wakeword/WakeWordAudioPreprocessorTest.kt`
 
 > Port of `WakeWordDetector.swift` matching logic (the transcription part needs Whisper — Task 5 — but the **match cascade is pure logic**): alias table → Levenshtein (≤2) → Metaphone phonetic equality with first-letter guard. This is fully unit-testable and is where wake-word recall lives.
 
@@ -163,8 +169,9 @@ class WakeWordTest {
 }
 ```
 
-- [ ] **Step 2–4:** implement `Metaphone` (standard algorithm, pure Kotlin) and `WakeWordDetector.matches(transcript)` with the cascade + alias table (`cloud`, `lord`, etc. from Swift) + first-letter guard + configurable wake word.
-- [ ] **Step 5: Commit** `feat(speech): wake-word match cascade (alias/Levenshtein/Metaphone)`
+- [ ] **Step 2–4:** implement `Metaphone` (standard algorithm, pure Kotlin) and `WakeWordDetector.matches(transcript)` with the cascade + alias table (`cloud`, `lord`, etc. — copy the EXACT alias entries from `WakeWordDetector.swift` so the test's `cloud` alias and Levenshtein bound match) + first-letter guard + configurable wake word.
+- [ ] **Step 4b: Port `WakeWordAudioPreprocessor`** (`WakeWordAudioPreprocessor.swift`; required for recall parity — do NOT skip): `peakNormalize` (targetPeak `0.95f`, noiseFloor `0.001f`, return unchanged if peak ≤ noiseFloor) and `pad(toSeconds=3.0, sampleRate=16000)` (trailing zeros, never truncate). Call BOTH on the captured audio **before** WhisperKit/whisper.cpp transcription, matching `WakeWordDetector.swift:67-73`. Unit-test: a quiet buffer normalizes to peak ≈ 0.95; a <3 s buffer pads to exactly 48000 samples; a near-silent buffer (peak ≤ 0.001) is returned unchanged.
+- [ ] **Step 5: Commit** `feat(speech): wake-word match cascade + audio preprocessor (normalize + pad)`
 
 ---
 
@@ -229,34 +236,50 @@ class WakeWordTest {
 
 **Files:**
 - Create: `speech/native/llama-jni/`
+- Create: `speech/src/main/kotlin/relay/speech/ProcessedText.kt`
 - Create: `speech/src/main/kotlin/relay/speech/cleanup/{TextCleaner,CloudPromptEnhancer,SpeechPostProcessor}.kt`
 - Test: `speech/src/test/kotlin/relay/speech/cleanup/SpeechPostProcessorTest.kt`
 
-> `SpeechPostProcessor` (port of `SpeechPostProcessor.swift`) chains enhance→clean→passthrough and **never throws** — this orchestration is pure logic and unit-testable with fakes. `CloudPromptEnhancer` is OkHttp REST (Bedrock Converse). `TextCleaner` is llama.cpp JNI.
+> `SpeechPostProcessor` (port of `SpeechPostProcessor.swift`) chains enhance→clean→passthrough and **never throws**, returning a **`ProcessedText`** (port `ProcessedText.swift`: a sealed type `Passthrough/Enhanced/Cleaned/Refused(original)/Empty` with `deliverableText: String?` = `null` for `Empty`). It **short-circuits to `Empty`** when the trimmed input is blank, `wordCount < 2`, or `isSilenceHallucination` — **before** any enhance/clean (`SpeechPostProcessor.swift:24-30`). `CloudPromptEnhancer` is OkHttp REST (Bedrock Converse). `TextCleaner` is llama.cpp JNI.
 
 - [ ] **Step 1: Write the failing test (fakes for cleaner + enhancer)**
 
 ```kotlin
+private fun pp(enhance: suspend (String)->String, clean: suspend (String)->String,
+               smart: Boolean, prompt: Boolean, token: String = "tok") =
+    SpeechPostProcessor(enhance, clean,
+        SpeechProcessingOptions(smartCleanupEnabled = smart, promptEnhancementEnabled = prompt,
+                                bedrockBearerToken = token))
+
+@Test fun `word count below two short-circuits to Empty before any work`() = runTest {
+    val pp = pp({ "X" }, { "Y" }, smart = true, prompt = true)
+    val r = pp.process("raw")                 // single word -> iOS suppresses
+    assertEquals(ProcessedText.Empty, r)
+    assertNull(r.deliverableText)
+}
 @Test fun `enhances then falls through to clean on enhancer failure`() = runTest {
-    val pp = SpeechPostProcessor(
-        enhance = { throw RuntimeException("network") },     // fails
-        clean = { "cleaned: $it" },
-        options = SpeechProcessingOptions(smartCleanup = true, promptEnhancement = true),
-    )
-    assertEquals("cleaned: raw text", pp.process("raw text"))
+    val pp = pp(enhance = { throw RuntimeException("network") }, clean = { "cleaned: $it" },
+               smart = true, prompt = true)
+    val r = pp.process("raw text here")       // >=2 words, passes the gate
+    assertEquals("cleaned: raw text here", r.deliverableText)
+}
+@Test fun `refused does not fall through to clean`() = runTest {
+    val pp = pp(enhance = { throw EnhancerException.Refused }, clean = { "cleaned: $it" },
+               smart = true, prompt = true)
+    val r = pp.process("two words")
+    assertTrue(r is ProcessedText.Refused); assertEquals("two words", r.deliverableText)
 }
 @Test fun `passthrough when both disabled`() = runTest {
-    val pp = SpeechPostProcessor({ "X" }, { "Y" }, SpeechProcessingOptions(false, false))
-    assertEquals("raw", pp.process("raw"))
+    val pp = pp({ "X" }, { "Y" }, smart = false, prompt = false)
+    assertEquals("raw text", pp.process("raw text").deliverableText)
 }
 @Test fun `never throws`() = runTest {
-    val pp = SpeechPostProcessor({ throw RuntimeException() }, { throw RuntimeException() },
-        SpeechProcessingOptions(true, true))
-    assertEquals("raw", pp.process("raw"))   // falls all the way back to original
+    val pp = pp({ throw RuntimeException() }, { throw RuntimeException() }, smart = true, prompt = true)
+    assertEquals("raw text", pp.process("raw text").deliverableText)  // falls back to original
 }
 ```
 
-- [ ] **Step 2–4:** implement `SpeechPostProcessor.process` (if `promptEnhancement` && token present → try `enhance`, on failure continue; if `smartCleanup` → try `clean`, on failure continue; else original — never throws). Implement `CloudPromptEnhancer` (Bedrock Converse POST, bearer token, maxTokens=512 temp=0.3, parse `output.message.content[0].text`, **redact `Bearer` in logs**, refusal-detection fallback). `TextCleaner` JNI below.
+- [ ] **Step 2–4:** implement `ProcessedText` (sealed type + `deliverableText`) and `SpeechPostProcessor.process` returning it (`SpeechPostProcessor.swift:20-73`): trim → `Empty` if blank / `wordCount < 2` / `isSilenceHallucination`; then `wantsEnhancement = promptEnhancement && token.isNotEmpty()` → try `enhance` → `Enhanced`, on `Refused` → `Refused(original)` (do NOT fall through), on other failure → if `smartCleanup` run `clean` else `Passthrough`; if not enhancing → `smartCleanup ? clean : Passthrough`; cleanup catches all → `Passthrough`; **never throws**. Implement `CloudPromptEnhancer` (Bedrock Converse POST, bearer token, maxTokens=512 temp=0.3, parse `output.message.content[0].text`, **redact `Bearer` in error logs**, 17 refusal-prefix + 6 refusal-phrase detection → `Refused`, 15 s timeout, default modelId `us.anthropic.claude-haiku-4-5-20251001-v1:0`). `TextCleaner` JNI below. **The mic-button consumer must skip sending when `deliverableText == null`** (the `Empty` suppression iOS relies on).
 
 > **EXECUTION NOTE — llama.cpp JNI:** vendor llama.cpp under `native/llama-jni/`; load the **same Qwen GGUF** as iOS; 512-token context; **8s timeout race** (`withTimeoutOrNull(8000)`) reverting to original on timeout/hallucination; unload on `ComponentCallbacks2.onTrimMemory`. Validate cleanup parity in M4.
 
@@ -331,10 +354,10 @@ class WakeWordTest {
 - Create: `speech/src/main/kotlin/relay/speech/SpeechModelStore.kt`, `ContinuousListeningService.kt`
 - Modify: `app/src/main/AndroidManifest.xml` (permissions + service)
 
-> `SpeechModelStore` (port of `SpeechModelStore.swift`): resumable downloads (Whisper + ~2.4GB Qwen + ONNX models) with progress, disk lifecycle, platform-keyed flags. `ContinuousListeningService` is the **Android-required foreground service** (`foregroundServiceType="microphone"` + persistent notification) — the documented divergence from iOS's foreground-only model.
+> `SpeechModelStore` (port of `SpeechModelStore.swift`): resumable **downloads of exactly two artifacts** — Whisper-ggml small.en + Qwen `qwen35-0.8b-q4km.gguf` (**≈0.5 GB**, not 2.4 GB; HF `unsloth/Qwen3.5-0.8B-GGUF`) — with progress, disk lifecycle, platform-keyed flags. The three ONNX models (Silero/SmartTurn/LogMel, converted in Task 9) are **bundled as app assets, NOT downloaded** (they're small: 904K/15M/364K originals). `ContinuousListeningService` is the **Android-required foreground service** (`foregroundServiceType="microphone"` + persistent notification) — the documented divergence from iOS's foreground-only model.
 
 - [ ] **Step 1: Manifest** — add `RECORD_AUDIO`, `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`; declare `<service android:foregroundServiceType="microphone"/>`.
-- [ ] **Step 2: `SpeechModelStore`** — download/cache/verify each model; `StateFlow` progress; cloud-only fallback if Qwen download fails (still transcribe + cloud-enhance).
+- [ ] **Step 2: `SpeechModelStore`** — download/cache/verify the **two** downloaded models (Whisper-ggml small.en + Qwen `qwen35-0.8b-q4km.gguf` ≈0.5 GB); bundle the three ONNX models as assets (do not download them); `StateFlow` progress; cloud-only fallback if the Qwen download fails (still transcribe + cloud-enhance). Mirror iOS `modelsReady = whisperReady && llmDownloaded`.
 - [ ] **Step 3: `ContinuousListeningService`** — foreground service hosting `ContinuousListeningEngine`; persistent notification; starts on workspace foreground when continuous mode is on; stops on background/disable. Runtime permission flow via `ActivityResultContracts`.
 - [ ] **Step 4: Manual verify** — grant mic permission; download models with progress; service notification appears; speak wake word → red → command → text appears in the terminal.
 - [ ] **Step 5: Commit** `feat(speech): model store + continuous-listening foreground service`
@@ -350,7 +373,7 @@ class WakeWordTest {
 > Port of `MicButton.swift`: PTT (tap) in default mode; continuous + long-press one-shot in continuous mode; state-driven icon+color (idle→recording→transcribing→cleaning→outputting; listening=blue); download-progress ring. `onUtteranceReady(text)` → active VM `sendInput(text)`.
 
 - [ ] **Step 1:** implement `MicButton` observing engine state; wire PTT/continuous per `AppSettings.continuousListeningEnabled`.
-- [ ] **Step 2:** wire `onUtteranceReady` → `coordinator.activeVm.sendInput(text)`.
+- [ ] **Step 2:** wire `onUtteranceReady(result: ProcessedText)` → **skip when `result.deliverableText == null`** (the `Empty` suppression), else `coordinator.activeVm.sendInput(result.deliverableText!!)`.
 - [ ] **Step 3: Manual verify (M3 acceptance):** PTT tap → speak → text sent; continuous mode → "Claude" (red) → command → text sent; long-press one-shot works; cloud enhance toggles behavior.
 - [ ] **Step 4: Commit** `feat(workspace): mic button + speech wired to terminal input`
 
@@ -363,7 +386,8 @@ class WakeWordTest {
 - [ ] Wake-word cascade: alias/Levenshtein/Metaphone + first-letter guard (Task 3 test).
 - [ ] State color buckets blue/red/yellow (Task 4 test).
 - [ ] Hallucination collapse (Task 5 test).
-- [ ] Post-processor never throws; enhance→clean→passthrough (Task 6 test).
+- [ ] Post-processor never throws; word<2/silence → `Empty`; `Refused` doesn't fall through; returns `ProcessedText` (Task 6 test).
+- [ ] `WakeWordAudioPreprocessor` ported: peakNormalize 0.95 + pad-to-3s before transcription (Task 3).
 - [ ] Heuristic turn-end (Task 7 test).
 - [ ] State machine: strict two-phase, armed timeout, classifier-authoritative, happy path (Task 8 tests).
 - [ ] Conversion pipeline builds + parity report generated (Task 9) — SmartTurn NOT yet enabled.

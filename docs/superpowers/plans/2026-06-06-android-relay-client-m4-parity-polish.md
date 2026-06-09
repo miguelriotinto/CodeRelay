@@ -1,6 +1,8 @@
 # Android Relay Client — M4: Parity Validation, Polish & Launch
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. **Depends on M1–M3.**
+>
+> **⚠️ Read `docs/superpowers/plans/2026-06-08-android-relay-client-corrections.md` first.** M4-relevant: the <400 MB memory target was reasoned against a mis-sized "~2.4 GB Qwen" — the real model is ≈0.5 GB (A6), so revisit the target (it should be easier to hit; confirm the real peak). The input-prompt debounce (Task 3) values **1000 ms / 2000 ms** are confirmed-correct (§D). The parity audit (Task 8) must cross-check the corrected settings count (14+1) and the per-op coordinator sequences.
 
 **Goal:** Reach 100% feature parity and ship-quality polish: enable the SmartTurn turn-end classifier once it passes the parity gate, complete accessibility/haptics/animations, harden edge cases, run a full parity audit against iOS, and prepare the Play Store release.
 
@@ -118,7 +120,7 @@
 
 - [ ] **Step 1: Integration test (instrumented, against the dev server):** full flow — connect, create 3 sessions, switch (assert single-paint replay), rename, kill server mid-session → recovery → restart server → reconnect → sessions restored.
 - [ ] **Step 2: Process-death restore:** kill the app process while attached; relaunch → ownership store restores names/owned/agents; auto-connect (if on) reconnects.
-- [ ] **Step 3: Memory:** profile peak memory with speech models loaded (target < 400 MB per spec); confirm `onTrimMemory` unloads the cleanup LLM.
+- [ ] **Step 3: Memory:** profile peak memory with speech models loaded (target < 400 MB; note the Qwen is ≈0.5 GB on disk, much smaller than the "~2.4 GB" the target was originally reasoned against — re-baseline against the real loaded footprint); confirm `onTrimMemory` unloads the cleanup LLM.
 - [ ] **Step 4: Large output:** stream a huge file (`cat bigfile`) → confirm the 4MB pending cap drops oldest without crashing and the live terminal stays responsive.
 - [ ] **Step 5: Commit** `test: edge-case hardening + integration pass`
 

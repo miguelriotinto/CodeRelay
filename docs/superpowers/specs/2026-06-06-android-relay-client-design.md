@@ -1,8 +1,13 @@
 # Android Relay Client — Design
 
 **Date:** 2026-06-06
-**Status:** Approved (design); pending implementation plan
+**Status:** Approved (design); implementation plans M1–M4 written + source-verified
 **Author:** Design session (Claude + Miguel)
+
+> **Source-fidelity corrections (2026-06-08):** a verification pass against the canonical
+> Swift source produced `docs/superpowers/plans/2026-06-08-android-relay-client-corrections.md`,
+> which **supersedes** any spec/plan text it corrects. The inline fixes below are applied;
+> the corrections doc explains each with source citations. Read it before implementing.
 
 ## Goal
 
@@ -88,10 +93,11 @@ flows) is unaffected — it simply ignores the Kotlin tree.
 - **Envelope:** every control message is `{"type":"<string>","payload":{...}}`.
   `payload` is a nested JSON **object** (never a string). `ping`/`pong`/
   `session_detach`/`session_list` carry an **empty** `payload` object.
-- **30 unique type strings** — 12 client, 18 server. Port as
-  `sealed interface ClientMessage` / `ServerMessage` with a hand-written
-  envelope serializer switching on `type`, plus a single `Map<String, Origin>`
-  lookup mirroring `MessageEnvelope.typeOrigin`. Unknown type → throw.
+- **31 unique type strings** — 12 client, **19 server** (verified against
+  `ServerMessage.swift:5-23,53-60`). Port as `sealed interface ClientMessage` /
+  `ServerMessage` with a hand-written envelope serializer switching on `type`, plus a
+  single `Map<String, Origin>` lookup mirroring `MessageEnvelope.typeOrigin`. Unknown
+  type → throw.
 - **Field casing is camelCase** inside payloads (`sessionId`,
   `protocolVersion`, `skipReplay`). The **type strings** are snake_case. Pin
   field names explicitly with `@SerialName` — do **not** auto-snake-case.
@@ -163,11 +169,17 @@ cleanup in `onCleared()`.
 ### SessionCoordinator (port of `SharedSessionCoordinator`)
 
 Owns: session list, active-session slot, recovery UI state, LRU-8 terminal
-cache, and the three sub-controllers. Session ops (`create/switch/attach/
-terminate`) follow the exact iOS sequence (detach prev → act → claim → wire
-output → set active → `touch` cache → `enforceLimit` → fetch), each wrapped in
-`withAuth { }` and guarded by `!isRecovering`. **Eager output wiring:** set the
-binary-frame output closure to the active VM **before** `resume` completes.
+cache, and the three sub-controllers. The four session ops follow **distinct**
+iOS sequences (do NOT collapse into one — see corrections doc §A5):
+- **create** → `withAuth { detach?; createSession }` → claim → wire (after) → active → touch → enforceLimit → fetch
+- **switch** → `prepareForSwitch(prev)` → `beginReplay(incoming)` → **wire BEFORE** `withAuth { detach; resume }` → active → touch → enforceLimit → fetch (no claim)
+- **attach** → `withAuth { detach?; attachSession }` → claim → `vm.beginReplay()` → wire (after) → active → touch → enforceLimit → names → fetch (with previous-session rollback on failure)
+- **terminate** → `send(.sessionTerminate)` → clear active → evict → forget activity → unclaim → remove name+title → fetch
+
+Each session-op RPC is wrapped in `withAuth { }` and guarded by `!isRecovering`.
+**Eager output wiring applies to the SWITCH path only:** wire the binary-frame output
+closure to the incoming VM **before** `resume` so replay frames route correctly. For
+create/attach the wiring is *after* the RPC.
 
 ### RecoveryController (circuit-breaker state machine)
 
@@ -175,13 +187,18 @@ binary-frame output closure to the active VM **before** `resume` completes.
   (backoff, auth, resume) re-checks `myGen == currentGen` and bails if newer.
 - **Two distinct guards:** `isRecoveryDispatched` (synchronous entry lock, gates
   scheduling) vs. `isRecovering` (UI flag, gates work). Both as `StateFlow`s.
-- **`isAlive()` short-circuit:** before full backoff, probe with a ping (~2 s);
-  if alive, skip recovery and just `fetchSessions()`. Makes foreground-after-
-  sleep correct.
+- **`isAlive()` short-circuit:** before full backoff, probe with a ping (**5 s** pong
+  timeout — `RelayConnection.swift:313`, not ~2 s); if alive, skip recovery and just
+  `fetchSessions()`. Makes foreground-after-sleep correct. Set `isRecovering = true`
+  **only after** the probe returns false (the short-circuit must not flash recovery UI).
 - **Circuit breaker:** 3 consecutive *auto*-triggered failures →
-  `autoRecoverySuspended`; only explicit user signals (foreground /
-  network-restored / manual) reset it. Backoff `[0,1,2,4,8,15]s`; final failure
-  → `connectionTimedOut`.
+  `autoRecoverySuspended`; reset by explicit user signals (foreground /
+  network-restored / manual) **and** by a healthy keepalive ping
+  (`resetAutoRecoveryBreaker`). Backoff `[0,1,2,4,8,15]s`; final failure →
+  `connectionTimedOut`. **A successful reconnect whose auth/resume then fails is a
+  *terminal* outcome** (counts one breaker failure, does not re-loop the backoff) — see
+  corrections §A4. Also port: 3 s auto-recovery cooldown, `cancel()` suspends the
+  breaker, 1 s cancel-debounce on user recovery, and `suppressAllViewModelSends`.
 - **Defer-idempotency:** a single coroutine `try/finally` clears `isRecovering`
   + send-suppression + `lastRecoveryEndedAt` even if cancelled mid-`await`.
 - **Foreground:** `scenePhase == .active` → `Lifecycle.Event.ON_RESUME`
@@ -243,13 +260,15 @@ ring, OSC-title callbacks — SwiftTerm's semantics without a custom VT100 build
   `replay_complete`, `endReplay` flushes accumulated bytes as **one contiguous
   `feed()`** (single display pass, no history scrolling past). `terminalReady`
   sends **RIS (`ESC c` = `0x1B 0x63`)** to blank, deferred to first-ready.
-  **Add unit tests** (iOS has none here — close the gap).
+  **Port the existing iOS tests** (`Tests/ClaudeRelayClientTests/TerminalViewModelTests.swift`
+  — mirror that suite, not net-new coverage).
 - **Input-prompt silence detector:** coroutine `delay` + `Job` cancel replacing
   the Swift debounce; **1000 ms normal / 2000 ms agent-active**, feeding
   `awaitingInput` → tab attention-flash.
 - **Resize:** recompute cols/rows from view bounds ÷ monospace cell metrics on
-  layout change; send `resize` immediately (not debounced); `resize_ack`
-  reconciles.
+  layout change; send `resize` immediately (not debounced). iOS is **fire-and-forget** —
+  it ignores `resize_ack`; do NOT build a reconcile loop to "match iOS" (any reconcile is a
+  deliberate enhancement beyond parity).
 - **Keyboard accessory bar** — Compose `LazyRow` of special keys sending raw
   bytes: ESC `0x1B`, Tab `0x09`, arrows (`1B 5B 41/42/43/44`), Ctrl-C/R/A/E/D/Z/L,
   Return `0x0D`, literals `| / ~ - _`, clear-to-prompt cycle.
@@ -299,8 +318,15 @@ ring, OSC-title callbacks — SwiftTerm's semantics without a custom VT100 build
   and blue/red/yellow color buckets.
 - **Wake-word matching** — alias table → Levenshtein (≤2) → **Metaphone**
   phonetic + first-letter guard. Pure logic.
-- **`SpeechPostProcessor`** — cloud-enhance (Bedrock Haiku, if token) → local
-  cleanup → passthrough; never throws.
+- **`WakeWordAudioPreprocessor`** (do not omit — `WakeWordDetector.swift:67-73`) —
+  `peakNormalize` (targetPeak `0.95f`, noiseFloor `0.001f`, unchanged if peak ≤ noiseFloor)
+  + `pad(toSeconds=3.0, sampleRate=16000, trailing zeros, never truncate)`, applied before
+  transcription. Required for wake-word recall parity.
+- **`SpeechPostProcessor` / `ProcessedText`** — port `ProcessedText` as a sealed type with
+  nullable `deliverableText` (`.empty` → nil). The processor short-circuits to `.empty` when
+  `trimmed.isEmpty`, `wordCount < 2`, or `isSilenceHallucination` **before** any work; then
+  cloud-enhance (Bedrock Haiku, if token) → local cleanup → passthrough; `.refused` is
+  special-cased (does not fall through to cleanup); **never throws**.
 
 ### Audio + platform
 
@@ -314,8 +340,12 @@ ring, OSC-title callbacks — SwiftTerm's semantics without a custom VT100 build
   notification (Android can't mic in background silently), `RECORD_AUDIO` runtime
   permission, `POST_NOTIFICATIONS` (API 33+). Same foreground-only *spirit* as
   iOS but Android requires the explicit FG-service + notification.
-- **`SpeechModelStore`** — model download/cache/disk-lifecycle with progress UI;
-  large resumable downloads (Whisper + ~2.4 GB Qwen).
+- **`SpeechModelStore`** — model download/cache/disk-lifecycle with progress UI.
+  iOS **downloads exactly two** artifacts — Whisper `openai_whisper-small.en` (via
+  WhisperKit's own store) + the Qwen GGUF (`qwen35-0.8b-q4km.gguf`, **≈0.5 GB**, not 2.4 GB —
+  `SpeechModelStore.swift:24-29`) — and **bundles three** CoreML models. Android **bundles the
+  converted ONNX** (Silero/SmartTurn/LogMel — small) and **downloads** Whisper-ggml + Qwen-GGUF.
+  ONNX models are bundled, not downloaded.
 
 ## Section 6 — UI, Navigation & Platform Integration (`:feature-*`, `:app`)
 
@@ -341,7 +371,7 @@ Material 3 `WindowSizeClass` via `currentWindowAdaptiveInfo()`:
 | `QRCodeSheet` | `QrShareSheet` | ZXing QR of `clauderelay://session/{UUID}` + selectable deeplink |
 | `QRScannerView` | `QrScannerScreen` | CameraX + ML Kit barcode; haptic on detect; parse → attach |
 
-### Settings parity (18 `@AppStorage` keys → DataStore; Bedrock token → EncryptedSharedPreferences)
+### Settings parity (14 `@AppStorage` keys → DataStore; Bedrock token → EncryptedSharedPreferences = 15 persisted prefs)
 
 - **Speech-to-Text:** Smart Cleanup, Prompt Enhancement, Continuous Listening +
   wake-word display
@@ -397,7 +427,7 @@ Material 3 `WindowSizeClass` via `currentWindowAdaptiveInfo()`:
 | Double-timestamp / binary-frame protocol misreads | Medium | Contract test round-tripping a captured live server frame |
 | Continuous-listening FG-service UX divergence from iOS | Medium | Documented divergence; persistent notification required by platform |
 | Device-identifier instability vs iOS | Low | Generated UUID in EncryptedSharedPreferences; documented |
-| Large model downloads (~2.4 GB Qwen) | Medium | Resumable downloads, progress UI, cloud-only fallback if download fails |
+| Large model downloads (Whisper-ggml + ≈0.5 GB Qwen3.5-0.8B Q4_K_M) | Low–Medium | Resumable downloads, progress UI, cloud-only fallback if download fails |
 
 ## Out of Scope
 

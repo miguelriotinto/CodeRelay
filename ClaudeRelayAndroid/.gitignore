@@ -1,0 +1,13 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.keystore
+.idea/
+*.iml
+captures/
+
+# iCloud/macOS sync duplicates (e.g. "gradlew 2", "Foo 2.kt") — never commit; they
+# also break the D8 dex step ("defined multiple times"). Delete on sight.
+* [0-9]
+* [0-9].*

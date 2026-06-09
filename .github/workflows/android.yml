@@ -1,0 +1,47 @@
+name: Android CI
+
+on:
+  pull_request:
+    paths:
+      - 'ClaudeRelayAndroid/**'
+      - '.github/workflows/android.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ClaudeRelayAndroid/**'
+      - '.github/workflows/android.yml'
+
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build + unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ClaudeRelayAndroid
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run JVM unit tests (pure-JVM + Android-lib unit tests)
+        run: ./gradlew :core-protocol:test :core-net:test :terminal:testDebugUnitTest --no-daemon
+
+      - name: Compile deferred instrumented test sources (storage needs a device to run)
+        run: ./gradlew :core-storage:compileDebugAndroidTestKotlin --no-daemon
+
+      - name: Assemble the whole project (verifies the full module graph links)
+        run: ./gradlew assembleDebug --no-daemon

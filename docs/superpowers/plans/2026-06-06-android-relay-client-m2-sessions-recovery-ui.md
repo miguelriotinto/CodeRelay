@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. **Depends on M1.**
 
-**Goal:** Full session management + recovery parity with iOS (no speech): the recovery circuit-breaker state machine, multi-session tabs/sidebar, ownership/activity tracking, QR share+scan, deep links, the adaptive phone/tablet Compose UI, and all 18 settings.
+**Goal:** Full session management + recovery parity with iOS (no speech): the recovery circuit-breaker state machine, multi-session tabs/sidebar, ownership/activity tracking, QR share+scan, deep links, the adaptive phone/tablet Compose UI, and all settings (14 `@AppStorage` keys + 1 Keychain token = 15 persisted prefs).
+
+> **⚠️ Read `docs/superpowers/plans/2026-06-08-android-relay-client-corrections.md` first.** M2-relevant corrections: settings count is **14 (+1 Keychain) = 15**, not 18 (A2); `SessionNaming.pickDefaultName` is **random** + explicit `fallbackIndex` (A3, fixed in Task 1); the four coordinator ops are **distinct sequences** with switch-only eager wiring (A5 — see Task 6 callout); **RecoveryController is a rewrite, not a transcription** — 5 s probe, auth/resume-failure-is-terminal, 3 s cooldown, healthy-ping breaker reset, cancel-suspends-breaker, 1 s cancel-debounce, send-suppression, defer `isRecovering` past the probe (A4 — see Task 3 callout); ownership key segment is `ownedSessions` (B5, fixed); TerminalCache needs `pruneStale/cachedIds/removeAll` (B2).
 
 **Architecture:** Add `:core-session` (coordinator + RecoveryController + ActivityCoordinator + AuthCoordinator + LRU-8 terminal cache + ownership store), extend `:core-storage`, build the `:feature-servers`/`:feature-workspace`/`:feature-settings` Compose modules, and replace the M1 demo with the real navigation graph in `:app`.
 
@@ -61,20 +63,31 @@ import relay.protocol.SessionNamingTheme
 class SessionNamingTest {
     @Test fun `picks unused name from theme`() {
         val used = setOf("Jon Snow")
-        val name = SessionNaming.pick(SessionNamingTheme.GAME_OF_THRONES, used)
+        // Signature mirrors Swift pickDefaultName(usedNames, theme, fallbackIndex)
+        val name = SessionNaming.pickDefaultName(used, SessionNamingTheme.GAME_OF_THRONES, fallbackIndex = 1)
         assertFalse(name in used); assertTrue(name.isNotBlank())
+        assertTrue(name in SessionNamingTheme.GAME_OF_THRONES.names)  // a real pool name, randomly chosen
     }
-    @Test fun `falls back to Session N when pool exhausted`() {
-        val pool = SessionNaming.pool(SessionNamingTheme.VIKING)
-        val name = SessionNaming.pick(SessionNamingTheme.VIKING, pool.toSet())
-        assertTrue(name.startsWith("Session "))
+    @Test fun `falls back to Session fallbackIndex when pool exhausted`() {
+        val pool = SessionNamingTheme.VIKING.names.toSet()
+        val name = SessionNaming.pickDefaultName(pool, SessionNamingTheme.VIKING, fallbackIndex = 7)
+        assertEquals("Session 7", name)   // exact: "Session $fallbackIndex", NOT used.size+1
     }
 }
 ```
 
 - [ ] **Step 2: Run to verify it fails / Step 3: implement**
 
-`SessionNaming.kt` — port the theme pools from `SessionNaming.swift` verbatim (Game of Thrones, Viking, Star Wars, Dune, LOTR, Star Trek). Add `SessionNamingTheme` enum to `:core-protocol` (raw values stable for migration). `pick(theme, used)` returns first unused pool entry, else `"Session ${used.size + 1}"`.
+`SessionNaming.kt` — port the theme pools from `SessionNaming.swift:42-144` **verbatim** (Game of Thrones, Viking, Star Wars, Dune, LOTR, Star Trek; ≈70 names each). Add `SessionNamingTheme` enum to `:core-protocol` with the iOS **camelCase** raw values pinned via `@SerialName` (`gameOfThrones, viking, starWars, dune, lordOfTheRings, starTrek`; default `gameOfThrones`) so persisted `@AppStorage` values round-trip. **Port the full Swift signature** (`SessionNaming.swift:157-164`):
+
+```kotlin
+fun pickDefaultName(usedNames: Set<String>, theme: SessionNamingTheme, fallbackIndex: Int): String {
+    val available = theme.names.filter { it !in usedNames }
+    return available.randomElement() ?: "Session $fallbackIndex"   // RANDOM, not first-unused
+}
+```
+
+> Do NOT use `pick(theme, used)` returning the "first unused" entry, and do NOT compute the fallback as `"Session ${used.size + 1}"` — iOS picks a **random** unused name and takes an explicit caller-supplied `fallbackIndex`. The lossy shape diverges from iOS UX and numbering. (`randomElement()` on a Kotlin `List` is the analog of Swift `Array.randomElement()`.)
 
 `SessionOwnershipStore.kt` (Android, DataStore/SharedPreferences):
 
@@ -88,8 +101,13 @@ import java.util.UUID
  *  writes are diff-checked (skip when unchanged) to avoid churn. */
 class SessionOwnershipStore(context: Context, private val deviceId: String) {
     private val prefs = context.getSharedPreferences("relay.ownership", Context.MODE_PRIVATE)
+    // Key strings mirror the iOS source segments (SessionOwnershipStore.swift):
+    // sessionNames / ownedSessions(.deviceId) / agentSessions. Note the owned key
+    // segment is "ownedSessions", NOT "ownedSessionIds". (Exact cross-platform key
+    // parity is a non-goal — Android shares no UserDefaults with iOS — but matching
+    // the source segment avoids confusion and eases any future shared-store work.)
     private val namesKey = "sessionNames"               // plain
-    private val ownedKey = "ownedSessionIds.$deviceId"  // device-scoped
+    private val ownedKey = "ownedSessions.$deviceId"    // device-scoped
     private val agentsKey = "agentSessions"             // plain
 
     private var namesCache: MutableMap<UUID, String> = load(namesKey)
@@ -187,8 +205,27 @@ class TerminalCache<T>(private val limit: Int = 8) {
             map.remove(victim)
         }
     }
+
+    // Required by SharedSessionCoordinator (corrections §B2): fetchSessions evicts
+    // cached terminals for sessions gone from the server; teardown clears all.
+    val cachedIds: Set<UUID> get() = map.keys.toSet()
+    val count: Int get() = map.size
+    fun removeAll() = map.clear()
+    /** Evict any cached terminal whose id is not in the server's current set. */
+    fun pruneStale(knownSessionIds: Set<UUID>): List<UUID> {
+        val stale = map.keys.filter { it !in knownSessionIds }
+        stale.forEach { map.remove(it) }
+        return stale
+    }
 }
 ```
+
+> **Note:** Swift's `enforceLimit` keys off the cached-view count + an explicit `lru` array
+> rather than `LinkedHashMap` access-order. The access-order map above is an acceptable
+> idiomatic Kotlin equivalent **provided** `touch()` actually bumps order (calling
+> `map[id]` on an access-order `LinkedHashMap` does) and the stale-prune methods above exist
+> — the coordinator's `fetchSessions` (`SharedSessionCoordinator.swift:349-355`) and teardown
+> (`:720`) depend on them.
 
 - [ ] **Step 5: Commit** `feat(session): LRU-8 terminal cache`
 
@@ -202,6 +239,19 @@ class TerminalCache<T>(private val limit: Int = 8) {
 - Test: `core-session/src/test/kotlin/relay/session/RecoveryControllerTest.kt`
 
 > The most behaviorally critical port. From `RecoveryController.swift`: `recoveryGeneration` captured at entry & rechecked at every await; **two distinct guards** (`isRecoveryDispatched` sync entry-lock vs `isRecovering` UI flag); `isAlive()` short-circuit; **3 auto-failures → `autoRecoverySuspended`**, reset only by user signals; backoff `[0,1,2,4,8,15]`s; defer-idempotency clears flags even on cancel.
+>
+> **⚠️ Treat this as a REWRITE from source, not a transcription of the skeleton below.** The reference Kotlin in Step 3 is a starting shape that is missing nine load-bearing behaviors verified against `RecoveryController.swift` (corrections §A4). Before implementing, re-read the Swift file and wire in ALL of:
+> 1. **5 s probe timeout** (not ~2 s) — `isAlive` wraps a 5 s pong wait (`RelayConnection.swift:313`).
+> 2. **Auth/resume failure is TERMINAL** — a successful reconnect whose `restoreSession` (auth/resume) fails counts **one** breaker failure and returns; it does NOT re-loop the 6-step backoff. Only *reconnect* failures retry the backoff (`RecoveryController.swift:202-206,272`).
+> 3. **App-level vs transport-level restore-error split** — an app-level error (session gone) sets `sessionAttachFailed`, does NOT set `connectionTimedOut`, but still counts toward the breaker (`:258-272`).
+> 4. **3 s auto-recovery cooldown** — `scheduleAutoRecovery` drops auto-recoveries within 3 s of the last one ending (`:43,94-98`); stamp `lastRecoveryEndedAt = now` in the `finally` (inject a monotonic clock — do NOT stamp `0L`).
+> 5. **`resetAutoRecoveryBreaker()` on healthy ping** — a successful keepalive ping clears the breaker (`:69-74`, wired to `onHealthyPing`). A 4th reset trigger beyond user signals.
+> 6. **`cancel()`** sets `autoRecoverySuspended = true` + `recoveryFailed = true` + stamps `lastCancelledAt` + bumps generation (`:286-299`).
+> 7. **1 s cancel-debounce** on `triggerUserRecovery` (`:56-58,124-127`) to avoid sheet-dismiss → ON_RESUME re-trigger loops.
+> 8. **`suppressAllViewModelSends(true/false)`** toggled around the recovery body (`:165,168`) — inject a `suppressSends(Boolean)` lambda.
+> 9. **`isRecovering = true` only AFTER the `isAlive()` false branch** (`:164`) — the alive short-circuit must not flash recovery UI.
+>
+> Extend the test suite (Step 1) to cover: cooldown drop, healthy-ping breaker reset, cancel-suspends-breaker, cancel-debounce, and "reconnect-success-then-auth-fail is terminal (counts once, no re-loop)."
 
 - [ ] **Step 1: Write the failing tests (inject a fake clock + fake connection)**
 
@@ -470,14 +520,24 @@ class AuthCoordinator(
 - Create: `core-session/src/main/kotlin/relay/session/SessionCoordinator.kt`
 - Test: `core-session/src/test/kotlin/relay/session/SessionCoordinatorTest.kt`
 
-> Port of `SharedSessionCoordinator.swift`. Owns `StateFlow`s for `sessions`, `activeSessionId`, recovery state (delegated to `RecoveryController`), the `TerminalCache`, and the coordinators. Session ops follow the exact iOS sequence; each wrapped in `authCoordinator.withAuth { }` and guarded by `!isRecovering`. **Eager output wiring**: set `connection.onTerminalOutput` → active VM `receiveOutput` BEFORE `resume` completes.
+> Port of `SharedSessionCoordinator.swift`. Owns `StateFlow`s for `sessions`, `activeSessionId`, recovery state (delegated to `RecoveryController`), the `TerminalCache`, and the coordinators. Each session-op RPC is wrapped in `authCoordinator.withAuth { }` and guarded by `!isRecovering`.
+>
+> **⚠️ The four ops are DISTINCT sequences — do NOT collapse into one shared flow** (corrections §A5, verified against `SharedSessionCoordinator.swift`):
+> - **CREATE** (`:392-412`): `withAuth { detach?; createSession }` → `claimSession` → `wireTerminalOutput` (**after** the RPC) → set active → `touch` → `enforceLimit` → `fetchSessions`.
+> - **SWITCH** (`:433-458`): `prepareForSwitch(prev)` → `beginReplay(incoming)` → **`wireTerminalOutput` BEFORE** `withAuth { detach; resume }` → set active → `touch` → `enforceLimit` → `fetchSessions`. **No `claim`.** (Comment `:433-434`: wire before resume so binary replay frames route to the correct VM.)
+> - **ATTACH** (`:477-522`): `withAuth { detach?; attachSession }` → `claimSession` → `vm.beginReplay()` → `wireTerminalOutput` (after) → set active → `touch` → `enforceLimit` → names → `fetchSessions`, **with previous-session rollback on failure** (`:510-514`: on catch, `resumeSession(previousId)` + re-wire).
+> - **TERMINATE** (`:568-578`): `connection.send(.sessionTerminate)` → clear active → `evictTerminal` → `forgetSession` (activity) → `unclaimSession` → remove name+title → `fetchSessions`.
+>
+> **Eager output wiring (the "before resume" rule) applies to the SWITCH path only** — for create/attach the wiring is *after* the RPC.
 
 - [ ] **Step 1: Write failing tests for the op sequences (fake controller/connection)**
 
 ```kotlin
-@Test fun `createSession claims, caches, sets active, fetches`() { /* assert claim+touch+active+fetch order */ }
-@Test fun `switchSession detaches prev, beginReplay on incoming, resumes, endReplay on replayComplete`() { /* assert ordering */ }
-@Test fun `terminate clears active, evicts cache, unclaims, forgets activity, fetches`() { /* ... */ }
+@Test fun `createSession does withAuth then claim, wire(after), active, touch, enforceLimit, fetch`() { /* CREATE order */ }
+@Test fun `switchSession wires BEFORE resume and does NOT claim`() { /* assert wire precedes resume; no claim call */ }
+@Test fun `switchSession endReplay fires on replayComplete`() { /* onReplayComplete -> activeVm.endReplay() */ }
+@Test fun `attachRemote rolls back to previous session on attach failure`() { /* catch -> resume(previousId) + re-wire */ }
+@Test fun `terminate sends terminate, clears active, evicts, forgets activity, unclaims, fetches`() { /* forget BEFORE unclaim */ }
 @Test fun `ops are no-ops while isRecovering`() { /* assert guarded */ }
 ```
 
@@ -503,13 +563,13 @@ class AuthCoordinator(
 
 ## Task 8: `:feature-workspace` — adaptive split, sidebar, tabs, terminal host
 
-**Files:** `feature-workspace/.../WorkspaceScreen.kt`, `SessionSidebar.kt`, `SessionTabs.kt`, `TerminalHost.kt`, `ConnectionQualityDot.kt`, `ActivityDot.kt`, `AgentColorPalette.kt`
+**Files:** `feature-workspace/.../WorkspaceScreen.kt`, `SessionSidebar.kt`, `SessionTabs.kt`, `TerminalHost.kt`, `ConnectionQualityDot.kt`, `ActivityDot.kt`, `AgentColorPalette.kt`, `TerminalPalette.kt`
 
 > UI — manual verification. Port of `WorkspaceView`/`SessionSidebarView`/`ActiveTerminalView` and the shared `Views/` atoms.
 
 - [ ] **Step 1: Adaptive layout** via `currentWindowAdaptiveInfo()`: Expanded → two-pane (sidebar | terminal); Compact → terminal full-screen + sidebar as `ModalBottomSheet`/drawer.
 - [ ] **Step 2: Sidebar** — New/Attach buttons, session list with state badges + `ActivityDot`, rename `AlertDialog`, swipe-delete, **long-press context menu** (rename / share QR), pull-to-refresh.
-- [ ] **Step 3: Tabs** — `LazyRow`, numbered, agent-colored (`AgentColorPalette` ported from Swift), flash when `awaitingInput`.
+- [ ] **Step 3: Tabs** — `LazyRow`, numbered, agent-colored, flash when `awaitingInput`. Port `AgentColorPalette` keyed on the `agentId` **String** (corrections §B1; do NOT port the server-only `CodingAgent` registry): `"claude" → orange`, `"codex" → Color(red=84/255, green=132/255, blue=137/255)` (teal), and **default → the same teal** as codex (`AgentColorPalette.swift:12-14`). Also port `TerminalPalette` (`TerminalPalette.swift:8-25`) — the 16-color ANSI palette — and install it into the Termux engine (the iOS `RelayTerminalView.swift:266` analog).
 - [ ] **Step 4: Status bar** — sidebar toggle, disconnect, key-bar toggle, `ConnectionQualityDot` (excellent/good=green, poor/veryPoor=yellow blinking via `rememberInfiniteTransition`, disconnected=red), uptime timer (days + HH:MM:SS), QR share, name badge (long-press → rename).
 - [ ] **Step 5: Terminal host** — `AndroidView { RelayTerminalView }` bound to the active VM; wires `onInput`/`onResize`; hosts `KeyboardAccessory`.
 - [ ] **Step 6: Recovery overlay** — observes `coordinator.isRecovering`/`phase`; modal with progress + phase label + cancel; `BackHandler` suppresses dismiss during recovery (the `interactiveDismissDisabled` analog).
@@ -540,13 +600,27 @@ class AuthCoordinator(
 
 ---
 
-## Task 10: `:feature-settings` — AppSettings (DataStore) + all 18 keys
+## Task 10: `:feature-settings` — AppSettings (DataStore: 14 keys) + Bedrock token (Keychain)
 
 **Files:** `feature-settings/.../SettingsScreen.kt`, `AppSettings.kt`, `KeyCapture.kt`
 
 > Port of `SettingsView.swift`/`AppSettings.swift`. `AppSettings` backed by DataStore (Bedrock token via `TokenStore`, 500ms debounced write through `Flow.debounce(500)`).
+>
+> **The exact 14 `@AppStorage` keys + defaults (`AppSettings.swift:112-145`):**
+> `smartCleanupEnabled=true`, `promptEnhancementEnabled=false`, `bedrockRegion="us-east-1"`,
+> `hapticFeedbackEnabled=true`, `autoConnectEnabled=false`, `lastConnectedServerId=""`,
+> `sessionNamingTheme=gameOfThrones`, `terminalFontSize=12.0`, `terminalScrollbackLines=5000`,
+> `recordingShortcutEnabled=true`, `recordingShortcutFlags=[command,option]`,
+> `recordingShortcutKey=""`, `continuousListeningEnabled=false`, `wakeWord="claude"`.
+> Plus `bedrockBearerToken` in the Keychain/EncryptedSharedPreferences (`@Published`, **not**
+> `@AppStorage`) = 15 persisted prefs. `turnEndSilenceTimeout` is **not** a setting.
+>
+> **Two migrations to port** (`AppSettings.swift:31-98`): (a) `recordingShortcutModifier`
+> string → `recordingShortcutFlags` Int; (b) legacy UserDefaults `bedrockBearerToken` →
+> Keychain with read-back-confirm-before-delete + plaintext fallback. The Bedrock debounce
+> uses **`.dropFirst()`** — the initial seed must NOT trigger a write.
 
-- [ ] **Step 1: Test AppSettings persistence (instrumented)** — set/read each key default + override.
+- [ ] **Step 1: Test AppSettings persistence (instrumented)** — set/read each of the 14 keys (default + override); assert the Bedrock token round-trips through the Keychain store and that the seed write is suppressed (`.dropFirst()` analog).
 - [ ] **Step 2–4: implement** the settings sections exactly: **Speech** (Smart Cleanup, Prompt Enhancement, Continuous Listening + wake-word display — wake-word editing UI present but engine lands in M3), **Bedrock** (token masked + region; validation alert if enhancement on + token empty), **Connection** (Auto-Connect), **General** (Haptic Feedback, Naming theme picker, Font Size stepper 8–16, Scrollback picker 1k/5k/10k/25k), **Keyboard Shortcuts** (recording-shortcut toggle + `KeyEvent.META_*`+keycode capture), **About** (version/build from `BuildConfig`).
 - [ ] **Step 5: Manual verify** — toggle each setting, relaunch, values persist; font-size/scrollback affect the terminal; auto-connect reconnects on launch.
 - [ ] **Step 6: Commit** `feat(settings): full settings screen + AppSettings store`
@@ -574,6 +648,6 @@ class AuthCoordinator(
 - [ ] Adaptive layout reflows phone↔tablet/foldable (Task 8 manual).
 - [ ] Tabs/sidebar/activity dots/quality dot parity (Task 8 manual).
 - [ ] QR share/scan + deep links cold+warm (Task 9 manual).
-- [ ] All 18 settings persist + take effect (Task 10).
+- [ ] All settings persist + take effect: 14 `@AppStorage` keys + 1 Keychain Bedrock token (Task 10).
 - [ ] Foreground + network recovery end-to-end (Task 11 manual).
 - [ ] Every iOS screen has an Android counterpart (cross-check the spec's screen parity map).
