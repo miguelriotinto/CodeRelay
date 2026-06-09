@@ -13,6 +13,10 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!-- Haptic feedback on QR-scan detection (QrScannerScreen.vibrate). Normal
+         (non-dangerous) permission, no runtime request needed. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <application
         android:name="relay.app.RelayApplication"
         android:allowBackup="true"

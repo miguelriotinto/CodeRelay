@@ -37,8 +37,11 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run JVM unit tests (pure-JVM + Android-lib unit tests)
-        run: ./gradlew :core-protocol:test :core-net:test :terminal:testDebugUnitTest --no-daemon
+      - name: Run JVM unit tests (all modules — pure-JVM `test` + Android-lib `testDebugUnitTest`)
+        # Aggregate tasks run unit tests across EVERY module that defines them, so
+        # modules added in future milestones are covered without editing this list.
+        # (`test` covers kotlin.jvm modules; `testDebugUnitTest` covers android.library/app.)
+        run: ./gradlew test testDebugUnitTest --no-daemon
 
       - name: Compile deferred instrumented test sources (storage needs a device to run)
         run: ./gradlew :core-storage:compileDebugAndroidTestKotlin --no-daemon
