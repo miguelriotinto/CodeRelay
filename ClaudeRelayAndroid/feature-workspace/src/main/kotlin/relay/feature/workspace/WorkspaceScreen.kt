@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,6 +63,10 @@ import java.util.UUID
 
 /** Material3 "expanded" width breakpoint — width ≥ this gets the two-pane layout. */
 private val EXPANDED_WIDTH_BREAKPOINT = 840.dp
+
+/** Compact top-toolbar icon sizing (the default IconButton 48dp is too large). */
+private val TOOLBAR_ICON_BUTTON = 34.dp
+private val TOOLBAR_ICON = 18.dp
 
 /**
  * The workspace screen — the adaptive split host, ported from `WorkspaceView.swift`.
@@ -155,6 +160,12 @@ fun WorkspaceScreen(
     var showKeyBar by remember { mutableStateOf(true) }
     var renameActive by remember { mutableStateOf(false) }
 
+    // Two-pane (fold-open / tablet) sidebar visibility, the iOS `columnVisibility`
+    // (.all ↔ .detailOnly) analog. Defaults to shown; the sidebar-toggle button
+    // collapses it so the terminal can go full-width even on a wide screen (the
+    // compact layout uses the ModalNavigationDrawer instead).
+    var twoPaneSidebarVisible by remember { mutableStateOf(true) }
+
     val drawerState = rememberDrawerState(DrawerValue.Closed)
 
     val sidebar: @Composable () -> Unit = {
@@ -217,9 +228,16 @@ fun WorkspaceScreen(
 
             if (expanded) {
                 Row(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.width(320.dp).fillMaxHeight()) { sidebar() }
+                    // Sidebar pane is collapsible (iOS columnVisibility): the toggle
+                    // flips twoPaneSidebarVisible so the terminal can take the full
+                    // width even on a fold-open / tablet screen.
+                    if (twoPaneSidebarVisible) {
+                        Box(modifier = Modifier.width(320.dp).fillMaxHeight()) { sidebar() }
+                    }
                     Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                        terminalColumn({ /* no toggle in two-pane */ }, true)
+                        // Always show the toggle in two-pane now (it hides/shows the
+                        // pane), and keep showing it; `showSidebarToggle = true`.
+                        terminalColumn({ twoPaneSidebarVisible = !twoPaneSidebarVisible }, false)
                     }
                 }
             } else {
@@ -342,16 +360,26 @@ private fun TerminalColumn(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             if (showSidebarToggle) {
-                IconButton(onClick = onToggleSidebar) {
-                    Icon(Icons.Filled.Menu, contentDescription = "Toggle Sidebar", tint = Color.White)
+                IconButton(onClick = onToggleSidebar, modifier = Modifier.size(TOOLBAR_ICON_BUTTON)) {
+                    Icon(
+                        Icons.Filled.Menu,
+                        contentDescription = "Toggle Sidebar",
+                        tint = Color.White,
+                        modifier = Modifier.size(TOOLBAR_ICON),
+                    )
                 }
             }
             // Disconnect from the SERVER (iOS `server.rack` icon, ActiveTerminalView).
             // This leaves the server entirely — it is NOT a per-session close (kill a
             // session by swiping it in the sidebar). The earlier [X] looked like a
             // session-close, so it's now the server-rack glyph to match iOS.
-            IconButton(onClick = onDisconnect) {
-                Icon(Icons.Filled.Dns, contentDescription = "Disconnect from server", tint = Color.White)
+            IconButton(onClick = onDisconnect, modifier = Modifier.size(TOOLBAR_ICON_BUTTON)) {
+                Icon(
+                    Icons.Filled.Dns,
+                    contentDescription = "Disconnect from server",
+                    tint = Color.White,
+                    modifier = Modifier.size(TOOLBAR_ICON),
+                )
             }
             // Key-bar toggle — iOS uses the literal "fn" SF Symbol; Material has no
             // "fn" glyph, so we render an "fn" text chip (active = filled white,
@@ -384,8 +412,13 @@ private fun TerminalColumn(
             // the terminal; see the floating Box in the terminal body below.)
 
             if (activeSessionId != null) {
-                IconButton(onClick = { onShareQr(activeSessionId) }) {
-                    Icon(Icons.Filled.QrCode, contentDescription = "Share Session", tint = Color.White)
+                IconButton(onClick = { onShareQr(activeSessionId) }, modifier = Modifier.size(TOOLBAR_ICON_BUTTON)) {
+                    Icon(
+                        Icons.Filled.QrCode,
+                        contentDescription = "Share Session",
+                        tint = Color.White,
+                        modifier = Modifier.size(TOOLBAR_ICON),
+                    )
                 }
                 // Session name badge — long-press to rename (Swift's onLongPressGesture).
                 Box(

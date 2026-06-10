@@ -6,13 +6,11 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,7 +18,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.Color
@@ -84,18 +81,16 @@ fun SplashScreen(appVersion: String, onComplete: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             // The real app icon (the "AI" mark) — same artwork as the launcher
-            // icon and the iOS splash logo. Clipped to a rounded tile with a faint
-            // white ring so it reads as a distinct tile over the same-tan splash
-            // background (the icon's own background is the brand tan too).
+            // icon and the iOS splash logo. No border/clip: the icon's own
+            // background is the brand tan, so it blends seamlessly into the
+            // same-tan splash background (a ring/edge would break the blend).
             Image(
                 painter = painterResource(R.drawable.splash_logo),
                 contentDescription = "ClaudeRelay",
                 modifier = Modifier
                     .size(120.dp)
                     .scale(logoScale.value)
-                    .alpha(logoOpacity.value)
-                    .clip(RoundedCornerShape(28.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(28.dp)),
+                    .alpha(logoOpacity.value),
             )
 
             Text(

@@ -9,8 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -113,45 +113,49 @@ fun KeyboardAccessory(
     }
 }
 
-// MARK: - Button builders (match the iOS KeyboardAccessory builders)
+// MARK: - Button builders
 
 private val KeyShape = RoundedCornerShape(5.dp)
-// iOS tertiary/secondary system backgrounds in dark mode ≈ these dark greys.
-private val IconKeyBg = Color(0xFF2C2C2E)   // .tertiarySystemBackground (dark)
-private val TextKeyBg = Color(0xFF1C1C1E)   // .secondarySystemBackground (dark)
+private val KeyBg = Color(0xFF2C2C2E)
 private val KeyFg = Color.White
+
+// Every key is rendered at the SAME fixed size (≈ the return-key footprint) so the
+// bar is visually even regardless of content — icon, single char, "ESC", or "^C"
+// all occupy an identical cell. (The earlier per-content sizing made each key a
+// different width.)
+private val KeyWidth = 40.dp
+private val KeyHeight = 32.dp
+
+/**
+ * A uniform key cell: fixed [KeyWidth] x [KeyHeight], rounded, tappable, content
+ * centered. All four key kinds below are this same cell with different content.
+ */
+@Composable
+private fun KeyCell(onClick: () -> Unit, content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(width = KeyWidth, height = KeyHeight)
+            .clip(KeyShape)
+            .background(KeyBg)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
+    }
+}
 
 /** An icon key (return / tab / delete / arrows) — iOS `keyButton(icon:)`. */
 @Composable
 private fun IconKey(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(KeyShape)
-            .background(IconKeyBg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = KeyFg,
-            modifier = Modifier.height(18.dp),
-        )
+    KeyCell(onClick) {
+        Icon(imageVector = icon, contentDescription = label, tint = KeyFg, modifier = Modifier.height(18.dp))
     }
 }
 
 /** A text key (ESC) — iOS `textKeyButton`. */
 @Composable
 private fun TextKey(label: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(KeyShape)
-            .background(TextKeyBg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-        contentAlignment = Alignment.Center,
-    ) {
+    KeyCell(onClick) {
         Text(text = label, color = KeyFg, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     }
 }
@@ -159,19 +163,11 @@ private fun TextKey(label: String, onClick: () -> Unit) {
 /** A monospaced single-character key (digits + the | / ~ - _ symbols) — iOS `charButton`. */
 @Composable
 private fun CharKey(char: Char, onKey: (ByteArray) -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(KeyShape)
-            .background(TextKeyBg)
-            .clickable { onKey(SpecialKeys.literal(char)) }
-            .widthIn(min = 28.dp)
-            .padding(vertical = 5.dp),
-        contentAlignment = Alignment.Center,
-    ) {
+    KeyCell({ onKey(SpecialKeys.literal(char)) }) {
         Text(
             text = char.toString(),
             color = KeyFg,
-            fontSize = 14.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.Medium,
             fontFamily = FontFamily.Monospace,
         )
@@ -181,14 +177,7 @@ private fun CharKey(char: Char, onKey: (ByteArray) -> Unit) {
 /** A Ctrl-<letter> combo key — iOS `ctrlComboButton` (a "^" prefix + monospaced letter). */
 @Composable
 private fun CtrlKey(letter: Char, bytes: ByteArray, onKey: (ByteArray) -> Unit) {
-    Box(
-        modifier = Modifier
-            .clip(KeyShape)
-            .background(IconKeyBg)
-            .clickable { onKey(bytes) }
-            .padding(horizontal = 7.dp, vertical = 5.dp),
-        contentAlignment = Alignment.Center,
-    ) {
+    KeyCell({ onKey(bytes) }) {
         // iOS uses the SF Symbol "control" (the ⌃ caret) + the letter; "^<letter>"
         // is the rendering-safe ASCII equivalent.
         Text(
