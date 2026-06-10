@@ -6,6 +6,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -115,29 +116,34 @@ fun KeyboardAccessory(
 
 // MARK: - Button builders
 
-private val KeyShape = RoundedCornerShape(5.dp)
+private val KeyShape = RoundedCornerShape(6.dp)
 private val KeyBg = Color(0xFF2C2C2E)
 private val KeyFg = Color.White
 
-// Every key is rendered at the SAME fixed size (≈ the return-key footprint) so the
-// bar is visually even regardless of content — icon, single char, "ESC", or "^C"
-// all occupy an identical cell. (The earlier per-content sizing made each key a
-// different width.)
-private val KeyWidth = 40.dp
-private val KeyHeight = 32.dp
+// Keys match the TOP BAR control footprint exactly (feature-workspace ToolbarChip /
+// the SessionTab "1" chip): a 26x22dp min cell with 6dp corners + 6dp horizontal
+// padding and a 14dp icon. Single-glyph keys (return, arrows, digit) are exactly the
+// chip size; multi-char keys (ESC, ^C) grow with content the same way the tab does.
+// (Values are mirrored, not shared: :terminal is below :feature-workspace in the
+// module graph, so it can't import that constant.)
+private val KeyMinWidth = 26.dp
+private val KeyMinHeight = 22.dp
+private val KeyIconSize = 14.dp
 
 /**
- * A uniform key cell: fixed [KeyWidth] x [KeyHeight], rounded, tappable, content
- * centered. All four key kinds below are this same cell with different content.
+ * A uniform key cell sized like the top-bar chip: [KeyMinWidth] x [KeyMinHeight]
+ * min, 6dp corners, rounded, tappable, content centered. All key kinds below are
+ * this same cell with different content.
  */
 @Composable
 private fun KeyCell(onClick: () -> Unit, content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
-            .size(width = KeyWidth, height = KeyHeight)
+            .defaultMinSize(minWidth = KeyMinWidth, minHeight = KeyMinHeight)
             .clip(KeyShape)
             .background(KeyBg)
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         content()
@@ -148,7 +154,7 @@ private fun KeyCell(onClick: () -> Unit, content: @Composable () -> Unit) {
 @Composable
 private fun IconKey(icon: ImageVector, label: String, onClick: () -> Unit) {
     KeyCell(onClick) {
-        Icon(imageVector = icon, contentDescription = label, tint = KeyFg, modifier = Modifier.height(18.dp))
+        Icon(imageVector = icon, contentDescription = label, tint = KeyFg, modifier = Modifier.size(KeyIconSize))
     }
 }
 
