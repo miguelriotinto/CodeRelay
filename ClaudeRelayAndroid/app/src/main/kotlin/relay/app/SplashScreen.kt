@@ -86,7 +86,7 @@ fun SplashScreen(appVersion: String, onComplete: () -> Unit) {
             // same-tan splash background (a ring/edge would break the blend).
             Image(
                 painter = painterResource(R.drawable.splash_logo),
-                contentDescription = "ClaudeRelay",
+                contentDescription = "Claude Relay",
                 modifier = Modifier
                     .size(120.dp)
                     .scale(logoScale.value)
@@ -94,7 +94,7 @@ fun SplashScreen(appVersion: String, onComplete: () -> Unit) {
             )
 
             Text(
-                text = "ClaudeRelay",
+                text = "Claude Relay",
                 color = Color.White,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.SemiBold,
