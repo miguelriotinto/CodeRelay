@@ -388,14 +388,19 @@ class SessionCoordinator(
      * server set, drop its name, claim, and agent, evict its cached terminal, and
      * forget its activity state. A non-critical refresh — failures are swallowed.
      */
-    suspend fun fetchSessions() {
+    suspend fun fetchSessions(force: Boolean = false) {
         // 0.5 s debounce keyed on the injected [nowMs] clock (Swift :308-310).
         // The first fetch (lastFetchMs == null, Swift `.distantPast`) always
-        // passes; subsequent calls within 500 ms are dropped. There is no `force`
-        // parameter — every caller (connect, post-op, recovery) shares this gate,
-        // matching Swift, which also has no force path.
+        // passes; subsequent calls within 500 ms are dropped.
+        //
+        // [force] bypasses the debounce for post-mutation fetches (create / attach):
+        // those MUST refresh `_sessions` so the just-claimed id appears in the pane.
+        // Without it, a create/attach that lands < 500 ms after connect()'s initial
+        // fetch is debounced away, leaving the session `owned` but absent from
+        // `_sessions` → `computeActiveSessions` filters it out → it's invisible until
+        // some later fetch (the "sometimes not visible after attach" symptom).
         val last = lastFetchMs
-        if (last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
+        if (!force && last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
         lastFetchMs = nowMs()
 
         _isLoading.value = true
@@ -407,10 +412,32 @@ class SessionCoordinator(
     }
 
     private suspend fun doFetchSessions() {
+        // The pane list is TOKEN-scoped (sessions created/attached under THIS
+        // connection's token) — `session_list`.
         val list = runCatching { authCoordinator.withAuth { sessionController.listSessions() } }
             .getOrElse { return }
         _sessions.value = list
         recomputeActiveSessions()
+
+        // The PRUNE existence set is TOKEN-AGNOSTIC — `session_list_all` lists every
+        // session the server still holds, across all tokens. We prune local
+        // ownership/names/agents against THIS, not the token-scoped `list`, because
+        // ownership is device-scoped: a session this device created/attached under a
+        // DIFFERENT token (e.g. another device attached it, or a prior launch used a
+        // different token) is absent from `list` but still very much alive. Pruning
+        // against the token-scoped list would permanently unclaim it → the session
+        // vanishes from the pane with no recovery (the reported bug). The server
+        // REMOVES terminated/cleaned-up sessions from its store (SessionManager
+        // `sessions.removeValue`), so a truly-dead session is absent from
+        // `session_list_all` too and is still pruned correctly. The dedicated
+        // `session_stolen` push handles the "another device took it" case.
+        //
+        // If the all-sessions RPC fails, fall back to the token-scoped ids — but
+        // since that risks the over-prune above, treat a failure as "prune nothing"
+        // (null) rather than "prune everything not on this token".
+        val existsIds: Set<UUID>? = runCatching {
+            authCoordinator.withAuth { sessionController.listAllSessions() }.map { it.id }.toSet()
+        }.getOrNull()
 
         // Adopt any server-provided names.
         for (session in list) {
@@ -422,26 +449,28 @@ class SessionCoordinator(
             activityCoordinator.applyActivity(session.id, session.activity ?: ActivityState.IDLE, session.agent)
         }
 
-        val serverIds = list.map { it.id }.toSet()
-
-        // Prune names not on the server.
-        for (id in ownershipStore.names.keys.toList()) {
-            if (id !in serverIds) setNameLocal(id, null)
-        }
-        // Prune owned ids not on the server.
-        for (id in ownershipStore.owned.toList()) {
-            if (id !in serverIds) unclaimSession(id)
-        }
-        // Prune agents not on the server, forgetting their activity state too.
-        for (id in ownershipStore.agents.keys.toList()) {
-            if (id !in serverIds) activityCoordinator.forgetSession(id)
-        }
-        // Evict cached terminals for sessions that no longer exist on the server.
-        val prunedTerminals = terminalCache.pruneStale(serverIds)
-        // Forget activity for any pruned terminal whose id wasn't already handled
-        // above (e.g. a cached terminal with no agent entry).
-        for (id in prunedTerminals) {
-            if (id !in serverIds) activityCoordinator.forgetSession(id)
+        // Only prune when we have an authoritative all-sessions set; a failed
+        // all-sessions fetch must NOT trigger unclaims (see above).
+        if (existsIds != null) {
+            // Prune names for sessions gone from the server entirely.
+            for (id in ownershipStore.names.keys.toList()) {
+                if (id !in existsIds) setNameLocal(id, null)
+            }
+            // Prune owned ids only when truly gone from the server (any token).
+            for (id in ownershipStore.owned.toList()) {
+                if (id !in existsIds) unclaimSession(id)
+            }
+            // Prune agents gone from the server, forgetting their activity state too.
+            for (id in ownershipStore.agents.keys.toList()) {
+                if (id !in existsIds) activityCoordinator.forgetSession(id)
+            }
+            // Evict cached terminals for sessions that no longer exist on the server.
+            val prunedTerminals = terminalCache.pruneStale(existsIds)
+            // Forget activity for any pruned terminal whose id wasn't already handled
+            // above (e.g. a cached terminal with no agent entry).
+            for (id in prunedTerminals) {
+                if (id !in existsIds) activityCoordinator.forgetSession(id)
+            }
         }
     }
 
@@ -473,7 +502,9 @@ class SessionCoordinator(
             terminalCache.touch(sessionId)
             terminalCache.enforceLimit(_activeSessionId.value)
 
-            fetchSessions()
+            // force: bypass the debounce so the just-created session lands in
+            // `_sessions` immediately (it may be < 500 ms since connect()'s fetch).
+            fetchSessions(force = true)
         } catch (e: Throwable) {
             presentError(e.message ?: "Failed to create session")
         }
@@ -557,7 +588,10 @@ class SessionCoordinator(
                 runCatching { sessionController.renameSession(id, name) }
             }
 
-            fetchSessions()
+            // force: bypass the debounce so the just-attached session lands in
+            // `_sessions` immediately (attach claims it but does not add it to
+            // `_sessions` directly; a debounced fetch would leave it invisible).
+            fetchSessions(force = true)
         } catch (e: Throwable) {
             // Rollback to the previous session (SharedSessionCoordinator.swift:510-514).
             if (previousId != null) {

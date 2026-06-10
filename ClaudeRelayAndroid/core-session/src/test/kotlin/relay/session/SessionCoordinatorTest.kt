@@ -85,12 +85,30 @@ class SessionCoordinatorTest {
             is ClientMessage.SessionResume -> ServerMessage.SessionResumed(message.sessionId)
             is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
             is ClientMessage.SessionList -> ServerMessage.SessionList(sessionsOnServer)
-            is ClientMessage.SessionListAll -> ServerMessage.SessionListAll(sessionsOnServer)
+            // SessionListAll defaults to the token-scoped list, but tests can stage a
+            // SUPERSET (sessions on OTHER tokens) by setting [allSessionsOnServer] to
+            // exercise the prune-against-all-sessions behavior.
+            is ClientMessage.SessionListAll ->
+                if (failAllSessions) {
+                    ServerMessage.Error(code = 500, message = "session_list_all unavailable")
+                } else {
+                    ServerMessage.SessionListAll(allSessionsOnServer ?: sessionsOnServer)
+                }
             else -> null // rename/terminate/ping are fire-and-forget here
         }
 
-        /** Sessions the server reports for SessionList. Mutable so tests can stage prune scenarios. */
+        /** Sessions the server reports for SessionList (token-scoped). Mutable so tests can stage prune scenarios. */
         var sessionsOnServer: List<SessionInfo> = emptyList()
+
+        /**
+         * Sessions the server reports for SessionListAll (all tokens). `null` ⇒ mirror
+         * [sessionsOnServer]; set to a superset to model sessions owned under another
+         * token, which must survive the prune.
+         */
+        var allSessionsOnServer: List<SessionInfo>? = null
+
+        /** When true, SessionListAll responds with an Error so listAllSessions throws. */
+        var failAllSessions: Boolean = false
 
         companion object {
             val NEW_SESSION_ID: UUID = UUID.fromString("00000000-0000-0000-0000-0000000000aa")
@@ -457,6 +475,72 @@ class SessionCoordinatorTest {
         assertNull(coord.terminalCache.view(c), "C terminal evicted")
         assertFalse(coord.terminalCache.cachedIds.contains(b), "B not cached")
         assertFalse(coord.terminalCache.cachedIds.contains(c), "C not cached")
+    }
+
+    // -------------------------------------------------------------------------
+    // REGRESSION (device-pin bug): a session this device owns but that lives under
+    // a DIFFERENT token (absent from the token-scoped session_list, present in
+    // session_list_all) must SURVIVE the prune. Previously the prune ran against the
+    // token-scoped list and permanently unclaimed it → the session vanished from the
+    // pane with no recovery.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `fetchSessions keeps owned sessions that exist under another token`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val a = UUID.fromString("00000000-0000-0000-0000-00000000000a") // this token
+        val b = UUID.fromString("00000000-0000-0000-0000-00000000000b") // another token (alive)
+        val gone = UUID.fromString("00000000-0000-0000-0000-00000000000d") // truly gone
+        val store = FakeOwnershipStore(
+            log,
+            seedNames = mapOf(a to "Arya", b to "Bran", gone to "Ghost"),
+            seedOwned = setOf(a, b, gone),
+            seedAgents = mapOf(b to "claude"),
+        )
+        // Token-scoped list: only A (B is attached under another device's token now).
+        surface.sessionsOnServer = listOf(session(a, "Arya"))
+        // All-tokens list: A and B exist on the server; `gone` does not.
+        surface.allSessionsOnServer = listOf(session(a, "Arya"), session(b, "Bran"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.fetchSessions()
+        advanceUntilIdle()
+
+        // A and B survive (both exist server-side, on some token); `gone` is pruned.
+        assertTrue(store.owned.contains(a), "A kept")
+        assertTrue(store.owned.contains(b), "B kept (exists under another token)")
+        assertFalse(store.owned.contains(gone), "truly-gone session pruned")
+        assertTrue(store.names.containsKey(b), "B name kept")
+        assertFalse(store.names.containsKey(gone), "gone un-named")
+        assertTrue(store.agents.containsKey(b), "B agent kept")
+    }
+
+    // -------------------------------------------------------------------------
+    // A failed session_list_all must NOT trigger any unclaim (avoid over-pruning
+    // when the all-sessions RPC is unavailable).
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `fetchSessions does not prune when listAllSessions is unavailable`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
+        val b = UUID.fromString("00000000-0000-0000-0000-00000000000b")
+        val store = FakeOwnershipStore(log, seedOwned = setOf(a, b))
+        surface.sessionsOnServer = listOf(session(a, "Arya"))
+        // Make SessionListAll return no usable response → listAllSessions throws →
+        // existsIds is null → prune is skipped entirely.
+        surface.failAllSessions = true
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.fetchSessions()
+        advanceUntilIdle()
+
+        assertTrue(store.owned.contains(a), "A kept (no prune on all-sessions failure)")
+        assertTrue(store.owned.contains(b), "B kept (no prune on all-sessions failure)")
     }
 
     // -------------------------------------------------------------------------
