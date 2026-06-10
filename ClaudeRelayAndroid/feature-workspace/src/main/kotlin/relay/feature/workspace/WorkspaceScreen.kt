@@ -1,8 +1,14 @@
 package relay.feature.workspace
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +16,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -64,9 +71,13 @@ import java.util.UUID
 /** Material3 "expanded" width breakpoint — width ≥ this gets the two-pane layout. */
 private val EXPANDED_WIDTH_BREAKPOINT = 840.dp
 
-/** Compact top-toolbar icon sizing (the default IconButton 48dp is too large). */
-private val TOOLBAR_ICON_BUTTON = 34.dp
-private val TOOLBAR_ICON = 18.dp
+// Top-toolbar controls share the SessionTab "1" chip footprint so they're uniform
+// with the tab: 26x22dp min, 6dp corners, ~14dp icon. (The default IconButton 48dp
+// was far larger than the tab.)
+private val TOOLBAR_CHIP_MIN_WIDTH = 26.dp
+private val TOOLBAR_CHIP_MIN_HEIGHT = 22.dp
+private val TOOLBAR_ICON = 14.dp
+private val TOOLBAR_CHIP_SHAPE = RoundedCornerShape(6.dp)
 
 /**
  * The workspace screen — the adaptive split host, ported from `WorkspaceView.swift`.
@@ -230,8 +241,16 @@ fun WorkspaceScreen(
                 Row(modifier = Modifier.fillMaxSize()) {
                     // Sidebar pane is collapsible (iOS columnVisibility): the toggle
                     // flips twoPaneSidebarVisible so the terminal can take the full
-                    // width even on a fold-open / tablet screen.
-                    if (twoPaneSidebarVisible) {
+                    // width even on a fold-open / tablet screen. AnimatedVisibility
+                    // slides + shrinks it horizontally so the pane glides left rather
+                    // than vanishing instantly.
+                    AnimatedVisibility(
+                        visible = twoPaneSidebarVisible,
+                        enter = expandHorizontally(expandFrom = Alignment.Start) +
+                            slideInHorizontally(initialOffsetX = { -it }),
+                        exit = shrinkHorizontally(shrinkTowards = Alignment.Start) +
+                            slideOutHorizontally(targetOffsetX = { -it }),
+                    ) {
                         Box(modifier = Modifier.width(320.dp).fillMaxHeight()) { sidebar() }
                     }
                     Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
@@ -359,8 +378,10 @@ private fun TerminalColumn(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            // All top-bar controls share the SessionTab "1" chip footprint (26×22dp,
+            // 6dp corners) so they're visually uniform with the tab.
             if (showSidebarToggle) {
-                IconButton(onClick = onToggleSidebar, modifier = Modifier.size(TOOLBAR_ICON_BUTTON)) {
+                ToolbarChip(onClick = onToggleSidebar) {
                     Icon(
                         Icons.Filled.Menu,
                         contentDescription = "Toggle Sidebar",
@@ -373,7 +394,7 @@ private fun TerminalColumn(
             // This leaves the server entirely — it is NOT a per-session close (kill a
             // session by swiping it in the sidebar). The earlier [X] looked like a
             // session-close, so it's now the server-rack glyph to match iOS.
-            IconButton(onClick = onDisconnect, modifier = Modifier.size(TOOLBAR_ICON_BUTTON)) {
+            ToolbarChip(onClick = onDisconnect) {
                 Icon(
                     Icons.Filled.Dns,
                     contentDescription = "Disconnect from server",
@@ -412,7 +433,7 @@ private fun TerminalColumn(
             // the terminal; see the floating Box in the terminal body below.)
 
             if (activeSessionId != null) {
-                IconButton(onClick = { onShareQr(activeSessionId) }, modifier = Modifier.size(TOOLBAR_ICON_BUTTON)) {
+                ToolbarChip(onClick = { onShareQr(activeSessionId) }) {
                     Icon(
                         Icons.Filled.QrCode,
                         contentDescription = "Share Session",
@@ -484,25 +505,45 @@ private fun TerminalColumn(
 }
 
 /**
+ * A top-bar control chip with the SAME footprint as the SessionTab "1" chip
+ * (26x22dp min, 6dp corners, translucent-white bg) so all top-bar items are
+ * visually uniform. Holds an icon or short text.
+ */
+@Composable
+private fun ToolbarChip(onClick: () -> Unit, content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = TOOLBAR_CHIP_MIN_WIDTH, minHeight = TOOLBAR_CHIP_MIN_HEIGHT)
+            .clip(TOOLBAR_CHIP_SHAPE)
+            .background(Color.White.copy(alpha = 0.12f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
+    }
+}
+
+/**
  * The key-bar toggle, rendering an "fn" chip (iOS `ToolbarIconButton(icon: "fn")`).
- * Material ships no "fn" glyph, so this is a small monospace "fn" Text styled like
- * the iOS toolbar button: filled white when [active] (key bar shown), dim
- * white-on-translucent when inactive.
+ * Same footprint as [ToolbarChip] / the "1" tab; filled white when [active] (key
+ * bar shown), dim white-on-translucent when inactive.
  */
 @Composable
 private fun FnToggleButton(active: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .defaultMinSize(minWidth = TOOLBAR_CHIP_MIN_WIDTH, minHeight = TOOLBAR_CHIP_MIN_HEIGHT)
+            .clip(TOOLBAR_CHIP_SHAPE)
             .background(if (active) Color.White else Color.White.copy(alpha = 0.12f))
-            .combinedClickable(onClick = onClick, onLongClick = null)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = "fn",
             color = if (active) Color.Black else Color.White.copy(alpha = 0.7f),
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             fontFamily = FontFamily.Monospace,
         )
