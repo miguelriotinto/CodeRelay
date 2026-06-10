@@ -37,7 +37,10 @@ class TokenStore(context: Context) {
 
     /** Saves [token] for [connectionId], replacing any existing entry. */
     fun saveToken(token: String, connectionId: UUID) {
-        prefs.edit().putString(connectionId.toString(), token).apply()
+        // commit() (synchronous): a token saved in Add/Edit-Server must survive a
+        // force-kill right after. With apply()'s async flush, a kill before the
+        // write lands leaves no token next launch → "No saved token" on connect.
+        prefs.edit().putString(connectionId.toString(), token).commit()
     }
 
     /** Returns the token for [connectionId], or `null` if none is stored. */
@@ -46,7 +49,7 @@ class TokenStore(context: Context) {
 
     /** Removes the token for [connectionId]. No-op when absent. */
     fun deleteToken(connectionId: UUID) {
-        prefs.edit().remove(connectionId.toString()).apply()
+        prefs.edit().remove(connectionId.toString()).commit()
     }
 
     /**
@@ -54,10 +57,11 @@ class TokenStore(context: Context) {
      * mirroring `AuthManager.saveBedrockToken(_:)`.
      */
     fun saveBedrockToken(token: String) {
+        // commit() not apply() — see saveToken(); a force-kill must not lose it.
         if (token.isEmpty()) {
-            prefs.edit().remove(BEDROCK_KEY).apply()
+            prefs.edit().remove(BEDROCK_KEY).commit()
         } else {
-            prefs.edit().putString(BEDROCK_KEY, token).apply()
+            prefs.edit().putString(BEDROCK_KEY, token).commit()
         }
     }
 

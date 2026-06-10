@@ -151,14 +151,22 @@ class SessionOwnershipStore(
     private fun persist(key: String, map: Map<UUID, String>) {
         val encoded = map.entries.associate { it.key.toString().lowercase() to it.value }
         val json = WireJson.instance.encodeToString(MAP_SERIALIZER, encoded)
-        prefs.edit().putString(key, json).apply()
+        // commit() (synchronous), not apply(): a claim/name written right before the
+        // app is force-killed (or a rapid reconnect rebuilds the store from disk)
+        // must already be on disk. apply()'s async flush could otherwise be lost,
+        // dropping the ownership claim so the session vanishes next launch. These
+        // are tiny, infrequent writes — the sync cost is negligible. (DeviceIdentifier
+        // uses commit() for the same reason.)
+        prefs.edit().putString(key, json).commit()
     }
 
     /** Encodes [set] (lowercase UUID strings) and writes it to [key]. */
     private fun persistSet(key: String, set: Set<UUID>) {
         val encoded = set.map { it.toString().lowercase() }
         val json = WireJson.instance.encodeToString(LIST_SERIALIZER, encoded)
-        prefs.edit().putString(key, json).apply()
+        // commit() not apply() — see persist() above; the owned set is the
+        // load-bearing device-pin state and must survive a force-kill.
+        prefs.edit().putString(key, json).commit()
     }
 
     companion object {
