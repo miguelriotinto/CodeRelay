@@ -53,7 +53,9 @@ fun QrShareSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val sheetState = rememberModalBottomSheetState()
+    // skipPartiallyExpanded so the sheet opens FULLY expanded in one motion instead
+    // of stopping at the half-height partial detent (the QR was getting clipped).
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val deepLink = remember(sessionId) { DeepLinks.sessionUri(sessionId) }
     // Encode once per id; 560 px ≈ the iOS 280 pt @2x render.
     val bitmap = remember(deepLink) { runCatching { qrBitmap(deepLink, 560) }.getOrNull() }
