@@ -1,6 +1,7 @@
 package relay.storage
 
 import android.content.Context
+import android.provider.Settings
 import java.util.UUID
 
 /**
@@ -8,14 +9,36 @@ import java.util.UUID
  * (e.g. session-ownership keys), the same role `DeviceIdentifier.swift` plays on
  * iOS/macOS.
  *
- * ## Accepted iOS divergence
+ * ## Why this is derived from the OS, not a random persisted UUID
  *
- * iOS uses `UIDevice.identifierForVendor` and macOS uses the IOKit platform
- * UUID — both supplied by the OS. Android has no equivalent stable, privacy-safe
- * hardware ID we may read without restricted permissions, so we generate a random
- * [UUID] on first access and persist it in plain (non-encrypted) SharedPreferences.
- * The value is therefore stable for the lifetime of the install (it resets on
- * uninstall / data-clear), which is sufficient for storage namespacing.
+ * The ownership store keys the device-owned session set as
+ * `ownedSessions.$deviceId`. So the device id MUST return the same value on every
+ * launch — if it changes, the owned set is written under one key and read back
+ * under another, so `owned` reads empty and the device's sessions vanish from the
+ * pane (resurfacing only via "Attach"). The reported Huawei bug.
+ *
+ * The previous implementation generated a random [UUID] and persisted it in plain
+ * SharedPreferences. That is fragile: if the (non-encrypted) write is ever lost —
+ * which aggressive OEM storage/process management (notably HarmonyOS/EMUI on
+ * Huawei) can cause — a NEW UUID is generated on the next launch, silently
+ * re-namespacing all device-scoped storage. There is no recovery: every relaunch
+ * looks like a brand-new device.
+ *
+ * So the PRIMARY source is now [Settings.Secure.ANDROID_ID] — a 64-bit value the
+ * OS guarantees stable for the app's signing key + user across reboots and app
+ * restarts (it resets only on factory reset / signing-key change), requires no
+ * permission, and crucially needs NO storage write to stay stable. It is derived
+ * fresh each launch and is identical each launch by construction.
+ *
+ * ## Fallback chain
+ * 1. `ANDROID_ID` when present and not the known-bad emulator constant.
+ * 2. A persisted random UUID (the old behaviour), for the rare device returning a
+ *    null/bogus `ANDROID_ID`. Persisted with `commit()` so a crash can't lose it.
+ * 3. An in-memory UUID for THIS process if even the persist read/write degrades —
+ *    cached so it is at least stable within the process lifetime.
+ *
+ * The resolved value is memoised in [cached] so all callers in a process agree
+ * even if step 2/3 is reached.
  */
 object DeviceIdentifier {
 
@@ -23,15 +46,52 @@ object DeviceIdentifier {
     private const val KEY = "deviceId"
 
     /**
-     * Returns the persisted device id, generating and storing one on first call.
-     * Subsequent calls return the same value for the lifetime of the install.
+     * `9774d56d682e549c` is the well-known buggy `ANDROID_ID` that a population of
+     * (mostly older/cloned) devices return identically — treat it as absent so we
+     * fall back to a per-install UUID rather than collapsing every such device
+     * onto one shared namespace.
      */
-    fun get(context: Context): String = synchronized(this) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        prefs.getString(KEY, null)
-            ?: UUID.randomUUID().toString().also {
-                // commit() (not apply()) so a crash right after generation can't lose it.
-                prefs.edit().putString(KEY, it).commit()
-            }
+    private const val BAD_ANDROID_ID = "9774d56d682e549c"
+
+    @Volatile
+    private var cached: String? = null
+
+    /**
+     * Returns the stable device id, deriving it from [Settings.Secure.ANDROID_ID]
+     * when available and falling back to a persisted/in-memory UUID otherwise.
+     * Memoised for the process lifetime.
+     */
+    fun get(context: Context): String {
+        cached?.let { return it }
+        return synchronized(this) {
+            cached?.let { return it }
+            resolve(context.applicationContext).also { cached = it }
+        }
+    }
+
+    private fun resolve(appContext: Context): String {
+        // 1. OS-stable ANDROID_ID — no storage write needed to stay stable.
+        val androidId = runCatching {
+            Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
+        }.getOrNull()
+        if (!androidId.isNullOrBlank() && androidId != BAD_ANDROID_ID) {
+            // Prefix so the namespace can't collide with a legacy persisted UUID
+            // value (different shape) and so the source is self-describing.
+            return "aid-$androidId"
+        }
+
+        // 2. Persisted random UUID (legacy behaviour) for devices with no usable
+        //    ANDROID_ID. Reuse any value an earlier launch already stored.
+        val prefs = runCatching {
+            appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        }.getOrNull()
+        prefs?.getString(KEY, null)?.let { return it }
+
+        val generated = UUID.randomUUID().toString()
+        // commit() (not apply()) so a crash right after generation can't lose it.
+        // Best-effort: if the write fails, `cached` still keeps this stable for the
+        // process so at least a single session lifetime is coherent.
+        runCatching { prefs?.edit()?.putString(KEY, generated)?.commit() }
+        return generated
     }
 }

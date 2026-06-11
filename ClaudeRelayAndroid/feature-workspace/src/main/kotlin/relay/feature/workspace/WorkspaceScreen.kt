@@ -162,6 +162,10 @@ fun WorkspaceScreen(
     val isRecovering by coordinator.isRecovering.collectAsStateWithLifecycle()
     val recoveryPhase by coordinator.recoveryPhase.collectAsStateWithLifecycle()
     val connectionTimedOut by coordinator.connectionTimedOut.collectAsStateWithLifecycle()
+    // "Session Moved" alert — raised when the active session is attached away by
+    // another device (iOS WorkspaceView.swift:168-181). Without surfacing this the
+    // session just vanishes to "No Active Session" with no explanation.
+    val stolenAlert by coordinator.stolenAlert.collectAsStateWithLifecycle()
 
     val quality by vm.connectionQuality.collectAsStateWithLifecycle()
     val uptimeSeconds by vm.uptimeSeconds.collectAsStateWithLifecycle()
@@ -335,6 +339,22 @@ fun WorkspaceScreen(
                     coordinator.clearRecoveryFlags()
                     onDisconnect()
                 }) { Text("Disconnect") }
+            },
+        )
+    }
+
+    // "Session Moved" alert (iOS WorkspaceView.swift:168-181). Matches the iOS
+    // copy exactly: title "Session Moved", message "{name} ({shortId}) was attached
+    // from another device.", single OK button.
+    stolenAlert?.let { alert ->
+        AlertDialog(
+            onDismissRequest = { coordinator.activityCoordinator.clearStolen(alert.sessionId) },
+            title = { Text("Session Moved") },
+            text = { Text("${alert.sessionName} (${alert.shortId}) was attached from another device.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    coordinator.activityCoordinator.clearStolen(alert.sessionId)
+                }) { Text("OK") }
             },
         )
     }
