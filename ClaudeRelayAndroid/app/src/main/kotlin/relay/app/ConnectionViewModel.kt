@@ -2,7 +2,6 @@ package relay.app
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -87,12 +86,15 @@ class ConnectionViewModel : ViewModel() {
 
     override fun onCleared() {
         // The Activity is truly finishing (not a fold/config change) — tear the
-        // session down. teardown() is suspend, so run it on the (about-to-cancel)
-        // viewModelScope; the disconnect is best-effort at this point.
+        // session down. teardown() is suspend, so it needs a live scope. NOT
+        // viewModelScope: AndroidX cancels that inside clear() *before* onCleared()
+        // runs, so a coroutine launched here would never start (leaking the mic /
+        // foreground microphone service). The session's OWN scope is still alive at
+        // this point, so launch the teardown there and cancel it as the final step.
         val session = _activeSession.value
         _activeSession.value = null
         if (session != null) {
-            viewModelScope.launch {
+            session.scope.launch {
                 session.speech.stop()
                 session.coordinator.tearDown()
                 session.scope.cancel()
