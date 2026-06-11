@@ -90,7 +90,11 @@ extension RelayMessageHandler {
                 }
                 handler.sendServerMessage(.replayComplete(sessionId: sessionId), context: ctx)
                 handler.sendServerMessage(.sessionActivity(sessionId: sessionId, activity: activity, agent: agent?.id), context: ctx)
-                handler.wirePTYOutput(pty: pty, context: ctx)
+                // repaintAfter: the replayed ring-buffer bytes were emitted for
+                // whatever grid existed when they were generated; a SIGWINCH
+                // after the handler is wired makes the foreground app redraw
+                // at the current grid, replacing any mis-wrapped replay.
+                handler.wirePTYOutput(pty: pty, context: ctx, repaintAfter: true)
             },
             onFailure: { handler, ctx, error in
                 RelayLogger.log(.error, category: "session", "Attach failed for \(sessionId): \(error)")
@@ -130,7 +134,10 @@ extension RelayMessageHandler {
                 }
                 handler.sendServerMessage(.replayComplete(sessionId: sessionId), context: ctx)
                 handler.sendServerMessage(.sessionActivity(sessionId: sessionId, activity: activity, agent: agent?.id), context: ctx)
-                handler.wirePTYOutput(pty: pty, context: ctx)
+                // repaintAfter even when skipReplay=true: a tab switch back to
+                // a cached terminal can still be stale if the session's grid
+                // changed while another device was attached.
+                handler.wirePTYOutput(pty: pty, context: ctx, repaintAfter: true)
             },
             onFailure: { handler, ctx, error in
                 handler.sendServerMessage(.error(code: 404, message: "Resume failed: \(error)"), context: ctx)

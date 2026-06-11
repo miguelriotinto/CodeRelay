@@ -424,13 +424,23 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
 
     // MARK: - PTY Output Wiring
 
-    func wirePTYOutput(pty: any PTYSessionProtocol, context: ChannelHandlerContext) {
+    /// Installs the live output handler. With `repaintAfter`, also delivers
+    /// SIGWINCH to the PTY's foreground process group once the handler is in
+    /// place, so full-screen apps repaint at the current grid. Used after a
+    /// ring-buffer replay: replayed bytes reflect the grid they were emitted
+    /// for, and the kernel won't signal a same-size reattach on its own. The
+    /// ordering is load-bearing — repainting before the handler is wired would
+    /// send the redraw bytes to the ring buffer only, never to this client.
+    func wirePTYOutput(pty: any PTYSessionProtocol, context: ChannelHandlerContext, repaintAfter: Bool = false) {
         let ctx = UnsafeTransfer(context)
         Task { [weak self] in
             await pty.setOutputHandler { [weak self] data in
                 ctx.value.eventLoop.execute {
                     self?.sendBinaryData(data, context: ctx.value)
                 }
+            }
+            if repaintAfter {
+                await pty.forceRepaint()
             }
         }
     }

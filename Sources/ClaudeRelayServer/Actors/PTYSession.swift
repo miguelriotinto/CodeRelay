@@ -12,6 +12,13 @@ public protocol PTYSessionProtocol: Actor {
     func clearOutputHandler()
     func write(_ data: Data)
     func resize(cols: UInt16, rows: UInt16)
+    /// Asks the foreground process group to repaint by delivering SIGWINCH.
+    /// Used after a ring-buffer replay: the replayed bytes were emitted for the
+    /// grid size at the time they were generated, so the client's screen can be
+    /// mis-wrapped until the app redraws. The kernel only auto-delivers WINCH
+    /// when TIOCSWINSZ *changes* the size — a same-size reattach gets nothing —
+    /// so the server sends it explicitly (the dtach trick).
+    func forceRepaint()
     func readBuffer() -> Data
     func terminate()
     func getActivityState() -> ActivityState
@@ -475,6 +482,17 @@ public actor PTYSession: PTYSessionProtocol {
     public func resize(cols: UInt16, rows: UInt16) {
         guard !terminated else { return }
         _ = relay_set_winsize(masterFD, rows, cols)
+    }
+
+    /// Delivers SIGWINCH to the foreground process group so full-screen apps
+    /// repaint at the current grid. The kernel only auto-signals when
+    /// TIOCSWINSZ changes the size, so a same-size reattach needs this
+    /// explicit nudge.
+    public func forceRepaint() {
+        guard !terminated else { return }
+        let pgid = relay_get_foreground_pgid(masterFD)
+        guard pgid > 0 else { return }
+        _ = kill(-pgid, SIGWINCH)
     }
 
     /// Read the ring buffer contents (for resume, send scrollback history to client).

@@ -12,6 +12,11 @@ actor MockPTYSession: PTYSessionProtocol {
     private var terminated = false
     private var activityHandler: (@Sendable (ActivityState, CodingAgent?, UInt64) -> Void)?
     private(set) var clearOutputHandlerCallCount = 0
+    private(set) var forceRepaintCallCount = 0
+    /// Whether the live output handler was already wired when `forceRepaint()`
+    /// fired — the repaint's redraw bytes must reach the client, not just the
+    /// ring buffer, so ordering matters.
+    private(set) var forceRepaintSawOutputHandler = false
     private var bufferContents = Data()
 
     init(sessionId: UUID, cols: UInt16, rows: UInt16, scrollbackSize: Int) {
@@ -27,6 +32,10 @@ actor MockPTYSession: PTYSessionProtocol {
     }
     func write(_ data: Data) {}
     func resize(cols: UInt16, rows: UInt16) {}
+    func forceRepaint() {
+        forceRepaintCallCount += 1
+        forceRepaintSawOutputHandler = outputHandler != nil
+    }
     func readBuffer() -> Data { bufferContents }
     func terminate() { terminated = true }
     func getActivityState() -> ActivityState { .active }
