@@ -304,8 +304,19 @@ class SessionCoordinator(
             scope = scope,
             // isAlive wraps a 5 s pong wait inside RelayConnection.isAlive().
             isAlive = { connection.isAlive() },
+            needsRestore = { needsSessionRestore() },
             reconnect = { connection.forceReconnect() },
-            reauth = { sessionController.authenticate(token) },
+            // Reset auth only when it is actually stale for the current
+            // connection, then go through the single-flight ensureAuthenticated
+            // (iOS restoreSession does resetAuth() + ensureAuthenticated(),
+            // RecoveryController.swift:239-241). The conditional matters on the
+            // alive-restore path: the server handler is STILL authenticated
+            // there, and a blind re-auth would draw its 400 "Already
+            // authenticated" reject and fail the whole restore.
+            reauth = {
+                if (!sessionController.isAuthValid) sessionController.resetAuth()
+                authCoordinator.ensureAuthenticated()
+            },
             resumeActive = { resumeActiveForRecovery() },
             fetchSessions = { fetchSessions() },
             suppressSends = { on -> sendsSuppressed = on },
@@ -804,6 +815,26 @@ class SessionCoordinator(
     }
 
     /**
+     * Whether the active session's server-side attachment is stale on the
+     * CURRENT connection. The server holds the attached PTY per connection
+     * handler, so a socket replacement (or a recovery pass whose reconnect
+     * succeeded but whose resume failed) leaves the session orphaned: the
+     * transport is healthy and pongs normally, but the server SILENTLY drops
+     * typed bytes (`handleBinaryFrame`'s `guard isAuthenticated, let pty =
+     * attachedPTY else { return }`). This is the recovery controller's
+     * `needsRestore` collaborator — it converts "alive" short-circuits into
+     * restore passes when the attachment is stale (the sleep/wake bug).
+     *
+     * False when no session is active (nothing to restore — includes the
+     * post-app-level-failure state, where the failed restore already cleared
+     * the active id, and the post-steal state, where `onSessionStolen` did).
+     */
+    internal fun needsSessionRestore(): Boolean {
+        val activeId = _activeSessionId.value ?: return false
+        return sessionController.sessionId != activeId || !sessionController.isAttachmentValid
+    }
+
+    /**
      * Signals that the user just sent input (a keystroke / utterance). Because
      * OkHttp's `WebSocket.send()` returns `true` as soon as bytes are *enqueued*
      * — not delivered — a keystroke over a half-open socket vanishes silently and
@@ -831,8 +862,13 @@ class SessionCoordinator(
         val lastProbe = lastActivityProbeMs
         if (lastProbe != null && now - lastProbe < ACTIVITY_PROBE_THROTTLE_MS) return
 
+        // A healthy transport only excuses the probe when the session attachment
+        // is also current. After a failed restore the socket pongs forever while
+        // the server drops this very keystroke (no attached PTY) — typing is the
+        // strongest "I need this session NOW" signal, so route it into recovery,
+        // whose alive-restore path resumes without a reconnect.
         val healthyAt = lastHealthyAtMs
-        if (healthyAt != null && now - healthyAt < ACTIVITY_HEALTH_STALE_MS) return
+        if (healthyAt != null && now - healthyAt < ACTIVITY_HEALTH_STALE_MS && !needsSessionRestore()) return
 
         lastActivityProbeMs = now
         recoveryController.triggerUserRecovery()

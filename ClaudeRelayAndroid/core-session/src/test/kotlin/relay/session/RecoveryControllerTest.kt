@@ -34,6 +34,7 @@ class RecoveryControllerTest {
     private class RecoveryTestEnv(scope: CoroutineScope) {
         var clockMs: Long = 1_000_000L
         var alive: Boolean = false
+        var staleAttachment: Boolean = false
 
         val isAliveCalls = AtomicInteger(0)
         val reconnectCalls = AtomicInteger(0)
@@ -53,6 +54,7 @@ class RecoveryControllerTest {
         val controller = RecoveryController(
             scope = scope,
             isAlive = { isAliveCalls.incrementAndGet(); alive },
+            needsRestore = { staleAttachment },
             reconnect = { reconnectCalls.incrementAndGet(); reconnectBehavior(reconnectAttempt++) },
             reauth = { reauthCalls.incrementAndGet(); reauthBehavior() },
             resumeActive = { resumeCalls.incrementAndGet(); resumeBehavior() },
@@ -81,6 +83,68 @@ class RecoveryControllerTest {
         // recovery UI never flashed.
         assertTrue(env.suppressLog.isEmpty(), "alive path must not toggle suppressSends")
         assertEquals(false, env.controller.isRecovering.value)
+    }
+
+    // Sleep/wake fix: alive transport + stale attachment -> restore WITHOUT the
+    // backoff loop. The bare isAlive() short-circuit would lock in the
+    // detached-but-healthy state forever (server pongs but silently drops input).
+    @Test
+    fun `alive with stale attachment restores without reconnect`() = runTest {
+        val env = RecoveryTestEnv(this).apply {
+            alive = true
+            staleAttachment = true
+        }
+        env.controller.launchRecovery(userInitiated = true)
+        advanceUntilIdle()
+
+        assertEquals(0, env.reconnectCalls.get(), "live transport must not reconnect")
+        assertTrue(env.sleeps.isEmpty(), "no backoff on the alive-restore path")
+        assertEquals(1, env.reauthCalls.get())
+        assertEquals(1, env.resumeCalls.get(), "the stale session is resumed")
+        assertEquals(1, env.fetchCalls.get(), "successful restore refreshes the list")
+        // Full recovery-pass bookkeeping ran: suppressed on entry, released on exit.
+        assertEquals(listOf(true, false), env.suppressLog)
+        assertEquals(false, env.controller.isRecovering.value)
+        assertEquals(RecoveryPhase.RESUMING, env.controller.phase.value)
+    }
+
+    // Sleep/wake fix: a failed alive-restore keeps the existing terminal failure
+    // semantics (app-level -> sessionAttachFailed, counts toward the breaker).
+    @Test
+    fun `alive restore failure is terminal with app-level semantics`() = runTest {
+        val appErr = IllegalStateException("session gone")
+        val env = RecoveryTestEnv(this).apply {
+            alive = true
+            staleAttachment = true
+            resumeBehavior = { throw appErr }
+            appLevel = { it === appErr }
+        }
+        env.controller.launchRecovery(userInitiated = false)
+        advanceUntilIdle()
+
+        assertEquals(0, env.reconnectCalls.get())
+        assertTrue(env.controller.sessionAttachFailed.value)
+        assertFalse(env.controller.connectionTimedOut.value)
+        assertEquals(1, env.controller.consecutiveAutoFailuresForTest)
+        assertEquals(false, env.controller.isRecovering.value)
+        assertEquals(listOf(true, false), env.suppressLog, "suppression released after the failed pass")
+    }
+
+    // Sleep/wake fix: alive + CURRENT attachment keeps the plain short-circuit.
+    @Test
+    fun `alive with current attachment still short-circuits to fetch`() = runTest {
+        val env = RecoveryTestEnv(this).apply {
+            alive = true
+            staleAttachment = false
+        }
+        env.controller.launchRecovery(userInitiated = true)
+        advanceUntilIdle()
+
+        assertEquals(0, env.reconnectCalls.get())
+        assertEquals(0, env.reauthCalls.get())
+        assertEquals(0, env.resumeCalls.get())
+        assertEquals(1, env.fetchCalls.get())
+        assertTrue(env.suppressLog.isEmpty(), "short-circuit must not flash recovery UI")
     }
 
     // 1: backoff array is exactly [0,1,2,4,8,15] seconds (RecoveryController.swift:176).

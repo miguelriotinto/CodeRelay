@@ -122,6 +122,12 @@ class SessionCoordinatorTest {
         var lastWiredHandler: ((ByteArray) -> Unit)? = null
         /** When set, forceReconnect awaits it (lets a test park the recovery pass). */
         var forceReconnectGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+        /**
+         * Invoked on forceReconnect — lets a test mirror the real transport, where
+         * reconnecting bumps the (shared) connection generation that the
+         * SessionController's auth/attachment stamps are compared against.
+         */
+        var onForceReconnect: (() -> Unit)? = null
         private val subscribers = ConcurrentHashMap<UUID, (ServerMessage) -> Unit>()
 
         override var onTerminalOutput: ((ByteArray) -> Unit)? = null
@@ -134,7 +140,11 @@ class SessionCoordinatorTest {
         override var onHealthyPing: (() -> Unit)? = null
 
         override suspend fun connect(config: ConnectionConfig, token: String) { log.add("connect") }
-        override suspend fun forceReconnect() { log.add("forceReconnect"); forceReconnectGate?.await() }
+        override suspend fun forceReconnect() {
+            log.add("forceReconnect")
+            onForceReconnect?.invoke()
+            forceReconnectGate?.await()
+        }
         override suspend fun disconnect() { log.add("disconnect") }
         override suspend fun isAlive(): Boolean = alive
         override suspend fun send(message: ClientMessage) { log.add("send:${message.typeString}") }
@@ -725,6 +735,89 @@ class SessionCoordinatorTest {
         assertNull(coord.terminalCache.view(target), "stale active terminal evicted")
         assertTrue(coord.sessionAttachFailed.value, "sessionAttachFailed surfaced")
         assertFalse(coord.connectionTimedOut.value, "transport stayed up — not a connection timeout")
+    }
+
+    // -------------------------------------------------------------------------
+    // SLEEP/WAKE TRAP (end-to-end) — a recovery pass whose reconnect succeeds
+    // but whose resume FAILS leaves the transport healthy (pongs flow) while the
+    // server handler has no attached PTY: it silently drops every typed byte.
+    // The old bare isAlive() short-circuit locked that state in forever — every
+    // later trigger just fetched. The fix: needsSessionRestore() detects the
+    // stale attachment (generation mismatch) and the next trigger runs a
+    // restore-only pass on the live socket: resume WITHOUT reconnect, and
+    // WITHOUT a blind reauth (the handler is still authenticated; a second
+    // auth_request would draw the server's 400 "Already authenticated").
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `wake after a failed restore resumes on the live socket without reconnect or reauth`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        // Mirror the real transport: reconnecting replaces the socket and bumps
+        // the shared generation, invalidating the controller's auth/attachment
+        // stamps (the server's new handler knows nothing about either).
+        conn.onForceReconnect = { surface.generation += 1 }
+
+        // 1) Healthy: the session is active with a current attachment.
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertEquals(target, coord.activeSessionId.value)
+        assertFalse(coord.needsSessionRestore(), "fresh attachment needs no restore")
+
+        // 2) Phone sleeps; the socket dies. Auto-recovery reconnects (generation
+        // bump) and reauths fine, but the resume RPC gets no response — the 10 s
+        // timeout makes it a TRANSPORT-shaped failure, so the active id survives
+        // (only app-level failures clear it).
+        conn.alive = false
+        surface.responder = { msg ->
+            when (msg) {
+                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
+                is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
+                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
+                else -> null // SessionResume never answered → timeout
+            }
+        }
+        conn.onSendFailed?.invoke()
+        advanceUntilIdle() // virtual time runs through the 10 s resume timeout
+
+        // The trap state: transport healthy again, attachment orphaned.
+        conn.alive = true
+        assertEquals(target, coord.activeSessionId.value, "transport-shaped failure keeps the active id")
+        assertTrue(coord.connectionTimedOut.value, "first pass surfaced the transport failure")
+        assertFalse(coord.sessionAttachFailed.value)
+        assertTrue(coord.needsSessionRestore(), "stale attachment detected on the live socket")
+
+        // 3) Wake: the server answers again. The next foreground trigger must
+        // RESTORE — not reconnect, not blind-reauth, not bare-fetch.
+        surface.responder = { msg ->
+            when (msg) {
+                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
+                is ClientMessage.SessionResume -> ServerMessage.SessionResumed(msg.sessionId)
+                is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
+                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
+                is ClientMessage.SessionListAll -> ServerMessage.SessionListAll(surface.sessionsOnServer)
+                else -> null
+            }
+        }
+        log.entries.clear()
+        coord.handleForegroundTransition()
+        advanceUntilIdle()
+
+        assertFalse("forceReconnect" in log, "alive-restore path never touches the transport")
+        assertFalse(
+            "rpc:auth_request" in log,
+            "handler is still authenticated — a blind reauth would draw the server's 400",
+        )
+        assertTrue("rpc:session_resume" in log, "the orphaned session was resumed on the live socket")
+        assertFalse(coord.needsSessionRestore(), "attachment is current again after the restore")
+        assertEquals(target, coord.activeSessionId.value)
+        assertFalse(coord.isRecovering.value)
     }
 
     // -------------------------------------------------------------------------

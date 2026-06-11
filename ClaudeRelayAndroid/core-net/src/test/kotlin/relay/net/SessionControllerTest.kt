@@ -103,6 +103,31 @@ class SessionControllerTest {
     }
 
     @Test
+    fun `attachment validity tracks the connection generation`() = runTest {
+        val id = UUID.randomUUID()
+        val conn = FakeConnection(autoRespond = { msg ->
+            if (msg is ClientMessage.SessionResume) ServerMessage.SessionResumed(id) else null
+        })
+        val controller = SessionController(conn)
+
+        assertFalse(controller.isAttachmentValid, "no attachment yet")
+
+        controller.resumeSession(id)
+        assertTrue(controller.isAttachmentValid, "resume stamps the current generation")
+        assertEquals(conn.generation, controller.attachedGeneration)
+
+        // Socket replaced: the server's new handler has no attached PTY, so the
+        // stale stamp must invalidate the attachment even though sessionId is set.
+        conn.generation += 1
+        assertEquals(id, controller.sessionId)
+        assertFalse(controller.isAttachmentValid, "generation bump invalidates the attachment")
+
+        // A successful re-resume on the new connection re-validates.
+        controller.resumeSession(id)
+        assertTrue(controller.isAttachmentValid)
+    }
+
+    @Test
     fun `renameSession is fire-and-forget plain send`() = runTest {
         val conn = FakeConnection()
         val controller = SessionController(conn)

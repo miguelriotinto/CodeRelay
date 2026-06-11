@@ -162,6 +162,11 @@ fun WorkspaceScreen(
     val isRecovering by coordinator.isRecovering.collectAsStateWithLifecycle()
     val recoveryPhase by coordinator.recoveryPhase.collectAsStateWithLifecycle()
     val connectionTimedOut by coordinator.connectionTimedOut.collectAsStateWithLifecycle()
+    // "Cannot Open Session" alert — raised on an app-level restore failure (the
+    // connection is fine but the session couldn't be resumed; iOS
+    // WorkspaceView.swift:161-167). Without surfacing this, a failed recovery
+    // restore leaves a blank terminal with zero explanation.
+    val sessionAttachFailed by coordinator.sessionAttachFailed.collectAsStateWithLifecycle()
     // "Session Moved" alert — raised when the active session is attached away by
     // another device (iOS WorkspaceView.swift:168-181). Without surfacing this the
     // session just vanishes to "No Active Session" with no explanation.
@@ -339,6 +344,21 @@ fun WorkspaceScreen(
                     coordinator.clearRecoveryFlags()
                     onDisconnect()
                 }) { Text("Disconnect") }
+            },
+        )
+    }
+
+    // "Cannot Open Session" alert (iOS WorkspaceView.swift:161-167). App-level
+    // restore failure: the coordinator already evicted the stale terminal and
+    // cleared the active session; the user picks a session from the sidebar (or
+    // creates a new one) to continue — same UX as iOS.
+    if (sessionAttachFailed) {
+        AlertDialog(
+            onDismissRequest = { coordinator.clearRecoveryFlags() },
+            title = { Text("Cannot Open Session") },
+            text = { Text("Unable to attach to this session.") },
+            confirmButton = {
+                TextButton(onClick = { coordinator.clearRecoveryFlags() }) { Text("OK") }
             },
         )
     }

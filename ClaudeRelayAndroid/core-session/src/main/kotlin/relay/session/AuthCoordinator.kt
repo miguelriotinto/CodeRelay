@@ -1,6 +1,7 @@
 package relay.session
 
 import kotlinx.coroutines.CompletableDeferred
+import relay.net.SessionException
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -9,8 +10,17 @@ import kotlin.coroutines.cancellation.CancellationException
  * a fresh, unauthenticated handler). Maps to Swift's
  * `SessionController.SessionError.isNotAuthenticated` branch
  * (AuthCoordinator.swift:96).
+ *
+ * Note: the real `SessionController` reports this state as
+ * `SessionException(isNotAuthenticated = true)` — [AuthCoordinator.withAuth]
+ * catches BOTH shapes. This type remains for callers/tests that signal the
+ * condition directly.
  */
 class NotAuthenticatedException : Exception("not authenticated")
+
+/** The error shapes [AuthCoordinator.withAuth] treats as "server saw us unauthenticated". */
+private fun Throwable.indicatesNotAuthenticated(): Boolean =
+    this is NotAuthenticatedException || (this is SessionException && isNotAuthenticated)
 
 /**
  * Owns the authentication surface ported from
@@ -73,17 +83,20 @@ class AuthCoordinator(
     }
 
     /**
-     * Run [body] with auth ensured. If [body] throws [NotAuthenticatedException]
-     * (the server saw a fresh unauthenticated handler after a reconnect),
-     * re-authenticate and retry the body exactly once. A second
-     * [NotAuthenticatedException] — or any non-auth error — propagates
-     * (AuthCoordinator.swift:92-101).
+     * Run [body] with auth ensured. If [body] throws a not-authenticated-shaped
+     * error — [NotAuthenticatedException], or the `SessionController`'s real
+     * `SessionException(isNotAuthenticated = true)` (the server saw a fresh
+     * unauthenticated handler after a reconnect) — re-authenticate and retry the
+     * body exactly once. A second not-authenticated error — or any non-auth
+     * error — propagates (AuthCoordinator.swift:92-101, which catches
+     * `SessionError where error.isNotAuthenticated`).
      */
     suspend fun <T> withAuth(body: suspend () -> T): T {
         ensureAuthenticated()
         return try {
             body()
-        } catch (e: NotAuthenticatedException) {
+        } catch (e: Exception) {
+            if (e is CancellationException || !e.indicatesNotAuthenticated()) throw e
             // Swift: `sessionController?.resetAuth(); ensureAuthenticated()`
             // (AuthCoordinator.swift:97-98). resetAuth() clears the local
             // auth bit so the following ensureAuthenticated() can't short-circuit
