@@ -270,6 +270,22 @@ class SessionCoordinator(
      */
     private var lastFetchMs: Long? = null
 
+    /**
+     * Timestamp (from [nowMs]) of the last evidence the transport is healthy — a
+     * successful pong ([onHealthyPing]) or a fresh [connect]. The input-activity
+     * liveness probe ([notifyUserActivity]) compares against this to decide
+     * whether a keystroke is going out over a possibly-dead socket. Null means
+     * "no health evidence yet".
+     */
+    private var lastHealthyAtMs: Long? = null
+
+    /**
+     * Timestamp (from [nowMs]) of the last [notifyUserActivity] probe, throttling
+     * the probe so a burst of keystrokes fires at most one liveness check per
+     * [ACTIVITY_PROBE_THROTTLE_MS] window.
+     */
+    private var lastActivityProbeMs: Long? = null
+
     init {
         authCoordinator = AuthCoordinator(
             authenticate = { sessionController.authenticate(token) },
@@ -305,8 +321,20 @@ class SessionCoordinator(
         }
 
         // Transport health → recovery breaker, matching the Swift init wiring.
-        connection.onSendFailed = { recoveryController.scheduleAutoRecovery() }
-        connection.onHealthyPing = { recoveryController.resetAutoRecoveryBreaker() }
+        // Both callbacks are invoked by RelayConnection on ITS confinement
+        // dispatcher (the `relay-net` thread, see NetworkConfinement) — not the
+        // coordinator's main dispatcher. The coordinator and RecoveryController
+        // are main-confined, so hop onto [scope] before touching their state
+        // (lastHealthyAtMs, the breaker, the dispatch lock).
+        connection.onSendFailed = {
+            scope.launch { recoveryController.scheduleAutoRecovery() }
+        }
+        connection.onHealthyPing = {
+            scope.launch {
+                lastHealthyAtMs = nowMs()
+                recoveryController.resetAutoRecoveryBreaker()
+            }
+        }
     }
 
     /**
@@ -333,6 +361,7 @@ class SessionCoordinator(
      */
     suspend fun connect() {
         connection.connect(config, token)
+        lastHealthyAtMs = nowMs()
         authCoordinator.ensureAuthenticated()
         fetchSessions()
     }
@@ -775,6 +804,41 @@ class SessionCoordinator(
     }
 
     /**
+     * Signals that the user just sent input (a keystroke / utterance). Because
+     * OkHttp's `WebSocket.send()` returns `true` as soon as bytes are *enqueued*
+     * — not delivered — a keystroke over a half-open socket vanishes silently and
+     * never trips [CoordinatorConnection.onSendFailed]. Without this hook the only
+     * thing that notices a dead socket is the 10 s keepalive's three-failure death
+     * detector, leaving a 30–45 s window where typing does nothing and the user
+     * must reconnect by hand (the reported bug).
+     *
+     * This collapses that window: when input is sent and the transport has not
+     * proven healthy within [ACTIVITY_HEALTH_STALE_MS], it drives a user-initiated
+     * recovery. Routing through [RecoveryController.triggerUserRecovery] (not the
+     * auto path) is deliberate — active typing is an unambiguous "I want this
+     * connection" signal, so it also clears the auto-recovery circuit breaker,
+     * self-healing the case where repeated outages had suspended auto-recovery.
+     * `triggerUserRecovery` then short-circuits via its own `isAlive` probe if the
+     * socket turns out to be fine, so a healthy connection pays only a single ~5 s
+     * probe, never a reconnect.
+     *
+     * Throttled to one probe per [ACTIVITY_PROBE_THROTTLE_MS] so a burst of
+     * keystrokes fires at most one liveness check. A no-op while recovery is
+     * already in flight (the dispatch lock in the controller also guards this).
+     */
+    fun notifyUserActivity() {
+        val now = nowMs()
+        val lastProbe = lastActivityProbeMs
+        if (lastProbe != null && now - lastProbe < ACTIVITY_PROBE_THROTTLE_MS) return
+
+        val healthyAt = lastHealthyAtMs
+        if (healthyAt != null && now - healthyAt < ACTIVITY_HEALTH_STALE_MS) return
+
+        lastActivityProbeMs = now
+        recoveryController.triggerUserRecovery()
+    }
+
+    /**
      * Cancels any in-flight recovery and the in-flight auth single-flight
      * (Swift RecoveryController.swift:289 calls
      * `coordinator.authCoordinator.cancelInFlight()`).
@@ -857,6 +921,17 @@ class SessionCoordinator(
     companion object {
         /** fetchSessions debounce window, ms (Swift `0.5` s, :309). */
         private const val FETCH_DEBOUNCE_MS = 500L
+
+        /**
+         * How stale the last health evidence must be before a keystroke triggers
+         * a liveness probe. Set just above the 10 s keepalive interval so steady
+         * typing on a healthy connection (which sees a pong every 10 s) never
+         * probes, but a socket that has gone quiet does.
+         */
+        private const val ACTIVITY_HEALTH_STALE_MS = 12_000L
+
+        /** Minimum spacing between input-activity liveness probes. */
+        private const val ACTIVITY_PROBE_THROTTLE_MS = 5_000L
 
         /**
          * Pure derivation of the active-session list, factored out so it is

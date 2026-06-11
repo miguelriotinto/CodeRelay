@@ -61,6 +61,11 @@ class WorkspaceViewModel(
      * a raw binary WebSocket frame on [viewModelScope].
      */
     fun sendInput(bytes: ByteArray) {
+        // Prove the socket is alive on user activity. OkHttp's send() returns true
+        // for bytes merely enqueued onto a half-open socket, so a keystroke can
+        // vanish without tripping onSendFailed; this drives a fast liveness probe +
+        // recovery instead of waiting up to ~45 s on the keepalive death detector.
+        coordinator.notifyUserActivity()
         viewModelScope.launch { runCatching { sendBinary(bytes) } }
     }
 

@@ -485,6 +485,24 @@ class RelayConnection(
         const val WINDOW_SIZE = 6
         const val DEATH_THRESHOLD = 3
 
-        private val defaultClient: OkHttpClient by lazy { OkHttpClient() }
+        /**
+         * Transport-level (WebSocket opcode 0x9) ping interval. Defense-in-depth
+         * ONLY — the authoritative liveness signal is the application-level
+         * ping/pong on [PING_INTERVAL_MS], because some network configurations
+         * silently drop protocol-level ping frames (the reason the app-level
+         * keepalive exists). When 0x9 frames DO get through, this lets OkHttp
+         * fail a dead socket via `onFailure` without waiting on the app-level
+         * keepalive's three-strike death detector — covering the fully-idle
+         * session (no typing, so the input-activity probe never fires). Set
+         * longer than the app-level interval so the app-level path stays the
+         * primary detector and the two don't double up on healthy connections.
+         */
+        const val TRANSPORT_PING_INTERVAL_MS = 20_000L
+
+        private val defaultClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .pingInterval(TRANSPORT_PING_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .build()
+        }
     }
 }
