@@ -799,6 +799,45 @@ class SessionCoordinatorTest {
         )
     }
 
+    @Test
+    fun `notifyUserActivity is a no-op while a recovery pass is in flight`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val conn = FakeCoordinatorConnection(log).apply {
+            alive = false
+            forceReconnectGate = gate // park the recovery pass inside forceReconnect
+        }
+        val clock = newClock()
+        val store = FakeOwnershipStore(log)
+        val coord = SessionCoordinator(
+            this, conn, SessionController(surface), "tok", store, config,
+            nowMs = { clock.ms },
+        )
+
+        // Health is stale (never connected), so the keystroke is probe-eligible.
+        // The first notifyUserActivity dispatches a recovery that parks in
+        // forceReconnect with the dispatch lock held.
+        coord.notifyUserActivity()
+        testScheduler.runCurrent()
+        assertTrue(coord.isRecovering.value, "first keystroke drove a recovery pass")
+        val reconnects = log.entries.count { it == "forceReconnect" }
+
+        // Keystrokes during the in-flight pass (past the 5 s throttle so only the
+        // dispatch lock can stop them) must not dispatch a second pass.
+        clock.ms += 6_000
+        coord.notifyUserActivity()
+        testScheduler.runCurrent()
+        assertEquals(
+            reconnects,
+            log.entries.count { it == "forceReconnect" },
+            "keystroke during in-flight recovery did not dispatch a second pass",
+        )
+
+        gate.complete(Unit) // unwind the parked pass so runTest finishes
+        advanceUntilIdle()
+    }
+
     // -------------------------------------------------------------------------
     // FIX 5 — fetchSessions 0.5 s debounce keyed on the injected clock + isLoading.
     //   First fetch passes; a second within 500 ms is skipped; advancing the clock

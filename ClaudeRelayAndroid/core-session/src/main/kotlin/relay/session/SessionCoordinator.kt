@@ -321,10 +321,19 @@ class SessionCoordinator(
         }
 
         // Transport health → recovery breaker, matching the Swift init wiring.
-        connection.onSendFailed = { recoveryController.scheduleAutoRecovery() }
+        // Both callbacks are invoked by RelayConnection on ITS confinement
+        // dispatcher (the `relay-net` thread, see NetworkConfinement) — not the
+        // coordinator's main dispatcher. The coordinator and RecoveryController
+        // are main-confined, so hop onto [scope] before touching their state
+        // (lastHealthyAtMs, the breaker, the dispatch lock).
+        connection.onSendFailed = {
+            scope.launch { recoveryController.scheduleAutoRecovery() }
+        }
         connection.onHealthyPing = {
-            lastHealthyAtMs = nowMs()
-            recoveryController.resetAutoRecoveryBreaker()
+            scope.launch {
+                lastHealthyAtMs = nowMs()
+                recoveryController.resetAutoRecoveryBreaker()
+            }
         }
     }
 
