@@ -728,6 +728,78 @@ class SessionCoordinatorTest {
     }
 
     // -------------------------------------------------------------------------
+    // notifyUserActivity — input over a possibly-dead socket drives a fast
+    // liveness probe + user recovery, because OkHttp send() returning true does
+    // not prove delivery. A keystroke after health has gone stale probes; one on
+    // a recently-healthy connection does not; bursts are throttled.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `notifyUserActivity probes when health is stale and is a no-op while fresh`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        // Socket reports alive so triggerUserRecovery's isAlive short-circuit just
+        // fetches (no reconnect) — we only need to observe that a pass was driven.
+        val conn = FakeCoordinatorConnection(log).apply { alive = true }
+        val clock = newClock()
+        val store = FakeOwnershipStore(log)
+        val coord = SessionCoordinator(
+            this, conn, SessionController(surface), "tok", store, config,
+            nowMs = { clock.ms },
+        )
+
+        // connect() stamps lastHealthyAtMs = now, so an immediate keystroke is fresh.
+        coord.connect()
+        advanceUntilIdle()
+        val listsAfterConnect = log.entries.count { it == "rpc:session_list" }
+
+        // Fresh health → no probe (no extra isAlive-driven fetch).
+        coord.notifyUserActivity()
+        advanceUntilIdle()
+        assertEquals(
+            listsAfterConnect,
+            log.entries.count { it == "rpc:session_list" },
+            "no probe while health is fresh",
+        )
+
+        // Let health go stale (past ACTIVITY_HEALTH_STALE_MS = 12 s).
+        clock.ms += 13_000
+        coord.notifyUserActivity()
+        advanceUntilIdle()
+        assertTrue(
+            log.entries.count { it == "rpc:session_list" } > listsAfterConnect,
+            "stale health drove a recovery pass (alive short-circuit → fetch)",
+        )
+    }
+
+    @Test
+    fun `notifyUserActivity throttles a burst of keystrokes to one probe`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log).apply { alive = true }
+        val clock = newClock()
+        val store = FakeOwnershipStore(log)
+        val coord = SessionCoordinator(
+            this, conn, SessionController(surface), "tok", store, config,
+            nowMs = { clock.ms },
+        )
+        coord.connect()
+        advanceUntilIdle()
+        // Make health stale so probes are eligible.
+        clock.ms += 13_000
+        val baseline = log.entries.count { it == "rpc:session_list" }
+
+        // A burst of keystrokes within the throttle window → exactly one probe.
+        repeat(5) { coord.notifyUserActivity() }
+        advanceUntilIdle()
+        assertEquals(
+            baseline + 1,
+            log.entries.count { it == "rpc:session_list" },
+            "burst within the throttle window probes once",
+        )
+    }
+
+    // -------------------------------------------------------------------------
     // FIX 5 — fetchSessions 0.5 s debounce keyed on the injected clock + isLoading.
     //   First fetch passes; a second within 500 ms is skipped; advancing the clock
     //   past 500 ms lets it through again.
