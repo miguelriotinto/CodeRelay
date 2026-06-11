@@ -33,7 +33,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import relay.feature.servers.ServersScreen
@@ -98,49 +97,36 @@ fun RelayNavGraph(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // The single live connection session (coordinator + workspace VM), or null.
-    var activeSession by remember { mutableStateOf<ConnectionSession?>(null) }
-    // True while a connect()/authenticate() round-trip is in flight.
-    var connecting by remember { mutableStateOf(false) }
+    // The live connection lives in an Activity-RETAINED ViewModel, not a composition
+    // `remember`, so it survives Activity recreation — crucially the Huawei Fold's
+    // inner↔outer display switch on fold/unfold, which forces an Activity restart
+    // that `android:configChanges` cannot suppress (a display change isn't a config
+    // it covers). The nav back stack survives via rememberSaveable, so on recreation
+    // the graph restores to WORKSPACE and re-binds to this still-alive session — the
+    // user keeps typing in the same terminal instead of being bounced to Servers.
+    val connectionVm: ConnectionViewModel = viewModel()
+    val activeSession by connectionVm.activeSession.collectAsStateWithLifecycle()
+    val connecting by connectionVm.connecting.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Tears down the current session (cancel recovery, disconnect, cancel scope).
     suspend fun teardownActive() {
-        activeSession?.let { session ->
-            session.speech.stop()
-            session.coordinator.tearDown()
-            session.scope.cancel()
-        }
-        activeSession = null
+        connectionVm.teardown()
     }
 
     // Builds + connects a session for [config]+[token], records last-connected,
     // and navigates to Workspace. Surfaces failures as a snackbar on Servers.
     suspend fun connectAndOpen(config: ConnectionConfig, token: String) {
-        if (connecting) return
-        connecting = true
-        try {
-            teardownActive()
-            val session = ConnectionSession.create(
-                context = context,
-                config = config,
-                token = token,
-                settings = settings,
-            )
-            session.coordinator.connect()
-            activeSession = session
-            settings.setLastConnectedServerId(config.id.toString())
-            navController.navigate(Routes.WORKSPACE) {
-                // Drop the splash from the back stack so back from Workspace lands
-                // on Servers, never the splash.
-                popUpTo(Routes.SERVERS) { inclusive = false }
-            }
-        } catch (e: Throwable) {
-            teardownActive()
+        val error = connectionVm.connect(context, config, token, settings)
+        if (error != null) {
             snackbarHostState.currentSnackbarData?.dismiss()
-            snackbarHostState.showSnackbar("Failed to connect: ${e.message ?: "unknown error"}")
-        } finally {
-            connecting = false
+            snackbarHostState.showSnackbar(error)
+            return
+        }
+        navController.navigate(Routes.WORKSPACE) {
+            // Drop the splash from the back stack so back from Workspace lands
+            // on Servers, never the splash.
+            popUpTo(Routes.SERVERS) { inclusive = false }
         }
     }
 

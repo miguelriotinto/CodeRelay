@@ -51,7 +51,8 @@
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTop"
-            android:theme="@style/Theme.ClaudeRelayM1">
+            android:theme="@style/Theme.ClaudeRelayM1"
+            android:configChanges="screenLayout|screenSize|smallestScreenSize|orientation|keyboardHidden|keyboard|navigation|uiMode|density|fontScale">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
