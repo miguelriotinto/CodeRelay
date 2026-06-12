@@ -36,6 +36,12 @@ class SessionException(
  * the await is still captured (via [ResumeGuard.pendingValue]). The guard
  * guarantees the awaiting coroutine is resumed exactly once even when the
  * response, the timeout, and a duplicate response all race.
+ *
+ * Not thread-safe across dispatchers — like the Swift original (`@MainActor`),
+ * all mutable state ([sessionId], [isAuthenticated], the generation stamps) is
+ * written and read under the coordinator's single confined dispatcher. The
+ * stamps carry no `@Volatile`; cross-thread visibility is provided by that
+ * confinement, not by the fields themselves.
  */
 class SessionController(private val connection: ConnectionSurface) {
 

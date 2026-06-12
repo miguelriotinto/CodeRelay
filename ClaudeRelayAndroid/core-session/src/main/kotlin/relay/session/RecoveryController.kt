@@ -112,7 +112,7 @@ import kotlin.coroutines.cancellation.CancellationException
 class RecoveryController(
     private val scope: CoroutineScope,
     private val isAlive: suspend () -> Boolean,
-    private val needsRestore: () -> Boolean = { false },
+    private val needsRestore: () -> Boolean,
     private val reconnect: suspend () -> Unit,
     private val reauth: suspend () -> Unit,
     private val resumeActive: suspend () -> Unit,
