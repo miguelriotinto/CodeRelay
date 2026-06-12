@@ -36,6 +36,12 @@ class SessionException(
  * the await is still captured (via [ResumeGuard.pendingValue]). The guard
  * guarantees the awaiting coroutine is resumed exactly once even when the
  * response, the timeout, and a duplicate response all race.
+ *
+ * Not thread-safe across dispatchers — like the Swift original (`@MainActor`),
+ * all mutable state ([sessionId], [isAuthenticated], the generation stamps) is
+ * written and read under the coordinator's single confined dispatcher. The
+ * stamps carry no `@Volatile`; cross-thread visibility is provided by that
+ * confinement, not by the fields themselves.
  */
 class SessionController(private val connection: ConnectionSurface) {
 
@@ -54,11 +60,33 @@ class SessionController(private val connection: ConnectionSurface) {
         private set
 
     /**
+     * The connection generation when the current [sessionId] attachment was
+     * established (create/attach/resume succeeded). Server-side attachment is
+     * per-connection-handler state, so a socket replacement silently orphans it:
+     * the new handler has no attached PTY and **drops typed bytes without an
+     * error** (RelayMessageHandler.swift `handleBinaryFrame` guard). Comparing
+     * this stamp against [ConnectionSurface.generation] is the only client-side
+     * way to detect that orphaned state — the transport stays alive and pongs
+     * normally, so liveness probes can't see it.
+     */
+    var attachedGeneration: Long = 0L
+        private set
+
+    /**
      * Whether the controller is authenticated on the **current** connection.
      * False once the socket has been replaced since auth was established.
      */
     val isAuthValid: Boolean
         get() = isAuthenticated && authenticatedGeneration == connection.generation
+
+    /**
+     * Whether [sessionId]'s server-side attachment was established on the
+     * **current** connection. False when there is no attachment, or when the
+     * socket has been replaced since the attach/resume succeeded (the server's
+     * new handler has no attached PTY even though [sessionId] is still set).
+     */
+    val isAttachmentValid: Boolean
+        get() = sessionId != null && attachedGeneration == connection.generation
 
     /** Resets auth so the next operation re-authenticates. Call after reconnect. */
     fun resetAuth() {
@@ -102,7 +130,7 @@ class SessionController(private val connection: ConnectionSurface) {
     suspend fun createSession(name: String? = null): UUID {
         val response = sendAndWaitForResponse(ClientMessage.SessionCreate(name))
         return when (response) {
-            is ServerMessage.SessionCreated -> response.sessionId.also { sessionId = it }
+            is ServerMessage.SessionCreated -> response.sessionId.also { recordAttachment(it) }
             is ServerMessage.Error -> throw unexpected(response.message)
             else -> throw unexpected(response)
         }
@@ -115,7 +143,7 @@ class SessionController(private val connection: ConnectionSurface) {
     suspend fun attachSession(id: UUID) {
         val response = sendAndWaitForResponse(ClientMessage.SessionAttach(id))
         when (response) {
-            is ServerMessage.SessionAttached -> sessionId = response.sessionId
+            is ServerMessage.SessionAttached -> recordAttachment(response.sessionId)
             is ServerMessage.Error -> throw unexpected(response.message)
             else -> throw unexpected(response)
         }
@@ -128,7 +156,7 @@ class SessionController(private val connection: ConnectionSurface) {
     suspend fun resumeSession(id: UUID, skipReplay: Boolean = false) {
         val response = sendAndWaitForResponse(ClientMessage.SessionResume(id, skipReplay))
         when (response) {
-            is ServerMessage.SessionResumed -> sessionId = response.sessionId
+            is ServerMessage.SessionResumed -> recordAttachment(response.sessionId)
             is ServerMessage.Error -> throw unexpected(response.message)
             else -> throw unexpected(response)
         }
@@ -173,6 +201,12 @@ class SessionController(private val connection: ConnectionSurface) {
     }
 
     // MARK: - Internal helpers
+
+    /** Stamps a successful create/attach/resume against the current connection. */
+    private fun recordAttachment(id: UUID) {
+        sessionId = id
+        attachedGeneration = connection.generation
+    }
 
     private fun unexpected(response: ServerMessage): SessionException = unexpected(response.typeString)
 

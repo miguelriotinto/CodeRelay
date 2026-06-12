@@ -84,6 +84,60 @@ class AuthCoordinatorTest {
     }
 
     @Test
+    fun `withAuth retries on the controller's real not-authenticated SessionException`() = runTest {
+        // The production SessionController signals "server saw us unauthenticated"
+        // as SessionException(isNotAuthenticated = true) — NOT as
+        // NotAuthenticatedException. withAuth must retry on that shape too, or
+        // the retry-once path is dead code in the real app (the iOS original
+        // catches `SessionError where error.isNotAuthenticated`).
+        val authCalls = AtomicInteger(0)
+        var valid = false
+        val coordinator = AuthCoordinator(
+            authenticate = { authCalls.incrementAndGet(); valid = true },
+            isAuthValid = { valid },
+            resetAuth = { valid = false },
+        )
+
+        val bodyCalls = AtomicInteger(0)
+        val result = coordinator.withAuth {
+            if (bodyCalls.incrementAndGet() == 1) {
+                throw relay.net.SessionException(
+                    "Unexpected server response: not authenticated",
+                    isNotAuthenticated = true,
+                )
+            }
+            "ok"
+        }
+
+        assertEquals("ok", result)
+        assertEquals(2, bodyCalls.get())
+        assertEquals(2, authCalls.get())
+    }
+
+    @Test
+    fun `withAuth does not retry a non-auth SessionException`() = runTest {
+        var valid = false
+        val coordinator = AuthCoordinator(
+            authenticate = { valid = true },
+            isAuthValid = { valid },
+            resetAuth = { valid = false },
+        )
+
+        val bodyCalls = AtomicInteger(0)
+        val thrown = try {
+            coordinator.withAuth {
+                bodyCalls.incrementAndGet()
+                throw relay.net.SessionException("Session not found")
+            }
+        } catch (e: relay.net.SessionException) {
+            e
+        }
+
+        assertEquals("Session not found", (thrown as relay.net.SessionException).message)
+        assertEquals(1, bodyCalls.get(), "non-auth errors must propagate without a retry")
+    }
+
+    @Test
     fun `withAuth re-authenticates before the retry`() = runTest {
         // After the first NotAuthenticated, resetAuth() must clear the local auth
         // bit BEFORE ensureAuthenticated() runs, so the retry re-authenticates

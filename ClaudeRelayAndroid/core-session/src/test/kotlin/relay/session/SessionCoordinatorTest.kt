@@ -1,6 +1,7 @@
 package relay.session
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -63,6 +64,13 @@ class SessionCoordinatorTest {
         /** Override to fail a specific op (e.g. attach) — return the error to throw via response. */
         var responder: (ClientMessage) -> ServerMessage? = { defaultResponse(it) }
 
+        /**
+         * Awaited between logging an RPC and delivering its response — lets a
+         * test park a session op mid-flight (e.g. between detach and the create
+         * response) to probe the coordinator's transient state.
+         */
+        var sendGate: (suspend (ClientMessage) -> Unit)? = null
+
         override fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID {
             val id = UUID.randomUUID()
             subscribers[id] = handler
@@ -73,6 +81,7 @@ class SessionCoordinatorTest {
 
         override suspend fun send(message: ClientMessage) {
             log.add("rpc:${message.typeString}")
+            sendGate?.invoke(message)
             responder(message)?.let { response ->
                 for (h in subscribers.values) h(response)
             }
@@ -122,6 +131,18 @@ class SessionCoordinatorTest {
         var lastWiredHandler: ((ByteArray) -> Unit)? = null
         /** When set, forceReconnect awaits it (lets a test park the recovery pass). */
         var forceReconnectGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+        /**
+         * When set, isAlive awaits it — parks a recovery pass inside the probe,
+         * BEFORE it commits (isRecovering is still false there), so a test can
+         * race a user op into that window.
+         */
+        var isAliveGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+        /**
+         * Invoked on forceReconnect — lets a test mirror the real transport, where
+         * reconnecting bumps the (shared) connection generation that the
+         * SessionController's auth/attachment stamps are compared against.
+         */
+        var onForceReconnect: (() -> Unit)? = null
         private val subscribers = ConcurrentHashMap<UUID, (ServerMessage) -> Unit>()
 
         override var onTerminalOutput: ((ByteArray) -> Unit)? = null
@@ -134,9 +155,16 @@ class SessionCoordinatorTest {
         override var onHealthyPing: (() -> Unit)? = null
 
         override suspend fun connect(config: ConnectionConfig, token: String) { log.add("connect") }
-        override suspend fun forceReconnect() { log.add("forceReconnect"); forceReconnectGate?.await() }
+        override suspend fun forceReconnect() {
+            log.add("forceReconnect")
+            onForceReconnect?.invoke()
+            forceReconnectGate?.await()
+        }
         override suspend fun disconnect() { log.add("disconnect") }
-        override suspend fun isAlive(): Boolean = alive
+        override suspend fun isAlive(): Boolean {
+            isAliveGate?.await()
+            return alive
+        }
         override suspend fun send(message: ClientMessage) { log.add("send:${message.typeString}") }
         override fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID {
             val id = UUID.randomUUID()
@@ -725,6 +753,223 @@ class SessionCoordinatorTest {
         assertNull(coord.terminalCache.view(target), "stale active terminal evicted")
         assertTrue(coord.sessionAttachFailed.value, "sessionAttachFailed surfaced")
         assertFalse(coord.connectionTimedOut.value, "transport stayed up — not a connection timeout")
+    }
+
+    // -------------------------------------------------------------------------
+    // SLEEP/WAKE TRAP (end-to-end) — a recovery pass whose reconnect succeeds
+    // but whose resume FAILS leaves the transport healthy (pongs flow) while the
+    // server handler has no attached PTY: it silently drops every typed byte.
+    // The old bare isAlive() short-circuit locked that state in forever — every
+    // later trigger just fetched. The fix: needsSessionRestore() detects the
+    // stale attachment (generation mismatch) and the next trigger runs a
+    // restore-only pass on the live socket: resume WITHOUT reconnect, and
+    // WITHOUT a blind reauth (the handler is still authenticated; a second
+    // auth_request would draw the server's 400 "Already authenticated").
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `wake after a failed restore resumes on the live socket without reconnect or reauth`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        // Mirror the real transport: reconnecting replaces the socket and bumps
+        // the shared generation, invalidating the controller's auth/attachment
+        // stamps (the server's new handler knows nothing about either).
+        conn.onForceReconnect = { surface.generation += 1 }
+
+        // 1) Healthy: the session is active with a current attachment.
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertEquals(target, coord.activeSessionId.value)
+        assertFalse(coord.needsSessionRestore(), "fresh attachment needs no restore")
+
+        // 2) Phone sleeps; the socket dies. Auto-recovery reconnects (generation
+        // bump) and reauths fine, but the resume RPC gets no response — the 10 s
+        // timeout makes it a TRANSPORT-shaped failure, so the active id survives
+        // (only app-level failures clear it).
+        conn.alive = false
+        surface.responder = { msg ->
+            when (msg) {
+                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
+                is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
+                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
+                else -> null // SessionResume never answered → timeout
+            }
+        }
+        conn.onSendFailed?.invoke()
+        advanceUntilIdle() // virtual time runs through the 10 s resume timeout
+
+        // The trap state: transport healthy again, attachment orphaned.
+        conn.alive = true
+        assertEquals(target, coord.activeSessionId.value, "transport-shaped failure keeps the active id")
+        assertTrue(coord.connectionTimedOut.value, "first pass surfaced the transport failure")
+        assertFalse(coord.sessionAttachFailed.value)
+        assertTrue(coord.needsSessionRestore(), "stale attachment detected on the live socket")
+
+        // 3) Wake: the server answers again. The next foreground trigger must
+        // RESTORE — not reconnect, not blind-reauth, not bare-fetch.
+        surface.responder = { msg ->
+            when (msg) {
+                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
+                is ClientMessage.SessionResume -> ServerMessage.SessionResumed(msg.sessionId)
+                is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
+                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
+                is ClientMessage.SessionListAll -> ServerMessage.SessionListAll(surface.sessionsOnServer)
+                else -> null
+            }
+        }
+        log.entries.clear()
+        coord.handleForegroundTransition()
+        advanceUntilIdle()
+
+        assertFalse("forceReconnect" in log, "alive-restore path never touches the transport")
+        assertFalse(
+            "rpc:auth_request" in log,
+            "handler is still authenticated — a blind reauth would draw the server's 400",
+        )
+        assertTrue("rpc:session_resume" in log, "the orphaned session was resumed on the live socket")
+        assertFalse(coord.needsSessionRestore(), "attachment is current again after the restore")
+        assertEquals(target, coord.activeSessionId.value)
+        assertFalse(coord.isRecovering.value)
+    }
+
+    // -------------------------------------------------------------------------
+    // OP-IN-FLIGHT RACES — session ops (create / switch / attach) put the
+    // controller and _activeSessionId in transiently mismatched states at their
+    // suspension points. needsSessionRestore() must defer to the in-flight op
+    // instead of misreading the gap as a stale attachment; otherwise a recovery
+    // pass racing the op resumes the OLD active id concurrently with the op's
+    // own resume — two resumes on one connection (the server holds ONE attached
+    // PTY per handler) → black terminal / output routed to the wrong VM.
+    // -------------------------------------------------------------------------
+
+    // Both race tests freeze the injected clock: every non-force fetchSessions
+    // after the first is then debounced (500 ms window never elapses), so the
+    // recovery short-circuit's fetch issues no RPC while an op's RPC is parked.
+    // That isolation matters — sendAndWaitForResponse matches ANY response type
+    // (single-request-in-flight design, Swift parity), so a list result arriving
+    // while a resume/create awaits would cross-deliver into the parked guard.
+
+    @Test
+    fun `needsSessionRestore defers to a create parked mid-flight`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val a = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedOwned = setOf(a))
+        surface.sessionsOnServer = listOf(
+            session(a, "Arya"),
+            session(FakeConnectionSurface.NEW_SESSION_ID, "Bran"),
+        )
+        val clock = newClock() // frozen — see comment above
+        val coord = SessionCoordinator(
+            this, conn, SessionController(surface), "tok", store, config,
+            nowMs = { clock.ms },
+        )
+
+        coord.switchToSession(a)
+        advanceUntilIdle()
+        assertEquals(a, coord.activeSessionId.value)
+        assertFalse(coord.needsSessionRestore())
+        log.entries.clear()
+
+        // Park the create between its detach (controller.sessionId is now null)
+        // and the create response (_activeSessionId still holds `a`) — the
+        // mismatched window a concurrent trigger used to misread as stale.
+        val createGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        surface.sendGate = { msg ->
+            if (msg is ClientMessage.SessionCreate) createGate.await()
+        }
+        val create = launch { coord.createNewSession() }
+        testScheduler.runCurrent()
+
+        assertEquals(a, coord.activeSessionId.value, "create has not committed yet")
+        assertFalse(
+            coord.needsSessionRestore(),
+            "an in-flight op is not a stale attachment — it is establishing a fresh one",
+        )
+
+        // A recovery trigger inside the window must short-circuit to a fetch,
+        // never resume the old active id under the op's feet.
+        coord.handleForegroundTransition()
+        advanceUntilIdle()
+        assertFalse("rpc:session_resume" in log, "no spurious restore raced the create")
+
+        createGate.complete(Unit)
+        advanceUntilIdle()
+        create.join()
+
+        assertEquals(FakeConnectionSurface.NEW_SESSION_ID, coord.activeSessionId.value)
+        assertFalse(coord.needsSessionRestore(), "committed create is a current attachment")
+        assertFalse("rpc:session_resume" in log, "nothing ever resumed")
+        assertFalse(coord.isRecovering.value)
+    }
+
+    @Test
+    fun `switch racing a parked alive probe wins - recovery defers to the op`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log).apply { alive = true }
+        val a = UUID.randomUUID()
+        val b = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedOwned = setOf(a, b))
+        surface.sessionsOnServer = listOf(session(a, "Arya"), session(b, "Bran"))
+        val clock = newClock() // frozen — see comment above
+        val coord = SessionCoordinator(
+            this, conn, SessionController(surface), "tok", store, config,
+            nowMs = { clock.ms },
+        )
+
+        coord.switchToSession(a)
+        advanceUntilIdle()
+        assertEquals(a, coord.activeSessionId.value)
+
+        // Sleep/wake trap: the socket was replaced — auth + attachment stamps stale.
+        surface.generation += 1
+        assertTrue(coord.needsSessionRestore(), "stale attachment detected")
+
+        // Recovery parks inside the isAlive probe — PRE-commit, so isRecovering
+        // is still false and the switch below is not gated at entry. This is the
+        // exact window the race lives in.
+        val aliveGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        conn.isAliveGate = aliveGate
+        coord.handleForegroundTransition()
+        testScheduler.runCurrent()
+        assertFalse(coord.isRecovering.value, "probe is pre-commit")
+
+        // The user switches to B; park its resume so the op is still mid-flight
+        // when the probe resumes. Record every resume's target id.
+        val resumeTargets = mutableListOf<UUID>()
+        val resumeGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        surface.sendGate = { msg ->
+            if (msg is ClientMessage.SessionResume) {
+                resumeTargets.add(msg.sessionId)
+                if (msg.sessionId == b) resumeGate.await()
+            }
+        }
+        val switch = launch { coord.switchToSession(b) }
+        testScheduler.runCurrent()
+        assertEquals(listOf(b), resumeTargets, "the switch's resume is in flight")
+
+        // Probe resumes mid-op: recovery must defer (fetch only), NOT resume A
+        // on the same connection the switch is resuming B on.
+        aliveGate.complete(Unit)
+        testScheduler.runCurrent()
+        assertEquals(listOf(b), resumeTargets, "recovery deferred — no second resume of A")
+
+        resumeGate.complete(Unit)
+        advanceUntilIdle()
+        switch.join()
+
+        assertEquals(listOf(b), resumeTargets, "exactly one resume — the switch's")
+        assertEquals(b, coord.activeSessionId.value)
+        assertFalse(coord.needsSessionRestore(), "switch re-established a current attachment")
+        assertFalse(coord.isRecovering.value)
     }
 
     // -------------------------------------------------------------------------

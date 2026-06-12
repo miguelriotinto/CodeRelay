@@ -70,9 +70,23 @@ import kotlin.coroutines.cancellation.CancellationException
  *   faithful to the Swift `@MainActor` model. The Task-6 coordinator wiring is
  *   responsible for providing such a scope.
  * @param isAlive Probes the socket; wraps a 5 s pong wait at the call site.
+ * @param needsRestore True when the active session's server-side attachment is
+ *   stale on the CURRENT connection (socket replaced since the last successful
+ *   create/attach/resume). Server attachment is per-connection-handler state,
+ *   and a healthy socket pongs normally even with no session attached — while
+ *   the server SILENTLY DROPS typed bytes (RelayMessageHandler.swift
+ *   `handleBinaryFrame` guard). Without this check, a recovery pass whose
+ *   reconnect succeeded but whose restore failed leaves every future trigger
+ *   short-circuiting on `isAlive()==true`, so the session is never resumed:
+ *   black screen + dead typing until a manual reconnect (the sleep/wake bug).
+ *   When alive-but-stale, the pass skips the backoff loop and runs
+ *   [restoreSession] directly on the live transport.
  * @param reconnect Forces a transport reconnect; throws on failure (only this
  *   failure retries the backoff array).
- * @param reauth Resets + re-establishes auth on the current connection.
+ * @param reauth Resets + re-establishes auth on the current connection. Must be
+ *   a NO-OP when auth is already valid for the current connection — on the
+ *   alive-restore path the server handler is still authenticated, and a blind
+ *   re-auth draws the server's 400 "Already authenticated" reject.
  * @param resumeActive Resumes the active session (no-op if there is none).
  * @param fetchSessions Refreshes the server session list.
  * @param suppressSends Toggled true around the recovery body, false on exit.
@@ -98,6 +112,7 @@ import kotlin.coroutines.cancellation.CancellationException
 class RecoveryController(
     private val scope: CoroutineScope,
     private val isAlive: suspend () -> Boolean,
+    private val needsRestore: () -> Boolean,
     private val reconnect: suspend () -> Unit,
     private val reauth: suspend () -> Unit,
     private val resumeActive: suspend () -> Unit,
@@ -269,21 +284,39 @@ class RecoveryController(
 
             // isAlive short-circuit (RecoveryController.swift:151-156). isRecovering
             // is NOT set yet, so this path never flashes recovery UI.
-            if (isAlive()) {
+            //
+            // The needsRestore() refinement: "transport alive" is NOT "session
+            // usable". After a pass whose reconnect succeeded but whose restore
+            // failed, the socket is healthy (pongs flow) while the server handler
+            // has no attached PTY and silently drops typed input. The bare
+            // isAlive() short-circuit would lock that state in forever — every
+            // trigger fetches and returns, and nothing ever resumes the session.
+            // Only short-circuit when the transport is alive AND the active
+            // session's attachment is current; alive-but-stale falls through to
+            // a restore-only pass below.
+            val alive = isAlive()
+            if (alive && !needsRestore()) {
                 fetchSessions()
                 return
             }
 
-            // Not alive: now we commit to a recovery pass.
+            // Not alive, or alive with a stale attachment: commit to a recovery pass.
             recoveryGeneration += 1u
             val myGeneration = recoveryGeneration
 
-            _phase.value = RecoveryPhase.RECONNECTING
+            _phase.value = if (alive) RecoveryPhase.AUTHENTICATING else RecoveryPhase.RECONNECTING
             recoveryFailed = false
             _isRecovering.value = true
             suppressSends(true)
             try {
-                runReconnectThenRestore(myGeneration, userInitiated)
+                if (alive) {
+                    // Transport is fine — skip the backoff loop and restore the
+                    // session on the live socket. restoreSession owns ALL failure
+                    // semantics (terminal, app-level vs transport split, breaker).
+                    restoreSession(myGeneration, userInitiated)
+                } else {
+                    runReconnectThenRestore(myGeneration, userInitiated)
+                }
             } finally {
                 // Inner defer (RecoveryController.swift:166-170): idempotent even
                 // on a mid-await cancel. Generation-guarded so a stale gen-N
