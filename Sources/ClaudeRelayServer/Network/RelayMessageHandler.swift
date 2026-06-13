@@ -183,7 +183,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         switch message {
         case .authRequest:
             sendServerMessage(.error(code: 400, message: "Already authenticated"), context: context)
-        case .sessionCreate(let name):
+        case .sessionCreate(let name, _, _):
             handleSessionCreate(name: name, context: context)
         case .sessionAttach(let sessionId):
             handleSessionAttach(sessionId: sessionId, context: context)
