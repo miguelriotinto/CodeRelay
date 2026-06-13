@@ -21,4 +21,18 @@ final class ServerStatusCheckerTests: XCTestCase {
         XCTAssertFalse(status.isLive)
         XCTAssertEqual(status.reachability, .invalidToken)
     }
+
+    func testMapInvalidTokenError() {
+        let err = SessionController.SessionError.authenticationFailed(reason: "Invalid token")
+        let status = ServerStatusChecker.statusForProbeFailure(err)
+        XCTAssertFalse(status.isLive)
+        XCTAssertEqual(status.reachability, .invalidToken)
+    }
+
+    func testMapTimeoutErrorIsUnreachable() {
+        let err = SessionController.SessionError.timeout
+        let status = ServerStatusChecker.statusForProbeFailure(err)
+        XCTAssertFalse(status.isLive)
+        XCTAssertEqual(status.reachability, .unreachable)
+    }
 }

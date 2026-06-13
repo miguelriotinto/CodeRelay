@@ -68,6 +68,17 @@ public final class ServerStatusChecker: ObservableObject {
         }
     }
 
+    /// Maps a probe failure to a status. `authenticationFailed` means the
+    /// socket reached the server but the token was rejected — surface that
+    /// distinctly from an unreachable server.
+    static func statusForProbeFailure(_ error: Error) -> ServerStatus {
+        if let sessionErr = error as? SessionController.SessionError,
+           case .authenticationFailed = sessionErr {
+            return ServerStatus(isLive: false, reachability: .invalidToken)
+        }
+        return ServerStatus(isLive: false, reachability: .unreachable)
+    }
+
     @MainActor
     static func probe(config: ConnectionConfig) async -> ServerStatus {
         guard let token = try? AuthManager.shared.loadToken(for: config.id),
@@ -93,10 +104,10 @@ public final class ServerStatusChecker: ObservableObject {
                         // real session data when the user actually opens a server.
                         try await controller.authenticate(token: token)
                         connection.disconnect()
-                        return ServerStatus(isLive: true)
+                        return ServerStatus(isLive: true, reachability: .live)
                     } catch {
                         connection.disconnect()
-                        return ServerStatus()
+                        return Self.statusForProbeFailure(error)
                     }
                 } onCancel: {
                     Task { @MainActor in connection.disconnect() }
