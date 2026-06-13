@@ -105,6 +105,7 @@ class WorkspaceViewModel(
      */
     fun sendResize(cols: Int, rows: Int) {
         if (cols <= 0 || rows <= 0) return
+        coordinator.recordTerminalSize(cols, rows)
         viewModelScope.launch {
             // Re-check suppression INSIDE the coroutine (not before launch): the UI
             // and the recovery controller both run on Main, so a resize enqueued

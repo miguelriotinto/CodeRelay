@@ -79,8 +79,16 @@ class SessionCoordinatorTest {
 
         override fun removeSubscriber(id: UUID) { subscribers.remove(id) }
 
+        /** Captured cols/rows from the most recent SessionCreate RPC (null if never sent or omitted). */
+        var lastCreateCols: UShort? = null
+        var lastCreateRows: UShort? = null
+
         override suspend fun send(message: ClientMessage) {
             log.add("rpc:${message.typeString}")
+            if (message is ClientMessage.SessionCreate) {
+                lastCreateCols = message.cols
+                lastCreateRows = message.rows
+            }
             sendGate?.invoke(message)
             responder(message)?.let { response ->
                 for (h in subscribers.values) h(response)
@@ -258,6 +266,27 @@ class SessionCoordinatorTest {
         assertTrue(log.precedes("rpc:session_create", "wire"), "wire is AFTER the create RPC")
         assertEquals(FakeConnectionSurface.NEW_SESSION_ID, coord.activeSessionId.value)
         assertTrue(store.owned.contains(FakeConnectionSurface.NEW_SESSION_ID), "session is claimed")
+    }
+
+    // -------------------------------------------------------------------------
+    // CREATE seeds the session_create RPC with the last-known terminal size.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `createNewSession sends the last-known terminal size`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(FakeConnectionSurface.NEW_SESSION_ID, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.recordTerminalSize(110, 35)
+        coord.createNewSession()
+        advanceUntilIdle()
+
+        assertEquals(110.toUShort(), surface.lastCreateCols, "create carried the cached cols")
+        assertEquals(35.toUShort(), surface.lastCreateRows, "create carried the cached rows")
     }
 
     // -------------------------------------------------------------------------
