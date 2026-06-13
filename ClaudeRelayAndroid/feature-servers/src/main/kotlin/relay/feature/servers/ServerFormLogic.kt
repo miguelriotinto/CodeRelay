@@ -13,11 +13,35 @@ import java.util.UUID
  */
 object ServerFormLogic {
 
+    /** Default plaintext WebSocket port (matches the server's `wsPort` default). */
+    const val DEFAULT_PLAINTEXT_PORT = "9200"
+
+    /** Default TLS port (`wss://` over standard HTTPS). */
+    const val DEFAULT_TLS_PORT = "443"
+
     /**
      * Host-non-empty validation, mirroring `AddEditServerViewModel.isValid`
      * (`!host.isEmpty`). The Save button is disabled when this is false.
      */
     fun isHostValid(host: String): Boolean = host.trim().isNotEmpty()
+
+    /**
+     * Returns the port to show after the "Use TLS" toggle flips, swapping only
+     * the well-known defaults so a deliberate custom port is never clobbered:
+     *  - turning TLS **on** while the port is still the plaintext default
+     *    (or blank) switches it to [DEFAULT_TLS_PORT];
+     *  - turning TLS **off** while the port is the TLS default switches it back
+     *    to [DEFAULT_PLAINTEXT_PORT];
+     *  - any other (custom) port is returned unchanged.
+     */
+    fun portForTLSChange(currentPort: String, useTLS: Boolean): String {
+        val trimmed = currentPort.trim()
+        return if (useTLS) {
+            if (trimmed.isEmpty() || trimmed == DEFAULT_PLAINTEXT_PORT) DEFAULT_TLS_PORT else currentPort
+        } else {
+            if (trimmed == DEFAULT_TLS_PORT) DEFAULT_PLAINTEXT_PORT else currentPort
+        }
+    }
 
     /**
      * Parses a port string to a [UShort], mirroring Swift's
