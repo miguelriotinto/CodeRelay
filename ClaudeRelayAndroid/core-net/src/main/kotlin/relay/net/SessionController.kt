@@ -127,8 +127,8 @@ class SessionController(private val connection: ConnectionSurface) {
     // MARK: - Session lifecycle
 
     /** Creates a new terminal session on the server. Returns the session UUID. */
-    suspend fun createSession(name: String? = null): UUID {
-        val response = sendAndWaitForResponse(ClientMessage.SessionCreate(name))
+    suspend fun createSession(name: String? = null, cols: UShort? = null, rows: UShort? = null): UUID {
+        val response = sendAndWaitForResponse(ClientMessage.SessionCreate(name, cols, rows))
         return when (response) {
             is ServerMessage.SessionCreated -> response.sessionId.also { recordAttachment(it) }
             is ServerMessage.Error -> throw unexpected(response.message)

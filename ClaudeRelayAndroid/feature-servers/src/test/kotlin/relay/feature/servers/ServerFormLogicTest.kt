@@ -90,6 +90,28 @@ class ServerFormLogicTest {
         assertEquals(listOf(a), input)
     }
 
+    @Test
+    fun `enabling TLS swaps the plaintext default to 443`() {
+        assertEquals("443", ServerFormLogic.portForTLSChange("9200", useTLS = true))
+        assertEquals("443", ServerFormLogic.portForTLSChange("", useTLS = true))
+        assertEquals("443", ServerFormLogic.portForTLSChange("  9200  ", useTLS = true))
+    }
+
+    @Test
+    fun `disabling TLS swaps 443 back to the plaintext default`() {
+        assertEquals("9200", ServerFormLogic.portForTLSChange("443", useTLS = false))
+        assertEquals("9200", ServerFormLogic.portForTLSChange(" 443 ", useTLS = false))
+    }
+
+    @Test
+    fun `toggling TLS leaves a custom port untouched`() {
+        assertEquals("8443", ServerFormLogic.portForTLSChange("8443", useTLS = true))
+        assertEquals("8080", ServerFormLogic.portForTLSChange("8080", useTLS = false))
+        // Already on the target default: no-op, not double-swapped.
+        assertEquals("443", ServerFormLogic.portForTLSChange("443", useTLS = true))
+        assertEquals("9200", ServerFormLogic.portForTLSChange("9200", useTLS = false))
+    }
+
     private fun config(name: String) =
         ConnectionConfig(id = UUID.randomUUID(), name = name, host = "h", port = 9200u)
 }

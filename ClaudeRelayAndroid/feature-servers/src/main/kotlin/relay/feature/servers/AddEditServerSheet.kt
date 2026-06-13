@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
@@ -18,6 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -78,10 +81,13 @@ fun AddEditServerSheet(
     val portValid = ServerFormLogic.parsePort(port) != null
     val isValid = hostValid && portValid
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -151,7 +157,13 @@ fun AddEditServerSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Use TLS", style = MaterialTheme.typography.bodyLarge)
-                Switch(checked = useTLS, onCheckedChange = { useTLS = it })
+                Switch(
+                    checked = useTLS,
+                    onCheckedChange = { enabled ->
+                        useTLS = enabled
+                        port = ServerFormLogic.portForTLSChange(port, enabled)
+                    },
+                )
             }
 
             Button(

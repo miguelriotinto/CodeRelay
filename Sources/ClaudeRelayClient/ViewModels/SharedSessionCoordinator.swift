@@ -107,6 +107,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         set { authCoordinator.sessionController = newValue }
     }
     public var terminalViewModels: [UUID: TerminalViewModel] = [:]
+    /// Best-known terminal geometry from the most recent resize on any session.
+    /// Seeds `session_create` so the PTY forks at the right width. `nil` until
+    /// the first terminal has been laid out.
+    public private(set) var lastKnownTerminalSize: (cols: UInt16, rows: UInt16)?
     public var recoveryTask: Task<Void, Never>?
     public var isTornDown = false
     /// UserDefaults persistence for sessionNames / ownedSessionIds /
@@ -394,7 +398,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                     try? await controller.detach()
                 }
                 let name = self.pickDefaultName()
-                let sessionId = try await controller.createSession(name: name)
+                let size = self.lastKnownTerminalSize
+                let sessionId = try await controller.createSession(
+                    name: name, cols: size?.cols, rows: size?.rows
+                )
                 return (name, sessionId)
             }
 
@@ -641,6 +648,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         }
         terminalViewModels[sessionId]?.onTitleChanged = { [weak self] title in
             self?.terminalTitles[sessionId] = title
+        }
+        terminalViewModels[sessionId]?.onResize = { [weak self] cols, rows in
+            self?.lastKnownTerminalSize = (cols, rows)
         }
     }
 

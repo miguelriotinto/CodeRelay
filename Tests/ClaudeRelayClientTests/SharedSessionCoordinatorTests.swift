@@ -447,6 +447,25 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.sessionNames[sessionId], "NewName")
     }
 
+    // MARK: - Last-Known Terminal Size
+
+    func testResizeUpdatesLastKnownTerminalSize() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+
+        let sessionId = UUID()
+        let vm = TerminalViewModel(sessionId: sessionId, connection: connection)
+        coordinator.terminalViewModels[sessionId] = vm
+        coordinator.wireTerminalOutput(to: sessionId)
+
+        XCTAssertNil(coordinator.lastKnownTerminalSize)
+
+        vm.sendResize(cols: 100, rows: 30)
+
+        XCTAssertEqual(coordinator.lastKnownTerminalSize?.cols, 100)
+        XCTAssertEqual(coordinator.lastKnownTerminalSize?.rows, 30)
+    }
+
     // MARK: - ViewModel Access
 
     func testViewModelReturnsNilForUnknownSession() {

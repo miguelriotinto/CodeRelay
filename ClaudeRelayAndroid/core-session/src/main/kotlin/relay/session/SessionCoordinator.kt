@@ -535,6 +535,17 @@ class SessionCoordinator(
      */
     private var sessionOpsInFlight = 0
 
+    /** Best-known terminal geometry (cols to rows) from the latest resize; seeds
+     *  the next `session_create`. Null until the first terminal lays out. */
+    @Volatile
+    private var lastKnownTerminalSize: Pair<UShort, UShort>? = null
+
+    /** Called by the workspace layer whenever the terminal reports a new size. */
+    fun recordTerminalSize(cols: Int, rows: Int) {
+        if (cols <= 0 || rows <= 0) return
+        lastKnownTerminalSize = cols.toUShort() to rows.toUShort()
+    }
+
     // MARK: - Create (SharedSessionCoordinator.swift:388-421)
 
     suspend fun createNewSession() {
@@ -546,7 +557,8 @@ class SessionCoordinator(
             // withAuth: detach the previous session (best-effort), then create.
             val sessionId = authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
-                sessionController.createSession(name)
+                val size = lastKnownTerminalSize
+                sessionController.createSession(name, size?.first, size?.second)
             }
 
             previousId?.let {

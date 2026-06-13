@@ -3,7 +3,7 @@ import Foundation
 /// Messages sent from the client to the server.
 public enum ClientMessage: Equatable, Sendable {
     case authRequest(token: String, protocolVersion: Int? = nil)
-    case sessionCreate(name: String? = nil)
+    case sessionCreate(name: String? = nil, cols: UInt16? = nil, rows: UInt16? = nil)
     case sessionAttach(sessionId: UUID)
     /// Resume a detached session. `skipReplay` (defaults to false) lets the
     /// client opt out of receiving the server's ring-buffer replay when it
@@ -61,8 +61,10 @@ extension ClientMessage: Codable {
         case .authRequest(let token, let protocolVersion):
             try container.encode(token, forKey: .token)
             try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
-        case .sessionCreate(let name):
+        case .sessionCreate(let name, let cols, let rows):
             try container.encodeIfPresent(name, forKey: .name)
+            try container.encodeIfPresent(cols, forKey: .cols)
+            try container.encodeIfPresent(rows, forKey: .rows)
         case .sessionAttach(let sessionId):
             try container.encode(sessionId, forKey: .sessionId)
         case .sessionResume(let sessionId, let skipReplay):
@@ -100,7 +102,9 @@ extension ClientMessage: Codable {
             return .authRequest(token: token, protocolVersion: protocolVersion)
         case "session_create":
             let name = try container.decodeIfPresent(String.self, forKey: .name)
-            return .sessionCreate(name: name)
+            let cols = try container.decodeIfPresent(UInt16.self, forKey: .cols)
+            let rows = try container.decodeIfPresent(UInt16.self, forKey: .rows)
+            return .sessionCreate(name: name, cols: cols, rows: rows)
         case "session_attach":
             let sessionId = try container.decode(UUID.self, forKey: .sessionId)
             return .sessionAttach(sessionId: sessionId)

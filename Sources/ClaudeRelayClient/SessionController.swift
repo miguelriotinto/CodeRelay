@@ -99,8 +99,8 @@ public final class SessionController: ObservableObject {
 
     /// Creates a new terminal session on the server. Returns the session UUID.
     @discardableResult
-    public func createSession(name: String? = nil) async throws -> UUID {
-        let response = try await sendAndWaitForResponse(.sessionCreate(name: name))
+    public func createSession(name: String? = nil, cols: UInt16? = nil, rows: UInt16? = nil) async throws -> UUID {
+        let response = try await sendAndWaitForResponse(.sessionCreate(name: name, cols: cols, rows: rows))
 
         switch response {
         case .sessionCreated(let id, _, _):

@@ -20,6 +20,26 @@ final class SessionLifecycleTests: SessionManagerTestCase {
         XCTAssertEqual(session.state, .activeAttached)
     }
 
+    func testCreateSessionHonorsExplicitSize() async throws {
+        let (_, tokenInfo) = try await createTestToken()
+        let manager = makeManager()
+
+        let info = try await manager.createSession(tokenId: tokenInfo.id, cols: 132, rows: 50)
+
+        XCTAssertEqual(info.cols, 132)
+        XCTAssertEqual(info.rows, 50)
+    }
+
+    func testCreateSessionDefaultsTo80x24WhenSizeOmitted() async throws {
+        let (_, tokenInfo) = try await createTestToken()
+        let manager = makeManager()
+
+        let info = try await manager.createSession(tokenId: tokenInfo.id)
+
+        XCTAssertEqual(info.cols, 80)
+        XCTAssertEqual(info.rows, 24)
+    }
+
     func testListSessions() async throws {
         let (_, tokenInfo) = try await createTestToken()
         let manager = makeManager()

@@ -58,6 +58,10 @@ public final class TerminalViewModel: ObservableObject {
     public var onTitleChanged: ((String) -> Void)?
     /// Installed by the terminal view. Fires when `awaitingInput` transitions.
     public var onAwaitingInputChanged: ((Bool) -> Void)?
+    /// Installed by the coordinator. Fires whenever the view reports a new
+    /// terminal size, so the coordinator can remember the last-known geometry
+    /// to seed the next `session_create`.
+    public var onResize: ((UInt16, UInt16) -> Void)?
 
     private var terminalSized = false
     private var isReplaying = false
@@ -233,6 +237,7 @@ public final class TerminalViewModel: ObservableObject {
     }
 
     public func sendResize(cols: UInt16, rows: UInt16) {
+        onResize?(cols, rows)
         guard !isSendingSuppressed else { return }
         Task { try? await connection.sendResize(cols: cols, rows: rows) }
     }

@@ -17,7 +17,11 @@ sealed interface ClientMessage {
         override val typeString get() = "auth_request"
     }
 
-    data class SessionCreate(val name: String? = null) : ClientMessage {
+    data class SessionCreate(
+        val name: String? = null,
+        val cols: UShort? = null,
+        val rows: UShort? = null,
+    ) : ClientMessage {
         override val typeString get() = "session_create"
     }
 
