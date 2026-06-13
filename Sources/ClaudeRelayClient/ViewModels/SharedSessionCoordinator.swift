@@ -521,6 +521,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 wireTerminalOutput(to: previousId)
             }
             if Self.isApplicationLevelError(error) {
+                if case SessionController.SessionError.authenticationFailed = error {
+                    recoveryController?.markAuthRejected()
+                }
                 sessionAttachError = friendlyAttachErrorMessage(error)
                 sessionAttachFailed = true
             } else {

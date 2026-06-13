@@ -130,4 +130,16 @@ final class RecoveryControllerTests: XCTestCase {
 
         XCTAssertFalse(controller._testOnly_authRejected)
     }
+
+    func testMarkAuthRejectedArmsGate() {
+        let (coordinator, controller) = makeCoordinatorAndController()
+        XCTAssertFalse(controller._testOnly_authRejected)
+
+        controller.markAuthRejected()
+
+        XCTAssertTrue(controller._testOnly_authRejected)
+        // And the gate now blocks auto-recovery:
+        controller.scheduleAutoRecovery()
+        XCTAssertNil(coordinator.recoveryTask)
+    }
 }

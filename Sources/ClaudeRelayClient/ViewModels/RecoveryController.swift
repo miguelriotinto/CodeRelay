@@ -143,6 +143,13 @@ final class RecoveryController {
         }
     }
 
+    /// Arm the auth-rejected gate from outside the recovery flow (e.g. when
+    /// the initial attach path observes an invalid token). Idempotent.
+    /// Cleared by `triggerUserRecovery` when the user re-pairs.
+    func markAuthRejected() {
+        authRejected = true
+    }
+
     // MARK: - Recovery flow
 
     /// - Parameter userInitiated: true when triggered by an explicit
