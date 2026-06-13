@@ -551,6 +551,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     func friendlyAttachErrorMessage(_ error: Error) -> String {
         if let sessionErr = error as? SessionController.SessionError,
+           case .authenticationFailed = sessionErr {
+            return "Access token rejected. This server's token is no longer "
+                + "valid — edit the server to re-pair it."
+        }
+        if let sessionErr = error as? SessionController.SessionError,
            case .unexpectedResponse(let detail) = sessionErr {
             if detail.localizedCaseInsensitiveContains("not found") {
                 return "This session no longer exists on the server."
