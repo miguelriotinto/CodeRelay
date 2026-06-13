@@ -108,4 +108,38 @@ final class RecoveryControllerTests: XCTestCase {
         controller.triggerUserRecovery()
         XCTAssertNil(coordinator.recoveryTask, "Recovery should be debounced within 1s of cancel")
     }
+
+    // MARK: - Auth rejection
+
+    func testScheduleAutoRecoveryBlockedWhenAuthRejected() {
+        let (coordinator, controller) = makeCoordinatorAndController()
+        controller._testOnly_setAuthRejected(true)
+
+        controller.scheduleAutoRecovery()
+
+        XCTAssertNil(coordinator.recoveryTask)
+    }
+
+    func testTriggerUserRecoveryClearsAuthRejected() {
+        let (coordinator, controller) = makeCoordinatorAndController()
+        _ = coordinator  // retain: controller holds an unowned ref to it
+        controller._testOnly_setAuthRejected(true)
+        XCTAssertTrue(controller._testOnly_authRejected)
+
+        controller.triggerUserRecovery()
+
+        XCTAssertFalse(controller._testOnly_authRejected)
+    }
+
+    func testMarkAuthRejectedArmsGate() {
+        let (coordinator, controller) = makeCoordinatorAndController()
+        XCTAssertFalse(controller._testOnly_authRejected)
+
+        controller.markAuthRejected()
+
+        XCTAssertTrue(controller._testOnly_authRejected)
+        // And the gate now blocks auto-recovery:
+        controller.scheduleAutoRecovery()
+        XCTAssertNil(coordinator.recoveryTask)
+    }
 }

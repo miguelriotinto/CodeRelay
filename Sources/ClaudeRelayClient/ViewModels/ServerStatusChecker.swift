@@ -1,9 +1,22 @@
 import Foundation
 
 public struct ServerStatus: Equatable {
+    /// Coarse reachability classification, distinct from the boolean
+    /// `isLive` so the UI can tell "server up but token rejected" apart
+    /// from "server unreachable".
+    public enum Reachability: Equatable {
+        case unknown        // not yet probed
+        case live           // reachable + token accepted
+        case invalidToken   // reachable but auth rejected
+        case unreachable    // could not connect / timed out
+    }
+
     public var isLive: Bool = false
-    public init(isLive: Bool = false) {
+    public var reachability: Reachability = .unknown
+
+    public init(isLive: Bool = false, reachability: Reachability = .unknown) {
         self.isLive = isLive
+        self.reachability = reachability
     }
 }
 
@@ -55,6 +68,17 @@ public final class ServerStatusChecker: ObservableObject {
         }
     }
 
+    /// Maps a probe failure to a status. `authenticationFailed` means the
+    /// socket reached the server but the token was rejected — surface that
+    /// distinctly from an unreachable server.
+    static func statusForProbeFailure(_ error: Error) -> ServerStatus {
+        if let sessionErr = error as? SessionController.SessionError,
+           case .authenticationFailed = sessionErr {
+            return ServerStatus(isLive: false, reachability: .invalidToken)
+        }
+        return ServerStatus(isLive: false, reachability: .unreachable)
+    }
+
     @MainActor
     static func probe(config: ConnectionConfig) async -> ServerStatus {
         guard let token = try? AuthManager.shared.loadToken(for: config.id),
@@ -80,10 +104,10 @@ public final class ServerStatusChecker: ObservableObject {
                         // real session data when the user actually opens a server.
                         try await controller.authenticate(token: token)
                         connection.disconnect()
-                        return ServerStatus(isLive: true)
+                        return ServerStatus(isLive: true, reachability: .live)
                     } catch {
                         connection.disconnect()
-                        return ServerStatus()
+                        return Self.statusForProbeFailure(error)
                     }
                 } onCancel: {
                     Task { @MainActor in connection.disconnect() }

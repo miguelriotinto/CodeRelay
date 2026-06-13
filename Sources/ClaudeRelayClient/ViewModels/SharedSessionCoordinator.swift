@@ -521,6 +521,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 wireTerminalOutput(to: previousId)
             }
             if Self.isApplicationLevelError(error) {
+                if case SessionController.SessionError.authenticationFailed = error {
+                    recoveryController?.markAuthRejected()
+                }
                 sessionAttachError = friendlyAttachErrorMessage(error)
                 sessionAttachFailed = true
             } else {
@@ -550,6 +553,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     }
 
     func friendlyAttachErrorMessage(_ error: Error) -> String {
+        if let sessionErr = error as? SessionController.SessionError,
+           case .authenticationFailed = sessionErr {
+            return "Access token rejected. This server's token is no longer "
+                + "valid — edit the server to re-pair it."
+        }
         if let sessionErr = error as? SessionController.SessionError,
            case .unexpectedResponse(let detail) = sessionErr {
             if detail.localizedCaseInsensitiveContains("not found") {

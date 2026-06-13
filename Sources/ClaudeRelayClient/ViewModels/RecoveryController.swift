@@ -48,6 +48,11 @@ final class RecoveryController {
     /// True when auto-retry has been circuit-broken. Cleared on explicit
     /// recovery entry.
     private var autoRecoverySuspended = false
+    /// True once the server rejected the token as invalid. Unlike the
+    /// failure-count breaker, this trips on the FIRST auth rejection and is
+    /// cleared ONLY by user-initiated recovery (e.g. after re-pairing). This
+    /// is what stops the silent reconnect storm against a known-bad token.
+    private var authRejected = false
     /// Synchronous entry lock, distinct from `isRecovering` (which is set
     /// after `await isAlive()`). Prevents concurrent recovery dispatches
     /// from racing across the suspension point at the top of
@@ -91,6 +96,10 @@ final class RecoveryController {
             recoveryLog.info("scheduleAutoRecovery: auto-suspend active — awaiting user signal")
             return
         }
+        guard !authRejected else {
+            recoveryLog.info("scheduleAutoRecovery: token rejected — awaiting user re-pair")
+            return
+        }
         let elapsed = Date().timeIntervalSince(lastRecoveryEndedAt)
         guard elapsed >= autoRecoveryCooldown else {
             recoveryLog.debug("scheduleAutoRecovery: cooldown (\(elapsed, format: .fixed(precision: 2))s < \(self.autoRecoveryCooldown)s)")
@@ -127,10 +136,18 @@ final class RecoveryController {
         }
         autoRecoverySuspended = false
         consecutiveAutoRecoveryFailures = 0
+        authRejected = false
         isRecoveryDispatched = true
         coordinator.recoveryTask = Task { [weak self] in
             await self?.handleForegroundTransition(userInitiated: true)
         }
+    }
+
+    /// Arm the auth-rejected gate from outside the recovery flow (e.g. when
+    /// the initial attach path observes an invalid token). Idempotent.
+    /// Cleared by `triggerUserRecovery` when the user re-pairs.
+    func markAuthRejected() {
+        authRejected = true
     }
 
     // MARK: - Recovery flow
@@ -256,6 +273,12 @@ final class RecoveryController {
             coordinator.recoveryFailed = true
             // App-level errors leave the connection intact — user can retry without reconnecting
             if SharedSessionCoordinator.isApplicationLevelError(error) {
+                if case SessionController.SessionError.authenticationFailed = error {
+                    // Token rejected: stop auto-recovery entirely until the
+                    // user re-pairs. Prevents the reconnect storm that trips
+                    // the server's rate limiter.
+                    authRejected = true
+                }
                 // Session no longer exists / invalid transition / etc. The
                 // socket itself is fine — clear the active session and surface
                 // a recoverable error. Don't tear the workspace down via
@@ -309,6 +332,8 @@ final class RecoveryController {
 
     var _testOnly_autoRecoverySuspended: Bool { autoRecoverySuspended }
     var _testOnly_consecutiveAutoRecoveryFailures: Int { consecutiveAutoRecoveryFailures }
+    var _testOnly_authRejected: Bool { authRejected }
+    func _testOnly_setAuthRejected(_ value: Bool) { authRejected = value }
 
     func _testOnly_setAutoRecoverySuspended(_ suspended: Bool, failures: Int) {
         autoRecoverySuspended = suspended

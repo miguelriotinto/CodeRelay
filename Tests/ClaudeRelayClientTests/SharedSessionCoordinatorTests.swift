@@ -494,4 +494,15 @@ final class SharedSessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.createdAt(for: sessionId), now)
     }
+
+    // MARK: - Friendly Attach Error Message
+
+    func testFriendlyMessageForAuthenticationFailed() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+        let err = SessionController.SessionError.authenticationFailed(reason: "Invalid token")
+        let message = coordinator.friendlyAttachErrorMessage(err)
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("token"))
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("re-pair"))
+    }
 }

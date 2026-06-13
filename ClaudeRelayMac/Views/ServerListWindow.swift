@@ -27,7 +27,8 @@ struct ServerListWindow: View {
                 ForEach(viewModel.connections, id: \.id) { connection in
                     ServerRow(
                         connection: connection,
-                        isReachable: viewModel.statuses[connection.id]?.isLive ?? false
+                        isReachable: viewModel.statuses[connection.id]?.isLive ?? false,
+                        isTokenInvalid: viewModel.statuses[connection.id]?.reachability == .invalidToken
                     )
                     .contextMenu {
                         Button("Connect") { connectTo(connection) }
@@ -93,17 +94,28 @@ struct ServerListWindow: View {
 private struct ServerRow: View {
     let connection: ConnectionConfig
     let isReachable: Bool
+    var isTokenInvalid: Bool = false
+
+    private var dotColor: Color {
+        if isTokenInvalid { return .orange }
+        return isReachable ? .green : .red
+    }
 
     var body: some View {
         HStack {
             Circle()
-                .fill(isReachable ? .green : .red)
+                .fill(dotColor)
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
                 Text(connection.name).font(.headline)
                 Text("\(connection.useTLS ? "wss" : "ws")://\(connection.host):\(connection.port)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if isTokenInvalid {
+                    Text("Invalid token")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
             Spacer()
         }

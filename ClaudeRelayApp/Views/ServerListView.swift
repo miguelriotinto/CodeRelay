@@ -182,9 +182,9 @@ struct ServerRowView: View {
                     .foregroundStyle(.secondary)
                 HStack(spacing: 4) {
                     Circle()
-                        .fill(status?.isLive == true ? .green : .red)
+                        .fill(statusColor(status))
                         .frame(width: 8, height: 8)
-                    Text(status?.isLive == true ? "Live" : "Offline")
+                    Text(statusLabel(status))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -196,6 +196,22 @@ struct ServerRowView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             }
+        }
+    }
+
+    private func statusColor(_ status: ServerStatus?) -> Color {
+        switch status?.reachability {
+        case .live:         return .green
+        case .invalidToken: return .orange
+        default:            return .red
+        }
+    }
+
+    private func statusLabel(_ status: ServerStatus?) -> String {
+        switch status?.reachability {
+        case .live:         return "Live"
+        case .invalidToken: return "Invalid token"
+        default:            return "Offline"
         }
     }
 }
