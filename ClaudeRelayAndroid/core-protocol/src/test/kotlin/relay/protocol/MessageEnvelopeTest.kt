@@ -160,6 +160,19 @@ class MessageEnvelopeTest {
         assertTrue(encoded.contains(""""name":"my session""""))
     }
 
+    @Test fun `session_create encodes cols and rows when present`() {
+        val encoded = MessageEnvelope.encodeClient(ClientMessage.SessionCreate("dev", 120u, 40u))
+        assertTrue(encoded.contains(""""cols":120"""))
+        assertTrue(encoded.contains(""""rows":40"""))
+        assertTrue(encoded.contains(""""name":"dev""""))
+    }
+
+    @Test fun `session_create omits cols and rows when null`() {
+        val encoded = MessageEnvelope.encodeClient(ClientMessage.SessionCreate("dev"))
+        assertTrue(!encoded.contains("cols"))
+        assertTrue(!encoded.contains("rows"))
+    }
+
     @Test fun `encode session_attach uses lowercase-hyphenated uuid`() {
         val upper = UUID.fromString("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
         val encoded = MessageEnvelope.encodeClient(ClientMessage.SessionAttach(upper))

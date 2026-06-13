@@ -37,8 +37,11 @@ object MessageEnvelope {
                     put("token", JsonPrimitive(message.token))
                     message.protocolVersion?.let { put("protocolVersion", JsonPrimitive(it)) }
                 }
-                is ClientMessage.SessionCreate ->
+                is ClientMessage.SessionCreate -> {
                     message.name?.let { put("name", JsonPrimitive(it)) }
+                    message.cols?.let { put("cols", JsonPrimitive(it.toInt())) }
+                    message.rows?.let { put("rows", JsonPrimitive(it.toInt())) }
+                }
                 is ClientMessage.SessionAttach ->
                     put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
                 is ClientMessage.SessionResume -> {
