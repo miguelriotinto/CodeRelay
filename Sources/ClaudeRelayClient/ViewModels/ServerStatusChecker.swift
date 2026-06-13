@@ -1,9 +1,22 @@
 import Foundation
 
 public struct ServerStatus: Equatable {
+    /// Coarse reachability classification, distinct from the boolean
+    /// `isLive` so the UI can tell "server up but token rejected" apart
+    /// from "server unreachable".
+    public enum Reachability: Equatable {
+        case unknown        // not yet probed
+        case live           // reachable + token accepted
+        case invalidToken   // reachable but auth rejected
+        case unreachable    // could not connect / timed out
+    }
+
     public var isLive: Bool = false
-    public init(isLive: Bool = false) {
+    public var reachability: Reachability = .unknown
+
+    public init(isLive: Bool = false, reachability: Reachability = .unknown) {
         self.isLive = isLive
+        self.reachability = reachability
     }
 }
 
