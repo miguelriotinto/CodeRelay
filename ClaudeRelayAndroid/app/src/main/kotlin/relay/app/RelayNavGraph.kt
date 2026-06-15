@@ -281,9 +281,19 @@ private fun WorkspaceRoute(
     val coordinator = session.coordinator
     val hapticsEnabled by settings.hapticFeedbackEnabled.collectAsStateWithLifecycle()
 
-    // ON_RESUME → handleForegroundTransition (the scenePhase == .active analog).
+    // ON_RESUME → restore + repaint the active terminal (the scenePhase == .active
+    // analog). restoreActiveOnForeground() is the SINGLE foreground entry point:
+    //  - dead socket → it defers to full recovery (reconnect → reauth → resume),
+    //  - live-but-stalled socket → it resumes in place so the server replays
+    //    scrollback into the live emulator and the terminal repaints.
+    // It deliberately replaces the old bare handleForegroundTransition() call here:
+    // calling BOTH would race two resumes on one connection when the socket is
+    // alive (handleForegroundTransition's recovery short-circuits to fetch WITHOUT
+    // setting isRecovering, so it would not gate the repaint path). The
+    // network-restored edge still drives handleForegroundTransition via the
+    // connectivityRestored collector below.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        coordinator.handleForegroundTransition()
+        coordinator.restoreActiveOnForeground()
     }
 
     // Connectivity restored → user-recovery (NetworkMonitor.connectivityRestored).

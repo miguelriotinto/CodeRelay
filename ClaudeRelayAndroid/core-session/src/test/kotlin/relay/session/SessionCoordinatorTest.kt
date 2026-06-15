@@ -868,6 +868,123 @@ class SessionCoordinatorTest {
     }
 
     // -------------------------------------------------------------------------
+    // FOREGROUND REPAINT — returning to the app must always repaint the active
+    // terminal, even when the transport still looks alive and the attachment
+    // generation never changed (a plain background→foreground where the socket
+    // quietly stalled but was never replaced). The bare handleForegroundTransition
+    // short-circuits on isAlive()==true && !needsSessionRestore() → fetch only,
+    // so the cached emulator is never re-fed and the grid stays blank (the
+    // "reopen lands on a dead terminal" bug). restoreActiveOnForeground() forces
+    // a resume so the server replays scrollback into the live emulator.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `restoreActiveOnForeground resumes and repaints the active session even when alive`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log).apply { alive = true } // transport looks fine
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertEquals(target, coord.activeSessionId.value)
+        // Fresh attachment + alive socket: the existing foreground path would NOT
+        // restore (it short-circuits to fetch). This is exactly the dead-terminal case.
+        assertFalse(coord.needsSessionRestore(), "attachment is current — bare foreground would only fetch")
+        log.entries.clear()
+
+        coord.restoreActiveOnForeground()
+        advanceUntilIdle()
+
+        // The active session is resumed so the server replays scrollback into the
+        // live emulator (the repaint), and output is re-wired to the same VM.
+        assertTrue("rpc:session_resume" in log, "foreground forces a resume to repaint the live terminal")
+        assertTrue(log.precedes("rpc:session_resume", "wire"), "output re-wired after the resume")
+        assertEquals(target, coord.activeSessionId.value, "active session unchanged")
+        assertFalse(coord.isRecovering.value, "a healthy-socket repaint never flashes recovery UI")
+    }
+
+    @Test
+    fun `restoreActiveOnForeground with no active session never resumes (defers to recovery fetch)`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        // Alive socket → the recovery path short-circuits to a fetch; no resume.
+        val conn = FakeCoordinatorConnection(log).apply { alive = true }
+        val store = FakeOwnershipStore(log)
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.restoreActiveOnForeground()
+        advanceUntilIdle()
+
+        assertFalse("rpc:session_resume" in log, "nothing to resume with no active session")
+        assertFalse("forceReconnect" in log, "alive socket: recovery short-circuits to fetch, no reconnect")
+        assertNull(coord.activeSessionId.value)
+        assertFalse(coord.isRecovering.value)
+    }
+
+    @Test
+    fun `restoreActiveOnForeground defers to recovery when the socket is dead`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val conn = FakeCoordinatorConnection(log).apply {
+            alive = false
+            forceReconnectGate = gate // park the recovery pass so isRecovering stays true
+        }
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+        coord.switchToSession(target)
+        advanceUntilIdle()
+
+        // Socket is dead now. A foreground signal must route through full recovery
+        // (reconnect→reauth→resume), NOT a bare resume on a dead socket.
+        conn.alive = false
+        log.entries.clear()
+        coord.restoreActiveOnForeground()
+        testScheduler.runCurrent()
+
+        assertTrue(coord.isRecovering.value, "dead socket drives full recovery, not a bare resume")
+        assertTrue("forceReconnect" in log, "recovery reconnects the dead transport")
+
+        gate.complete(Unit) // unwind the parked pass so runTest finishes
+        advanceUntilIdle()
+    }
+
+    // -------------------------------------------------------------------------
+    // RE-SELECT ACTIVE = RESTORE — tapping the already-active session in the
+    // sidebar must force a resume (escape hatch for a stale terminal), instead of
+    // the old early-return no-op that left the user stuck with a blank grid.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `switchToSession on the active id forces a restoring resume`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log).apply { alive = true }
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertEquals(target, coord.activeSessionId.value)
+        log.entries.clear()
+
+        // Re-tap the SAME session: must resume (repaint), not no-op.
+        coord.switchToSession(target)
+        advanceUntilIdle()
+
+        assertTrue("rpc:session_resume" in log, "re-selecting the active session resumes it (repaint escape hatch)")
+        assertEquals(target, coord.activeSessionId.value)
+    }
+
+    // -------------------------------------------------------------------------
     // OP-IN-FLIGHT RACES — session ops (create / switch / attach) put the
     // controller and _activeSessionId in transiently mismatched states at their
     // suspension points. needsSessionRestore() must defer to the in-flight op

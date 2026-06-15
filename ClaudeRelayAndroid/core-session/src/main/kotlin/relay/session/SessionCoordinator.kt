@@ -589,7 +589,18 @@ class SessionCoordinator(
     // MARK: - Switch (SharedSessionCoordinator.swift:425-458)
 
     suspend fun switchToSession(id: UUID) {
-        if (recoveryController.isRecovering.value || id == _activeSessionId.value) return
+        if (recoveryController.isRecovering.value) return
+        // Re-selecting the ALREADY-active session is a repaint request, not a
+        // switch: the user tapped the session they're already on because its
+        // terminal looks blank/stale (e.g. after returning from the background).
+        // Route it through the foreground-restore path (resume + re-feed the live
+        // emulator) instead of the old early-return no-op that left them stuck.
+        // Do NOT run the full SWITCH sequence here — that would detach() then
+        // resume() the same session, needlessly orphaning it mid-op.
+        if (id == _activeSessionId.value) {
+            restoreActiveOnForeground()
+            return
+        }
         val previousId = _activeSessionId.value
         sessionOpsInFlight += 1
         try {
@@ -849,6 +860,78 @@ class SessionCoordinator(
      */
     fun handleForegroundTransition() {
         recoveryController.triggerUserRecovery()
+    }
+
+    /**
+     * Force-repaint the active session's terminal when the app returns to the
+     * foreground. This is the fix for the "reopen lands on a blank/dead terminal"
+     * bug: after a plain background→foreground the WebSocket can stall WITHOUT the
+     * connection being replaced, so `needsSessionRestore()` is false (sessionId and
+     * attachedGeneration both still match) and `isAlive()` may briefly report true
+     * on the half-dead socket. `handleForegroundTransition()` then short-circuits
+     * to a bare `fetchSessions()` and the cached emulator is never re-fed — the
+     * user sees the green dot and ticking uptime over an empty grid, and tapping
+     * the session does nothing.
+     *
+     * Unlike that heuristic path, this ALWAYS repaints when a session is active:
+     *  - **Dead socket** (`!isAlive()`): defer to full recovery (reconnect →
+     *    reauth → resume) via [RecoveryController.triggerUserRecovery]; a bare
+     *    resume on a dead socket can't work, and recovery owns the breaker/backoff.
+     *  - **Live socket**: resume the active session directly on the live transport.
+     *    The server's resume handler is idempotent and ALWAYS replays scrollback +
+     *    re-wires PTY output (`repaintAfter: true`, SessionRequestHandlers.swift:140),
+     *    so this re-feeds the live emulator and the terminal repaints in place. The
+     *    resume goes through `withAuth` so a silently-expired auth re-authenticates
+     *    once. No-op while a session op is mid-flight or recovery is already running
+     *    (those are already establishing a fresh attachment).
+     *
+     * Called from the UI on `ON_RESUME` (alongside, not replacing,
+     * [handleForegroundTransition], which still covers the network-restored and
+     * dead-socket cases). Also the target of a re-tap on the active session in the
+     * sidebar (see [switchToSession]).
+     */
+    fun restoreActiveOnForeground() {
+        if (recoveryController.isRecovering.value) return
+        if (sessionOpsInFlight > 0) return
+        val activeId = _activeSessionId.value
+        if (activeId == null) {
+            // No active session to repaint, but the transport may still have died
+            // in the background — let the recovery path reconnect + refresh the
+            // sidebar (it short-circuits to a fetch if the socket is fine). This
+            // keeps restoreActiveOnForeground the single ON_RESUME entry point.
+            recoveryController.triggerUserRecovery()
+            return
+        }
+        scope.launch {
+            // A dead transport can't be repainted by a bare resume — hand off to
+            // the full recovery state machine (reconnect → reauth → resume).
+            if (!connection.isAlive()) {
+                recoveryController.triggerUserRecovery()
+                return@launch
+            }
+            // Live socket: resume in place so the server replays scrollback into
+            // the live emulator. Guard the whole op with sessionOpsInFlight so a
+            // concurrent recovery trigger reads a consistent attachment state (the
+            // same protection the create/switch/attach ops use).
+            sessionOpsInFlight += 1
+            try {
+                authCoordinator.withAuth {
+                    sessionController.resumeSession(activeId, skipReplay = false)
+                }
+                // Re-wire AFTER the resume (recovery semantics), so the replayed
+                // scrollback routes to the active VM's live output handler.
+                wireTerminalOutput(activeId)
+            } catch (e: Throwable) {
+                // A live-socket resume that still fails is most likely a transient
+                // attachment race; fall back to the full recovery path rather than
+                // surfacing an error over a working connection.
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    recoveryController.triggerUserRecovery()
+                }
+            } finally {
+                sessionOpsInFlight -= 1
+            }
+        }
     }
 
     /** Explicit user-initiated recovery (QR rescan, manual retry). */
