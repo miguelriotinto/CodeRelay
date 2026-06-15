@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -113,18 +114,48 @@ fun TerminalHost(
     // The real VT grid. termlib owns sizing (auto-fits cols×rows to the available
     // space at its monospace font); keyboardEnabled=true gives normal soft-keyboard
     // typing straight into the live grid (the accessory bar handles special keys).
-    Terminal(
-        terminalEmulator = engine.emulator,
-        keyboardEnabled = true,
-        // termlib focuses its ImeInputView on tap; we then force the platform IME
-        // up (it stays down on tap after a manual swipe-down otherwise — see above).
-        onTerminalTap = {
-            ViewCompat.getWindowInsetsController(view)?.show(WindowInsetsCompat.Type.ime())
-        },
-        backgroundColor = TerminalPalette.background.toComposeColor(),
-        foregroundColor = TerminalPalette.foreground.toComposeColor(),
-        modifier = modifier
-            .fillMaxSize()
-            .background(TerminalPalette.background.toComposeColor()),
-    )
+    //
+    // CRITICAL — `key(vm)`: this forces Compose to DISPOSE the old termlib subtree and
+    // BUILD a fresh one on every session change, instead of reusing this call site's
+    // node with a new `terminalEmulator` argument. It is load-bearing for the soft
+    // keyboard, NOT a micro-optimization:
+    //
+    //   termlib hosts its soft-keyboard `InputConnection` inside an `ImeInputView`
+    //   that it creates in an `AndroidView` *factory* lambda. Compose runs an
+    //   AndroidView factory EXACTLY ONCE per node — never on recomposition. termlib's
+    //   `ImeInputView` holds its `KeyboardHandler` (and the handler its
+    //   `TerminalEmulator`) as `final` fields, bound at construction. So when a session
+    //   switch feeds this stable node a NEW `engine.emulator`, termlib rebuilds its
+    //   `KeyboardHandler` (that part IS keyed on the emulator) but the
+    //   AndroidView-hosted `ImeInputView` is NOT recreated — it stays welded to the
+    //   PREVIOUS session's handler/emulator. Android's `InputMethodManager` serves a
+    //   single view process-wide, so it keeps serving that stale view: every
+    //   soft-keyboard commit routes to a detached `InputConnection` and silently
+    //   vanishes — for this session AND every session opened afterwards. (The
+    //   KeyboardAccessory special-key bar feeds `onInput` directly, bypassing the IME,
+    //   so it keeps working — which is exactly the observed "special keys type, soft
+    //   keyboard doesn't" symptom.)
+    //
+    //   Re-keying on `vm` makes a session switch tear the old `ImeInputView` out of the
+    //   window (its `onDetachedFromWindow` releases the IMM) and construct a brand-new
+    //   one bound to the new session's emulator, so the keyboard works on every session.
+    //   The per-session `TerminalSessionVm` lives in the coordinator's terminalCache
+    //   (outside composition), so keying here costs only a termlib view rebuild — the
+    //   same rebuild that already happens for `engine`/`controller` (both `remember(vm)`).
+    key(vm) {
+        Terminal(
+            terminalEmulator = engine.emulator,
+            keyboardEnabled = true,
+            // termlib focuses its ImeInputView on tap; we then force the platform IME
+            // up (it stays down on tap after a manual swipe-down otherwise — see above).
+            onTerminalTap = {
+                ViewCompat.getWindowInsetsController(view)?.show(WindowInsetsCompat.Type.ime())
+            },
+            backgroundColor = TerminalPalette.background.toComposeColor(),
+            foregroundColor = TerminalPalette.foreground.toComposeColor(),
+            modifier = modifier
+                .fillMaxSize()
+                .background(TerminalPalette.background.toComposeColor()),
+        )
+    }
 }
