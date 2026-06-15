@@ -13,6 +13,7 @@ A remote terminal relay server and CLI over WebSocket, enabling secure terminal 
 - **Service management** - Run as a background service with launchd/brew services
 - **iOS client** - Native iOS app with terminal emulation, session tabs, and coding agent detection
 - **macOS client** - Native macOS app with menu-bar persistence, full keyboard shortcuts, and iOS feature parity
+- **Android client** - Native Android app (Jetpack Compose) with a real VT100 terminal, session tabs, recovery, and on-device speech (in test-build distribution; see [ClaudeRelayAndroid](ClaudeRelayAndroid/))
 - **Multi-agent detection** - Pluggable coding agent registry (Claude Code, Codex) with per-agent tab colors
 - **On-device speech engine** - Offline speech-to-text via WhisperKit (CoreML/ANE) with LLM text cleanup (iOS + macOS)
 - **Cloud prompt enhancement** - Optional rewriting of transcriptions into clear prompts via Anthropic Haiku
@@ -22,14 +23,21 @@ A remote terminal relay server and CLI over WebSocket, enabling secure terminal 
 
 ## Architecture
 
-ClaudeRelay consists of six main components:
+The macOS server/CLI and the two Apple clients are built from one Swift package; the Android client is a separate Gradle project under `ClaudeRelayAndroid/`.
+
+**Swift package (server, CLI, shared libraries, Apple clients):**
 
 - **ClaudeRelayServer** - WebSocket server (port 9200) and Admin HTTP API (port 9100)
 - **ClaudeRelayCLI** - Command-line interface for managing tokens, sessions, and service
 - **ClaudeRelayKit** - Shared library with protocol definitions, utilities, and `CodingAgent` registry
 - **ClaudeRelayClient** - Swift client library for building custom clients (includes shared `SessionCoordinating` protocol and `SessionNaming` helpers)
+- **ClaudeRelaySpeech** - Cross-platform on-device speech pipeline shared by both Apple apps (WhisperKit + LLM cleanup + `SpeechEngineState`)
 - **ClaudeRelayApp** - iOS application with terminal emulation
 - **ClaudeRelayMac** (branded "ClaudeDock") - Native macOS application with menu-bar persistence and full feature parity with iOS
+
+**Android client (separate Gradle project, `ClaudeRelayAndroid/`):**
+
+- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and an on-device speech pipeline). It speaks the identical wire protocol to the same server. Distributed as test builds via GitHub Releases (`android-v*` tags) — see [`ClaudeRelayAndroid/RELEASE.md`](ClaudeRelayAndroid/RELEASE.md).
 
 ## Installation
 
@@ -224,7 +232,7 @@ swift build
 ### Run Tests
 
 ```bash
-swift test                                    # All SPM tests (703 tests across 5 targets)
+swift test                                    # All SPM tests (700+ across 5 targets)
 swift test --filter ClaudeRelayKitTests       # Specific suite
 swift test --filter testTokenGeneration       # Specific test
 ```
@@ -288,6 +296,15 @@ ClaudeRelay/
 │   ├── ViewModels/             # Observable view models
 │   ├── Models/                 # App settings, saved connections
 │   └── Helpers/                # NetworkMonitor, SleepWakeObserver, image paste
+├── ClaudeRelayAndroid/         # Android application (Jetpack Compose, Gradle — separate build)
+│   ├── core-protocol/          # Kotlin wire-protocol models (ClientMessage/ServerMessage/MessageEnvelope)
+│   ├── core-net/               # OkHttp WebSocket transport + SessionController
+│   ├── core-session/           # SessionCoordinator, RecoveryController, NetworkObserver (pure-JVM)
+│   ├── core-storage/           # Token / ownership / saved-connection stores
+│   ├── terminal/               # VT100 terminal (ConnectBot termlib) + session view model
+│   ├── speech/                 # On-device speech pipeline (Whisper/LLM, mirrors ClaudeRelaySpeech)
+│   ├── feature-servers|workspace|settings/  # Compose UI features
+│   └── app/                    # Nav graph, MainActivity, connection wiring
 ├── Tests/
 │   ├── ClaudeRelayKitTests/    # Protocol, CodingAgent, ActivityState, SessionState, TokenGenerator, ConnectionQuality, RelayConfig, MessageEnvelope
 │   ├── ClaudeRelayServerTests/ # SessionManager, TokenStore, RateLimiter, RingBuffer, ConfigValidation, ActivityMonitor, AdminRoutesEndpoint
@@ -415,10 +432,11 @@ Contributions are welcome! Please feel free to submit a Pull Request.
    paths, and any backward-compat decoding (see how `RelayConfigTests`
    pins defaults across missing-field JSON)
 3. Update documentation (README, CHANGELOG, CLAUDE.md)
-4. Run `swift test` before submitting (all 703 SPM tests must pass; the
+4. Run `swift test` before submitting (the full SPM suite must pass; the
    pre-existing Keychain-dependent `AuthManagerTests` and one timing
    `SessionActivityMonitor` test may fail in sandboxed environments —
-   they're environmental, not regressions)
+   they're environmental, not regressions). Android changes: run
+   `./gradlew test` from `ClaudeRelayAndroid/`.
 5. Ensure `swiftlint` passes (see `.swiftlint.yml`)
 
 ## License

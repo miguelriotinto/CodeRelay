@@ -7,7 +7,8 @@ versioning, and signing-from-env wiring) already lives in the repo:
 - `app/build.gradle.kts` — `release` buildType (`isMinifyEnabled = true`,
   `isShrinkResources = true`), signing config read from `keystore.properties`
   with a debug-signing fallback for headless/CI builds, and the version
-  (`versionCode = 3`, `versionName = "0.3-m4"`).
+  (`versionCode` / `versionName` — that file is the single source of truth;
+  bump it per release as described in step 3 below).
 - `app/proguard-rules.pro` — R8 keep rules for kotlinx.serialization, ONNX
   Runtime (JNI), OkHttp/Okio, ML Kit / CameraX, and coroutines. **Do not weaken
   these without re-verifying on a device** (see the runtime caveat below).
