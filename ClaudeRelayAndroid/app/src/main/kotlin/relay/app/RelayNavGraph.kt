@@ -184,8 +184,33 @@ fun RelayNavGraph(
         composable(Routes.WORKSPACE) {
             val session = activeSession
             if (session == null) {
-                // Defensive: workspace with no live session pops back to Servers.
-                LaunchedEffect(Unit) { navController.popBackStack(Routes.SERVERS, inclusive = false) }
+                // No live session behind a restored WORKSPACE route. This is the
+                // PROCESS-DEATH path: Android killed the app under memory pressure,
+                // then restored the saved NavHost back stack (which lands on
+                // WORKSPACE), but ConnectionViewModel is a plain ViewModel with no
+                // SavedStateHandle — a live WebSocket + coroutine scope cannot be
+                // serialized across process death — so activeSession comes back null.
+                //
+                // (This branch does NOT fire on a fold/rotation/config change: there
+                // the Activity-retained ConnectionViewModel survives, so activeSession
+                // is still non-null and we re-bind to the live terminal below — the
+                // Huawei Fold survival fix, commit 970496c. The null check is exactly
+                // the process-death-vs-config-change discriminator.)
+                //
+                // Route to SERVERS deterministically by popping WORKSPACE ITSELF
+                // (inclusive), NOT popBackStack(SERVERS): the latter silently no-ops
+                // if SERVERS isn't on the restored stack, which would strand the user
+                // on a dead workspace. If SERVERS is somehow absent too, navigate to
+                // it as a fallback so we always land somewhere live. Render nothing
+                // meanwhile so the empty workspace chrome never flashes.
+                LaunchedEffect(Unit) {
+                    val popped = navController.popBackStack(Routes.WORKSPACE, inclusive = true)
+                    if (!popped || navController.currentBackStackEntry?.destination?.route != Routes.SERVERS) {
+                        navController.navigate(Routes.SERVERS) {
+                            popUpTo(navController.graph.id) { inclusive = true }
+                        }
+                    }
+                }
             } else {
                 WorkspaceRoute(
                     session = session,
