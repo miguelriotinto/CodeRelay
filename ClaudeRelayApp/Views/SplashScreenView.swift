@@ -27,7 +27,7 @@ struct SplashScreenView: View {
                     .scaleEffect(logoScale)
                     .opacity(logoOpacity)
 
-                Text("Claude Relay")
+                Text("Code Relay")
                     .font(.system(size: 24, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
                     .opacity(textOpacity)

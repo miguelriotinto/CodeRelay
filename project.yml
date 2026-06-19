@@ -32,15 +32,15 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claude.relay
         INFOPLIST_FILE: ClaudeRelayApp/Info.plist
-        INFOPLIST_KEY_CFBundleDisplayName: "Claude Relay"
+        INFOPLIST_KEY_CFBundleDisplayName: "Code Relay"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Claude Relay needs microphone access for voice-to-text input."
-        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Claude Relay uses speech recognition to convert voice input to terminal commands."
-        INFOPLIST_KEY_NSCameraUsageDescription: "Claude Relay uses the camera to scan QR codes for session sharing."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Code Relay needs microphone access for voice-to-text input."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Code Relay uses speech recognition to convert voice input to terminal commands."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Code Relay uses the camera to scan QR codes for session sharing."
         SWIFT_VERSION: "5.9"
         DEVELOPMENT_TEAM: T9WF95GC9T
         SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
@@ -101,9 +101,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.claude.relay.mac
         PRODUCT_NAME: ClaudeDock
         INFOPLIST_FILE: ClaudeRelayMac/Info.plist
-        INFOPLIST_KEY_CFBundleDisplayName: ClaudeDock
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: "ClaudeDock needs microphone access for voice-to-text input."
-        INFOPLIST_KEY_NSCameraUsageDescription: "ClaudeDock uses the camera to scan QR codes for session sharing."
+        INFOPLIST_KEY_CFBundleDisplayName: "Code Relay"
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Code Relay needs microphone access for voice-to-text input."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Code Relay uses the camera to scan QR codes for session sharing."
         INFOPLIST_KEY_LSUIElement: NO
         SWIFT_VERSION: "5.9"
         DEVELOPMENT_TEAM: T9WF95GC9T
@@ -123,8 +123,8 @@ targets:
         # See iOS note — exempt because the app only uses Apple-provided crypto.
         ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: "public.app-category.developer-tools"
-        NSMicrophoneUsageDescription: "ClaudeDock needs microphone access for voice-to-text input."
-        NSCameraUsageDescription: "ClaudeDock uses the camera to scan QR codes for session sharing."
+        NSMicrophoneUsageDescription: "Code Relay needs microphone access for voice-to-text input."
+        NSCameraUsageDescription: "Code Relay uses the camera to scan QR codes for session sharing."
         NSAppTransportSecurity:
           # See iOS app note — same scoping applies to the Mac app.
           NSAllowsLocalNetworking: true

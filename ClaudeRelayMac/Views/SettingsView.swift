@@ -431,7 +431,7 @@ private struct AboutSettingsTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                SettingsSectionHeader(title: "ClaudeRelay")
+                SettingsSectionHeader(title: "Code Relay")
                 SettingsGroup {
                     SettingsGroupRow {
                         Text("Version")

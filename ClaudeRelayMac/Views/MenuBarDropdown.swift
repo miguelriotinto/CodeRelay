@@ -90,7 +90,7 @@ struct MenuBarDropdown: View {
 
                 menuSeparator
 
-                MenuButton(label: "Quit ClaudeDock") {
+                MenuButton(label: "Quit Code Relay") {
                     NSApp.terminate(nil)
                 }
             }

@@ -92,12 +92,12 @@ class ContinuousListeningService : Service() {
                 CHANNEL_ID,
                 "Voice Listening",
                 NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = "On-device wake-word listening for Claude Relay" }
+            ).apply { description = "On-device wake-word listening for Code Relay" }
             manager.createNotificationChannel(channel)
         }
 
         val notification: Notification = Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("Claude Relay")
+            .setContentTitle("Code Relay")
             .setContentText("Listening for the wake word")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
