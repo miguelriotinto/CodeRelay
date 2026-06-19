@@ -37,7 +37,7 @@ import kotlinx.coroutines.delay
  *  3. Everything fades out (~0.7 s), then [onComplete] fires to advance the nav
  *     graph to Servers.
  *
- * The brand color `rgb(204,155,122)` is the same sRGB sample the iOS splash uses
+ * The brand color is black, the same value the iOS splash uses
  * (SplashScreenView.swift:14). There is no bundled `SplashLogo` raster in this
  * module, so the "logo" is a rounded brand square with the app initial — a
  * deliberate placeholder; swapping in a drawable later is a one-line `Image` change.
@@ -80,10 +80,10 @@ fun SplashScreen(appVersion: String, onComplete: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            // The real app icon (the "AI" mark) — same artwork as the launcher
+            // The real app icon (the "CR" mark) — same artwork as the launcher
             // icon and the iOS splash logo. No border/clip: the icon's own
-            // background is the brand tan, so it blends seamlessly into the
-            // same-tan splash background (a ring/edge would break the blend).
+            // background is brand black, so it blends seamlessly into the
+            // same-black splash background (a ring/edge would break the blend).
             Image(
                 painter = painterResource(R.drawable.splash_logo),
                 contentDescription = "Claude Relay",
@@ -111,5 +111,5 @@ fun SplashScreen(appVersion: String, onComplete: () -> Unit) {
     }
 }
 
-/** Brand color rgb(204,155,122), matching the iOS splash (SplashScreenView.swift:14). */
-private val BRAND_COLOR = Color(red = 204, green = 155, blue = 122)
+/** Brand color black, matching the iOS splash (SplashScreenView.swift:14). */
+private val BRAND_COLOR = Color.Black
