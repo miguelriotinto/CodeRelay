@@ -85,7 +85,7 @@ fun SplashScreen(appVersion: String, onComplete: () -> Unit) {
             // box), so nothing dark is revealed as the splash fades out.
             Image(
                 painter = painterResource(R.drawable.splash_logo),
-                contentDescription = "Code Relay",
+                contentDescription = "Code[Relay]",
                 modifier = Modifier
                     .size(120.dp)
                     .scale(logoScale.value)
@@ -93,7 +93,7 @@ fun SplashScreen(appVersion: String, onComplete: () -> Unit) {
             )
 
             Text(
-                text = "Code Relay",
+                text = "Code[Relay]",
                 color = Color.White,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.SemiBold,

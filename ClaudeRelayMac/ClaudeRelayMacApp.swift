@@ -14,7 +14,7 @@ struct ClaudeRelayMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup("Code Relay") {
+        WindowGroup("Code[Relay]") {
             MainWindow()
                 .frame(minWidth: 800, minHeight: 500)
                 .onOpenURL { url in
