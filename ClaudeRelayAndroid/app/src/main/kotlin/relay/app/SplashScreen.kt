@@ -80,10 +80,9 @@ fun SplashScreen(appVersion: String, onComplete: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            // The real app icon (the "CR" mark) — same artwork as the launcher
-            // icon and the iOS splash logo. No border/clip: the icon's own
-            // background is brand black, so it blends seamlessly into the
-            // same-black splash background (a ring/edge would break the blend).
+            // The "CR" mark — same artwork as the launcher icon and the iOS
+            // splash logo. White glyph on a transparent background (no opaque
+            // box), so nothing dark is revealed as the splash fades out.
             Image(
                 painter = painterResource(R.drawable.splash_logo),
                 contentDescription = "Claude Relay",

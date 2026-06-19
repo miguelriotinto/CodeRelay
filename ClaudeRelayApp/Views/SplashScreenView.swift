@@ -17,11 +17,13 @@ struct SplashScreenView: View {
             brandColor.ignoresSafeArea()
 
             VStack(spacing: 20) {
+                // SplashLogo is a white CR glyph on a transparent background (no
+                // opaque box), so nothing dark is revealed as the splash fades out
+                // over the lighter ServerListView beneath it.
                 Image("SplashLogo")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 120, height: 120)
-                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                     .scaleEffect(logoScale)
                     .opacity(logoOpacity)
 
