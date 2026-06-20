@@ -108,6 +108,5 @@ extension NSApplication {
                 NSLog("[KeyCapture] swizzle saw event type=\(type.rawValue)")
             }
         }
-        self.crm_sendEvent(event)
     }
 }
