@@ -29,11 +29,11 @@ android {
         applicationId = "relay.app"
         minSdk = 28
         targetSdk = 34
-        // M12 version. Milestone naming ("0.3-m12") chosen over a bare "1.0"
+        // M13 version. Milestone naming ("0.3-m13") chosen over a bare "1.0"
         // so the version string stays honest about the pre-1.0 milestone cadence;
         // the App "About" section reads this via BuildConfig (buildConfig = true).
-        versionCode = 11
-        versionName = "0.3-m12"
+        versionCode = 12
+        versionName = "0.3-m13"
     }
 
     buildFeatures {
