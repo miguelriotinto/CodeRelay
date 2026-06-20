@@ -70,6 +70,7 @@
 		E5A9B0683CE8446B1F90DFB6 /* ClaudeRelayMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42FCDD4B9EDF313C4B8EC47F /* ClaudeRelayMacApp.swift */; };
 		E773E7EDA1271778ADC748E0 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC85F57C078BD1CFAAFED7C /* AppSettings.swift */; };
 		E9FBE1A1DE907E4CF7E23433 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = CB2627EF23FDE67AF2E31A6A /* SwiftTerm */; };
+		EC422914AEFDD96D234248E2 /* CodeRelayIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1604B543C9F9EFA0D4C37EE5 /* CodeRelayIcon.icns */; };
 		EFFCA49EDD9553791CAADCB9 /* StatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF311DE62F36AF5A19AB87E9 /* StatusBarView.swift */; };
 		F5391066E5BB1F15D347FCA7 /* ClaudeRelayClient in Frameworks */ = {isa = PBXBuildFile; productRef = 79A9D0B1D5DEC741B2045A7E /* ClaudeRelayClient */; };
 		FBB59F2B15827CE9597B7DA4 /* AttachRemoteSessionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A314CF6083AD77911749C92 /* AttachRemoteSessionSheet.swift */; };
@@ -97,11 +98,12 @@
 /* Begin PBXFileReference section */
 		03CCD809DA85DE7858FE6A87 /* KeyboardAccessory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardAccessory.swift; sourceTree = "<group>"; };
 		09635901942F407E83C1B376 /* AppSettingsBedrockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsBedrockTests.swift; sourceTree = "<group>"; };
-		09EC62BA9D637188AC22F1FC /* ClaudeDock.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeDock.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		09EC62BA9D637188AC22F1FC /* ClaudeRelayMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeRelayMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0BA9F1A3D0A1C24B057EF633 /* ActiveTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveTerminalView.swift; sourceTree = "<group>"; };
 		0CE8732910310E2EB40DAF34 /* ModifierFlagsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModifierFlagsTests.swift; sourceTree = "<group>"; };
 		1070882CC08139377A3E6C5B /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		1481B919F081FD62AD2BBD9A /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
+		1604B543C9F9EFA0D4C37EE5 /* CodeRelayIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CodeRelayIcon.icns; sourceTree = "<group>"; };
 		1848CC51EF450982C0B741A1 /* TerminalPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPalette.swift; sourceTree = "<group>"; };
 		203B7144359F258D91797C4E /* ClaudeRelayApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRelayApp.swift; sourceTree = "<group>"; };
 		2BC85F57C078BD1CFAAFED7C /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
@@ -124,12 +126,12 @@
 		79A7D6C757F3F4D55DDE13B0 /* SplashScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashScreenView.swift; sourceTree = "<group>"; };
 		7AD5621F82700100B9C4F53F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		7B9B72D775E497F2FB66C38A /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
-		7C001E978A6A6C85BABCA076 /* ClaudeRelayApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeRelayApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7C001E978A6A6C85BABCA076 /* ClaudeRelayApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ClaudeRelayApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7CDE7061F16DD811CA184B2B /* ClaudeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ClaudeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		8738BA3A8400468879A7EA72 /* ImagePasteHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePasteHandler.swift; sourceTree = "<group>"; };
 		8EB4DA40B47A6CE46CC9797F /* SessionSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSidebarView.swift; sourceTree = "<group>"; };
 		91B48FD6DC9E458119F76B8E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		91FD1804AA1C8F43534632C6 /* ClaudeRelayAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ClaudeRelayAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		91FD1804AA1C8F43534632C6 /* ClaudeRelayAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ClaudeRelayAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		94688372C735D9B8D283F7BE /* QRCodePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodePopover.swift; sourceTree = "<group>"; };
 		9A314CF6083AD77911749C92 /* AttachRemoteSessionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachRemoteSessionSheet.swift; sourceTree = "<group>"; };
 		9AE2628EFBF436099BE3C66E /* RelayTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayTerminalView.swift; sourceTree = "<group>"; };
@@ -219,7 +221,7 @@
 			children = (
 				7C001E978A6A6C85BABCA076 /* ClaudeRelayApp.app */,
 				91FD1804AA1C8F43534632C6 /* ClaudeRelayAppTests.xctest */,
-				09EC62BA9D637188AC22F1FC /* ClaudeDock.app */,
+				09EC62BA9D637188AC22F1FC /* ClaudeRelayMac.app */,
 				7079226266577C165AB70463 /* ClaudeRelayMacTests.xctest */,
 			);
 			name = Products;
@@ -310,6 +312,7 @@
 				5D747D243348BFF4BE40432F /* Assets.xcassets */,
 				D4204EB40CF647D61C19C014 /* ClaudeRelayMac.entitlements */,
 				42FCDD4B9EDF313C4B8EC47F /* ClaudeRelayMacApp.swift */,
+				1604B543C9F9EFA0D4C37EE5 /* CodeRelayIcon.icns */,
 				67648825BC334FE028B1F2D7 /* Helpers */,
 				6949AF4F89256537825D5FF0 /* Models */,
 				D379A2A16B821D0ABA8A224B /* ViewModels */,
@@ -410,7 +413,7 @@
 				2FA8AF8C498C1695C7EDA79A /* SwiftTerm */,
 			);
 			productName = ClaudeRelayMac;
-			productReference = 09EC62BA9D637188AC22F1FC /* ClaudeDock.app */;
+			productReference = 09EC62BA9D637188AC22F1FC /* ClaudeRelayMac.app */;
 			productType = "com.apple.product-type.application";
 		};
 		53D3A67986EB0528C6161974 /* ClaudeRelayApp */ = {
@@ -483,7 +486,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 2630;
+				LastUpgradeCheck = 1500;
 				TargetAttributes = {
 					4590A002CC655CDF66EA3646 = {
 						DevelopmentTeam = T9WF95GC9T;
@@ -533,6 +536,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				55C2DA5C4B2D81E90A5C16BE /* Assets.xcassets in Resources */,
+				EC422914AEFDD96D234248E2 /* CodeRelayIcon.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -643,21 +647,13 @@
 		0559130877F1DB9A5CAF370E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = ClaudeRelayMac/ClaudeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 68;
-				DEAD_CODE_STRIPPING = YES;
+				CURRENT_PROJECT_VERSION = 73;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
-				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
-				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
-				ENABLE_USER_SELECTED_FILES = readwrite;
 				INFOPLIST_FILE = ClaudeRelayMac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
@@ -709,11 +705,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -727,7 +721,6 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -739,7 +732,6 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
-				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -786,11 +778,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -811,7 +801,6 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -840,7 +829,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 144;
+				CURRENT_PROJECT_VERSION = 135;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ClaudeRelayApp/Info.plist;
@@ -872,7 +861,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 144;
+				CURRENT_PROJECT_VERSION = 135;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ClaudeRelayApp/Info.plist;
@@ -919,21 +908,13 @@
 		FAA7B7F57B64D11572F59CA3 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = ClaudeRelayMac/ClaudeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 68;
-				DEAD_CODE_STRIPPING = YES;
+				CURRENT_PROJECT_VERSION = 73;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
-				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
-				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
-				ENABLE_USER_SELECTED_FILES = readwrite;
 				INFOPLIST_FILE = ClaudeRelayMac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
@@ -956,7 +937,6 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
-				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

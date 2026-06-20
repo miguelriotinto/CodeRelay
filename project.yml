@@ -100,6 +100,13 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claude.relay.mac
         PRODUCT_NAME: ClaudeDock
+        # Do NOT let actool own the app icon. Its generated AppIcon.icns is
+        # truncated at 256px and it force-sets CFBundleIconFile=AppIcon, which
+        # makes Finder composite onto its default rounded platter (light frame).
+        # Instead we ship a complete prebuilt CodeRelayIcon.icns (16–1024) and
+        # point CFBundleIconFile at it (see info.properties), matching how
+        # Cursor.app does it.
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
         INFOPLIST_FILE: ClaudeRelayMac/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: "Code[Relay]"
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Code[Relay] needs microphone access for voice-to-text input."
@@ -109,7 +116,7 @@ targets:
         DEVELOPMENT_TEAM: T9WF95GC9T
         SUPPORTED_PLATFORMS: "macosx"
         MARKETING_VERSION: "1.1.1"
-        CURRENT_PROJECT_VERSION: "53"
+        CURRENT_PROJECT_VERSION: "73"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_ENTITLEMENTS: ClaudeRelayMac/ClaudeRelayMac.entitlements
     info:
@@ -120,6 +127,14 @@ targets:
         # project.yml drives both iOS and Mac.
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # User-facing app name (Dock, menu bar, Finder). The build-setting
+        # form is ignored because this target ships a real Info.plist.
+        CFBundleDisplayName: "Code[Relay]"
+        # Ship a complete prebuilt .icns (all sizes 16–1024). actool's
+        # generated AppIcon.icns is truncated at 256px, which makes Finder
+        # composite the icon onto its default rounded-app platter (a light
+        # frame). Pointing CFBundleIconFile at a full-size .icns avoids that.
+        CFBundleIconFile: "CodeRelayIcon"
         # See iOS note — exempt because the app only uses Apple-provided crypto.
         ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: "public.app-category.developer-tools"
