@@ -647,7 +647,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = ClaudeRelayMac/ClaudeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 67;
+				CURRENT_PROJECT_VERSION = 68;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				ENABLE_APP_SANDBOX = YES;
@@ -657,6 +657,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				INFOPLIST_FILE = ClaudeRelayMac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
@@ -922,7 +923,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = ClaudeRelayMac/ClaudeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 67;
+				CURRENT_PROJECT_VERSION = 68;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				ENABLE_APP_SANDBOX = YES;
@@ -932,6 +933,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				INFOPLIST_FILE = ClaudeRelayMac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";

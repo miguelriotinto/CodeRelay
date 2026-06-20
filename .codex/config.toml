@@ -1,0 +1,3 @@
+[mcp_servers.code-review-graph]
+command = "code-review-graph"
+args = ["serve"]

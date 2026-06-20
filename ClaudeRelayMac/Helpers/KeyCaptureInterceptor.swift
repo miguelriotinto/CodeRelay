@@ -108,5 +108,10 @@ extension NSApplication {
                 NSLog("[KeyCapture] swizzle saw event type=\(type.rawValue)")
             }
         }
+        // CRITICAL: forward to the original sendEvent: IMP. After
+        // method_exchangeImplementations, `crm_sendEvent` resolves to the
+        // original `sendEvent:`, so this call delivers the event to AppKit.
+        // Without it, every event is swallowed and the whole UI freezes.
+        self.crm_sendEvent(event)
     }
 }
