@@ -100,6 +100,7 @@ fun SessionTabs(
                 // Align the item's trailing edge to the viewport's trailing edge:
                 // scroll so the item sits at offset (viewportWidth - itemSize).
                 val itemSize = visible.firstOrNull { it.index == target.index }?.size
+                    ?: visible.firstOrNull()?.size
                 if (itemSize != null && itemSize < viewportWidth) {
                     listState.animateScrollToItem(target.index, -(viewportWidth - itemSize))
                 } else {

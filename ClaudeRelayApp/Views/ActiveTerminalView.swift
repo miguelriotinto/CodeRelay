@@ -256,6 +256,18 @@ struct ActiveTerminalView: View {
                     }
                 }
             }
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: TabStripWidthKey.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(TabStripWidthKey.self) { _ in
+                if let id = coordinator.activeSessionId {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        proxy.scrollTo(id, anchor: nil)
+                    }
+                }
+            }
             .onChange(of: coordinator.activeSessionId) { _, newID in
                 guard let newID else { return }
                 withAnimation(.easeInOut(duration: 0.25)) {
@@ -270,6 +282,13 @@ struct ActiveTerminalView: View {
         }
     }
 
+}
+
+// MARK: - Preference Key for Tab Strip Width
+
+private struct TabStripWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 // MARK: - Toolbar Icon Button
