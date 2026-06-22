@@ -97,6 +97,42 @@ fun SessionTabs(
 /** Translucent white fills the Swift tab uses for the non-agent / dim states. */
 private val White15 = Color.White.copy(alpha = 0.15f)
 
+/** Which edge a minimal-reveal scroll should align the selected tab to. */
+internal enum class RevealEdge { LEADING, TRAILING }
+
+/** A visible tab's geometry relative to the viewport's left edge (px). */
+internal data class VisibleTab(val index: Int, val offset: Int, val size: Int)
+
+/** Result of a minimal-reveal decision: scroll [index] to [edge], or no-op if null. */
+internal data class RevealTarget(val index: Int, val edge: RevealEdge)
+
+/**
+ * Minimal-reveal decision for the session tab strip. Returns the target tab and
+ * edge to scroll to, or null when the selected tab is already fully visible.
+ *
+ *  - selected fully inside [0, viewportWidth]      -> null (no scroll)
+ *  - selected clipped/absent on the left           -> LEADING
+ *  - selected clipped/absent on the right          -> TRAILING
+ */
+internal fun revealTarget(
+    visible: List<VisibleTab>,
+    viewportWidth: Int,
+    selectedIndex: Int,
+): RevealTarget? {
+    if (visible.isEmpty()) return null
+    val selected = visible.firstOrNull { it.index == selectedIndex }
+    if (selected != null) {
+        val fullyVisible = selected.offset >= 0 && selected.offset + selected.size <= viewportWidth
+        if (fullyVisible) return null
+        val edge = if (selected.offset < 0) RevealEdge.LEADING else RevealEdge.TRAILING
+        return RevealTarget(selectedIndex, edge)
+    }
+    // Not currently laid out: decide by position relative to the visible window.
+    val firstIndex = visible.first().index
+    val edge = if (selectedIndex < firstIndex) RevealEdge.LEADING else RevealEdge.TRAILING
+    return RevealTarget(selectedIndex, edge)
+}
+
 /**
  * Computes a tab's background fill, ported from
  * `ActiveTerminalView.swift:318-324`:
