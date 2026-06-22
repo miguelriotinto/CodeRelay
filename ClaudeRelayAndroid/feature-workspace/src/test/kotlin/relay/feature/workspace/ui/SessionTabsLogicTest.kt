@@ -31,4 +31,74 @@ class SessionTabsLogicTest {
         assertEquals(agentColor("claude"), tabBackground("claude", needsAttention = true, flashOn = true))
         assertEquals(white15, tabBackground("claude", needsAttention = true, flashOn = false))
     }
+
+    // --- revealTarget: minimal-reveal scroll decision ---
+
+    // Viewport 300px wide, three 100px tabs visible at offsets 0,100,200.
+    private fun threeVisible() = listOf(
+        VisibleTab(index = 0, offset = 0, size = 100),
+        VisibleTab(index = 1, offset = 100, size = 100),
+        VisibleTab(index = 2, offset = 200, size = 100),
+    )
+
+    @Test
+    fun `fully visible selection does not scroll`() {
+        assertEquals(null, revealTarget(threeVisible(), viewportWidth = 300, selectedIndex = 1))
+    }
+
+    @Test
+    fun `selection clipped at right reveals trailing`() {
+        // index 2 spans 200..300 exactly; index 3 would be off-screen (not in visible list)
+        assertEquals(
+            RevealTarget(3, RevealEdge.TRAILING),
+            revealTarget(threeVisible(), viewportWidth = 300, selectedIndex = 3),
+        )
+    }
+
+    @Test
+    fun `selection before first visible reveals leading`() {
+        // first visible index is 2; selecting 0 should bring it to the leading edge
+        val shifted = listOf(
+            VisibleTab(index = 2, offset = 0, size = 100),
+            VisibleTab(index = 3, offset = 100, size = 100),
+            VisibleTab(index = 4, offset = 200, size = 100),
+        )
+        assertEquals(
+            RevealTarget(0, RevealEdge.LEADING),
+            revealTarget(shifted, viewportWidth = 300, selectedIndex = 0),
+        )
+    }
+
+    @Test
+    fun `partially clipped left edge reveals leading`() {
+        // index 0 starts at -20 (clipped left), so it is not fully visible
+        val clipped = listOf(
+            VisibleTab(index = 0, offset = -20, size = 100),
+            VisibleTab(index = 1, offset = 80, size = 100),
+            VisibleTab(index = 2, offset = 180, size = 100),
+        )
+        assertEquals(
+            RevealTarget(0, RevealEdge.LEADING),
+            revealTarget(clipped, viewportWidth = 300, selectedIndex = 0),
+        )
+    }
+
+    @Test
+    fun `partially clipped right edge reveals trailing`() {
+        // index 2 spans 180..280 fully visible; index 3 spans 280..380 clipped right
+        val clipped = listOf(
+            VisibleTab(index = 1, offset = 80, size = 100),
+            VisibleTab(index = 2, offset = 180, size = 100),
+            VisibleTab(index = 3, offset = 280, size = 100),
+        )
+        assertEquals(
+            RevealTarget(3, RevealEdge.TRAILING),
+            revealTarget(clipped, viewportWidth = 300, selectedIndex = 3),
+        )
+    }
+
+    @Test
+    fun `empty visible list does not scroll`() {
+        assertEquals(null, revealTarget(emptyList(), viewportWidth = 300, selectedIndex = 0))
+    }
 }

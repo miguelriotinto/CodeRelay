@@ -230,32 +230,65 @@ struct ActiveTerminalView: View {
 
     @ViewBuilder
     private func sessionTabBar(flashOn: Bool) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(Array(coordinator.activeSessions.enumerated()), id: \.element.id) { index, session in
-                    let isSelected = session.id == coordinator.activeSessionId
-                    let agentId = coordinator.activeAgent(for: session.id)
-                    let needsAttention = coordinator.sessionsAwaitingInput.contains(session.id)
-                    Button {
-                        if settings.hapticFeedbackEnabled {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(coordinator.activeSessions.enumerated()), id: \.element.id) { index, session in
+                        let isSelected = session.id == coordinator.activeSessionId
+                        let agentId = coordinator.activeAgent(for: session.id)
+                        let needsAttention = coordinator.sessionsAwaitingInput.contains(session.id)
+                        Button {
+                            if settings.hapticFeedbackEnabled {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                            Task { await coordinator.switchToSession(id: session.id) }
+                        } label: {
+                            SessionTab(
+                                number: index + 1,
+                                isSelected: isSelected,
+                                agentId: agentId,
+                                needsAttention: needsAttention,
+                                flashOn: flashOn
+                            )
                         }
-                        Task { await coordinator.switchToSession(id: session.id) }
-                    } label: {
-                        SessionTab(
-                            number: index + 1,
-                            isSelected: isSelected,
-                            agentId: agentId,
-                            needsAttention: needsAttention,
-                            flashOn: flashOn
-                        )
+                        .buttonStyle(.plain)
+                        .id(session.id)
                     }
-                    .buttonStyle(.plain)
+                }
+            }
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: TabStripWidthKey.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(TabStripWidthKey.self) { _ in
+                if let id = coordinator.activeSessionId {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        proxy.scrollTo(id, anchor: nil)
+                    }
+                }
+            }
+            .onChange(of: coordinator.activeSessionId) { _, newID in
+                guard let newID else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(newID, anchor: nil)
+                }
+            }
+            .onAppear {
+                if let id = coordinator.activeSessionId {
+                    proxy.scrollTo(id, anchor: nil)
                 }
             }
         }
     }
 
+}
+
+// MARK: - Preference Key for Tab Strip Width
+
+private struct TabStripWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 // MARK: - Toolbar Icon Button
