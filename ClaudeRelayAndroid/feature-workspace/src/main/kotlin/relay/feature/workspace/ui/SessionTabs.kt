@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -72,7 +75,42 @@ fun SessionTabs(
     )
     val flashOn = flashPhase >= 0.5f
 
+    val listState = rememberLazyListState()
+
+    // Map the selected session id to its index in the current ordering.
+    val selectedIndex = remember(sessions, activeSessionId) {
+        activeSessionId?.let { id -> sessions.indexOfFirst { it.id == id } } ?: -1
+    }
+
+    // Reveal the selected tab whenever the selection changes or the viewport
+    // resizes (rotation / window resize changes viewportSize). Minimal-reveal:
+    // no movement if already fully visible.
+    LaunchedEffect(selectedIndex, listState.layoutInfo.viewportSize) {
+        if (selectedIndex < 0) return@LaunchedEffect
+        val info = listState.layoutInfo
+        val viewportWidth = info.viewportSize.width
+        if (viewportWidth <= 0) return@LaunchedEffect
+        val visible = info.visibleItemsInfo.map {
+            VisibleTab(index = it.index, offset = it.offset, size = it.size)
+        }
+        val target = revealTarget(visible, viewportWidth, selectedIndex) ?: return@LaunchedEffect
+        when (target.edge) {
+            RevealEdge.LEADING -> listState.animateScrollToItem(target.index)
+            RevealEdge.TRAILING -> {
+                // Align the item's trailing edge to the viewport's trailing edge:
+                // scroll so the item sits at offset (viewportWidth - itemSize).
+                val itemSize = visible.firstOrNull { it.index == target.index }?.size
+                if (itemSize != null && itemSize < viewportWidth) {
+                    listState.animateScrollToItem(target.index, -(viewportWidth - itemSize))
+                } else {
+                    listState.animateScrollToItem(target.index)
+                }
+            }
+        }
+    }
+
     LazyRow(
+        state = listState,
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
