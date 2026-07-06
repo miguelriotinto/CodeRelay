@@ -284,6 +284,7 @@ final class HostCoordinator: NSObject {
     private var isKeyboardVisible: Binding<Bool>
     private var focusObserver: Any?
     private var resignObserver: Any?
+    private var redrawObserver: Any?
     private var keyboardShowObserver: Any?
     private var keyboardHideObserver: Any?
     /// Tracks which session was most recently focused so we only force-focus
@@ -344,6 +345,17 @@ final class HostCoordinator: NSObject {
         ) { _ in
             _ = activeTerminal()?.resignFirstResponder()
         }
+        // Force a full repaint of the visible terminal. `updateFullScreen()` marks
+        // every row dirty; `setNeedsDisplay()` then triggers SwiftTerm's `draw(_:)`,
+        // which fills the background and repaints from the buffer — clearing any
+        // stale glyph overlap. Cheap and non-destructive (buffer is untouched).
+        redrawObserver = NotificationCenter.default.addObserver(
+            forName: .terminalForceRedraw, object: nil, queue: .main
+        ) { _ in
+            guard let terminal = activeTerminal() else { return }
+            terminal.getTerminal().updateFullScreen()
+            terminal.setNeedsDisplay(terminal.bounds)
+        }
     }
 
     func removeFocusObservers() {
@@ -354,6 +366,10 @@ final class HostCoordinator: NSObject {
         if let obs = resignObserver {
             NotificationCenter.default.removeObserver(obs)
             resignObserver = nil
+        }
+        if let obs = redrawObserver {
+            NotificationCenter.default.removeObserver(obs)
+            redrawObserver = nil
         }
     }
 }

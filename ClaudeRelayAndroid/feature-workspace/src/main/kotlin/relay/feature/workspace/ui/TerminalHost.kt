@@ -51,6 +51,11 @@ private fun Int.toComposeColor(): Color = Color(this)
  * @param onInput engine → relay keystroke sink (wired to `connection.sendBinary`)
  * @param onResize relay PTY-resize sink, invoked `(cols, rows)` (wired to
  *   `WorkspaceViewModel.sendResize`)
+ * @param redrawToken bump this to force a full terminal repaint (see [key] below);
+ *   the workspace increments it when the user taps the session-name badge to clear
+ *   rare glyph overlap. It re-keys ONLY the termlib subtree, not `engine`/
+ *   `controller` (both `remember(vm)`), so the emulator + its screen state and grid
+ *   survive — no server resize round-trip, just a clean repaint.
  * @param modifier outer modifier
  */
 @Composable
@@ -58,6 +63,7 @@ fun TerminalHost(
     vm: TerminalSessionVm,
     onInput: (ByteArray) -> Unit,
     onResize: (cols: Int, rows: Int) -> Unit,
+    redrawToken: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     // Late-bound resize bridge. The engine is built before the controller (the
@@ -142,7 +148,13 @@ fun TerminalHost(
     //   The per-session `TerminalSessionVm` lives in the coordinator's terminalCache
     //   (outside composition), so keying here costs only a termlib view rebuild — the
     //   same rebuild that already happens for `engine`/`controller` (both `remember(vm)`).
-    key(vm) {
+    //
+    //   `redrawToken` piggybacks on this same rebuild: bumping it (session-name tap)
+    //   disposes the termlib view and builds a fresh one bound to the SAME emulator
+    //   (`engine`/`controller` are `remember(vm)`, unaffected by the token), forcing a
+    //   full clean repaint that clears any stale glyph overlap. The measured grid is
+    //   unchanged, so termlib fires no onResize — no server PTY round-trip.
+    key(vm, redrawToken) {
         Terminal(
             terminalEmulator = engine.emulator,
             keyboardEnabled = true,

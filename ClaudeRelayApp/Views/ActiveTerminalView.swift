@@ -141,6 +141,15 @@ struct ActiveTerminalView: View {
                         .background(Color.white.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .layoutPriority(1)
+                        // Tap → force a full terminal repaint (clears rare glyph
+                        // overlap). Long-press → rename. The tap gesture is declared
+                        // first so it doesn't swallow the long-press.
+                        .onTapGesture {
+                            if settings.hapticFeedbackEnabled {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                            NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
+                        }
                         .onLongPressGesture {
                             renameText = coordinator.name(for: id)
                             showRenameAlert = true
@@ -363,6 +372,9 @@ extension Notification.Name {
     static let terminalRequestFocus = Notification.Name("terminalRequestFocus")
     static let terminalResignFocus = Notification.Name("terminalResignFocus")
     static let toggleSpeechRecording = Notification.Name("toggleSpeechRecording")
+    /// Force a full repaint of the active terminal (clears rare glyph overlap).
+    /// Posted when the user taps the session-name badge; handled by `HostCoordinator`.
+    static let terminalForceRedraw = Notification.Name("terminalForceRedraw")
 }
 
 // MARK: - Session Uptime

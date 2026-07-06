@@ -182,6 +182,10 @@ fun WorkspaceScreen(
 
     var showKeyBar by remember { mutableStateOf(true) }
     var renameActive by remember { mutableStateOf(false) }
+    // Bumped when the user taps the session-name badge to force a terminal redraw
+    // (fixes rare glyph overlap). Threaded into [TerminalHost], which re-keys the
+    // termlib subtree on change — a clean full repaint against the same emulator.
+    var redrawToken by remember { mutableStateOf(0) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     // Two-pane (fold-open / tablet) drawer. DismissibleNavigationDrawer renders the
@@ -236,10 +240,12 @@ fun WorkspaceScreen(
                 onInput = { bytes -> vm.sendInput(bytes) },
                 onResize = { cols, rows -> vm.sendResize(cols, rows) },
                 onShareQr = { id -> haptics.lightTap(); onShareQr(id) },
+                onNameTap = { haptics.lightTap(); redrawToken++ },
                 onNameLongPress = { renameActive = true },
                 onKeyHaptic = { haptics.lightTap() },
                 nameFor = ::nameFor,
                 micButton = micButton,
+                redrawToken = redrawToken,
             )
         }
 
@@ -421,10 +427,12 @@ private fun TerminalColumn(
     onInput: (ByteArray) -> Unit,
     onResize: (cols: Int, rows: Int) -> Unit,
     onShareQr: (UUID) -> Unit,
+    onNameTap: () -> Unit,
     onNameLongPress: () -> Unit,
     onKeyHaptic: () -> Unit,
     nameFor: (UUID) -> String,
     micButton: @Composable () -> Unit,
+    redrawToken: Int,
 ) {
     Column(
         modifier = Modifier
@@ -508,15 +516,23 @@ private fun TerminalColumn(
                         modifier = Modifier.size(TOOLBAR_ICON),
                     )
                 }
-                // Session name badge — long-press to rename (Swift's onLongPressGesture).
+                // Session name badge. Shares the SessionTab "1" chip footprint
+                // (defaultMinSize 26×22dp + horizontal-only padding, NO vertical
+                // padding) so its height matches every other top-bar control — the
+                // earlier vertical padding made it taller than the 22dp chips.
+                // Tap forces a terminal redraw (fixes rare glyph overlap); long-press
+                // renames (Swift's onLongPressGesture).
                 Box(
                     modifier = Modifier
-                        .background(
-                            color = Color.White.copy(alpha = 0.12f),
-                            shape = RoundedCornerShape(6.dp),
+                        .defaultMinSize(
+                            minWidth = TOOLBAR_CHIP_MIN_WIDTH,
+                            minHeight = TOOLBAR_CHIP_MIN_HEIGHT,
                         )
-                        .combinedClickable(onClick = {}, onLongClick = onNameLongPress)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .clip(TOOLBAR_CHIP_SHAPE)
+                        .background(Color.White.copy(alpha = 0.12f))
+                        .combinedClickable(onClick = onNameTap, onLongClick = onNameLongPress)
+                        .padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = nameFor(activeSessionId),
@@ -536,6 +552,7 @@ private fun TerminalColumn(
                     vm = activeVm,
                     onInput = onInput,
                     onResize = onResize,
+                    redrawToken = redrawToken,
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
