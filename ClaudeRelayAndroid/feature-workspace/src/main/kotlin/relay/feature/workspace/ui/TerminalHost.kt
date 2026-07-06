@@ -4,8 +4,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
@@ -103,6 +108,36 @@ fun TerminalHost(
     // its input view. This is the platform-level API that drives the same IME
     // termlib's ImeInputView uses (`InputMethodManager.showSoftInput`).
     val view = LocalView.current
+
+    // A redraw (session-name tap) re-keys the termlib subtree below, and termlib
+    // requests focus + raises the soft keyboard on every fresh composition. That's
+    // unwanted here: a redraw should NOT summon the keyboard if it was down. We
+    // can't stop termlib from asking, so instead we snapshot the IME's visibility
+    // the frame the token changes — BEFORE the rebuild's focus effect runs — and,
+    // if it was hidden, re-hide it after the rebuild. termlib's show is itself an
+    // async LaunchedEffect, so we re-hide across a few consecutive frames to
+    // deterministically win the last-writer race without a brittle fixed delay.
+    // Skips the very first composition (redrawToken == 0) so a real terminal tap
+    // still brings the keyboard up normally.
+    var lastRedrawToken by remember(vm) { mutableStateOf(redrawToken) }
+    var suppressImeAfterRedraw by remember(vm) { mutableStateOf(false) }
+    if (redrawToken != lastRedrawToken) {
+        val imeWasVisible = ViewCompat.getRootWindowInsets(view)
+            ?.isVisible(WindowInsetsCompat.Type.ime()) ?: false
+        suppressImeAfterRedraw = !imeWasVisible
+        lastRedrawToken = redrawToken
+    }
+    LaunchedEffect(redrawToken) {
+        if (suppressImeAfterRedraw) {
+            // Re-hide for a handful of frames — termlib's post-rebuild show() is
+            // posted async, so a single hide can lose the race.
+            repeat(5) {
+                withFrameNanos {}
+                ViewCompat.getWindowInsetsController(view)?.hide(WindowInsetsCompat.Type.ime())
+            }
+            suppressImeAfterRedraw = false
+        }
+    }
 
     DisposableEffect(controller) {
         onDispose {
