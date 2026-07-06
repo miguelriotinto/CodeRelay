@@ -6,6 +6,29 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-07-07 — Client-requested screen refresh
+
+### Server + Protocol
+
+- **`refresh` client message** — new `ClientMessage` case (`"refresh"`,
+  empty payload). The server delivers SIGWINCH to the attached session's
+  foreground process group via the existing `PTYSession.forceRepaint()`,
+  making the running full-screen app (Claude Code, vim, …) re-emit its
+  whole screen. Fire-and-forget: no ack, the repaint bytes are the
+  response. Additive — no `protocolVersion` bump; older clients simply
+  never send it, but clients that DO send it need a server at this
+  version or newer (older servers reply error 400 to the unknown type).
+
+### Apps (iOS + Android)
+
+- **Tap-to-redraw now actually works** — tapping the session-name badge
+  sends `refresh`, so the glyph-overlap artifact is fixed by fresh
+  authoritative bytes from the running app instead of a client-side
+  repaint of the (possibly corrupt) local grid. This is the same replay
+  the keyboard show/hide toggle triggers as a side effect of resizing,
+  without moving the keyboard. Local repaints (iOS `updateScroller`
+  re-sync, Android full-grid damage) are kept as belt-and-suspenders.
+
 ## [0.3.6] - 2026-05-15 — Silent scrollback replay on reattach
 
 ### Server + Client
