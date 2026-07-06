@@ -33,6 +33,13 @@ class MessageEnvelopeTest {
         )
     }
 
+    @Test fun `encode refresh carries empty payload`() {
+        assertEquals(
+            """{"type":"refresh","payload":{}}""",
+            MessageEnvelope.encodeClient(ClientMessage.Refresh),
+        )
+    }
+
     @Test fun `encode session_detach and session_list carry empty payload`() {
         assertEquals("""{"type":"session_detach","payload":{}}""", MessageEnvelope.encodeClient(ClientMessage.SessionDetach))
         assertEquals("""{"type":"session_list","payload":{}}""", MessageEnvelope.encodeClient(ClientMessage.SessionList))

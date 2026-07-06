@@ -141,13 +141,18 @@ struct ActiveTerminalView: View {
                         .background(Color.white.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .layoutPriority(1)
-                        // Tap → force a full terminal repaint (clears rare glyph
-                        // overlap). Long-press → rename. The tap gesture is declared
-                        // first so it doesn't swallow the long-press.
+                        // Tap → ask the server to SIGWINCH the session's foreground
+                        // process group so the running app re-emits its screen (the
+                        // same replay the keyboard toggle triggers via resize — fresh
+                        // bytes, not a repaint of the possibly-corrupt local grid),
+                        // plus a local geometry re-sync via the notification.
+                        // Long-press → rename. The tap gesture is declared first so
+                        // it doesn't swallow the long-press.
                         .onTapGesture {
                             if settings.hapticFeedbackEnabled {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             }
+                            coordinator.viewModel(for: id)?.sendRefresh()
                             NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
                         }
                         .onLongPressGesture {

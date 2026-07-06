@@ -238,4 +238,18 @@ extension RelayMessageHandler {
             onFailure: { _, _, _ in /* resize doesn't throw */ }
         )
     }
+
+    /// SIGWINCH the foreground process group so full-screen apps re-emit their
+    /// screen. Same mechanism `wirePTYOutput(repaintAfter:)` uses after a
+    /// replay; here it's client-requested (tap-to-redraw). Fire-and-forget —
+    /// no ack, the repaint bytes ARE the response.
+    func handleRefresh(context: ChannelHandlerContext) {
+        guard let pty = attachedPTY else {
+            sendServerMessage(.error(code: 400, message: "No session attached"), context: context)
+            return
+        }
+        Task {
+            await pty.forceRepaint()
+        }
+    }
 }

@@ -201,6 +201,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             handleSessionRename(sessionId: sessionId, name: name, context: context)
         case .resize(let cols, let rows):
             handleResize(cols: cols, rows: rows, context: context)
+        case .refresh:
+            handleRefresh(context: context)
         case .pasteImage(let data):
             handlePasteImage(base64Data: data, context: context)
         case .ping:

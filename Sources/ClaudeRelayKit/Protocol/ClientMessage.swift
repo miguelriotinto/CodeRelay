@@ -16,6 +16,11 @@ public enum ClientMessage: Equatable, Sendable {
     case sessionListAll
     case sessionRename(sessionId: UUID, name: String)
     case resize(cols: UInt16, rows: UInt16)
+    /// Ask the server to deliver SIGWINCH to the attached session's foreground
+    /// process group so full-screen apps re-emit their whole screen. Used by the
+    /// apps' tap-to-redraw: client-side repaints can't fix a corrupted grid —
+    /// only the running application can, by redrawing from its own state.
+    case refresh
     case pasteImage(data: String)
     case ping
 
@@ -33,6 +38,7 @@ public enum ClientMessage: Equatable, Sendable {
         case .sessionListAll:    return "session_list_all"
         case .sessionRename:     return "session_rename"
         case .resize:         return "resize"
+        case .refresh:        return "refresh"
         case .pasteImage:     return "paste_image"
         case .ping:           return "ping"
         }
@@ -44,7 +50,7 @@ public enum ClientMessage: Equatable, Sendable {
         "auth_request",
         "session_create", "session_attach", "session_resume", "session_detach",
         "session_terminate", "session_list", "session_list_all", "session_rename",
-        "resize", "paste_image", "ping"
+        "resize", "refresh", "paste_image", "ping"
     ]
 }
 
@@ -86,6 +92,8 @@ extension ClientMessage: Codable {
         case .resize(let cols, let rows):
             try container.encode(cols, forKey: .cols)
             try container.encode(rows, forKey: .rows)
+        case .refresh:
+            break
         case .pasteImage(let data):
             try container.encode(data, forKey: .data)
         case .ping:
@@ -129,6 +137,8 @@ extension ClientMessage: Codable {
             let cols = try container.decode(UInt16.self, forKey: .cols)
             let rows = try container.decode(UInt16.self, forKey: .rows)
             return .resize(cols: cols, rows: rows)
+        case "refresh":
+            return .refresh
         case "paste_image":
             let data = try container.decode(String.self, forKey: .data)
             return .pasteImage(data: data)

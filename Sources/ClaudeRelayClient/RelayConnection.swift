@@ -291,6 +291,12 @@ public final class RelayConnection: ObservableObject {
         try await send(.resize(cols: cols, rows: rows))
     }
 
+    /// Asks the server to SIGWINCH the attached session's foreground process
+    /// group so full-screen apps re-emit their screen (tap-to-redraw).
+    public func sendRefresh() async throws {
+        try await send(.refresh)
+    }
+
     /// Sends base64-encoded image data to be pasted on the server's clipboard.
     public func sendPasteImage(base64Data: String) async throws {
         try await send(.pasteImage(data: base64Data))

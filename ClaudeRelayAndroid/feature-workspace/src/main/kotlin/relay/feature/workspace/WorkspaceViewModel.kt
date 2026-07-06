@@ -119,6 +119,21 @@ class WorkspaceViewModel(
         }
     }
 
+    /**
+     * Tap-to-redraw: asks the server to SIGWINCH the attached session's
+     * foreground process group, making the running full-screen app (Claude
+     * Code, vim, …) re-emit its whole screen. That server-side replay is what
+     * the keyboard show/hide toggle achieves as a side effect of resizing —
+     * fresh authoritative bytes, not a repaint of the local (possibly corrupt)
+     * grid. Fire-and-forget; the repaint bytes are the response.
+     */
+    fun sendRefresh() {
+        viewModelScope.launch {
+            if (coordinator.sendsSuppressed) return@launch
+            runCatching { coordinator.connection.send(ClientMessage.Refresh) }
+        }
+    }
+
     private val _connectionQuality = MutableStateFlow(ConnectionQuality.DISCONNECTED)
     val connectionQuality: StateFlow<ConnectionQuality> = _connectionQuality.asStateFlow()
 

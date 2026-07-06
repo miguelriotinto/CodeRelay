@@ -82,6 +82,15 @@ final class ClientMessageTests: ProtocolTestCase {
         XCTAssertEqual(obj["type"] as? String, "ping")
     }
 
+    func testRefreshEncoding() throws {
+        let msg = ClientMessage.refresh
+        let envelope = MessageEnvelope.client(msg)
+        let data = try encoder.encode(envelope)
+        let obj = try jsonObject(data)
+        XCTAssertEqual(obj["type"] as? String, "refresh")
+        XCTAssertEqual((obj["payload"] as? [String: Any])?.isEmpty, true)
+    }
+
     // MARK: - Round-trip
 
     func testClientMessageRoundTrips() throws {
@@ -93,6 +102,7 @@ final class ClientMessageTests: ProtocolTestCase {
             .sessionResume(sessionId: id),
             .sessionDetach,
             .resize(cols: 80, rows: 24),
+            .refresh,
             .ping
         ]
 

@@ -61,6 +61,7 @@ object MessageEnvelope {
                     put("cols", JsonPrimitive(message.cols.toInt()))
                     put("rows", JsonPrimitive(message.rows.toInt()))
                 }
+                ClientMessage.Refresh -> Unit
                 is ClientMessage.PasteImage ->
                     put("data", JsonPrimitive(message.data))
                 ClientMessage.Ping -> Unit

@@ -242,6 +242,15 @@ public final class TerminalViewModel: ObservableObject {
         Task { try? await connection.sendResize(cols: cols, rows: rows) }
     }
 
+    /// Tap-to-redraw: asks the server to SIGWINCH the session's foreground
+    /// process group. The app re-emits its whole screen, which both repaints
+    /// the terminal AND replaces any corrupted grid content — a client-side
+    /// repaint can only redraw the same (possibly corrupt) local buffer.
+    public func sendRefresh() {
+        guard !isSendingSuppressed else { return }
+        Task { try? await connection.sendRefresh() }
+    }
+
     // MARK: - Input Prompt Detection
 
     /// Output-silence detector: if no output has arrived for `threshold`

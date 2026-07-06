@@ -62,6 +62,16 @@ sealed interface ClientMessage {
         override val typeString get() = "resize"
     }
 
+    /**
+     * Ask the server to SIGWINCH the attached session's foreground process
+     * group so full-screen apps re-emit their whole screen. Used by
+     * tap-to-redraw: a client-side repaint can only redraw the local (possibly
+     * corrupt) grid — only the running application can rebuild the content.
+     */
+    data object Refresh : ClientMessage {
+        override val typeString get() = "refresh"
+    }
+
     data class PasteImage(val data: String) : ClientMessage {
         override val typeString get() = "paste_image"
     }
@@ -75,7 +85,7 @@ sealed interface ClientMessage {
             "auth_request",
             "session_create", "session_attach", "session_resume", "session_detach",
             "session_terminate", "session_list", "session_list_all", "session_rename",
-            "resize", "paste_image", "ping",
+            "resize", "refresh", "paste_image", "ping",
         )
     }
 }

@@ -182,9 +182,11 @@ fun WorkspaceScreen(
 
     var showKeyBar by remember { mutableStateOf(true) }
     var renameActive by remember { mutableStateOf(false) }
-    // Bumped when the user taps the session-name badge to force a terminal redraw
-    // (fixes rare glyph overlap). Threaded into [TerminalHost], which re-keys the
-    // termlib subtree on change — a clean full repaint against the same emulator.
+    // Bumped when the user taps the session-name badge. Threaded into
+    // [TerminalHost], which drives a local full-grid damage repaint. The primary
+    // fix for glyph overlap is the server-side refresh sent alongside it
+    // (SIGWINCH → the running app re-emits its screen); this local repaint is
+    // belt-and-suspenders for renderer-only staleness.
     var redrawToken by remember { mutableStateOf(0) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -240,7 +242,10 @@ fun WorkspaceScreen(
                 onInput = { bytes -> vm.sendInput(bytes) },
                 onResize = { cols, rows -> vm.sendResize(cols, rows) },
                 onShareQr = { id -> haptics.lightTap(); onShareQr(id) },
-                onNameTap = { haptics.lightTap(); redrawToken++ },
+                // Tap → server-side refresh (SIGWINCH → the running app re-emits
+                // its screen — the same replay the keyboard toggle triggers via
+                // resize) plus a local damage repaint as belt-and-suspenders.
+                onNameTap = { haptics.lightTap(); vm.sendRefresh(); redrawToken++ },
                 onNameLongPress = { renameActive = true },
                 onKeyHaptic = { haptics.lightTap() },
                 nameFor = ::nameFor,
