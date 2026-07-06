@@ -345,14 +345,28 @@ final class HostCoordinator: NSObject {
         ) { _ in
             _ = activeTerminal()?.resignFirstResponder()
         }
-        // Force a full repaint of the visible terminal. `updateFullScreen()` marks
-        // every row dirty; `setNeedsDisplay()` then triggers SwiftTerm's `draw(_:)`,
-        // which fills the background and repaints from the buffer — clearing any
-        // stale glyph overlap. Cheap and non-destructive (buffer is untouched).
+        // Resolve the rare glyph-overlap artifact the user fixes today by toggling
+        // the keyboard. That works because showing/hiding the keyboard changes the
+        // view's bounds → `layoutSubviews` → `processSizeChange` → `updateScroller()`,
+        // which re-syncs the UIScrollView's `contentOffset`/`contentSize` to the
+        // buffer. The overlap itself is that desync: `drawTerminalContents` picks the
+        // first row from `contentOffset.y / cellHeight`, so a drifted offset paints
+        // the wrong rows (overlap; typing not landing at the cursor). A plain repaint
+        // can't fix it — it would redraw from the SAME stale offset.
+        //
+        // `changeScrollback(_:)` is the public SwiftTerm method that calls the exact
+        // same `updateScroller()` re-sync, then refreshes + `queuePendingDisplay()`.
+        // Re-applying the CURRENT scrollback value (read back from the terminal's own
+        // options, so we don't touch main-actor AppSettings from this closure) is a
+        // no-op to the buffer (`changeHistorySize` only trims when the size shrinks),
+        // so this re-syncs geometry and repaints without touching content — the
+        // keyboard-toggle fix without moving the keyboard.
         redrawObserver = NotificationCenter.default.addObserver(
             forName: .terminalForceRedraw, object: nil, queue: .main
         ) { _ in
             guard let terminal = activeTerminal() else { return }
+            let currentScrollback = terminal.getTerminal().options.scrollback
+            terminal.changeScrollback(currentScrollback)
             terminal.getTerminal().updateFullScreen()
             terminal.setNeedsDisplay(terminal.bounds)
         }

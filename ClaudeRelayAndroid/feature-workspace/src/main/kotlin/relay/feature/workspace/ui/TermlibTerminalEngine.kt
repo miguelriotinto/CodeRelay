@@ -109,6 +109,51 @@ class TermlibTerminalEngine(
     }
 
     /**
+     * Force a full-screen repaint WITHOUT resizing or re-keying the view.
+     *
+     * termlib's Compose renderer observes a `TerminalSnapshot` StateFlow; marking
+     * the whole grid damaged re-runs its cell read + re-emits a fresh snapshot, so
+     * the renderer recomposes and repaints every cell from the authoritative
+     * libvterm state. This clears the rare glyph-overlap artifact (cells drawn on
+     * top of stale glyphs) the same way the SwiftTerm `updateFullScreen()` path
+     * does on iOS.
+     *
+     * Crucially this does NOT rebuild termlib's `ImeInputView` (unlike re-keying
+     * the composable), so it never grabs focus and never raises the soft keyboard.
+     *
+     * `damage(startRow, endRow, startCol, endCol)` is libvterm's damage callback.
+     * Both it and the concrete `TerminalEmulatorImpl` are Kotlin-`internal` in
+     * termlib, so it isn't reachable by a direct cast — we invoke it reflectively
+     * off the [TerminalEmulator] the factory hands back. The signature is stable
+     * (`int damage(int,int,int,int)`); `updateLine` internally clamps each row to
+     * `[0, rows)`, so passing the full grid is safe. Each call re-emits a snapshot
+     * with a fresh `sequenceNumber`/`timestamp`, so the renderer's StateFlow never
+     * dedups it away even when the buffer content is unchanged. The reflected method
+     * is cached; if lookup ever fails (termlib API change) the redraw degrades to a
+     * silent no-op rather than crashing.
+     */
+    fun redraw() {
+        val c = _cols
+        val r = _rows
+        if (c <= 0 || r <= 0) return
+        val method = damageMethod ?: return
+        runCatching { method.invoke(emulator, 0, r, 0, c) }
+    }
+
+    /**
+     * `TerminalEmulatorImpl.damage(int,int,int,int)`, resolved once off the live
+     * emulator's runtime class. Null if the method can't be found (defensive against
+     * a future termlib rename) — [redraw] then no-ops.
+     */
+    private val damageMethod: java.lang.reflect.Method? by lazy {
+        runCatching {
+            emulator.javaClass
+                .getMethod("damage", Int::class.java, Int::class.java, Int::class.java, Int::class.java)
+                .apply { isAccessible = true }
+        }.getOrNull()
+    }
+
+    /**
      * Record-only. termlib's `Terminal` composable is the sole resize driver (it
      * calls `emulator.resize()` from layout); invoking it here would re-fire the
      * factory `onResize` and loop. We only stash the dims so [cols]/[rows] reflect

@@ -5,12 +5,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
@@ -56,11 +52,11 @@ private fun Int.toComposeColor(): Color = Color(this)
  * @param onInput engine → relay keystroke sink (wired to `connection.sendBinary`)
  * @param onResize relay PTY-resize sink, invoked `(cols, rows)` (wired to
  *   `WorkspaceViewModel.sendResize`)
- * @param redrawToken bump this to force a full terminal repaint (see [key] below);
- *   the workspace increments it when the user taps the session-name badge to clear
- *   rare glyph overlap. It re-keys ONLY the termlib subtree, not `engine`/
- *   `controller` (both `remember(vm)`), so the emulator + its screen state and grid
- *   survive — no server resize round-trip, just a clean repaint.
+ * @param redrawToken bump this to force a full terminal repaint; the workspace
+ *   increments it when the user taps the session-name badge to clear rare glyph
+ *   overlap. A change drives [TermlibTerminalEngine.redraw] (a full-grid damage +
+ *   snapshot re-emit) — NOT a view rebuild — so it repaints every cell without
+ *   grabbing focus or raising the soft keyboard, and with no server round-trip.
  * @param modifier outer modifier
  */
 @Composable
@@ -109,34 +105,15 @@ fun TerminalHost(
     // termlib's ImeInputView uses (`InputMethodManager.showSoftInput`).
     val view = LocalView.current
 
-    // A redraw (session-name tap) re-keys the termlib subtree below, and termlib
-    // requests focus + raises the soft keyboard on every fresh composition. That's
-    // unwanted here: a redraw should NOT summon the keyboard if it was down. We
-    // can't stop termlib from asking, so instead we snapshot the IME's visibility
-    // the frame the token changes — BEFORE the rebuild's focus effect runs — and,
-    // if it was hidden, re-hide it after the rebuild. termlib's show is itself an
-    // async LaunchedEffect, so we re-hide across a few consecutive frames to
-    // deterministically win the last-writer race without a brittle fixed delay.
-    // Skips the very first composition (redrawToken == 0) so a real terminal tap
-    // still brings the keyboard up normally.
-    var lastRedrawToken by remember(vm) { mutableStateOf(redrawToken) }
-    var suppressImeAfterRedraw by remember(vm) { mutableStateOf(false) }
-    if (redrawToken != lastRedrawToken) {
-        val imeWasVisible = ViewCompat.getRootWindowInsets(view)
-            ?.isVisible(WindowInsetsCompat.Type.ime()) ?: false
-        suppressImeAfterRedraw = !imeWasVisible
-        lastRedrawToken = redrawToken
-    }
+    // Session-name tap → force a full-grid repaint to clear rare glyph overlap.
+    // We drive it through the engine's damage-based redraw (which re-emits a fresh
+    // snapshot the renderer repaints from) rather than re-keying the termlib view:
+    // re-keying rebuilds termlib's ImeInputView, which grabs focus and raises the
+    // soft keyboard — exactly the unwanted behaviour. skip == first composition
+    // (LaunchedEffect always runs once) is harmless: a redundant redraw of the
+    // just-built grid is a no-op to the eye and never touches focus/IME.
     LaunchedEffect(redrawToken) {
-        if (suppressImeAfterRedraw) {
-            // Re-hide for a handful of frames — termlib's post-rebuild show() is
-            // posted async, so a single hide can lose the race.
-            repeat(5) {
-                withFrameNanos {}
-                ViewCompat.getWindowInsetsController(view)?.hide(WindowInsetsCompat.Type.ime())
-            }
-            suppressImeAfterRedraw = false
-        }
+        engine.redraw()
     }
 
     DisposableEffect(controller) {
@@ -184,12 +161,11 @@ fun TerminalHost(
     //   (outside composition), so keying here costs only a termlib view rebuild — the
     //   same rebuild that already happens for `engine`/`controller` (both `remember(vm)`).
     //
-    //   `redrawToken` piggybacks on this same rebuild: bumping it (session-name tap)
-    //   disposes the termlib view and builds a fresh one bound to the SAME emulator
-    //   (`engine`/`controller` are `remember(vm)`, unaffected by the token), forcing a
-    //   full clean repaint that clears any stale glyph overlap. The measured grid is
-    //   unchanged, so termlib fires no onResize — no server PTY round-trip.
-    key(vm, redrawToken) {
+    //   NOTE: keyed on `vm` ONLY — deliberately NOT on `redrawToken`. Re-keying grabs
+    //   focus and raises the soft keyboard (termlib requests focus on a fresh
+    //   composition), so the tap-to-redraw path goes through `engine.redraw()` above
+    //   instead, which repaints without rebuilding this subtree.
+    key(vm) {
         Terminal(
             terminalEmulator = engine.emulator,
             keyboardEnabled = true,
