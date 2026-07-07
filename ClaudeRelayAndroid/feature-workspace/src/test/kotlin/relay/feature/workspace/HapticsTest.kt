@@ -7,11 +7,11 @@ import org.junit.jupiter.api.Test
 /**
  * Gating tests for the shared haptic helper.
  *
- * The actual buzz (`View.performHapticFeedback`) is DEVICE-DEFERRED — there is no
- * vibrator in JVM unit tests — so the testable seam is the pure [shouldFireHaptic]
+ * The actual buzz (`Vibrator.vibrate`) is DEVICE-DEFERRED — there is no vibrator
+ * in JVM unit tests — so the testable seam is the pure [shouldFireHaptic]
  * predicate that mirrors the iOS `if settings.hapticFeedbackEnabled { … }` guard.
  * A [HapticController] built around it must no-op every method when the setting is
- * off (a null root view also no-ops, so the controller is null-safe in tests).
+ * off (a null vibrator also no-ops, so the controller is null-safe in tests).
  */
 class HapticsTest {
 
@@ -22,22 +22,22 @@ class HapticsTest {
     }
 
     @Test
-    fun `disabled controller no-ops every style without a view`() {
-        // enabled = false → no method may touch the (null) view → no crash, no buzz.
-        val controller = HapticController(view = null, enabled = false)
+    fun `disabled controller no-ops every style without a vibrator`() {
+        // enabled = false → no method may touch the (null) vibrator → no crash, no buzz.
+        val controller = HapticController(vibrator = null, enabled = false)
         controller.lightTap()
         controller.mediumTap()
         controller.success()
         controller.warning()
         // Reaching here without throwing proves the gate short-circuits before the
-        // device call. (The enabled+real-view path is device-deferred.)
+        // device call. (The enabled+real-vibrator path is device-deferred.)
     }
 
     @Test
-    fun `enabled controller with null view is still safe`() {
-        // enabled = true but no root view (the LocalView seam is absent in unit
-        // tests): the controller must null-guard the performHapticFeedback call.
-        val controller = HapticController(view = null, enabled = true)
+    fun `enabled controller with null vibrator is still safe`() {
+        // enabled = true but vibrator-less hardware (or the unit-test JVM): the
+        // controller must null-guard the vibrate call.
+        val controller = HapticController(vibrator = null, enabled = true)
         controller.lightTap()
         controller.mediumTap()
         controller.success()
