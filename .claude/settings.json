@@ -1,13 +1,43 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(gh release list:*)",
+      "Bash(gh release view:*)",
+      "Bash(gh release download:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(swift build:*)",
+      "Bash(swift test:*)",
+      "Bash(./gradlew:*)",
+      "Bash(adb devices:*)",
+      "Bash(adb shell getprop:*)",
+      "Bash(adb logcat:*)",
+      "Bash(plutil -p:*)",
+      "Bash(swift run claude-relay status:*)",
+      "Bash(swift run claude-relay health:*)",
+      "Bash(swift run claude-relay logs:*)",
+      "Bash(curl -s http://127.0.0.1:9100/health)",
+      "Bash(launchctl list:*)",
+      "Bash(swiftlint lint:*)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Bash",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
             "command": "code-review-graph update --skip-flows",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "echo \"$CLAUDE_FILE_PATHS\" | tr ' ' '\\n' | grep '\\.swift$' | while read -r f; do [ -f \"$f\" ] && swiftlint lint --quiet \"$f\"; done; exit 0",
+            "timeout": 15
           }
         ]
       }

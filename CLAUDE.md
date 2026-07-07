@@ -28,6 +28,23 @@ Note: Service commands are top-level (`claude-relay stop`), while token/session/
 
 **Launchd**: Plist at `~/Library/LaunchAgents/com.claude.relay.plist`. The `load` command locates the server binary via a fallback chain: sibling of the CLI binary, `/opt/homebrew/bin/`, `/usr/local/bin/`, `~/.claude-relay/bin/`.
 
+## Release Process
+
+Use `/cr-ship [ios|android|mac|server|all]` to build, publish, and verify; `/cr-doctor` for a read-only "is everything published and running?" check.
+
+**Version bump trio** (bump only what ships):
+- iOS/macOS: build number in `project.yml`, then regenerate with `xcodegen`.
+- Android: `versionCode` + `versionName` in `ClaudeRelayAndroid/app/build.gradle.kts`. Milestone naming: `0.3-mNN` (versionCode increments by 1 per milestone).
+- Server: version constant + `Formula/clauderelay.rb` (Homebrew builds from HEAD; the Cellar dir name `HEAD-<commit>` encodes the built commit).
+- Release commit message: `chore(release): server X.Y.Z, iOS build NNN, Android 0.3-mNN (versionCode NN)` — adjust to what shipped.
+
+**Publish targets**:
+- iOS/macOS → TestFlight via `xcodebuild archive` + `-exportArchive` with `build/ExportOptions.plist` (destination=upload). Success is proven by `UPLOAD SUCCEEDED` in `$TMPDIR/<AppName>_*.xcdistributionlogs/ContentDelivery.log` — Apple-side processing takes up to ~1 h after that.
+- Android → GitHub Releases as a **pre-release** tagged `android-v<versionName>` with asset `CodeRelay-<versionName>.apk`. Main `vX.Y.Z` releases carry no binaries (server ships via Homebrew).
+- **The user installs APKs by downloading from GitHub Releases on the phone — the Android device is NOT adb-connected to this machine.** Never assume `adb install` reaches the user's device.
+
+**Verification is mandatory**: download the APK back from the release and check `aapt2 dump badging` versionCode (byte size is not proof); grep the ContentDelivery log for iOS; `claude-relay status` + `/health` for the server.
+
 ## Architecture
 
 Six SPM targets + iOS app + macOS app (both XcodeGen-managed via `project.yml`):
