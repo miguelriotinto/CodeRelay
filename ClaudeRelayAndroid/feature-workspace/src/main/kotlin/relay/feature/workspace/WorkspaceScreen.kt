@@ -7,7 +7,6 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -57,7 +56,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -560,17 +558,17 @@ private fun TerminalColumn(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val activeVm = activeSessionId?.let { vm.coordinator.terminalCache.view(it) }
 
-            // Edge-glow sweep (iOS ActiveTerminalView `refreshGlow` parity): a
-            // brief accent ring around the terminal confirming the session-name
-            // refresh fired. Keyed off redrawToken — the same bump that drives
-            // the local repaint — so feedback and refresh can't drift apart.
-            // Timing mirrors iOS: 150 ms ease-on, 300 ms ease-off.
-            val glowAlpha = remember { Animatable(0f) }
+            // White flash (iOS ActiveTerminalView `refreshFlash` parity): a
+            // brief camera-blink sheet over the terminal confirming the
+            // session-name refresh fired. Keyed off redrawToken — the same bump
+            // that drives the local repaint — so feedback and refresh can't
+            // drift apart. Timing mirrors iOS: 50 ms snap-on, 250 ms ease-off.
+            val flashAlpha = remember { Animatable(0f) }
             LaunchedEffect(redrawToken) {
                 if (redrawToken > 0) {
-                    glowAlpha.snapTo(0f)
-                    glowAlpha.animateTo(1f, tween(150, easing = LinearOutSlowInEasing))
-                    glowAlpha.animateTo(0f, tween(300, easing = FastOutLinearInEasing))
+                    flashAlpha.snapTo(0f)
+                    flashAlpha.animateTo(0.35f, tween(50, easing = FastOutLinearInEasing))
+                    flashAlpha.animateTo(0f, tween(250, easing = LinearOutSlowInEasing))
                 }
             }
             if (activeSessionId != null && activeVm != null) {
@@ -602,17 +600,14 @@ private fun TerminalColumn(
                 micButton()
             }
 
-            // The glow ring itself. A plain Box never intercepts touches, so
-            // it's purely decorative (iOS `.allowsHitTesting(false)`). The blur
-            // softens the stroke into a glow on API 31+ and gracefully no-ops
-            // on older devices, leaving a crisp ring.
-            if (glowAlpha.value > 0f) {
+            // The flash sheet itself. A plain Box never intercepts touches, so
+            // it's purely decorative (iOS `.allowsHitTesting(false)`).
+            if (flashAlpha.value > 0f) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer { alpha = glowAlpha.value }
-                        .blur(4.dp)
-                        .border(3.dp, MaterialTheme.colorScheme.primary),
+                        .graphicsLayer { alpha = flashAlpha.value }
+                        .background(Color.White),
                 )
             }
         }

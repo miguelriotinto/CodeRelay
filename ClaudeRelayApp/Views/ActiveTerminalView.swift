@@ -15,8 +15,8 @@ struct ActiveTerminalView: View {
     @State private var showQROverlay = false
     @State private var showRenameAlert = false
     @State private var renameText = ""
-    /// Drives the edge-glow flash when the session-name button triggers a refresh.
-    @State private var refreshGlow = false
+    /// Drives the white flash when the session-name button triggers a refresh.
+    @State private var refreshFlash = false
     @StateObject private var speechEngine = OnDeviceSpeechEngine()
     @StateObject private var continuousEngine = ContinuousListeningEngine.makeDefault(
         options: AppSettings.shared.currentSpeechOptions()
@@ -95,14 +95,12 @@ struct ActiveTerminalView: View {
                 .padding(.bottom, 12)
             }
         }
-        // Edge-glow sweep: a brief accent ring around the terminal that
+        // White flash: a brief camera-blink sheet over the terminal that
         // confirms the session-name refresh fired. Purely decorative, so it
         // never intercepts touches meant for the terminal underneath.
         .overlay {
-            RoundedRectangle(cornerRadius: 0)
-                .stroke(Color.accentColor, lineWidth: refreshGlow ? 3 : 0)
-                .blur(radius: 4)
-                .opacity(refreshGlow ? 1 : 0)
+            Color.white
+                .opacity(refreshFlash ? 0.35 : 0)
                 .allowsHitTesting(false)
                 .ignoresSafeArea()
         }
@@ -167,7 +165,7 @@ struct ActiveTerminalView: View {
                             }
                             coordinator.viewModel(for: id)?.sendRefresh()
                             NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
-                            flashRefreshGlow()
+                            flashRefreshFeedback()
                         }
                         .onLongPressGesture {
                             renameText = coordinator.name(for: id)
@@ -245,11 +243,11 @@ struct ActiveTerminalView: View {
         }
     }
 
-    /// Flash the edge-glow ring on, then fade it out — a self-extinguishing
-    /// ~0.3 s sweep with no timer.
-    private func flashRefreshGlow() {
-        withAnimation(.easeOut(duration: 0.15)) { refreshGlow = true }
-        withAnimation(.easeIn(duration: 0.3).delay(0.15)) { refreshGlow = false }
+    /// Flash the white sheet on fast, then fade it out — a self-extinguishing
+    /// ~0.3 s camera-blink with no timer.
+    private func flashRefreshFeedback() {
+        withAnimation(.easeIn(duration: 0.05)) { refreshFlash = true }
+        withAnimation(.easeOut(duration: 0.25).delay(0.05)) { refreshFlash = false }
     }
 
     private var optionsHash: String {
