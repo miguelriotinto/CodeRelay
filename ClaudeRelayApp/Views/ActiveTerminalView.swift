@@ -15,6 +15,8 @@ struct ActiveTerminalView: View {
     @State private var showQROverlay = false
     @State private var showRenameAlert = false
     @State private var renameText = ""
+    /// Drives the edge-glow flash when the session-name button triggers a refresh.
+    @State private var refreshGlow = false
     @StateObject private var speechEngine = OnDeviceSpeechEngine()
     @StateObject private var continuousEngine = ContinuousListeningEngine.makeDefault(
         options: AppSettings.shared.currentSpeechOptions()
@@ -93,6 +95,17 @@ struct ActiveTerminalView: View {
                 .padding(.bottom, 12)
             }
         }
+        // Edge-glow sweep: a brief accent ring around the terminal that
+        // confirms the session-name refresh fired. Purely decorative, so it
+        // never intercepts touches meant for the terminal underneath.
+        .overlay {
+            RoundedRectangle(cornerRadius: 0)
+                .stroke(Color.accentColor, lineWidth: refreshGlow ? 3 : 0)
+                .blur(radius: 4)
+                .opacity(refreshGlow ? 1 : 0)
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
+        }
         .safeAreaInset(edge: .top) {
             HStack(spacing: 6) {
                 ToolbarIconButton(icon: "sidebar.left") {
@@ -154,6 +167,7 @@ struct ActiveTerminalView: View {
                             }
                             coordinator.viewModel(for: id)?.sendRefresh()
                             NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
+                            flashRefreshGlow()
                         }
                         .onLongPressGesture {
                             renameText = coordinator.name(for: id)
@@ -229,6 +243,13 @@ struct ActiveTerminalView: View {
                 )
             }
         }
+    }
+
+    /// Flash the edge-glow ring on, then fade it out — a self-extinguishing
+    /// ~0.3 s sweep with no timer.
+    private func flashRefreshGlow() {
+        withAnimation(.easeOut(duration: 0.15)) { refreshGlow = true }
+        withAnimation(.easeIn(duration: 0.3).delay(0.15)) { refreshGlow = false }
     }
 
     private var optionsHash: String {
