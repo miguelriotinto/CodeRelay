@@ -6,6 +6,21 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-07-08 — Refresh actually repaints Claude Code
+
+### Server
+
+- **`forceRepaint()` is now a real resize wiggle** — the 0.3.8 refresh
+  delivered SIGWINCH at unchanged size, which Node/Ink apps (Claude
+  Code) ignore: Node re-reads TIOCGWINSZ in its WINCH handler and skips
+  the redraw when dimensions match its cache (measured: 0 repaint bytes
+  on same-size WINCH vs a full repaint on a 1-column change). The server
+  now mimics the keyboard show/hide gesture: TIOCSWINSZ to cols−1,
+  150 ms, restore. A client resize landing mid-wiggle wins — the restore
+  re-reads the tracked size after the gap. No protocol change; existing
+  clients' tap-to-redraw starts working once the server is upgraded.
+  Post-replay repaint on reattach inherits the same fix.
+
 ## [0.3.8] - 2026-07-07 — Client-requested screen refresh
 
 ### Server + Protocol
