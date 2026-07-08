@@ -561,12 +561,12 @@ private fun TerminalColumn(
             val activeVm = activeSessionId?.let { vm.coordinator.terminalCache.view(it) }
 
             // Swipe flash (iOS ActiveTerminalView `refreshSweepProgress`
-            // parity): a soft white band sweeping left → right across the
+            // parity): a soft white band sweeping top → bottom across the
             // terminal (~1 s) confirming the session-name refresh fired — the
             // motion reads as "the screen is being rewritten". Keyed off
             // redrawToken — the same bump that drives the local repaint — so
             // feedback and refresh can't drift apart. Progress 0 parks the band
-            // offscreen left, 1 offscreen right; snapTo(0) first so rapid
+            // offscreen above, 1 offscreen below; snapTo(0) first so rapid
             // re-taps restart the sweep instead of reversing mid-flight.
             val sweepProgress = remember { Animatable(0f) }
             LaunchedEffect(redrawToken) {
@@ -615,19 +615,19 @@ private fun TerminalColumn(
                     modifier = Modifier
                         .fillMaxSize()
                         .drawWithContent {
-                            val bandWidth = size.width * 0.45f
-                            // 0 → band fully offscreen left, 1 → fully offscreen right.
-                            val bandStart = -bandWidth + (size.width + 2f * bandWidth) * progress
+                            val bandHeight = size.height * 0.45f
+                            // 0 → band fully offscreen above, 1 → fully offscreen below.
+                            val bandStart = -bandHeight + (size.height + 2f * bandHeight) * progress
                             drawRect(
-                                brush = Brush.horizontalGradient(
+                                brush = Brush.verticalGradient(
                                     0f to Color.Transparent,
                                     0.5f to Color.White.copy(alpha = 0.30f),
                                     1f to Color.Transparent,
-                                    startX = bandStart,
-                                    endX = bandStart + bandWidth,
+                                    startY = bandStart,
+                                    endY = bandStart + bandHeight,
                                 ),
-                                topLeft = Offset(bandStart, 0f),
-                                size = Size(bandWidth, size.height),
+                                topLeft = Offset(0f, bandStart),
+                                size = Size(size.width, bandHeight),
                             )
                         },
                 )

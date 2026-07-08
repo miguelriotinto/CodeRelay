@@ -16,7 +16,7 @@ struct ActiveTerminalView: View {
     @State private var showRenameAlert = false
     @State private var renameText = ""
     /// Drives the swipe-flash sweep when the session-name button triggers a
-    /// refresh. 0 parks the band offscreen left, 1 offscreen right — so the
+    /// refresh. 0 parks the band offscreen above, 1 offscreen below — so the
     /// effect is invisible at both endpoints and needs no visibility flag.
     @State private var refreshSweepProgress: CGFloat = 0
     @StateObject private var speechEngine = OnDeviceSpeechEngine()
@@ -97,25 +97,25 @@ struct ActiveTerminalView: View {
                 .padding(.bottom, 12)
             }
         }
-        // Swipe flash: a soft white band sweeping left → right across the
+        // Swipe flash: a soft white band sweeping top → bottom across the
         // terminal (~1 s) that confirms the session-name refresh fired — the
         // motion reads as "the screen is being rewritten". Purely decorative,
         // so it never intercepts touches meant for the terminal underneath.
         .overlay {
             GeometryReader { geo in
-                let bandWidth = geo.size.width * 0.45
+                let bandHeight = geo.size.height * 0.45
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0),
                         .init(color: .white.opacity(0.30), location: 0.5),
                         .init(color: .clear, location: 1),
                     ],
-                    startPoint: .leading,
-                    endPoint: .trailing
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-                .frame(width: bandWidth)
-                // progress 0 → fully offscreen left, 1 → fully offscreen right.
-                .offset(x: -bandWidth + (geo.size.width + 2 * bandWidth) * refreshSweepProgress)
+                .frame(height: bandHeight)
+                // progress 0 → fully offscreen above, 1 → fully offscreen below.
+                .offset(y: -bandHeight + (geo.size.height + 2 * bandHeight) * refreshSweepProgress)
             }
             .allowsHitTesting(false)
             .ignoresSafeArea()
