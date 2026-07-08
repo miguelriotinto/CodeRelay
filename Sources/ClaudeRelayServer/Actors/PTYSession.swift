@@ -12,13 +12,14 @@ public protocol PTYSessionProtocol: Actor {
     func clearOutputHandler()
     func write(_ data: Data)
     func resize(cols: UInt16, rows: UInt16)
-    /// Asks the foreground process group to repaint by delivering SIGWINCH.
-    /// Used after a ring-buffer replay: the replayed bytes were emitted for the
-    /// grid size at the time they were generated, so the client's screen can be
-    /// mis-wrapped until the app redraws. The kernel only auto-delivers WINCH
-    /// when TIOCSWINSZ *changes* the size — a same-size reattach gets nothing —
-    /// so the server sends it explicitly (the dtach trick).
-    func forceRepaint()
+    /// Asks the foreground app to repaint by wiggling the PTY width (cols−1,
+    /// ~150 ms, restore). Used after a ring-buffer replay and for client
+    /// tap-to-redraw: the on-screen bytes can be mis-wrapped/garbled until the
+    /// app re-emits its whole screen. A bare same-size SIGWINCH is NOT enough —
+    /// Node/Ink apps (Claude Code) re-query TIOCGWINSZ on WINCH and skip the
+    /// redraw when the size is unchanged — so we make the size genuinely change
+    /// twice, exactly like the keyboard show/hide gesture that provably works.
+    func forceRepaint() async
     func readBuffer() -> Data
     func terminate()
     func getActivityState() -> ActivityState
@@ -79,6 +80,12 @@ public actor PTYSession: PTYSessionProtocol {
     private var activityHandler: (@Sendable (ActivityState, CodingAgent?, UInt64) -> Void)?
     private var terminated: Bool = false
     private var foregroundPollTimer: DispatchSourceTimer?
+    /// Last size applied via init/`resize()`. `forceRepaint()` restores to
+    /// these values after its wiggle; because reads happen inside the actor,
+    /// a client resize that lands mid-wiggle wins and the restore uses the
+    /// newest size instead of stomping it.
+    private var currentCols: UInt16
+    private var currentRows: UInt16
 
     // MARK: - Write Queue
 
@@ -115,6 +122,8 @@ public actor PTYSession: PTYSessionProtocol {
     ) throws {
         self.sessionId = sessionId
         self.ringBuffer = RingBuffer(capacity: scrollbackSize)
+        self.currentCols = cols
+        self.currentRows = rows
 
         var fd: Int32 = 0
         var ws = winsize()
@@ -481,18 +490,35 @@ public actor PTYSession: PTYSessionProtocol {
     /// Resize the terminal.
     public func resize(cols: UInt16, rows: UInt16) {
         guard !terminated else { return }
+        currentCols = cols
+        currentRows = rows
         _ = relay_set_winsize(masterFD, rows, cols)
     }
 
-    /// Delivers SIGWINCH to the foreground process group so full-screen apps
-    /// repaint at the current grid. The kernel only auto-signals when
-    /// TIOCSWINSZ changes the size, so a same-size reattach needs this
-    /// explicit nudge.
-    public func forceRepaint() {
+    /// Forces the foreground app to re-emit its whole screen by genuinely
+    /// changing the PTY width and restoring it (cols−1 → 150 ms → cols).
+    ///
+    /// A bare SIGWINCH at unchanged size does NOT work for Node/Ink apps
+    /// (Claude Code): Node's WINCH handler re-reads TIOCGWINSZ and only fires
+    /// the `resize` event when the dimensions differ from its cache — measured
+    /// 0 repaint bytes from `claude` on same-size WINCH vs a full repaint on a
+    /// 1-column change. The gap is required too: the foreground process must
+    /// handle the first WINCH *while the intermediate size is still current*,
+    /// or it observes only the restored size and skips the redraw (25 ms was
+    /// the measured minimum for `claude` on an idle machine; a busy process
+    /// needs more, and the keyboard gesture this mimics has a human-scale
+    /// gap). Cols is wiggled rather than rows because a rows-grow was observed
+    /// to produce no repaint. TIOCSWINSZ auto-delivers WINCH on each real
+    /// change, so no explicit kill() is needed.
+    public func forceRepaint() async {
+        guard !terminated, currentCols > 1 else { return }
+        _ = relay_set_winsize(masterFD, currentRows, currentCols - 1)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        // Re-read after the await: a client resize() that landed mid-wiggle
+        // has updated currentCols/currentRows, and restoring to those is
+        // correct (never stomp a legitimate resize with a stale size).
         guard !terminated else { return }
-        let pgid = relay_get_foreground_pgid(masterFD)
-        guard pgid > 0 else { return }
-        _ = kill(-pgid, SIGWINCH)
+        _ = relay_set_winsize(masterFD, currentRows, currentCols)
     }
 
     /// Read the ring buffer contents (for resume, send scrollback history to client).
