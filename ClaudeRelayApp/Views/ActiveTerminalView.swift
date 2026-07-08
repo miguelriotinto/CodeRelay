@@ -15,8 +15,10 @@ struct ActiveTerminalView: View {
     @State private var showQROverlay = false
     @State private var showRenameAlert = false
     @State private var renameText = ""
-    /// Drives the white flash when the session-name button triggers a refresh.
-    @State private var refreshFlash = false
+    /// Drives the swipe-flash sweep when the session-name button triggers a
+    /// refresh. 0 parks the band offscreen left, 1 offscreen right — so the
+    /// effect is invisible at both endpoints and needs no visibility flag.
+    @State private var refreshSweepProgress: CGFloat = 0
     @StateObject private var speechEngine = OnDeviceSpeechEngine()
     @StateObject private var continuousEngine = ContinuousListeningEngine.makeDefault(
         options: AppSettings.shared.currentSpeechOptions()
@@ -95,14 +97,28 @@ struct ActiveTerminalView: View {
                 .padding(.bottom, 12)
             }
         }
-        // White flash: a brief camera-blink sheet over the terminal that
-        // confirms the session-name refresh fired. Purely decorative, so it
-        // never intercepts touches meant for the terminal underneath.
+        // Swipe flash: a soft white band sweeping left → right across the
+        // terminal (~1 s) that confirms the session-name refresh fired — the
+        // motion reads as "the screen is being rewritten". Purely decorative,
+        // so it never intercepts touches meant for the terminal underneath.
         .overlay {
-            Color.white
-                .opacity(refreshFlash ? 0.35 : 0)
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
+            GeometryReader { geo in
+                let bandWidth = geo.size.width * 0.45
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .white.opacity(0.30), location: 0.5),
+                        .init(color: .clear, location: 1),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: bandWidth)
+                // progress 0 → fully offscreen left, 1 → fully offscreen right.
+                .offset(x: -bandWidth + (geo.size.width + 2 * bandWidth) * refreshSweepProgress)
+            }
+            .allowsHitTesting(false)
+            .ignoresSafeArea()
         }
         .safeAreaInset(edge: .top) {
             HStack(spacing: 6) {
@@ -243,11 +259,14 @@ struct ActiveTerminalView: View {
         }
     }
 
-    /// Flash the white sheet on fast, then fade it out — a self-extinguishing
-    /// ~0.3 s camera-blink with no timer.
+    /// Sweep the flash band across the terminal over ~1 s. Progress is snapped
+    /// back to 0 (offscreen left) without animation first, so rapid re-taps
+    /// restart the sweep cleanly instead of reversing mid-flight.
     private func flashRefreshFeedback() {
-        withAnimation(.easeIn(duration: 0.05)) { refreshFlash = true }
-        withAnimation(.easeOut(duration: 0.25).delay(0.05)) { refreshFlash = false }
+        var restart = Transaction()
+        restart.disablesAnimations = true
+        withTransaction(restart) { refreshSweepProgress = 0 }
+        withAnimation(.easeInOut(duration: 1.0)) { refreshSweepProgress = 1 }
     }
 
     private var optionsHash: String {

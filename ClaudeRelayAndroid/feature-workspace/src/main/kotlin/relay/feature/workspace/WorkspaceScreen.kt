@@ -2,8 +2,7 @@ package relay.feature.workspace
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -53,10 +52,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -558,17 +560,19 @@ private fun TerminalColumn(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val activeVm = activeSessionId?.let { vm.coordinator.terminalCache.view(it) }
 
-            // White flash (iOS ActiveTerminalView `refreshFlash` parity): a
-            // brief camera-blink sheet over the terminal confirming the
-            // session-name refresh fired. Keyed off redrawToken — the same bump
-            // that drives the local repaint — so feedback and refresh can't
-            // drift apart. Timing mirrors iOS: 50 ms snap-on, 250 ms ease-off.
-            val flashAlpha = remember { Animatable(0f) }
+            // Swipe flash (iOS ActiveTerminalView `refreshSweepProgress`
+            // parity): a soft white band sweeping left → right across the
+            // terminal (~1 s) confirming the session-name refresh fired — the
+            // motion reads as "the screen is being rewritten". Keyed off
+            // redrawToken — the same bump that drives the local repaint — so
+            // feedback and refresh can't drift apart. Progress 0 parks the band
+            // offscreen left, 1 offscreen right; snapTo(0) first so rapid
+            // re-taps restart the sweep instead of reversing mid-flight.
+            val sweepProgress = remember { Animatable(0f) }
             LaunchedEffect(redrawToken) {
                 if (redrawToken > 0) {
-                    flashAlpha.snapTo(0f)
-                    flashAlpha.animateTo(0.35f, tween(50, easing = FastOutLinearInEasing))
-                    flashAlpha.animateTo(0f, tween(250, easing = LinearOutSlowInEasing))
+                    sweepProgress.snapTo(0f)
+                    sweepProgress.animateTo(1f, tween(1000, easing = FastOutSlowInEasing))
                 }
             }
             if (activeSessionId != null && activeVm != null) {
@@ -600,14 +604,32 @@ private fun TerminalColumn(
                 micButton()
             }
 
-            // The flash sheet itself. A plain Box never intercepts touches, so
-            // it's purely decorative (iOS `.allowsHitTesting(false)`).
-            if (flashAlpha.value > 0f) {
+            // The sweep band itself, drawn only mid-flight (invisible at both
+            // endpoints). drawWithContent paints a clear→white→clear gradient
+            // band at the current progress — no layout node moves, so there is
+            // zero layout shift, and a plain draw overlay never intercepts
+            // touches (iOS `.allowsHitTesting(false)`).
+            val progress = sweepProgress.value
+            if (progress > 0f && progress < 1f) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer { alpha = flashAlpha.value }
-                        .background(Color.White),
+                        .drawWithContent {
+                            val bandWidth = size.width * 0.45f
+                            // 0 → band fully offscreen left, 1 → fully offscreen right.
+                            val bandStart = -bandWidth + (size.width + 2f * bandWidth) * progress
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    0f to Color.Transparent,
+                                    0.5f to Color.White.copy(alpha = 0.30f),
+                                    1f to Color.Transparent,
+                                    startX = bandStart,
+                                    endX = bandStart + bandWidth,
+                                ),
+                                topLeft = Offset(bandStart, 0f),
+                                size = Size(bandWidth, size.height),
+                            )
+                        },
                 )
             }
         }
