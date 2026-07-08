@@ -1,5 +1,5 @@
 ---
-name: cr-ship
+name: coderelay_ship
 description: Build, publish, and VERIFY ClaudeRelay artifacts — iOS/macOS to TestFlight, Android APK to GitHub Releases, server to Homebrew. Args: ios | android | mac | server | all (default all)
 disable-model-invocation: true
 ---
