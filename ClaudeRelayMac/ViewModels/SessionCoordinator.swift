@@ -59,6 +59,13 @@ final class SessionCoordinator: SharedSessionCoordinator {
         isAuthenticated = true
     }
 
+    /// After a replay + server SIGWINCH, also re-sync SwiftTerm's local geometry
+    /// and force a full repaint — clears any residual glyph overlap on the
+    /// reused terminal view without waiting for the next output frame.
+    override func didCompleteReplay(sessionId: UUID) {
+        NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
+    }
+
     // MARK: - Recovery Observers
 
     private func registerRecoveryObservers() {

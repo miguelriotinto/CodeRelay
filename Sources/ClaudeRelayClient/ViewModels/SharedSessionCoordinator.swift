@@ -150,6 +150,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     open func didAuthenticate() {}
 
+    /// Called on the main actor right after a session's ring-buffer replay has
+    /// been flushed and the SIGWINCH refresh dispatched. Platform subclasses
+    /// override to run local repaint glue (e.g. macOS posts
+    /// `.terminalForceRedraw` to re-sync SwiftTerm geometry). Default is a no-op.
+    open func didCompleteReplay(sessionId: UUID) {}
+
     public func startNetworkRecovery() {
         guard networkMonitor == nil else { return }
         let monitor = NetworkMonitor()
@@ -214,7 +220,17 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
         connection.onReplayComplete = { [weak self] sessionId in
             Task { @MainActor [weak self] in
-                self?.terminalViewModels[sessionId]?.endReplay()
+                guard let self else { return }
+                self.terminalViewModels[sessionId]?.endReplay()
+                // Replaying a full-screen app's scrollback (e.g. Claude Code
+                // progress output captured while detached) can render garbled:
+                // those bytes are cursor-relative escapes that assumed a screen
+                // state the reset terminal no longer has. Ask the server to
+                // SIGWINCH the foreground process so it repaints its whole
+                // screen from scratch — the same fix a manual window resize
+                // applies. Harmless for plain shells (they ignore SIGWINCH).
+                self.terminalViewModels[sessionId]?.sendRefresh()
+                self.didCompleteReplay(sessionId: sessionId)
             }
         }
         connection.onSessionActivity = { [weak self] sessionId, activity, agent in

@@ -162,20 +162,40 @@ private struct WorkspaceView: View {
                 StatusBarView(coordinator: coordinator)
             }
             .background(.black)
-            // Custom top bar instead of the native window toolbar: on macOS 26
-            // (Tahoe) the native toolbar refuses to right-align `.primaryAction`
-            // items in a split-view detail (ToolbarSpacer(.flexible) is a no-op
-            // there). A plain HStack + Spacer right-aligns deterministically and
-            // matches the iOS/Android layout. LEFT: sidebar toggle, servers,
-            // record. RIGHT (trailing): QR, session name.
-            .safeAreaInset(edge: .top, spacing: 0) {
-                workspaceTopBar
+        }
+        .toolbar {
+            // LEFT: the sidebar toggle is auto-injected by NavigationSplitView
+            // at the standard spot (after the traffic lights). Everything else
+            // goes in `.primaryAction`, which trail-aligns to the right edge of
+            // the detail toolbar — matching the reference app. `.fixed` spacers
+            // (macOS 26) break the shared glass so QR and the name get their own
+            // pills.
+            ToolbarItem(placement: .primaryAction) { serversToolbarButton }
+            ToolbarItem(placement: .primaryAction) { micToolbarButton }
+            if #available(macOS 26.0, *) {
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+                ToolbarItem(placement: .primaryAction) { qrToolbarButton }
+                if let id = coordinator.activeSessionId {
+                    // Own pill, separated from QR. On macOS 26 the toolbar wraps
+                    // the item in its own glass, so DON'T draw a second inner
+                    // background (that nested pill left a visible gap) — pass
+                    // badged: false and let the system glass be the pill.
+                    ToolbarSpacer(.fixed, placement: .primaryAction)
+                    ToolbarItem(placement: .primaryAction) {
+                        sessionNameLabel(id: id, badged: false)
+                    }
+                }
+            } else {
+                ToolbarItem(placement: .primaryAction) { qrToolbarButton }
+                if let id = coordinator.activeSessionId {
+                    ToolbarItem(placement: .primaryAction) {
+                        sessionNameLabel(id: id, badged: true)
+                    }
+                }
             }
         }
-        // Hide the native window toolbar entirely (including the auto-injected
-        // sidebar toggle) so our custom top bar is the only top chrome; the
-        // traffic lights remain in the transparent titlebar.
-        .toolbar(.hidden, for: .windowToolbar)
+        .toolbarBackground(.black, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
         .focusedValue(\.sidebarVisibility, $columnVisibility)
         .task(id: optionsHash) {
             continuousEngine.onUtteranceReady = { text in
@@ -246,48 +266,38 @@ private struct WorkspaceView: View {
         withAnimation(.easeInOut(duration: 1.0)) { refreshSweepProgress = 1 }
     }
 
-    // MARK: - Custom Top Bar
+    // MARK: - Toolbar Item Contents
 
-    /// The window's top chrome. LEFT (leading): sidebar toggle, servers,
-    /// record. RIGHT (trailing, pushed by the Spacer): QR, session name. The
-    /// leading padding clears the traffic-light buttons.
-    private var workspaceTopBar: some View {
-        HStack(spacing: 8) {
-            MacToolbarIconButton(icon: "sidebar.left", help: "Toggle Sidebar") {
-                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-            }
-            MacToolbarIconButton(icon: "server.rack", help: "Servers") {
-                NotificationCenter.default.post(name: .showServerList, object: nil)
-            }
-            MacMicButton(
-                engine: speechEngine,
-                coordinator: coordinator,
-                hasActiveSession: coordinator.activeSessionId != nil,
-                continuousEngine: continuousEngine,
-                settings: settings
-            )
+    private var serversToolbarButton: some View {
+        Button {
+            NotificationCenter.default.post(name: .showServerList, object: nil)
+        } label: {
+            Label("Servers", systemImage: "server.rack")
+        }
+    }
 
-            Spacer(minLength: 12)
+    private var micToolbarButton: some View {
+        MacMicButton(
+            engine: speechEngine,
+            coordinator: coordinator,
+            hasActiveSession: coordinator.activeSessionId != nil,
+            continuousEngine: continuousEngine,
+            settings: settings
+        )
+    }
 
-            if coordinator.activeSessionId != nil {
-                MacToolbarIconButton(icon: "qrcode", help: "Share via QR Code") {
-                    showQRPopover = true
-                }
-                .popover(isPresented: $showQRPopover, arrowEdge: .bottom) {
-                    if let id = coordinator.activeSessionId {
-                        QRCodePopover(sessionId: id, sessionName: coordinator.name(for: id))
-                    }
-                }
-            }
+    private var qrToolbarButton: some View {
+        Button {
+            showQRPopover = true
+        } label: {
+            Label("Share via QR Code", systemImage: "qrcode")
+        }
+        .disabled(coordinator.activeSessionId == nil)
+        .popover(isPresented: $showQRPopover, arrowEdge: .bottom) {
             if let id = coordinator.activeSessionId {
-                sessionNameLabel(id: id)
+                QRCodePopover(sessionId: id, sessionName: coordinator.name(for: id))
             }
         }
-        .padding(.leading, 80)   // clear the traffic-light buttons
-        .padding(.trailing, 12)
-        .frame(height: 38)
-        .frame(maxWidth: .infinity)
-        .background(.black)
     }
 
     /// Session-name badge (matches iOS/Android). Click → ask the server to
@@ -295,16 +305,26 @@ private struct WorkspaceView: View {
     /// re-emits its screen (fresh bytes, not a repaint of the possibly-stale
     /// local grid), plus a local full repaint via `.terminalForceRedraw`, plus
     /// the swipe flash. Right-click → rename.
-    private func sessionNameLabel(id: UUID) -> some View {
+    ///
+    /// The pill sizes to the session name (no fixed width) — it grows and
+    /// shrinks with the text, capped so a very long name truncates instead of
+    /// shoving the toolbar. `badged` keeps the manual pill (used on all OS
+    /// versions here so the label always reads as a tappable chip).
+    @ViewBuilder
+    private func sessionNameLabel(id: UUID, badged: Bool) -> some View {
         Text(coordinator.name(for: id))
-            .font(.system(.caption, design: .rounded))
+            .font(.system(size: 13, weight: .medium, design: .rounded))
             .foregroundStyle(.white)
             .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)   // size to text
+            // Only horizontal padding — let the toolbar drive the vertical
+            // metric so the pill matches the adjacent glass icon group's height
+            // instead of an over-tall hand-set frame. Capsule matches the
+            // group's rounding.
             .padding(.horizontal, 10)
-            .frame(maxWidth: 160)
-            .frame(height: 26)
-            .background(Color.white.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .frame(maxWidth: 260)                            // truncate, don't shove
+            .background(badged ? Color.white.opacity(0.12) : Color.clear)
+            .clipShape(Capsule())
             .onTapGesture {
                 coordinator.viewModel(for: id)?.sendRefresh()
                 NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
@@ -317,27 +337,6 @@ private struct WorkspaceView: View {
                 }
             }
             .help("Click to refresh · right-click to rename")
-    }
-}
-
-/// Compact square icon button for the custom top bar, styled to match the
-/// iOS toolbar buttons (26 pt, translucent-white pill).
-private struct MacToolbarIconButton: View {
-    let icon: String
-    let help: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.8))
-                .frame(width: 30, height: 26)
-                .background(Color.white.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 }
 
