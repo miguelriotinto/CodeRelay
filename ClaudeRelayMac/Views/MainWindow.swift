@@ -164,69 +164,39 @@ private struct WorkspaceView: View {
             .background(.black)
         }
         .toolbar {
-            // LEFT group (leading): sidebar toggle is auto-injected by
-            // NavigationSplitView; then Servers, then Record (mic).
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    NotificationCenter.default.post(name: .showServerList, object: nil)
-                } label: {
-                    Label("Servers", systemImage: "server.rack")
-                }
-            }
-            ToolbarItem(placement: .navigation) {
-                MacMicButton(
-                    engine: speechEngine,
-                    coordinator: coordinator,
-                    hasActiveSession: coordinator.activeSessionId != nil,
-                    continuousEngine: continuousEngine,
-                    settings: settings
-                )
-            }
-            // RIGHT group (trailing / top-right): QR code, then session name.
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showQRPopover = true
-                } label: {
-                    Label("Share via QR Code", systemImage: "qrcode")
-                }
-                .disabled(coordinator.activeSessionId == nil)
-                .popover(isPresented: $showQRPopover, arrowEdge: .bottom) {
-                    if let id = coordinator.activeSessionId {
-                        QRCodePopover(sessionId: id, sessionName: coordinator.name(for: id))
+            // macOS 26 (Tahoe) glass toolbar: adjacent items merge into ONE
+            // shared pill and `.primaryAction` no longer hard-trails. Use
+            // `ToolbarSpacer(.fixed)` to give each control its own pill,
+            // `ToolbarSpacer(.flexible)` to push the QR + name group to the
+            // trailing edge, and `.sharedBackgroundVisibility(.hidden)` to
+            // strip the pill off the name label.
+            if #available(macOS 26.0, *) {
+                // LEFT: sidebar toggle (auto-injected), Servers, Record — each
+                // its own pill.
+                ToolbarItem(placement: .navigation) { serversToolbarButton }
+                ToolbarSpacer(.fixed, placement: .navigation)
+                ToolbarItem(placement: .navigation) { micToolbarButton }
+
+                // Push the trailing group to the top-right.
+                ToolbarSpacer(.flexible)
+
+                // RIGHT: QR (own pill), then session name (no pill).
+                ToolbarItem(placement: .primaryAction) { qrToolbarButton }
+                if let id = coordinator.activeSessionId {
+                    ToolbarSpacer(.fixed, placement: .primaryAction)
+                    ToolbarItem(placement: .primaryAction) {
+                        sessionNameLabel(id: id, badged: false)
                     }
+                    .sharedBackgroundVisibility(.hidden)
                 }
-            }
-            if let id = coordinator.activeSessionId {
-                ToolbarItem(placement: .primaryAction) {
-                    // Session-name badge (matches iOS/Android). Click → ask the
-                    // server to SIGWINCH the session's foreground process group
-                    // so the running app re-emits its screen (fresh bytes, not a
-                    // repaint of the possibly-stale local grid), plus a local
-                    // full repaint via `.terminalForceRedraw`, plus the swipe
-                    // flash. Long-press (right-click menu) → rename.
-                    Text(coordinator.name(for: id))
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .padding(.horizontal, 10)
-                        .frame(maxWidth: 160)
-                        // Match the 26 pt mic button so the badge fills the
-                        // toolbar row top-to-bottom instead of floating shorter.
-                        .frame(height: 26)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .onTapGesture {
-                            coordinator.viewModel(for: id)?.sendRefresh()
-                            NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
-                            flashRefreshFeedback()
-                        }
-                        .contextMenu {
-                            Button("Rename Session…") {
-                                renameText = coordinator.name(for: id)
-                                showRenameAlert = true
-                            }
-                        }
-                        .help("Click to refresh · right-click to rename")
+            } else {
+                ToolbarItem(placement: .navigation) { serversToolbarButton }
+                ToolbarItem(placement: .navigation) { micToolbarButton }
+                ToolbarItem(placement: .primaryAction) { qrToolbarButton }
+                if let id = coordinator.activeSessionId {
+                    ToolbarItem(placement: .primaryAction) {
+                        sessionNameLabel(id: id, badged: true)
+                    }
                 }
             }
         }
@@ -300,6 +270,75 @@ private struct WorkspaceView: View {
         restart.disablesAnimations = true
         withTransaction(restart) { refreshSweepProgress = 0 }
         withAnimation(.easeInOut(duration: 1.0)) { refreshSweepProgress = 1 }
+    }
+
+    // MARK: - Toolbar Item Contents
+
+    private var serversToolbarButton: some View {
+        Button {
+            NotificationCenter.default.post(name: .showServerList, object: nil)
+        } label: {
+            Label("Servers", systemImage: "server.rack")
+        }
+    }
+
+    private var micToolbarButton: some View {
+        MacMicButton(
+            engine: speechEngine,
+            coordinator: coordinator,
+            hasActiveSession: coordinator.activeSessionId != nil,
+            continuousEngine: continuousEngine,
+            settings: settings
+        )
+    }
+
+    private var qrToolbarButton: some View {
+        Button {
+            showQRPopover = true
+        } label: {
+            Label("Share via QR Code", systemImage: "qrcode")
+        }
+        .disabled(coordinator.activeSessionId == nil)
+        .popover(isPresented: $showQRPopover, arrowEdge: .bottom) {
+            if let id = coordinator.activeSessionId {
+                QRCodePopover(sessionId: id, sessionName: coordinator.name(for: id))
+            }
+        }
+    }
+
+    /// Session-name badge (matches iOS/Android). Click → ask the server to
+    /// SIGWINCH the session's foreground process group so the running app
+    /// re-emits its screen (fresh bytes, not a repaint of the possibly-stale
+    /// local grid), plus a local full repaint via `.terminalForceRedraw`, plus
+    /// the swipe flash. Right-click → rename.
+    ///
+    /// `badged` draws the pill manually on pre-macOS-26, where toolbar items
+    /// have no shared background. On macOS 26 the toolbar supplies the glass
+    /// pill, which we strip via `.sharedBackgroundVisibility(.hidden)` at the
+    /// call site, so this passes `badged: false`.
+    @ViewBuilder
+    private func sessionNameLabel(id: UUID, badged: Bool) -> some View {
+        Text(coordinator.name(for: id))
+            .font(.system(.caption, design: .rounded))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: 160)
+            .frame(height: 26)
+            .background(badged ? Color.white.opacity(0.12) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .onTapGesture {
+                coordinator.viewModel(for: id)?.sendRefresh()
+                NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
+                flashRefreshFeedback()
+            }
+            .contextMenu {
+                Button("Rename Session…") {
+                    renameText = coordinator.name(for: id)
+                    showRenameAlert = true
+                }
+            }
+            .help("Click to refresh · right-click to rename")
     }
 }
 
