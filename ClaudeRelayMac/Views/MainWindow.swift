@@ -38,15 +38,6 @@ struct MainWindow: View {
             }
         }
         .background(.black)
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    showServerList = true
-                } label: {
-                    Label("Servers", systemImage: "server.rack")
-                }
-            }
-        }
         .task { await presentServerList() }
         .onAppear { speechEngine.preloadInBackground() }
         .sheet(isPresented: $showServerList) {
@@ -173,6 +164,25 @@ private struct WorkspaceView: View {
             .background(.black)
         }
         .toolbar {
+            // LEFT group (leading): sidebar toggle is auto-injected by
+            // NavigationSplitView; then Servers, then Record (mic).
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    NotificationCenter.default.post(name: .showServerList, object: nil)
+                } label: {
+                    Label("Servers", systemImage: "server.rack")
+                }
+            }
+            ToolbarItem(placement: .navigation) {
+                MacMicButton(
+                    engine: speechEngine,
+                    coordinator: coordinator,
+                    hasActiveSession: coordinator.activeSessionId != nil,
+                    continuousEngine: continuousEngine,
+                    settings: settings
+                )
+            }
+            // RIGHT group (trailing / top-right): QR code, then session name.
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     showQRPopover = true
@@ -185,15 +195,6 @@ private struct WorkspaceView: View {
                         QRCodePopover(sessionId: id, sessionName: coordinator.name(for: id))
                     }
                 }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                MacMicButton(
-                    engine: speechEngine,
-                    coordinator: coordinator,
-                    hasActiveSession: coordinator.activeSessionId != nil,
-                    continuousEngine: continuousEngine,
-                    settings: settings
-                )
             }
             if let id = coordinator.activeSessionId {
                 ToolbarItem(placement: .primaryAction) {
