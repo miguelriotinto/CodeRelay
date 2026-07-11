@@ -207,9 +207,11 @@ private struct WorkspaceView: View {
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(1)
-                        .frame(maxWidth: 140)
-                        .padding(.horizontal, 8)
-                        .frame(minHeight: 22)
+                        .padding(.horizontal, 10)
+                        .frame(maxWidth: 160)
+                        // Match the 26 pt mic button so the badge fills the
+                        // toolbar row top-to-bottom instead of floating shorter.
+                        .frame(height: 26)
                         .background(Color.white.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .onTapGesture {

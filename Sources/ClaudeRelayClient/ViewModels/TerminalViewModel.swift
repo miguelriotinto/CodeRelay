@@ -65,6 +65,14 @@ public final class TerminalViewModel: ObservableObject {
 
     private var terminalSized = false
     private var isReplaying = false
+    /// Set by `endReplay()` when the server's `replay_complete` arrives before
+    /// the terminal view has laid out (`terminalSized == false`). In that race
+    /// — common on macOS, where `updateNSView` is scheduled only *after* the
+    /// `activeSessionId` publish — we can't flush yet, so we defer: the next
+    /// `terminalReady()` emits the RIS clear AND flushes the buffered replay.
+    /// Without this the clear was skipped and replayed content painted over the
+    /// reused view's stale glyphs (the session-switch garble).
+    private var replayComplete = false
 
     // MARK: - Dependencies
 
@@ -136,20 +144,31 @@ public final class TerminalViewModel: ObservableObject {
 
     /// Call once after the terminal view's first `sizeChanged` callback.
     /// Flushes any scrollback that arrived while the view was still laying out,
-    /// unless a replay is in progress (endReplay will flush instead).
+    /// unless a replay is still in progress (endReplay will flush instead).
     public func terminalReady() {
         guard !terminalSized else { return }
         terminalSized = true
         didLogPendingCap = false
         echoDiag.info(
-            "terminalReady session=\(self.sessionId.uuidString.prefix(8), privacy: .public) isReplaying=\(self.isReplaying, privacy: .public) pendingBytes=\(self.pendingOutputBytes, privacy: .public)"
+            "terminalReady session=\(self.sessionId.uuidString.prefix(8), privacy: .public) isReplaying=\(self.isReplaying, privacy: .public) replayComplete=\(self.replayComplete, privacy: .public) pendingBytes=\(self.pendingOutputBytes, privacy: .public)"
         )
+        guard let handler = onTerminalOutput else { return }
+        // Replay still streaming in: clear the reused view now so old glyphs are
+        // gone before the buffered scrollback flushes in `endReplay()`.
         if isReplaying {
-            onTerminalOutput?(Data([0x1B, 0x63]))
+            handler(Data([0x1B, 0x63]))
             return
         }
-        guard let handler = onTerminalOutput else { return }
-        let combined = pendingOutput.reduce(into: Data()) { $0.append($1) }
+        // Replay already finished before we laid out (macOS race): the clear was
+        // deferred to here. Emit RIS first, then flush the buffered replay as one
+        // blob so SwiftTerm renders the reset + fresh content in a single pass —
+        // this is the fix for the session-switch garble.
+        var combined = Data()
+        if replayComplete {
+            replayComplete = false
+            combined.append(contentsOf: [0x1B, 0x63])
+        }
+        combined.append(contentsOf: pendingOutput.reduce(into: Data()) { $0.append($1) })
         pendingOutput.removeAll()
         pendingOutputBytes = 0
         if !combined.isEmpty { handler(combined) }
@@ -170,11 +189,19 @@ public final class TerminalViewModel: ObservableObject {
             "endReplay session=\(self.sessionId.uuidString.prefix(8), privacy: .public) terminalSized=\(self.terminalSized, privacy: .public) onTerminalOutput=\(self.onTerminalOutput != nil, privacy: .public) pendingBytes=\(self.pendingOutputBytes, privacy: .public)"
         )
         if terminalSized, let handler = onTerminalOutput {
+            // View already laid out → RIS was emitted by `terminalReady()` while
+            // replaying; just flush the buffered scrollback.
             let combined = pendingOutput.reduce(into: Data()) { $0.append($1) }
             pendingOutput.removeAll()
             pendingOutputBytes = 0
             didLogPendingCap = false
             if !combined.isEmpty { handler(combined) }
+        } else {
+            // View not laid out yet (macOS: `updateNSView` runs after the
+            // `activeSessionId` publish, so `replay_complete` wins the race).
+            // Defer the RIS clear + flush to the next `terminalReady()`; keep the
+            // buffered scrollback intact so nothing is lost.
+            replayComplete = true
         }
     }
 
@@ -195,6 +222,7 @@ public final class TerminalViewModel: ObservableObject {
         onAwaitingInputChanged = nil
         terminalSized = false
         isReplaying = false
+        replayComplete = false
         pendingOutput.removeAll()
         pendingOutputBytes = 0
         didLogPendingCap = false
@@ -212,6 +240,7 @@ public final class TerminalViewModel: ObservableObject {
         onAwaitingInputChanged = nil
         terminalSized = false
         isReplaying = false
+        replayComplete = false
         pendingOutput.removeAll()
         pendingOutputBytes = 0
         didLogPendingCap = false

@@ -120,6 +120,60 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(received[0], Data([0x1B, 0x63]))
     }
 
+    /// The macOS session-switch garble: the server's `replay_complete` arrives
+    /// (endReplay) BEFORE the terminal view lays out (terminalReady), because
+    /// `updateNSView` is scheduled only after the `activeSessionId` publish. The
+    /// RIS clear that wipes the reused view's stale glyphs must still be emitted
+    /// — and must precede the flushed scrollback — even in this order.
+    func testReplayCompletesBeforeLayoutStillClearsThenFlushes() {
+        let vm = makeVM()
+
+        // Coordinator flow for a cache-hit switch: prepareForReplay → beginReplay
+        // → wire handler → resumeSession streams scrollback → replay_complete.
+        vm.prepareForReplay()
+        vm.beginReplay()
+
+        var received = [Data]()
+        vm.onTerminalOutput = { received.append($0) }
+
+        // Scrollback frames arrive while the view is still laying out.
+        vm.receiveOutput(Data([0x41, 0x42]))    // "AB"
+
+        // replay_complete fires BEFORE terminalReady() (the macOS race). Nothing
+        // should be emitted yet — the view isn't laid out.
+        vm.endReplay()
+        XCTAssertTrue(received.isEmpty, "Must not flush before the view is laid out")
+
+        // Now the view lays out. Expect a single blob: RIS clear + buffered
+        // scrollback, in that order, so old glyphs are wiped before repaint.
+        vm.terminalReady()
+        XCTAssertEqual(received.count, 1)
+        XCTAssertEqual(received[0], Data([0x1B, 0x63, 0x41, 0x42]),
+            "RIS (ESC c) must precede the flushed scrollback in one pass")
+    }
+
+    /// The normal (iOS) ordering: the view lays out while still replaying, so
+    /// RIS fires immediately from terminalReady(); the buffered scrollback then
+    /// flushes on endReplay(). Guards against a double-RIS regression.
+    func testReplayLayoutBeforeCompleteClearsOnceThenFlushes() {
+        let vm = makeVM()
+        vm.prepareForReplay()
+        vm.beginReplay()
+
+        var received = [Data]()
+        vm.onTerminalOutput = { received.append($0) }
+
+        // View lays out first → RIS emitted immediately.
+        vm.terminalReady()
+        XCTAssertEqual(received, [Data([0x1B, 0x63])])
+
+        // Scrollback arrives, then replay_complete flushes it (no second RIS).
+        vm.receiveOutput(Data([0x41, 0x42]))
+        vm.endReplay()
+        XCTAssertEqual(received.count, 2)
+        XCTAssertEqual(received[1], Data([0x41, 0x42]))
+    }
+
     func testResetForReplaySendsRIS() {
         let vm = makeVM()
         var received = [Data]()

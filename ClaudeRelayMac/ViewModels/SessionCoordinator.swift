@@ -59,15 +59,6 @@ final class SessionCoordinator: SharedSessionCoordinator {
         isAuthenticated = true
     }
 
-    /// After a session's replay flushes into its (reused, previously-hidden)
-    /// terminal view, force a full repaint so stale glyphs from the prior
-    /// session don't bleed through — the switch-garble the user otherwise had
-    /// to fix by resizing the window. `TerminalContainerView` observes this and
-    /// re-syncs SwiftTerm's geometry + invalidates the full screen.
-    override func didEndReplay(sessionId: UUID) {
-        NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
-    }
-
     // MARK: - Recovery Observers
 
     private func registerRecoveryObservers() {
