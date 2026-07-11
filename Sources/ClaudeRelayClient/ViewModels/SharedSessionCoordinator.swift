@@ -150,6 +150,14 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     open func didAuthenticate() {}
 
+    /// Called on the main actor right after a session's ring-buffer replay has
+    /// been flushed to its terminal view (`endReplay()`). Platform subclasses
+    /// override this to force a full repaint — the freshly-fed replay content
+    /// on a reused, previously-hidden native terminal view only marks changed
+    /// lines dirty, so without a full-screen invalidate the prior session's
+    /// glyphs can bleed through until the next resize. Default is a no-op.
+    open func didEndReplay(sessionId: UUID) {}
+
     public func startNetworkRecovery() {
         guard networkMonitor == nil else { return }
         let monitor = NetworkMonitor()
@@ -215,6 +223,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         connection.onReplayComplete = { [weak self] sessionId in
             Task { @MainActor [weak self] in
                 self?.terminalViewModels[sessionId]?.endReplay()
+                self?.didEndReplay(sessionId: sessionId)
             }
         }
         connection.onSessionActivity = { [weak self] sessionId, activity, agent in

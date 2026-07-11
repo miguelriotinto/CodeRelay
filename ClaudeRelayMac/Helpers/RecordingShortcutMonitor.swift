@@ -59,4 +59,8 @@ final class RecordingShortcutMonitor {
 extension Notification.Name {
     static let toggleSpeechRecording = Notification.Name("toggleSpeechRecording")
     static let showServerList = Notification.Name("com.clauderelay.mac.showServerList")
+    /// Force a full repaint of the active terminal (clears rare glyph overlap).
+    /// Posted after a session's replay flushes (switch-garble auto-fix) and when
+    /// the user taps the session-name badge; handled by `TerminalContainerView`.
+    static let terminalForceRedraw = Notification.Name("terminalForceRedraw")
 }

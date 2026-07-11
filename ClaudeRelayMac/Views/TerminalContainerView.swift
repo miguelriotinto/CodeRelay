@@ -87,20 +87,64 @@ struct TerminalContainerView: NSViewRepresentable {
     /// fire `makeFirstResponder` on actual session switches. `updateNSView`
     /// is called on many SwiftUI triggers (size change, coordinator publish,
     /// tab switch); refocusing on each one wastes work and can steal focus
-    /// from modals.
-    final class FocusTracker {
+    /// from modals. Also owns the force-redraw observer so its lifetime
+    /// matches the host view, not any single SwiftUI render.
+    final class Coordinator {
         var lastFocusedId: UUID?
+        var redrawObserver: Any?
+
+        deinit {
+            if let obs = redrawObserver {
+                NotificationCenter.default.removeObserver(obs)
+            }
+        }
     }
 
-    func makeCoordinator() -> FocusTracker {
-        FocusTracker()
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
     }
 
     func makeNSView(context: Context) -> NSView {
         let host = NSView(frame: .zero)
         host.wantsLayer = true
         host.layer?.backgroundColor = NSColor.black.cgColor
+        installRedrawObserver(host: host, context: context)
         return host
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        if let obs = coordinator.redrawObserver {
+            NotificationCenter.default.removeObserver(obs)
+            coordinator.redrawObserver = nil
+        }
+    }
+
+    /// Resolves the rare glyph-overlap artifact that a window resize fixes
+    /// today. A resize works because it runs SwiftTerm's `processSizeChange`
+    /// → `updateFullScreen()` + `needsDisplay`, a *full* repaint of every
+    /// cell — the overlap is stale pixels left by the reused, previously-hidden
+    /// terminal view (feeds while hidden only mark changed lines dirty, so
+    /// showing the view repaints just those, leaving the prior session's glyphs
+    /// underneath). This re-syncs the scroller geometry via the public
+    /// `changeScrollback(_:)` (re-applying the CURRENT value is a no-op to the
+    /// buffer) and forces a full repaint — the resize fix without resizing.
+    ///
+    /// Posted on `.terminalForceRedraw`: automatically when a session's replay
+    /// completes (the switch-garble auto-fix) and manually from the session-name
+    /// button (the refresh feature).
+    private func installRedrawObserver(host: NSView, context: Context) {
+        if let existing = context.coordinator.redrawObserver {
+            NotificationCenter.default.removeObserver(existing)
+        }
+        context.coordinator.redrawObserver = NotificationCenter.default.addObserver(
+            forName: .terminalForceRedraw, object: nil, queue: .main
+        ) { [weak host] _ in
+            guard let terminal = host?.subviews.first(where: { !$0.isHidden }) as? PasteAwareTerminalView else { return }
+            let currentScrollback = terminal.getTerminal().options.scrollback
+            terminal.changeScrollback(currentScrollback)
+            terminal.getTerminal().updateFullScreen()
+            terminal.needsDisplay = true
+        }
     }
 
     func updateNSView(_ host: NSView, context: Context) {
