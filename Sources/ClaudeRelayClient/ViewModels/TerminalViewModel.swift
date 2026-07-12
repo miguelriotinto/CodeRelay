@@ -58,6 +58,10 @@ public final class TerminalViewModel: ObservableObject {
     public var onTitleChanged: ((String) -> Void)?
     /// Installed by the terminal view. Fires when `awaitingInput` transitions.
     public var onAwaitingInputChanged: ((Bool) -> Void)?
+    /// Installed by the terminal view. Fires after replay bytes have actually
+    /// been delivered to that view, so it can re-sync geometry and repaint the
+    /// correct session even when `replay_complete` beats view presentation.
+    public var onReplayFlushed: (() -> Void)?
     /// Installed by the coordinator. Fires whenever the view reports a new
     /// terminal size, so the coordinator can remember the last-known geometry
     /// to seed the next `session_create`.
@@ -164,7 +168,8 @@ public final class TerminalViewModel: ObservableObject {
         // blob so SwiftTerm renders the reset + fresh content in a single pass —
         // this is the fix for the session-switch garble.
         var combined = Data()
-        if replayComplete {
+        let completedReplay = replayComplete
+        if completedReplay {
             replayComplete = false
             combined.append(contentsOf: [0x1B, 0x63])
         }
@@ -172,6 +177,7 @@ public final class TerminalViewModel: ObservableObject {
         pendingOutput.removeAll()
         pendingOutputBytes = 0
         if !combined.isEmpty { handler(combined) }
+        if completedReplay { onReplayFlushed?() }
     }
 
     /// Enters replay-buffering mode. All output is held until `endReplay()`.
@@ -196,6 +202,7 @@ public final class TerminalViewModel: ObservableObject {
             pendingOutputBytes = 0
             didLogPendingCap = false
             if !combined.isEmpty { handler(combined) }
+            onReplayFlushed?()
         } else {
             // View not laid out yet (macOS: `updateNSView` runs after the
             // `activeSessionId` publish, so `replay_complete` wins the race).
@@ -220,6 +227,7 @@ public final class TerminalViewModel: ObservableObject {
         onTerminalOutput = nil
         onTitleChanged = nil
         onAwaitingInputChanged = nil
+        onReplayFlushed = nil
         terminalSized = false
         isReplaying = false
         replayComplete = false
@@ -238,6 +246,7 @@ public final class TerminalViewModel: ObservableObject {
         onTerminalOutput = nil
         onTitleChanged = nil
         onAwaitingInputChanged = nil
+        onReplayFlushed = nil
         terminalSized = false
         isReplaying = false
         replayComplete = false

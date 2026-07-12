@@ -129,9 +129,8 @@ struct TerminalContainerView: NSViewRepresentable {
     /// `changeScrollback(_:)` (re-applying the CURRENT value is a no-op to the
     /// buffer) and forces a full repaint — the resize fix without resizing.
     ///
-    /// Posted on `.terminalForceRedraw`: automatically when a session's replay
-    /// completes (the switch-garble auto-fix) and manually from the session-name
-    /// button (the refresh feature).
+    /// Posted on `.terminalForceRedraw` by the session-name button. Replay
+    /// completion targets its cached view directly through `onReplayFlushed`.
     private func installRedrawObserver(host: NSView, context: Context) {
         if let existing = context.coordinator.redrawObserver {
             NotificationCenter.default.removeObserver(existing)
@@ -184,6 +183,15 @@ struct TerminalContainerView: NSViewRepresentable {
         viewModel.onTerminalOutput = { [weak view = cached.view] data in
             guard let view else { return }
             view.feed(byteArray: Array(data)[...])
+        }
+        viewModel.onReplayFlushed = { [weak view = cached.view] in
+            DispatchQueue.main.async {
+                guard let view else { return }
+                let currentScrollback = view.getTerminal().options.scrollback
+                view.changeScrollback(currentScrollback)
+                view.getTerminal().updateFullScreen()
+                view.needsDisplay = true
+            }
         }
         // Order matters: terminalReady() flushes pending buffer through the newly-wired callback
         viewModel.terminalReady()

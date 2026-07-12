@@ -73,6 +73,9 @@ class TerminalSessionVm(
      */
     var onAwaitingInputChanged: ((Boolean) -> Unit)? = null
 
+    /** Fires after replay bytes have reached this terminal's engine. */
+    var onReplayFlushed: (() -> Unit)? = null
+
     /**
      * True when output has been silent long enough that the session is likely
      * waiting for user input. Driven by [detectInputPrompt]. Mirrors Swift's
@@ -93,6 +96,7 @@ class TerminalSessionVm(
 
     private var terminalSized = false
     private var isReplaying = false
+    private var replayComplete = false
 
     private val pendingOutput = ArrayDeque<ByteArray>()
     private var pendingOutputBytes = 0
@@ -141,7 +145,10 @@ class TerminalSessionVm(
             onTerminalOutput?.invoke(ReplayProtocol.RIS)
             return
         }
-        flushPending()
+        val completedReplay = replayComplete
+        replayComplete = false
+        flushPending(prefix = if (completedReplay) ReplayProtocol.RIS else ByteArray(0))
+        if (completedReplay) onReplayFlushed?.invoke()
     }
 
     /** Enters replay-buffering mode. All output is held until [endReplay]. */
@@ -159,6 +166,9 @@ class TerminalSessionVm(
         isReplaying = false
         if (terminalSized) {
             flushPending()
+            onReplayFlushed?.invoke()
+        } else {
+            replayComplete = true
         }
     }
 
@@ -191,17 +201,18 @@ class TerminalSessionVm(
 
     /**
      * Concatenates the whole pending deque into one [ByteArray], emits it once,
-     * and clears the buffer. A single feed — no incremental render. Empty
-     * buffers emit nothing (parity with Swift's `if !combined.isEmpty`).
+     * and clears the buffer. A single feed — no incremental render. An empty
+     * buffer emits nothing unless a deferred replay reset supplies [prefix].
      */
-    private fun flushPending() {
+    private fun flushPending(prefix: ByteArray = ByteArray(0)) {
         val handler = onTerminalOutput ?: return
-        if (pendingOutput.isEmpty()) {
+        if (pendingOutput.isEmpty() && prefix.isEmpty()) {
             pendingOutputBytes = 0
             return
         }
-        val combined = ByteArray(pendingOutputBytes)
-        var offset = 0
+        val combined = ByteArray(prefix.size + pendingOutputBytes)
+        prefix.copyInto(combined)
+        var offset = prefix.size
         for (chunk in pendingOutput) {
             chunk.copyInto(combined, offset)
             offset += chunk.size
@@ -220,8 +231,10 @@ class TerminalSessionVm(
         promptDebounceJob = null
         onTerminalOutput = null
         onAwaitingInputChanged = null
+        onReplayFlushed = null
         terminalSized = false
         isReplaying = false
+        replayComplete = false
         pendingOutput.clear()
         pendingOutputBytes = 0
         didLogPendingCap = false

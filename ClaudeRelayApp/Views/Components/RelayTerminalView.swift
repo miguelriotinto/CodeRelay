@@ -214,6 +214,15 @@ struct TerminalHostView: UIViewRepresentable {
                 }
             }
         }
+        viewModel.onReplayFlushed = { [weak view = cached.view] in
+            DispatchQueue.main.async {
+                guard let view else { return }
+                let currentScrollback = view.getTerminal().options.scrollback
+                view.changeScrollback(currentScrollback)
+                view.getTerminal().updateFullScreen()
+                view.setNeedsDisplay(view.bounds)
+            }
+        }
         // `terminalReady` is itself idempotent, but `updateUIView` fires on every
         // coordinator publish. Only dispatch once per session to avoid the
         // guard + pending-buffer flush loop cost on each update pass. Tracking

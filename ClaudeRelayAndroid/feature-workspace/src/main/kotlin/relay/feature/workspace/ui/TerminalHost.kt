@@ -92,6 +92,11 @@ fun TerminalHost(
         ).also { reportSizeHolder[0] = it::reportSize }
     }
 
+    DisposableEffect(vm, engine) {
+        vm.onReplayFlushed = { engine.redraw() }
+        onDispose { vm.onReplayFlushed = null }
+    }
+
     // Re-show the soft keyboard when the user taps the terminal. termlib types
     // through its OWN raw `ImeInputView` (an Android View with a custom
     // InputConnection), NOT a Compose text field — so `LocalSoftwareKeyboardController`

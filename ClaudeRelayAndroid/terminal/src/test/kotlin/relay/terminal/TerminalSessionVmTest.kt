@@ -147,6 +147,8 @@ class TerminalSessionVmTest {
         vm.beginReplay()
         val received = mutableListOf<ByteArray>()
         vm.onTerminalOutput = { received.add(it) }
+        var replayFlushCount = 0
+        vm.onReplayFlushed = { replayFlushCount++ }
         // terminalReady during replay emits RIS only — drop it so we can assert
         // the flush blob in isolation.
         vm.terminalReady()
@@ -161,6 +163,7 @@ class TerminalSessionVmTest {
 
         assertEquals(1, received.size, "endReplay must flush exactly ONE contiguous blob")
         assertArrayEquals("foobar".toByteArray(Charsets.US_ASCII), received[0])
+        assertEquals(1, replayFlushCount, "the terminal that consumed replay must redraw once")
     }
 
     // Plan case: terminalReady during replay emits RIS only (one emit == RIS).
@@ -242,6 +245,8 @@ class TerminalSessionVmTest {
         val vm = makeVm()
         val received = mutableListOf<ByteArray>()
         vm.onTerminalOutput = { received.add(it) }
+        var replayFlushCount = 0
+        vm.onReplayFlushed = { replayFlushCount++ }
 
         vm.beginReplay()
         vm.receiveOutput("foo".toByteArray(Charsets.US_ASCII))
@@ -250,11 +255,14 @@ class TerminalSessionVmTest {
         // endReplay while NOT sized: must not emit; buffer is retained.
         vm.endReplay()
         assertTrue(received.isEmpty(), "endReplay before terminalReady must not flush")
+        assertEquals(0, replayFlushCount, "redraw waits until replay bytes reach the terminal")
 
-        // terminalReady (no longer replaying) flushes the retained buffer once.
+        // terminalReady (no longer replaying) clears then flushes the retained
+        // buffer once, matching Swift's deferred replay-complete ordering.
         vm.terminalReady()
         assertEquals(1, received.size)
-        assertArrayEquals("foobar".toByteArray(Charsets.US_ASCII), received[0])
+        assertArrayEquals(ReplayProtocol.RIS + "foobar".toByteArray(Charsets.US_ASCII), received[0])
+        assertEquals(1, replayFlushCount)
     }
 
     // endReplay is a no-op when not replaying (guard parity with Swift).

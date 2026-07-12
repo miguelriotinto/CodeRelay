@@ -135,6 +135,8 @@ final class TerminalViewModelTests: XCTestCase {
 
         var received = [Data]()
         vm.onTerminalOutput = { received.append($0) }
+        var replayFlushCount = 0
+        vm.onReplayFlushed = { replayFlushCount += 1 }
 
         // Scrollback frames arrive while the view is still laying out.
         vm.receiveOutput(Data([0x41, 0x42]))    // "AB"
@@ -143,6 +145,7 @@ final class TerminalViewModelTests: XCTestCase {
         // should be emitted yet — the view isn't laid out.
         vm.endReplay()
         XCTAssertTrue(received.isEmpty, "Must not flush before the view is laid out")
+        XCTAssertEqual(replayFlushCount, 0, "Redraw must wait until replay bytes reach the terminal")
 
         // Now the view lays out. Expect a single blob: RIS clear + buffered
         // scrollback, in that order, so old glyphs are wiped before repaint.
@@ -150,6 +153,7 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(received.count, 1)
         XCTAssertEqual(received[0], Data([0x1B, 0x63, 0x41, 0x42]),
             "RIS (ESC c) must precede the flushed scrollback in one pass")
+        XCTAssertEqual(replayFlushCount, 1, "The terminal whose replay flushed must be redrawn once")
     }
 
     /// The normal (iOS) ordering: the view lays out while still replaying, so
@@ -162,6 +166,8 @@ final class TerminalViewModelTests: XCTestCase {
 
         var received = [Data]()
         vm.onTerminalOutput = { received.append($0) }
+        var replayFlushCount = 0
+        vm.onReplayFlushed = { replayFlushCount += 1 }
 
         // View lays out first → RIS emitted immediately.
         vm.terminalReady()
@@ -172,6 +178,7 @@ final class TerminalViewModelTests: XCTestCase {
         vm.endReplay()
         XCTAssertEqual(received.count, 2)
         XCTAssertEqual(received[1], Data([0x41, 0x42]))
+        XCTAssertEqual(replayFlushCount, 1, "Replay completion must redraw the terminal that received the bytes")
     }
 
     func testResetForReplaySendsRIS() {
