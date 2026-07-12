@@ -373,6 +373,17 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             let cachedNow = terminalCache.cachedIds
             let staleVMs = Set(terminalViewModels.keys).subtracting(serverIds).subtracting(cachedNow)
             for id in staleVMs { terminalViewModels.removeValue(forKey: id) }
+
+            // Reconcile the active session: the list only contains sessions this
+            // token still owns, so if the active session is gone it was stolen
+            // (attached from another device) or terminated. Clear the terminal
+            // so it stops showing stale content. This is the belt-and-suspenders
+            // for a missed real-time `session_stolen` push — that message is
+            // fire-and-forget, so a device whose socket was down at the steal
+            // instant (backgrounded / asleep) would otherwise never clean up.
+            if let active = activeSessionId, !serverIds.contains(active) {
+                activeSessionId = nil
+            }
         } catch {
             // Non-critical refresh.
         }

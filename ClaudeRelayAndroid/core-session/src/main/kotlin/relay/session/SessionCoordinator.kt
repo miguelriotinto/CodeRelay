@@ -512,6 +512,21 @@ class SessionCoordinator(
                 if (id !in existsIds) activityCoordinator.forgetSession(id)
             }
         }
+
+        // Reconcile the ACTIVE session against the TOKEN-SCOPED `list` (not
+        // existsIds): the token-scoped list is exactly the sessions this device
+        // still owns, so if the active session dropped out of it, another device
+        // attached it (stolen) — even though it may still be alive under the new
+        // token in existsIds. Clear the terminal so it stops showing stale
+        // content. This is the belt-and-suspenders for a MISSED real-time
+        // `session_stolen` push (fire-and-forget: a device whose socket was down
+        // at the steal instant never receives it), and mirrors the Swift fix.
+        val active = _activeSessionId.value
+        if (active != null && list.none { it.id == active }) {
+            _activeSessionId.value = null
+            evictTerminal(active)
+            recomputeActiveSessions()
+        }
     }
 
     // MARK: - Session-op tracking
