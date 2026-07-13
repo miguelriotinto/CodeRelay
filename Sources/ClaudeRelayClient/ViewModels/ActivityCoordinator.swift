@@ -122,35 +122,15 @@ public final class ActivityCoordinator: ObservableObject {
 
     /// Cleanup summary returned from `handleSessionStolen`. The parent
     /// coordinator owns the active-session slot and the terminal cache, so
-    /// it performs the corresponding cleanup using these values.
-    public struct StolenSessionCleanup {
-        public let sessionId: UUID
-        public let sessionName: String
-        public let shortId: String
-    }
-
-    /// Apply "session stolen by another device" semantics. Clears per-session
-    /// activity state and raises the alert flags. Returns a cleanup summary
-    /// so the caller can evict the terminal / clear active session.
-    public func handleSessionStolen(
-        sessionId: UUID,
-        nameLookup: (UUID) -> String
-    ) -> StolenSessionCleanup {
-        let sessionName = nameLookup(sessionId)
-        let shortId = String(sessionId.uuidString.prefix(8))
-
-        agentSessions.removeValue(forKey: sessionId)
-        sessionsAwaitingInput.remove(sessionId)
-
-        stolenSessionName = sessionName
-        stolenSessionShortId = shortId
+    /// Raise the "Session Moved" alert for a session lost to another device.
+    /// The coordinator handles the sidebar/tab/terminal cleanup separately (and
+    /// before this call); this only flips the @Published alert flags so the UI
+    /// presents the OK-only popup. Used for BOTH active and sidebar-only lost
+    /// sessions so the user always gets the notice.
+    public func presentStolenAlert(sessionId: UUID, name: String) {
+        stolenSessionName = name
+        stolenSessionShortId = String(sessionId.uuidString.prefix(8))
         showSessionStolen = true
-
-        return StolenSessionCleanup(
-            sessionId: sessionId,
-            sessionName: sessionName,
-            shortId: shortId
-        )
     }
 
     /// Clear activity state for a locally terminated session.

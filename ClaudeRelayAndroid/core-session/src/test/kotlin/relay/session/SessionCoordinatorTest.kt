@@ -653,7 +653,7 @@ class SessionCoordinatorTest {
     }
 
     @Test
-    fun `onSessionStolen of a NON-active session is silent but still unclaims and evicts`() = runTest {
+    fun `onSessionStolen of a NON-active session removes it AND raises the alert`() = runTest {
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
@@ -677,11 +677,13 @@ class SessionCoordinatorTest {
         conn.deliver(ServerMessage.SessionStolen(stolen))
         advanceUntilIdle()
 
-        // SILENT: no alert, not added to the stolen set; active is untouched.
-        assertNull(coord.stolenAlert.value, "no stolen alert for a non-active session")
-        assertFalse(coord.sessionsStolen.value.contains(stolen), "non-active steal does not mark the stolen set")
+        // The reported bug fix: a stolen sidebar session must ALSO alert, not
+        // just clean up silently.
+        assertEquals(stolen, coord.stolenAlert.value?.sessionId, "stolen alert raised for the sidebar session")
+        assertTrue(coord.sessionsStolen.value.contains(stolen), "non-active steal marks the stolen set")
+        // The active session the user is looking at is untouched.
         assertEquals(active, coord.activeSessionId.value, "active session unchanged")
-        // But ownership IS relinquished and the cached terminal evicted.
+        // Ownership relinquished and the cached terminal evicted.
         assertFalse(store.owned.contains(stolen), "non-active stolen session unclaimed")
         assertNull(coord.terminalCache.view(stolen), "non-active stolen terminal evicted")
     }

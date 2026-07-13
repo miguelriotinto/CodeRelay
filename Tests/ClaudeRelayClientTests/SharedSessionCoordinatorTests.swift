@@ -426,6 +426,44 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == keepId }))
     }
 
+    /// The reported bug: a stolen session that is OWNED but NOT the active one
+    /// (sitting in the sidebar / tab bar) must also disappear immediately AND
+    /// raise the "Session Moved" alert — not clean up silently.
+    func testSessionStolenNonActiveStillRemovesAndAlerts() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+
+        let stolenId = UUID()      // owned, shown in sidebar, NOT active
+        let activeId = UUID()      // the session the user is actually looking at
+
+        coordinator.claimSession(stolenId)
+        coordinator.claimSession(activeId)
+        coordinator.activeSessionId = activeId
+        coordinator.sessions = [
+            SessionInfo(id: stolenId, state: .activeDetached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
+            SessionInfo(id: activeId, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
+        ]
+
+        XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
+
+        connection.onSessionStolen?(stolenId)
+        let exp = expectation(description: "stolen callback dispatched")
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 1.0)
+
+        // Disappears from the sidebar/tab bar…
+        XCTAssertFalse(coordinator.ownedSessionIds.contains(stolenId))
+        XCTAssertFalse(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
+        // …and the alert fires even though it wasn't the active session.
+        XCTAssertTrue(coordinator.showSessionStolen)
+        // The active session the user is looking at is untouched.
+        XCTAssertEqual(coordinator.activeSessionId, activeId)
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(activeId))
+    }
+
     // MARK: - Session Renamed Handling
 
     func testSessionRenamedUpdatesLocalName() {

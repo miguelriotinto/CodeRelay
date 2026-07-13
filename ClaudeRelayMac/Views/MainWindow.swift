@@ -254,6 +254,20 @@ private struct WorkspaceView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .alert(
+            "Session Moved",
+            isPresented: Binding(
+                get: { coordinator.activityCoordinator.showSessionStolen },
+                set: { coordinator.activityCoordinator.showSessionStolen = $0 }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if let name = coordinator.activityCoordinator.stolenSessionName,
+               let shortId = coordinator.activityCoordinator.stolenSessionShortId {
+                Text("\(name) (\(shortId)) was attached from another device.")
+            }
+        }
     }
 
     /// Sweep the flash band across the terminal over ~1 s. Progress is snapped

@@ -517,15 +517,13 @@ class SessionCoordinator(
         // existsIds): the token-scoped list is exactly the sessions this device
         // still owns, so if the active session dropped out of it, another device
         // attached it (stolen) — even though it may still be alive under the new
-        // token in existsIds. Clear the terminal so it stops showing stale
-        // content. This is the belt-and-suspenders for a MISSED real-time
-        // `session_stolen` push (fire-and-forget: a device whose socket was down
-        // at the steal instant never receives it), and mirrors the Swift fix.
+        // token in existsIds. Run the same cleanup as the live push (remove from
+        // UI AND raise the "Session Moved" alert). Belt-and-suspenders for a
+        // MISSED real-time `session_stolen` push (fire-and-forget: a device
+        // whose socket was down at the steal instant never receives it).
         val active = _activeSessionId.value
         if (active != null && list.none { it.id == active }) {
-            _activeSessionId.value = null
-            evictTerminal(active)
-            recomputeActiveSessions()
+            cleanUpStolenSession(active)
         }
     }
 
@@ -767,28 +765,24 @@ class SessionCoordinator(
     }
 
     private fun onSessionStolen(sessionId: UUID) {
-        val wasActive = _activeSessionId.value == sessionId
+        // Idempotency guard: ignore a duplicate/late push (or the reconciliation
+        // backstop) for a session already handled.
+        if (sessionId !in ownershipStore.owned && _activeSessionId.value != sessionId) return
+        cleanUpStolenSession(sessionId)
+    }
 
-        // Only raise the "Session Moved" alert when the user's focused terminal
-        // is displaced; sidebar-only sessions disappear silently on the next list
-        // refresh (SharedSessionCoordinator.swift:601-625).
-        if (wasActive) {
-            // sessionStolen() raises the alert AND relinquishes ownership
-            // (unclaims internally) — do NOT double-unclaim here.
-            activityCoordinator.sessionStolen(sessionId) { name(it) }
-            _activeSessionId.value = null
-        } else {
-            // Silent path: forget activity state WITHOUT raising the alert.
-            // forgetSession() does NOT unclaim (only sessionStolen() does), so
-            // unclaim explicitly to match Swift, which unclaims in both branches
-            // (SharedSessionCoordinator.swift:615, :622).
-            activityCoordinator.forgetSession(sessionId)
-            unclaimSession(sessionId)
-        }
-
-        // Refresh the owned-id mirror (covers the active branch's internal
-        // unclaim), then evict + fetch in BOTH branches
-        // (SharedSessionCoordinator.swift:622-625).
+    /**
+     * Removes a session attached from another device and raises the "Session
+     * Moved" alert. Order matches the product spec: the session disappears from
+     * the sidebar + tab bar FIRST (clear active, unclaim → drops out of
+     * `activeSessions`, evict terminal), THEN the alert is shown — for ANY lost
+     * session, not just the active one. Shared by the live `session_stolen`
+     * push and the `fetchSessions` reconciliation backstop.
+     */
+    fun cleanUpStolenSession(sessionId: UUID) {
+        if (_activeSessionId.value == sessionId) _activeSessionId.value = null
+        // sessionStolen() clears activity, unclaims, AND raises the alert.
+        activityCoordinator.sessionStolen(sessionId) { name(it) }
         _ownedSessionIds.value = ownershipStore.owned
         recomputeActiveSessions()
         evictTerminal(sessionId)

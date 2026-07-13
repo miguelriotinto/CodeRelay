@@ -87,7 +87,13 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// re-render when agent / awaiting-input / stolen state changes.
     private var activityObjectWillChangeSubscription: AnyCancellable?
 
-    public private(set) var ownedSessionIds: Set<UUID> = []
+    /// Must be `@Published`: `activeSessions` (the sidebar + tab-bar data
+    /// source) filters `sessions` by this set, so a change here has to trigger
+    /// a SwiftUI re-render. When it wasn't published, unclaiming a stolen
+    /// session mutated only this set — no `objectWillChange` fired — so the
+    /// lost session lingered in the sidebar/tab bar until the next
+    /// `fetchSessions` happened to reassign `sessions`.
+    @Published public private(set) var ownedSessionIds: Set<UUID> = []
 
     public var activeSessions: [SessionInfo] {
         sessions
@@ -335,6 +341,19 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             }
 
             let serverIds = Set(sessions.map { $0.id })
+
+            // Snapshot BEFORE the prune below: if the active session is gone
+            // from the token-scoped list, it was stolen/terminated. We must
+            // capture this now because `pruneToServerSessions` unclaims it from
+            // `ownedSessionIds`, which would otherwise defeat the ownership
+            // guard in `cleanUpStolenSession`.
+            let stolenActive: UUID? = {
+                guard let active = activeSessionId,
+                      !serverIds.contains(active),
+                      ownedSessionIds.contains(active) else { return nil }
+                return active
+            }()
+
             // Prune names/owned/agents in one pass through the store. Each
             // `save*` inside `pruneToServerSessions` no-ops when nothing was
             // stale, so this does not churn UserDefaults (C-21).
@@ -359,15 +378,16 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             let staleVMs = Set(terminalViewModels.keys).subtracting(serverIds).subtracting(cachedNow)
             for id in staleVMs { terminalViewModels.removeValue(forKey: id) }
 
-            // Reconcile the active session: the list only contains sessions this
-            // token still owns, so if the active session is gone it was stolen
-            // (attached from another device) or terminated. Clear the terminal
-            // so it stops showing stale content. This is the belt-and-suspenders
-            // for a missed real-time `session_stolen` push — that message is
-            // fire-and-forget, so a device whose socket was down at the steal
-            // instant (backgrounded / asleep) would otherwise never clean up.
-            if let active = activeSessionId, !serverIds.contains(active) {
-                activeSessionId = nil
+            // Reconcile the active session (snapshotted pre-prune): run the same
+            // cleanup as the live push — remove it from the UI AND raise the
+            // "Session Moved" alert. Belt-and-suspenders for a missed real-time
+            // `session_stolen` push (fire-and-forget: a device whose socket was
+            // down at the steal instant never receives it). Re-claim first so
+            // `cleanUpStolenSession`'s ownership guard passes even though the
+            // prune above already unclaimed it.
+            if let stolenActive {
+                claimSession(stolenActive)
+                cleanUpStolenSession(stolenActive)
             }
         } catch {
             // Non-critical refresh.
@@ -626,28 +646,35 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     }
 
     private func handleSessionStolen(sessionId: UUID) {
-        let wasActive = activeSessionId == sessionId
+        // Only act on sessions this device still thinks it owns — otherwise a
+        // duplicate/late steal push (or the reconciliation backstop that also
+        // calls this) would re-raise the alert for an already-handled session.
+        guard ownedSessionIds.contains(sessionId) || activeSessionId == sessionId else { return }
+        cleanUpStolenSession(sessionId)
+    }
 
-        // Only show the alert when the user's focused terminal is displaced.
-        // Sidebar-only sessions disappear silently on the next list refresh.
-        if wasActive {
-            _ = activityCoordinator.handleSessionStolen(
-                sessionId: sessionId,
-                nameLookup: { [weak self] id in
-                    self?.name(for: id) ?? id.uuidString.prefix(8).description
-                }
-            )
+    /// Removes a session that was attached from another device and surfaces the
+    /// "Session Moved" alert. Ordering matters and matches the product spec:
+    /// the session must vanish from the sidebar + tab bar FIRST (clear
+    /// `activeSessionId`, unclaim → drops out of `activeSessions`, evict the
+    /// terminal), THEN the alert is raised — so when the user taps OK the UI is
+    /// already clean. The alert fires for ANY lost session, not just the
+    /// actively-focused one. Shared by the live `session_stolen` push and the
+    /// `fetchSessions` reconciliation backstop (missed-push case).
+    func cleanUpStolenSession(_ sessionId: UUID) {
+        let stolenName = name(for: sessionId)
+
+        // 1) Remove from the UI first.
+        if activeSessionId == sessionId {
             activeSessionId = nil
-        } else {
-            activityCoordinator.forgetSession(sessionId)
         }
-
-        // Suppress any in-flight sends from a VM that a view may still hold
-        // a reference to, then release this device's claim so the sidebar
-        // stops listing the session as locally owned.
         terminalViewModels[sessionId]?.isSendingSuppressed = true
-        unclaimSession(sessionId)
+        activityCoordinator.forgetSession(sessionId)
+        unclaimSession(sessionId)          // @Published → sidebar/tab re-render
         evictTerminal(for: sessionId)
+
+        // 2) Then raise the alert (OK-only). ActivityCoordinator owns the flag.
+        activityCoordinator.presentStolenAlert(sessionId: sessionId, name: stolenName)
 
         Task { await fetchSessions() }
     }
