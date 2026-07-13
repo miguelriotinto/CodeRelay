@@ -46,7 +46,7 @@ targets:
         SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
         SUPPORTS_MACCATALYST: NO
         MARKETING_VERSION: "1.4.1"
-        CURRENT_PROJECT_VERSION: "156"
+        CURRENT_PROJECT_VERSION: "157"
         GENERATE_INFOPLIST_FILE: YES
     info:
       path: ClaudeRelayApp/Info.plist
@@ -116,7 +116,7 @@ targets:
         DEVELOPMENT_TEAM: T9WF95GC9T
         SUPPORTED_PLATFORMS: "macosx"
         MARKETING_VERSION: "1.1.1"
-        CURRENT_PROJECT_VERSION: "82"
+        CURRENT_PROJECT_VERSION: "83"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_ENTITLEMENTS: ClaudeRelayMac/ClaudeRelayMac.entitlements
     info:
