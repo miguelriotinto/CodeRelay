@@ -78,6 +78,23 @@ public final class TerminalViewModel: ObservableObject {
     /// reused view's stale glyphs (the session-switch garble).
     private var replayComplete = false
 
+    /// True while output is being held to coalesce a manual refresh into a
+    /// single render. The server's `forceRepaint` wiggles the PTY width
+    /// (cols → cols−1 → 150 ms → cols), which makes a full-screen app repaint
+    /// TWICE: once reflowed to the narrow width, then again at full width.
+    /// Feeding both frames live shows the intermediate (narrow) frame for
+    /// ~150 ms — the flicker. Holding output for a short quiet window and
+    /// flushing it as one blob lets SwiftTerm apply both reflows in a single
+    /// display pass, so only the final frame is ever seen.
+    private var isCoalescingRefresh = false
+    private var refreshCoalesceTask: Task<Void, Never>?
+    /// Flush once output stays quiet for this long. Must exceed the server's
+    /// 150 ms width-wiggle gap so the two repaint frames land in one batch.
+    private static let refreshQuietWindow: Duration = .milliseconds(220)
+    /// Hard cap so a continuously-streaming session (refreshed mid-output)
+    /// can't buffer forever — flush no later than this after the tap.
+    private static let refreshMaxWindow: Duration = .milliseconds(1200)
+
     // MARK: - Dependencies
 
     public let sessionId: UUID
@@ -119,6 +136,15 @@ public final class TerminalViewModel: ObservableObject {
 
     /// Receives terminal output from the coordinator's I/O routing.
     public func receiveOutput(_ data: Data) {
+        // While coalescing a manual refresh, hold everything and (re)arm the
+        // quiet-window timer so the whole repaint burst flushes as one blob.
+        if isCoalescingRefresh {
+            pendingOutput.append(data)
+            pendingOutputBytes += data.count
+            armRefreshQuietTimer()
+            detectInputPrompt(data)
+            return
+        }
         if !isReplaying && terminalSized, let handler = onTerminalOutput {
             handler(data)
         } else {
@@ -231,6 +257,9 @@ public final class TerminalViewModel: ObservableObject {
         terminalSized = false
         isReplaying = false
         replayComplete = false
+        isCoalescingRefresh = false
+        refreshCoalesceTask?.cancel()
+        refreshCoalesceTask = nil
         pendingOutput.removeAll()
         pendingOutputBytes = 0
         didLogPendingCap = false
@@ -250,6 +279,9 @@ public final class TerminalViewModel: ObservableObject {
         terminalSized = false
         isReplaying = false
         replayComplete = false
+        isCoalescingRefresh = false
+        refreshCoalesceTask?.cancel()
+        refreshCoalesceTask = nil
         pendingOutput.removeAll()
         pendingOutputBytes = 0
         didLogPendingCap = false
@@ -280,13 +312,58 @@ public final class TerminalViewModel: ObservableObject {
         Task { try? await connection.sendResize(cols: cols, rows: rows) }
     }
 
-    /// Tap-to-redraw: asks the server to SIGWINCH the session's foreground
-    /// process group. The app re-emits its whole screen, which both repaints
-    /// the terminal AND replaces any corrupted grid content — a client-side
-    /// repaint can only redraw the same (possibly corrupt) local buffer.
+    /// Tap-to-redraw: asks the server to force the foreground process to
+    /// re-emit its whole screen (via a PTY width wiggle). That wiggle produces
+    /// TWO repaint frames (narrow, then full width) ~150 ms apart; to avoid
+    /// showing the intermediate narrow frame, we hold incoming output and flush
+    /// it as a single blob once it goes quiet (see `receiveOutput` /
+    /// `flushCoalescedRefresh`). Only meaningful when the view is live
+    /// (`terminalSized`, not replaying); otherwise the existing buffering paths
+    /// already batch output, so we skip coalescing to avoid interfering.
     public func sendRefresh() {
         guard !isSendingSuppressed else { return }
+        if terminalSized, !isReplaying, onTerminalOutput != nil {
+            isCoalescingRefresh = true
+            armRefreshQuietTimer(hardCap: true)
+        }
         Task { try? await connection.sendRefresh() }
+    }
+
+    /// (Re)arms the quiet-window timer that ends refresh coalescing. Each new
+    /// output chunk pushes the flush out by `refreshQuietWindow`; `hardCap`
+    /// (set once at `sendRefresh`) also schedules a `refreshMaxWindow` backstop
+    /// so a continuously-streaming session still flushes.
+    private func armRefreshQuietTimer(hardCap: Bool = false) {
+        guard isCoalescingRefresh else { return }
+        refreshCoalesceTask?.cancel()
+        refreshCoalesceTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.refreshQuietWindow)
+            guard !Task.isCancelled else { return }
+            self?.flushCoalescedRefresh()
+        }
+        if hardCap {
+            Task { [weak self] in
+                try? await Task.sleep(for: Self.refreshMaxWindow)
+                guard !Task.isCancelled else { return }
+                self?.flushCoalescedRefresh()
+            }
+        }
+    }
+
+    /// Ends coalescing and delivers the held repaint burst as one contiguous
+    /// blob so SwiftTerm renders the final frame in a single display pass.
+    private func flushCoalescedRefresh() {
+        guard isCoalescingRefresh else { return }
+        isCoalescingRefresh = false
+        refreshCoalesceTask?.cancel()
+        refreshCoalesceTask = nil
+        guard terminalSized, let handler = onTerminalOutput else {
+            pendingOutput.removeAll(); pendingOutputBytes = 0; return
+        }
+        let combined = pendingOutput.reduce(into: Data()) { $0.append($1) }
+        pendingOutput.removeAll()
+        pendingOutputBytes = 0
+        if !combined.isEmpty { handler(combined) }
     }
 
     // MARK: - Input Prompt Detection

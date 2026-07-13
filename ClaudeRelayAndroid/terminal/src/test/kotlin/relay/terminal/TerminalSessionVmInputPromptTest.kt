@@ -130,6 +130,33 @@ class TerminalSessionVmInputPromptTest {
         assertFalse(vm.awaitingInput, "re-arming for replay must cancel the silence timer")
     }
 
+    // Refresh flicker: the server's width-wiggle repaint emits two frames
+    // ~150 ms apart. beginRefreshCoalesce() holds output and flushes the whole
+    // burst as ONE delivery so the intermediate narrow frame never renders.
+    @Test
+    fun refreshCoalescesRepaintBurstIntoSingleDelivery() = runTest {
+        val vm = TerminalSessionVm(scope = backgroundScope)
+        val received = mutableListOf<ByteArray>()
+        vm.onTerminalOutput = { received.add(it) }
+        vm.terminalReady()
+
+        vm.beginRefreshCoalesce()
+        vm.receiveOutput(byteArrayOf(0x41))   // narrow-width frame
+        advanceTimeBy(80); runCurrent()
+        vm.receiveOutput(byteArrayOf(0x42))   // full-width frame
+        assertTrue(received.isEmpty(), "output must be held while coalescing")
+
+        // Quiet window (220 ms) elapses after the last chunk → single flush.
+        advanceTimeBy(230); runCurrent()
+        assertEquals(1, received.size, "coalesced refresh delivers exactly once")
+        assertEquals("AB", received[0].toString(ascii))
+
+        // Live output resumes immediately after the flush.
+        vm.receiveOutput(byteArrayOf(0x43))
+        assertEquals(2, received.size)
+        assertEquals("C", received[1].toString(ascii))
+    }
+
     // Plan case: onAwaitingInputChanged fires on transitions only (deduped),
     // not repeatedly.
     @Test

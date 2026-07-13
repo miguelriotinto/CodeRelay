@@ -130,6 +130,11 @@ class WorkspaceViewModel(
     fun sendRefresh() {
         viewModelScope.launch {
             if (coordinator.sendsSuppressed) return@launch
+            // Coalesce the server's two-frame width-wiggle repaint into one
+            // render so the intermediate narrow frame never flashes.
+            coordinator.activeSessionId.value?.let { id ->
+                coordinator.terminalCache.view(id)?.beginRefreshCoalesce()
+            }
             runCatching { coordinator.connection.send(ClientMessage.Refresh) }
         }
     }

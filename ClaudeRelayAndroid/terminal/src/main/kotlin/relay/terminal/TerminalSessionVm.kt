@@ -102,13 +102,78 @@ class TerminalSessionVm(
     private var pendingOutputBytes = 0
     private var didLogPendingCap = false
 
+    /**
+     * True while output is held to coalesce a manual refresh into a single
+     * render. The server's refresh wiggles the PTY width (cols → cols−1 →
+     * 150 ms → cols), so a full-screen app repaints TWICE — once at the narrow
+     * width, then again at full width. Feeding both frames live flashes the
+     * intermediate narrow frame for ~150 ms (the flicker). Holding output for a
+     * short quiet window and flushing it as one blob lets the terminal engine
+     * apply both reflows in a single display pass, so only the final frame
+     * shows. Mirrors Swift `TerminalViewModel.isCoalescingRefresh`.
+     */
+    private var isCoalescingRefresh = false
+    private var refreshCoalesceJob: Job? = null
+    private var refreshHardCapJob: Job? = null
+
     companion object {
         /** 4 MB. Matches Swift `TerminalViewModel.pendingOutputByteLimit`. */
         const val PENDING_OUTPUT_BYTE_LIMIT: Int = 4 * 1024 * 1024
+        /** Flush after output stays quiet this long; must exceed the server's
+         *  150 ms width-wiggle gap. Matches Swift `refreshQuietWindow`. */
+        const val REFRESH_QUIET_WINDOW_MS: Long = 220
+        /** Backstop so a continuously-streaming session still flushes. Matches
+         *  Swift `refreshMaxWindow`. */
+        const val REFRESH_MAX_WINDOW_MS: Long = 1200
+    }
+
+    /**
+     * Begins coalescing the manual-refresh repaint burst. Called on the active
+     * session's VM right before the `refresh` message is sent. Only meaningful
+     * when the view is live (not replaying / not still laying out); otherwise
+     * the existing buffering paths already batch output.
+     */
+    fun beginRefreshCoalesce() {
+        if (!terminalSized || isReplaying || onTerminalOutput == null) return
+        isCoalescingRefresh = true
+        armRefreshQuietTimer(hardCap = true)
+    }
+
+    private fun armRefreshQuietTimer(hardCap: Boolean = false) {
+        if (!isCoalescingRefresh) return
+        refreshCoalesceJob?.cancel()
+        refreshCoalesceJob = scope.launch {
+            delay(REFRESH_QUIET_WINDOW_MS)
+            if (isActive) flushCoalescedRefresh()
+        }
+        if (hardCap) {
+            refreshHardCapJob?.cancel()
+            refreshHardCapJob = scope.launch {
+                delay(REFRESH_MAX_WINDOW_MS)
+                if (isActive) flushCoalescedRefresh()
+            }
+        }
+    }
+
+    private fun flushCoalescedRefresh() {
+        if (!isCoalescingRefresh) return
+        isCoalescingRefresh = false
+        refreshCoalesceJob?.cancel(); refreshCoalesceJob = null
+        refreshHardCapJob?.cancel(); refreshHardCapJob = null
+        flushPending()
     }
 
     /** Receives terminal output from the coordinator's I/O routing. */
     fun receiveOutput(data: ByteArray) {
+        // While coalescing a manual refresh, hold everything and (re)arm the
+        // quiet-window timer so the whole repaint burst flushes as one blob.
+        if (isCoalescingRefresh) {
+            pendingOutput.addLast(data)
+            pendingOutputBytes += data.size
+            armRefreshQuietTimer()
+            detectInputPrompt(data)
+            return
+        }
         val handler = onTerminalOutput
         if (!isReplaying && terminalSized && handler != null) {
             handler(data)
@@ -235,6 +300,11 @@ class TerminalSessionVm(
         terminalSized = false
         isReplaying = false
         replayComplete = false
+        isCoalescingRefresh = false
+        refreshCoalesceJob?.cancel()
+        refreshCoalesceJob = null
+        refreshHardCapJob?.cancel()
+        refreshHardCapJob = null
         pendingOutput.clear()
         pendingOutputBytes = 0
         didLogPendingCap = false

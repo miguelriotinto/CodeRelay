@@ -193,6 +193,49 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(received[0], Data([0x1B, 0x63]))
     }
 
+    /// Refresh flicker: the server's width-wiggle repaint emits two frames
+    /// ~150 ms apart (narrow, then full width). `sendRefresh()` coalesces the
+    /// burst so both frames arrive in ONE `onTerminalOutput` call — SwiftTerm
+    /// then renders only the final frame instead of flashing the narrow one.
+    func testRefreshCoalescesRepaintBurstIntoSingleDelivery() async throws {
+        let vm = makeVM()
+        var received = [Data]()
+        vm.onTerminalOutput = { received.append($0) }
+        vm.terminalReady()
+
+        vm.sendRefresh()
+
+        // Two repaint frames arrive within the quiet window (like the server's
+        // cols−1 frame then the cols frame).
+        vm.receiveOutput(Data([0x41]))            // narrow-width frame
+        try await Task.sleep(for: .milliseconds(80))
+        vm.receiveOutput(Data([0x42]))            // full-width frame
+        XCTAssertTrue(received.isEmpty, "Output must be held while coalescing")
+
+        // After the quiet window, the whole burst flushes as one blob.
+        try await waitFor(timeout: .milliseconds(600)) { !received.isEmpty }
+        XCTAssertEqual(received.count, 1, "Coalesced refresh must deliver exactly once")
+        XCTAssertEqual(received[0], Data([0x41, 0x42]))
+    }
+
+    /// After a coalesced refresh flushes, normal live output resumes immediately
+    /// (no lingering buffering).
+    func testOutputResumesLiveAfterRefreshFlush() async throws {
+        let vm = makeVM()
+        var received = [Data]()
+        vm.onTerminalOutput = { received.append($0) }
+        vm.terminalReady()
+
+        vm.sendRefresh()
+        vm.receiveOutput(Data([0x41]))
+        try await waitFor(timeout: .milliseconds(600)) { !received.isEmpty }
+        received.removeAll()
+
+        // Subsequent output is forwarded live, not buffered.
+        vm.receiveOutput(Data([0x43]))
+        XCTAssertEqual(received, [Data([0x43])])
+    }
+
     func testSendInputClearsAwaitingInput() async throws {
         let vm = makeVM()
         var received = [Data]()
