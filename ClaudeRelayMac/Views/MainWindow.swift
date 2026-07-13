@@ -303,8 +303,13 @@ private struct WorkspaceView: View {
     /// Session-name badge (matches iOS/Android). Click → ask the server to
     /// SIGWINCH the session's foreground process group so the running app
     /// re-emits its screen (fresh bytes, not a repaint of the possibly-stale
-    /// local grid), plus a local full repaint via `.terminalForceRedraw`, plus
-    /// the swipe flash. Right-click → rename.
+    /// local grid), plus the swipe flash. Right-click → rename.
+    ///
+    /// We deliberately do NOT post `.terminalForceRedraw` here: a local repaint
+    /// paints the current (stale) buffer immediately, then the SIGWINCH reply
+    /// repaints with genuinely fresh bytes a round-trip later — two paints that
+    /// differ slightly, which reads as a flicker. The SIGWINCH re-emit is the
+    /// authoritative refresh on its own.
     ///
     /// The pill sizes to the session name (no fixed width) — it grows and
     /// shrinks with the text, capped so a very long name truncates instead of
@@ -327,7 +332,6 @@ private struct WorkspaceView: View {
             .clipShape(Capsule())
             .onTapGesture {
                 coordinator.viewModel(for: id)?.sendRefresh()
-                NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
                 flashRefreshFeedback()
             }
             .contextMenu {

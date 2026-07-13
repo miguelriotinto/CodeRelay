@@ -171,8 +171,12 @@ struct ActiveTerminalView: View {
                         // Tap → ask the server to SIGWINCH the session's foreground
                         // process group so the running app re-emits its screen (the
                         // same replay the keyboard toggle triggers via resize — fresh
-                        // bytes, not a repaint of the possibly-corrupt local grid),
-                        // plus a local geometry re-sync via the notification.
+                        // bytes, not a repaint of the possibly-corrupt local grid).
+                        // We deliberately do NOT also post `.terminalForceRedraw`:
+                        // a local repaint paints the current (stale) buffer at once,
+                        // then the SIGWINCH reply repaints with fresh bytes a
+                        // round-trip later — two slightly-different paints that read
+                        // as a flicker. The SIGWINCH re-emit is authoritative alone.
                         // Long-press → rename. The tap gesture is declared first so
                         // it doesn't swallow the long-press.
                         .onTapGesture {
@@ -180,7 +184,6 @@ struct ActiveTerminalView: View {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             }
                             coordinator.viewModel(for: id)?.sendRefresh()
-                            NotificationCenter.default.post(name: .terminalForceRedraw, object: nil)
                             flashRefreshFeedback()
                         }
                         .onLongPressGesture {
@@ -415,9 +418,6 @@ extension Notification.Name {
     static let terminalRequestFocus = Notification.Name("terminalRequestFocus")
     static let terminalResignFocus = Notification.Name("terminalResignFocus")
     static let toggleSpeechRecording = Notification.Name("toggleSpeechRecording")
-    /// Force a full repaint of the active terminal (clears rare glyph overlap).
-    /// Posted when the user taps the session-name badge; handled by `HostCoordinator`.
-    static let terminalForceRedraw = Notification.Name("terminalForceRedraw")
 }
 
 // MARK: - Session Uptime
