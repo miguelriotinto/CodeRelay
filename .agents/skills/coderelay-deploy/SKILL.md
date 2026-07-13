@@ -1,5 +1,5 @@
 ---
-name: coderelay_ship
+name: coderelay-deploy
 description: Build, publish, and VERIFY ClaudeRelay artifacts — iOS/macOS to TestFlight, Android APK to GitHub Releases, server to Homebrew. Args: ios | android | mac | server | all (default all)
 disable-model-invocation: true
 ---
@@ -56,9 +56,9 @@ since their last release tag and confirm the skip list with the user.
 - **Android**: download the APK **back from the release URL** with
   `gh release download`, then `aapt2 dump badging` must show the new
   `versionCode`/`versionName`. Byte size alone is NOT proof.
-- **Server**: `swift run claude-relay status` (or `claude-relay status`) must
+- **Server**: `swift run Codex-relay status` (or `Codex-relay status`) must
   report the new version; `curl -s http://127.0.0.1:9100/health` must be ok;
-  `/opt/homebrew/bin/claude-relay-server` symlink must point at the new Cellar
+  `/opt/homebrew/bin/Codex-relay-server` symlink must point at the new Cellar
   path.
 
 ## 5. Report

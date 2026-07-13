@@ -1,5 +1,5 @@
 ---
-name: coderelay_doctor
+name: coderelay-health
 description: Read-only health/version check across all ClaudeRelay deliverables — is the latest server running, is the latest APK on GitHub Releases, did the last TestFlight upload succeed. Use when the user asks "is everything published/running/up to date?"
 ---
 
@@ -47,4 +47,4 @@ skill — report and let the user decide.
 | macOS | build NNN uploaded ✓ | project.yml NNN | ✅/⚠️ |
 
 Follow with one line per ⚠️ explaining what's stale and the exact command or
-skill (`/coderelay_ship <platform>`) that would fix it.
+skill (`/coderelay-deploy <platform>`) that would fix it.

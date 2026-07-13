@@ -30,7 +30,7 @@ Note: Service commands are top-level (`claude-relay stop`), while token/session/
 
 ## Release Process
 
-Use `/coderelay_ship [ios|android|mac|server|all]` to build, publish, and verify; `/coderelay_doctor` for a read-only "is everything published and running?" check.
+Use `/coderelay-deploy [ios|android|mac|server|all]` to build, publish, and verify; `/coderelay-health` for a read-only "is everything published and running?" check.
 
 **Version bump trio** (bump only what ships):
 - iOS/macOS: build number in `project.yml`, then regenerate with `xcodegen`.
