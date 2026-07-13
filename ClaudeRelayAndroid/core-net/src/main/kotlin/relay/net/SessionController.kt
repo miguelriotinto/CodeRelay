@@ -164,7 +164,10 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /** Lists all sessions owned by the authenticated token. */
     suspend fun listSessions(): List<SessionInfo> {
-        val response = sendAndWaitForResponse(ClientMessage.SessionList)
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionList,
+            expected = setOf("session_list_result"),
+        )
         return when (response) {
             is ServerMessage.SessionList -> response.sessions
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -174,7 +177,10 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /** Lists all sessions across all tokens. Used for cross-device attach. */
     suspend fun listAllSessions(): List<SessionInfo> {
-        val response = sendAndWaitForResponse(ClientMessage.SessionListAll)
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionListAll,
+            expected = setOf("session_list_all_result"),
+        )
         return when (response) {
             is ServerMessage.SessionListAll -> response.sessions
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -222,13 +228,25 @@ class SessionController(private val connection: ConnectionSurface) {
      * **before** the send so a response that arrives during/just after the send is
      * captured by [ResumeGuard.pendingValue] rather than lost.
      */
-    private suspend fun sendAndWaitForResponse(message: ClientMessage): ServerMessage {
+    private suspend fun sendAndWaitForResponse(
+        message: ClientMessage,
+        expected: Set<String> = RESPONSE_TYPES,
+    ): ServerMessage {
         val guard = ResumeGuard()
 
         // 1) Install subscription BEFORE sending. The subscriber resumes the
         //    deferred if we're waiting, or stores the value for the post-send check.
+        //    Match only [expected] types (always incl. "error"): the wire protocol
+        //    carries no request ids, so a waiter that accepted EVERY response type
+        //    could grab a reply meant for a concurrent request. That's the
+        //    cross-device "No Sessions Available" bug — `listAllSessions` (waiting
+        //    for `session_list_all_result`) captured the `session_list_result` from
+        //    a periodic `fetchSessions` running in parallel, hit the `else` branch,
+        //    and returned an empty list. Scoping each waiter to its own reply type
+        //    keeps concurrent list requests from stealing each other's responses.
+        val matchTypes = expected + "error"
         val subscriptionId = connection.addServerMessageSubscriber { serverMessage ->
-            if (serverMessage.typeString in RESPONSE_TYPES) {
+            if (serverMessage.typeString in matchTypes) {
                 guard.deliver(serverMessage)
             }
         }

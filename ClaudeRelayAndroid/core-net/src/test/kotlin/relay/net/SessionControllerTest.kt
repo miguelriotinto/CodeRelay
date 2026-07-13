@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import relay.protocol.ClientMessage
 import relay.protocol.ServerMessage
+import relay.protocol.SessionInfo
+import relay.protocol.SessionState
 import java.util.UUID
 
 /**
@@ -186,6 +188,38 @@ class SessionControllerTest {
         request.join()
 
         assertEquals(firstId, controller.sessionId)
+    }
+
+    @Test
+    fun `listAllSessions ignores a stray session_list_result from a concurrent request`() = runTest {
+        // Regression: cross-device "No Sessions Available". A parallel
+        // fetchSessions() (session_list) and this listAllSessions()
+        // (session_list_all) run at once; both subscribers used to accept BOTH
+        // reply types, so listAllSessions could grab the session_list_result and
+        // fail the type check → empty list. It must now match ONLY its own type.
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        val wanted = SessionInfo(
+            id = UUID.randomUUID(), name = "on-other-device", state = SessionState.ACTIVE_DETACHED,
+            tokenId = "other", createdAt = 0.0, cols = 80u, rows = 24u,
+        )
+
+        var result: List<SessionInfo>? = null
+        val request = launch { result = controller.listAllSessions() }
+        yield()
+        runCurrent()
+
+        // The other request's reply arrives first — must be ignored here.
+        conn.deliver(ServerMessage.SessionList(emptyList()))
+        runCurrent()
+        assertEquals(null, result) { "listAllSessions must not resolve on session_list_result" }
+
+        // The correct reply resolves it.
+        conn.deliver(ServerMessage.SessionListAll(listOf(wanted)))
+        request.join()
+
+        assertEquals(listOf(wanted), result)
     }
 
     @Test

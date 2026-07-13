@@ -659,7 +659,13 @@ class SessionCoordinator(
         runCatching {
             authCoordinator.withAuth { sessionController.listAllSessions() }
                 .filter { !it.state.isTerminal && it.id !in ownershipStore.owned }
-        }.getOrDefault(emptyList())
+        }.getOrElse { e ->
+            // Surface the failure instead of silently returning an empty list —
+            // otherwise a transient RPC error reads to the user as the misleading
+            // "No Sessions Available" even when sessions exist on the server.
+            presentError(e.message ?: "Couldn't load sessions from the server. Try again.")
+            emptyList()
+        }
 
     suspend fun attachRemoteSession(id: UUID, serverName: String? = null) {
         if (recoveryController.isRecovering.value) return

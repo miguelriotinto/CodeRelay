@@ -149,7 +149,7 @@ public final class SessionController: ObservableObject {
 
     /// Lists all sessions owned by the authenticated token.
     public func listSessions() async throws -> [SessionInfo] {
-        let response = try await sendAndWaitForResponse(.sessionList)
+        let response = try await sendAndWaitForResponse(.sessionList, expected: ["session_list_result"])
 
         switch response {
         case .sessionList(let sessions):
@@ -163,7 +163,7 @@ public final class SessionController: ObservableObject {
 
     /// Lists all sessions across all tokens. Used for cross-device attach.
     public func listAllSessions() async throws -> [SessionInfo] {
-        let response = try await sendAndWaitForResponse(.sessionListAll)
+        let response = try await sendAndWaitForResponse(.sessionListAll, expected: ["session_list_all_result"])
 
         switch response {
         case .sessionListAll(let sessions):
@@ -215,15 +215,28 @@ public final class SessionController: ObservableObject {
     /// coordinator is also subscribed, both still receive every message, and
     /// two overlapping `withAuth { ... }` retry flows no longer risk
     /// restoring a stale handler in defer order.
-    private func sendAndWaitForResponse(_ message: ClientMessage) async throws -> ServerMessage {
+    private func sendAndWaitForResponse(
+        _ message: ClientMessage,
+        expected: Set<String>? = nil
+    ) async throws -> ServerMessage {
         let guard_ = ResumeGuard()
+
+        // Match only the caller's expected reply type(s), always including
+        // "error". The wire protocol has no request ids, so a waiter matching
+        // EVERY response type can capture a reply meant for a concurrent
+        // request — e.g. `listAllSessions` (awaiting `session_list_all_result`)
+        // grabbing the `session_list_result` from a parallel `fetchSessions`,
+        // then failing the type check and returning empty. Scoping each waiter
+        // to its own reply type prevents that cross-delivery. Defaults to the
+        // full set for callers that don't specify.
+        let matchTypes = expected.map { $0.union(["error"]) } ?? Self.responseTypes
 
         // 1) Install subscription SYNCHRONOUSLY on MainActor — guaranteed in
         //    place before any suspension point. The subscriber either
         //    resumes the continuation (if we're waiting) or stores the
         //    value (if the response beats the await).
         let subscriptionId = connection.addServerMessageSubscriber { serverMessage in
-            guard Self.responseTypes.contains(serverMessage.typeString) else { return }
+            guard matchTypes.contains(serverMessage.typeString) else { return }
             if guard_.continuation != nil {
                 guard_.resume(returning: serverMessage)
             } else {
