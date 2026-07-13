@@ -31,6 +31,7 @@ struct KeyboardAccessory: View {
                 ctrlComboButton("D", byte: 0x04)   // Ctrl-D (EOF)
                 ctrlComboButton("Z", byte: 0x1A)   // Ctrl-Z (suspend)
                 ctrlComboButton("L", byte: 0x0C)   // Ctrl-L (clear)
+                ctrlComboButton("V", byte: 0x16)   // Ctrl-V (literal next / verbatim)
 
                 Divider().frame(height: 24)
 

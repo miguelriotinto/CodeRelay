@@ -102,6 +102,7 @@ fun KeyboardAccessory(
         CtrlKey('D', SpecialKeys.CTRL_D, onKey)
         CtrlKey('Z', SpecialKeys.CTRL_Z, onKey)
         CtrlKey('L', SpecialKeys.CTRL_L, onKey)
+        CtrlKey('V', SpecialKeys.CTRL_V, onKey)
 
         KeyDivider()
 

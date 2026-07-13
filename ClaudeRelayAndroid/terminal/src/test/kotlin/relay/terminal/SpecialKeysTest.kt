@@ -28,6 +28,7 @@ class SpecialKeysTest {
         assertArrayEquals(byteArrayOf(0x1A), SpecialKeys.CTRL_Z)
         assertArrayEquals(byteArrayOf(0x0C), SpecialKeys.CTRL_L)
         assertArrayEquals(byteArrayOf(0x15), SpecialKeys.CTRL_U)
+        assertArrayEquals(byteArrayOf(0x16), SpecialKeys.CTRL_V)
     }
 
     @Test

@@ -34,6 +34,7 @@ object SpecialKeys {
     val CTRL_Z: ByteArray get() = byteArrayOf(0x1A) // suspend
     val CTRL_L: ByteArray get() = byteArrayOf(0x0C) // clear
     val CTRL_U: ByteArray get() = byteArrayOf(0x15) // kill line
+    val CTRL_V: ByteArray get() = byteArrayOf(0x16) // literal next / verbatim
 
     /**
      * A single literal character (e.g. the `| / ~ - _` quick keys in the iOS
