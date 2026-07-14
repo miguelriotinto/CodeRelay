@@ -498,11 +498,19 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     // MARK: - Attach
 
+    /// Lists sessions running on the server that this device isn't already
+    /// showing, so they can be attached from another device. Filter by the
+    /// TOKEN-SCOPED `sessions` (what the sidebar shows now), NOT `ownedSessionIds`:
+    /// the owned set is sticky — a session this device once attached but that has
+    /// since moved to another device lingers in `ownedSessionIds`, so filtering
+    /// by it hid every such session (neither in the sidebar nor offered for
+    /// attach: invisible AND unattachable). That was the bug.
     public func fetchAttachableSessions() async -> [SessionInfo] {
         do {
             let all = try await withAuth { try await $0.listAllSessions() }
+            let shownIds = Set(sessions.map { $0.id })
             return all.filter { session in
-                !session.state.isTerminal && !ownedSessionIds.contains(session.id)
+                !session.state.isTerminal && !shownIds.contains(session.id)
             }
         } catch {
             return []

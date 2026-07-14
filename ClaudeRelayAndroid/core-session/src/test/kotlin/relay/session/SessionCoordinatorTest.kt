@@ -390,6 +390,37 @@ class SessionCoordinatorTest {
         assertEquals(previous, coord.activeSessionId.value)
     }
 
+    @Test
+    fun `fetchAttachableSessions offers a stale-owned session not in this device's pane`() = runTest {
+        // The reported bug: a session this device once attached lingers in the
+        // sticky owned-set (doFetchSessions keeps any session alive under ANY
+        // token), but it's no longer in the token-scoped pane because another
+        // device took it. It must still be OFFERED for attach — filtering by
+        // `owned` hid it entirely.
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val onOtherDevice = UUID.randomUUID()   // owned locally (stale), NOT in our pane
+        val inOurPane = UUID.randomUUID()        // currently ours, shown in the sidebar
+        val store = FakeOwnershipStore(log, seedOwned = setOf(onOtherDevice, inOurPane))
+        // Token-scoped list (what we currently show) has only `inOurPane`.
+        surface.sessionsOnServer = listOf(session(inOurPane, "Ours"))
+        // All-tokens list (the server superset) also has the stolen-away one.
+        surface.allSessionsOnServer = listOf(session(inOurPane, "Ours"), session(onOtherDevice, "Moved"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        // Populate _sessions with the token-scoped list (as connect/fetch would).
+        coord.fetchSessions(force = true)
+        advanceUntilIdle()
+
+        val attachable = coord.fetchAttachableSessions()
+
+        // The stale-owned, moved-away session IS offered…
+        assertTrue(attachable.any { it.id == onOtherDevice }, "moved-away session must be attachable")
+        // …and the one already in our pane is NOT (no duplicate).
+        assertFalse(attachable.any { it.id == inOurPane }, "session already shown must not be re-offered")
+    }
+
     // -------------------------------------------------------------------------
     // TERMINATE: send terminate, clear active, evict, forget BEFORE unclaim, fetch.
     // -------------------------------------------------------------------------

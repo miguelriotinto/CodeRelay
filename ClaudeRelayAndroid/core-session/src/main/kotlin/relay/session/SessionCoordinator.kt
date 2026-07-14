@@ -652,11 +652,22 @@ class SessionCoordinator(
 
     // MARK: - Attach (SharedSessionCoordinator.swift:462-561)
 
-    /** Lists cross-device sessions this device does not already own. */
+    /** Lists sessions running on the server that this device is not already
+     *  showing in its own pane, so they can be attached from another device.
+     *
+     *  Filter by the TOKEN-SCOPED session list (`_sessions` — exactly what the
+     *  sidebar shows right now), NOT by `ownershipStore.owned`. The owned set is
+     *  sticky: `doFetchSessions` keeps any session still alive on the server
+     *  under ANY token (to avoid over-pruning), so a session this device once
+     *  attached but that has since moved to another device lingers in `owned`
+     *  forever. Filtering Attach by `owned` therefore hid every such session —
+     *  it was neither in the sidebar (token-scoped) nor offered for attach
+     *  (owned-filtered): invisible AND unattachable. That was the bug. */
     suspend fun fetchAttachableSessions(): List<SessionInfo> =
         runCatching {
+            val shownIds = _sessions.value.map { it.id }.toSet()
             authCoordinator.withAuth { sessionController.listAllSessions() }
-                .filter { !it.state.isTerminal && it.id !in ownershipStore.owned }
+                .filter { !it.state.isTerminal && it.id !in shownIds }
         }.getOrElse { e ->
             // Surface the failure instead of silently returning an empty list —
             // otherwise a transient RPC error reads to the user as the misleading
