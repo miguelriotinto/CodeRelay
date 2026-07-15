@@ -342,17 +342,13 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
             let serverIds = Set(sessions.map { $0.id })
 
-            // Snapshot BEFORE the prune below: if the active session is gone
-            // from the token-scoped list, it was stolen/terminated. We must
-            // capture this now because `pruneToServerSessions` unclaims it from
-            // `ownedSessionIds`, which would otherwise defeat the ownership
-            // guard in `cleanUpStolenSession`.
-            let stolenActive: UUID? = {
-                guard let active = activeSessionId,
-                      !serverIds.contains(active),
-                      ownedSessionIds.contains(active) else { return nil }
-                return active
-            }()
+            // Snapshot BEFORE the prune below: any owned session missing from
+            // this token's list was lost (moved to another device or
+            // terminated). We capture it now because `pruneToServerSessions`
+            // unclaims these, which would otherwise defeat the ownership guard
+            // in `cleanUpStolenSession`. Classified into moved-vs-terminated
+            // after the prune (see below).
+            let lostOwned = ownedSessionIds.subtracting(serverIds)
 
             // Prune names/owned/agents in one pass through the store. Each
             // `save*` inside `pruneToServerSessions` no-ops when nothing was
@@ -378,16 +374,29 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             let staleVMs = Set(terminalViewModels.keys).subtracting(serverIds).subtracting(cachedNow)
             for id in staleVMs { terminalViewModels.removeValue(forKey: id) }
 
-            // Reconcile the active session (snapshotted pre-prune): run the same
-            // cleanup as the live push — remove it from the UI AND raise the
-            // "Session Moved" alert. Belt-and-suspenders for a missed real-time
-            // `session_stolen` push (fire-and-forget: a device whose socket was
-            // down at the steal instant never receives it). Re-claim first so
-            // `cleanUpStolenSession`'s ownership guard passes even though the
-            // prune above already unclaimed it.
-            if let stolenActive {
-                claimSession(stolenActive)
-                cleanUpStolenSession(stolenActive)
+            // Reconcile EVERY lost owned session (not just the active one):
+            // belt-and-suspenders for a missed real-time `session_stolen` push
+            // — e.g. the theft happened while this device was disconnected, so
+            // it's only discovered now on reconnect. Distinguish "moved to
+            // another device" (still alive on the server under a different
+            // token → alert the user) from "terminated" (gone everywhere →
+            // clean up silently) via the token-agnostic all-sessions list. If
+            // that RPC fails we can't classify, so stay silent to avoid a false
+            // "moved" alert for a session that was actually terminated.
+            if !lostOwned.isEmpty {
+                let aliveElsewhere: Set<UUID>
+                if let all = try? await withAuth({ try await $0.listAllSessions() }) {
+                    aliveElsewhere = Set(all.filter { !$0.state.isTerminal }.map { $0.id })
+                } else {
+                    aliveElsewhere = []
+                }
+                for id in lostOwned {
+                    // Re-claim first so `cleanUpStolenSession`'s ownership guard
+                    // passes even though the prune above already unclaimed it.
+                    // `refetch: false` — we're already inside `fetchSessions`.
+                    claimSession(id)
+                    cleanUpStolenSession(id, alert: aliveElsewhere.contains(id), refetch: false)
+                }
             }
         } catch {
             // Non-critical refresh.
@@ -661,15 +670,22 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         cleanUpStolenSession(sessionId)
     }
 
-    /// Removes a session that was attached from another device and surfaces the
-    /// "Session Moved" alert. Ordering matters and matches the product spec:
-    /// the session must vanish from the sidebar + tab bar FIRST (clear
+    /// Removes a session that was lost to another device and (optionally)
+    /// surfaces the "Session Moved" alert. Ordering matches the product spec:
+    /// the session vanishes from the sidebar + tab bar FIRST (clear
     /// `activeSessionId`, unclaim → drops out of `activeSessions`, evict the
     /// terminal), THEN the alert is raised — so when the user taps OK the UI is
-    /// already clean. The alert fires for ANY lost session, not just the
-    /// actively-focused one. Shared by the live `session_stolen` push and the
-    /// `fetchSessions` reconciliation backstop (missed-push case).
-    func cleanUpStolenSession(_ sessionId: UUID) {
+    /// already clean. Fires for ANY lost session, not just the active one.
+    ///
+    /// - Parameters:
+    ///   - alert: raise the "moved to another device" popup. True for the live
+    ///     `session_stolen` push (the server only sends it for a genuine
+    ///     cross-device attach). The reconnect reconciliation passes `false`
+    ///     for sessions that are gone everywhere (terminated) and `true` only
+    ///     for those still alive under another token (actually moved).
+    ///   - refetch: re-run `fetchSessions` afterward. False when called from
+    ///     inside `fetchSessions` to avoid re-entrancy.
+    func cleanUpStolenSession(_ sessionId: UUID, alert: Bool = true, refetch: Bool = true) {
         let stolenName = name(for: sessionId)
 
         // 1) Remove from the UI first.
@@ -682,9 +698,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         evictTerminal(for: sessionId)
 
         // 2) Then raise the alert (OK-only). ActivityCoordinator owns the flag.
-        activityCoordinator.presentStolenAlert(sessionId: sessionId, name: stolenName)
+        if alert {
+            activityCoordinator.presentStolenAlert(sessionId: sessionId, name: stolenName)
+        }
 
-        Task { await fetchSessions() }
+        if refetch { Task { await fetchSessions() } }
     }
 
     private func handleSessionRenamed(sessionId: UUID, name: String) {

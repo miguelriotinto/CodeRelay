@@ -475,9 +475,14 @@ class SessionCoordinator(
         // If the all-sessions RPC fails, fall back to the token-scoped ids — but
         // since that risks the over-prune above, treat a failure as "prune nothing"
         // (null) rather than "prune everything not on this token".
-        val existsIds: Set<UUID>? = runCatching {
-            authCoordinator.withAuth { sessionController.listAllSessions() }.map { it.id }.toSet()
+        val allSessions: List<SessionInfo>? = runCatching {
+            authCoordinator.withAuth { sessionController.listAllSessions() }
         }.getOrNull()
+        val existsIds: Set<UUID>? = allSessions?.map { it.id }?.toSet()
+        // Ids alive (non-terminal) under ANY token — used to tell "moved to
+        // another device" (alert) from "terminated" (silent). Distinct from
+        // `existsIds`, which also includes terminated-but-not-yet-reaped ids.
+        val aliveElsewhere: Set<UUID> = allSessions?.filter { !it.state.isTerminal }?.map { it.id }?.toSet() ?: emptySet()
 
         // Adopt any server-provided names.
         for (session in list) {
@@ -488,6 +493,14 @@ class SessionCoordinator(
         for (session in list) {
             activityCoordinator.applyActivity(session.id, session.activity ?: ActivityState.IDLE, session.agent)
         }
+
+        // Capture every owned session missing from THIS token's pane BEFORE the
+        // prune unclaims them. Each was lost — moved to another device or
+        // terminated — and is reconciled (with the right alert/silent choice)
+        // after the prune below. This covers the "stolen while disconnected,
+        // discovered on reconnect" case the live push can't.
+        val shownIds = list.map { it.id }.toSet()
+        val lostOwned = ownershipStore.owned.filter { it !in shownIds }.toSet()
 
         // Only prune when we have an authoritative all-sessions set; a failed
         // all-sessions fetch must NOT trigger unclaims (see above).
@@ -513,17 +526,22 @@ class SessionCoordinator(
             }
         }
 
-        // Reconcile the ACTIVE session against the TOKEN-SCOPED `list` (not
-        // existsIds): the token-scoped list is exactly the sessions this device
-        // still owns, so if the active session dropped out of it, another device
-        // attached it (stolen) — even though it may still be alive under the new
-        // token in existsIds. Run the same cleanup as the live push (remove from
-        // UI AND raise the "Session Moved" alert). Belt-and-suspenders for a
-        // MISSED real-time `session_stolen` push (fire-and-forget: a device
-        // whose socket was down at the steal instant never receives it).
-        val active = _activeSessionId.value
-        if (active != null && list.none { it.id == active }) {
-            cleanUpStolenSession(active)
+        // Reconcile EVERY lost owned session (not just the active one), so a
+        // theft that happened while this device was disconnected is surfaced on
+        // reconnect. Distinguish "moved to another device" (still alive under a
+        // different token → alert) from "terminated" (gone everywhere → silent).
+        //
+        // Gate on `existsIds != null`: a failed all-sessions RPC means we can't
+        // authoritatively tell lost-and-moved from lost-and-terminated (or even
+        // a transient blip), so we skip reconciliation entirely rather than
+        // unclaim + alert on incomplete data — same guard the prune uses.
+        // Re-claim first so `cleanUpStolenSession` acts (the prune above already
+        // unclaimed it); `refetch=false` — we're inside doFetchSessions.
+        if (existsIds != null) {
+            for (id in lostOwned) {
+                claimSession(id)
+                cleanUpStolenSession(id, alert = id in aliveElsewhere, refetch = false)
+            }
         }
     }
 
@@ -783,21 +801,33 @@ class SessionCoordinator(
     }
 
     /**
-     * Removes a session attached from another device and raises the "Session
-     * Moved" alert. Order matches the product spec: the session disappears from
-     * the sidebar + tab bar FIRST (clear active, unclaim → drops out of
-     * `activeSessions`, evict terminal), THEN the alert is shown — for ANY lost
-     * session, not just the active one. Shared by the live `session_stolen`
-     * push and the `fetchSessions` reconciliation backstop.
+     * Removes a session lost to another device and (optionally) raises the
+     * "Session Moved" alert. Order matches the product spec: the session
+     * disappears from the sidebar + tab bar FIRST (clear active, unclaim →
+     * drops out of `activeSessions`, evict terminal), THEN the alert is shown —
+     * for ANY lost session, not just the active one.
+     *
+     * @param alert raise the "moved to another device" popup. True for the live
+     *   `session_stolen` push. The reconnect reconciliation passes `false` for
+     *   sessions gone everywhere (terminated) and `true` for those still alive
+     *   under another token (actually moved).
+     * @param refetch re-run `fetchSessions` afterward. False when called from
+     *   inside `doFetchSessions` to avoid re-entrancy.
      */
-    fun cleanUpStolenSession(sessionId: UUID) {
+    fun cleanUpStolenSession(sessionId: UUID, alert: Boolean = true, refetch: Boolean = true) {
         if (_activeSessionId.value == sessionId) _activeSessionId.value = null
-        // sessionStolen() clears activity, unclaims, AND raises the alert.
-        activityCoordinator.sessionStolen(sessionId) { name(it) }
+        if (alert) {
+            // sessionStolen() clears activity, unclaims, AND raises the alert.
+            activityCoordinator.sessionStolen(sessionId) { name(it) }
+        } else {
+            // Silent path (terminated): clear activity + unclaim, no popup.
+            activityCoordinator.forgetSession(sessionId)
+            unclaimSession(sessionId)
+        }
         _ownedSessionIds.value = ownershipStore.owned
         recomputeActiveSessions()
         evictTerminal(sessionId)
-        scope.launch { fetchSessions() }
+        if (refetch) scope.launch { fetchSessions() }
     }
 
     private fun onSessionRenamed(sessionId: UUID, name: String) {

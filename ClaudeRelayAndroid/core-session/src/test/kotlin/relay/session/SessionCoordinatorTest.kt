@@ -574,13 +574,18 @@ class SessionCoordinatorTest {
     // -------------------------------------------------------------------------
 
     @Test
-    fun `fetchSessions keeps owned sessions that exist under another token`() = runTest {
+    fun `fetchSessions relinquishes a session moved to another token and alerts`() = runTest {
+        // Behavior change (per product): a session this device owned but that is
+        // now attached under ANOTHER token has moved to another device. The user
+        // wants it to disappear from this device AND be told. So B is unclaimed
+        // and raises the "moved" alert; `gone` (terminated everywhere) is
+        // unclaimed silently; A (still ours) is kept.
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val a = UUID.fromString("00000000-0000-0000-0000-00000000000a") // this token
-        val b = UUID.fromString("00000000-0000-0000-0000-00000000000b") // another token (alive)
-        val gone = UUID.fromString("00000000-0000-0000-0000-00000000000d") // truly gone
+        val b = UUID.fromString("00000000-0000-0000-0000-00000000000b") // another token (alive → moved)
+        val gone = UUID.fromString("00000000-0000-0000-0000-00000000000d") // truly gone → silent
         val store = FakeOwnershipStore(
             log,
             seedNames = mapOf(a to "Arya", b to "Bran", gone to "Ghost"),
@@ -596,13 +601,13 @@ class SessionCoordinatorTest {
         coord.fetchSessions()
         advanceUntilIdle()
 
-        // A and B survive (both exist server-side, on some token); `gone` is pruned.
-        assertTrue(store.owned.contains(a), "A kept")
-        assertTrue(store.owned.contains(b), "B kept (exists under another token)")
+        // A (still in our pane) is kept; B and `gone` are relinquished.
+        assertTrue(store.owned.contains(a), "A kept (still ours)")
+        assertFalse(store.owned.contains(b), "B relinquished (moved to another device)")
         assertFalse(store.owned.contains(gone), "truly-gone session pruned")
-        assertTrue(store.names.containsKey(b), "B name kept")
+        // B — alive elsewhere — raised the "Session Moved" alert; `gone` did not.
+        assertEquals(b, coord.stolenAlert.value?.sessionId, "moved session B alerts the user")
         assertFalse(store.names.containsKey(gone), "gone un-named")
-        assertTrue(store.agents.containsKey(b), "B agent kept")
     }
 
     // -------------------------------------------------------------------------
