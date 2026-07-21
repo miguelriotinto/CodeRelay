@@ -20,7 +20,8 @@ public actor SessionManager {
     private let ptyFactory: PTYFactory
     private var sessions: [UUID: ManagedSession] = [:]
     private var detachTimers: [UUID: Task<Void, Never>] = [:]
-    public typealias ActivityObserver = @Sendable (UUID, ActivityState, String?) -> Void
+    public typealias ActivityObserver =
+        @Sendable (UUID, ActivityState, String?, AgentDetectedState?, String?) -> Void
     private var activityObservers = ObserverRegistry<ActivityObserver>()
     public typealias StealObserver = @Sendable (UUID) -> Void
     private var stealObservers = ObserverRegistry<StealObserver>()
@@ -37,6 +38,10 @@ public actor SessionManager {
         var latestActivity: ActivityState = .active
         /// The coding agent detected in this session, if any.
         var latestAgent: String?
+        /// Latest fine-grained agent state (Phase 2 screen detection).
+        var latestAgentState: AgentDetectedState?
+        /// Latest window title (OSC 0/2).
+        var latestTitle: String?
         /// Monotonic revision of the last activity update we accepted.
         /// `reportActivityChange` drops updates whose revision is not
         /// strictly greater (see C-03).
@@ -102,11 +107,11 @@ public actor SessionManager {
         }
 
         let sessionId = id
-        await pty.setActivityHandler { [weak self] newState, agent, revision in
+        await pty.setActivityHandler { [weak self] newState, agent, agentState, title, revision in
             Task {
                 await self?.reportActivityChange(
                     sessionId: sessionId, activity: newState, agent: agent?.id,
-                    revision: revision
+                    agentState: agentState, title: title, revision: revision
                 )
             }
         }
@@ -348,13 +353,15 @@ public actor SessionManager {
     public func listSessionsForToken(tokenId: String) -> [SessionInfo] {
         sessions.values
             .filter { $0.info.tokenId == tokenId }
-            .map { $0.info.enriched(activity: $0.latestActivity, agent: $0.latestAgent) }
+            .map { $0.info.enriched(activity: $0.latestActivity, agent: $0.latestAgent,
+                                    agentState: $0.latestAgentState, title: $0.latestTitle) }
     }
 
     /// List all sessions across all tokens, enriched with cached activity state.
     /// Used for cross-device attach — lets a device see sessions from other tokens.
     public func listAllSessions() -> [SessionInfo] {
-        sessions.values.map { $0.info.enriched(activity: $0.latestActivity, agent: $0.latestAgent) }
+        sessions.values.map { $0.info.enriched(activity: $0.latestActivity, agent: $0.latestAgent,
+                                                agentState: $0.latestAgentState, title: $0.latestTitle) }
     }
 
     // MARK: - Activity Observers
@@ -370,7 +377,8 @@ public actor SessionManager {
         // client doesn't wait for a change event to render correct state.
         for managed in sessions.values where managed.info.tokenId == tokenId {
             guard !managed.info.state.isTerminal else { continue }
-            callback(managed.info.id, managed.latestActivity, managed.latestAgent)
+            callback(managed.info.id, managed.latestActivity, managed.latestAgent,
+                     managed.latestAgentState, managed.latestTitle)
         }
         return observerId
     }
@@ -391,6 +399,8 @@ public actor SessionManager {
         sessionId: UUID,
         activity: ActivityState,
         agent: String? = nil,
+        agentState: AgentDetectedState? = nil,
+        title: String? = nil,
         revision: UInt64 = .max
     ) {
         guard var managed = sessions[sessionId] else { return }
@@ -402,10 +412,12 @@ public actor SessionManager {
         managed.activityRevision = revision
         managed.latestActivity = activity
         managed.latestAgent = agent
+        managed.latestAgentState = agentState
+        managed.latestTitle = title
         sessions[sessionId] = managed
         let tokenId = managed.info.tokenId
         for (_, callback) in activityObservers.forToken(tokenId) {
-            callback(sessionId, activity, agent)
+            callback(sessionId, activity, agent, agentState, title)
         }
     }
 

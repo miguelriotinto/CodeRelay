@@ -22,6 +22,13 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     /// The coding agent currently detected as running, or nil.
     public private(set) var activeAgent: CodingAgent?
 
+    /// Fine-grained agent state from screen detection (Phase 2). Nil in Phase 1
+    /// — the arbiter that populates it is added in a later task.
+    public private(set) var agentState: AgentDetectedState?
+
+    /// Latest window title (OSC 0/2) observed for this session, if any.
+    public private(set) var title: String?
+
     // MARK: - Configuration
 
     private let silenceThreshold: TimeInterval
@@ -31,7 +38,7 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     /// to drop updates that arrived out of order: an older revision must never
     /// overwrite a newer one even if its enqueue-then-await was delayed.
     public private(set) var revision: UInt64 = 0
-    private let onChange: @Sendable (ActivityState, CodingAgent?, UInt64) -> Void
+    private let onChange: @Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void
 
     /// Invoked by the silence timer's Task when the threshold elapses. The
     /// owner (PTYSession) sets this to a closure that re-enters the actor
@@ -64,7 +71,7 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     public init(
         silenceThreshold: TimeInterval = 1.0,
         agentSilenceThreshold: TimeInterval = 2.0,
-        onChange: @escaping @Sendable (ActivityState, CodingAgent?, UInt64) -> Void
+        onChange: @escaping @Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void
     ) {
         self.silenceThreshold = silenceThreshold
         self.agentSilenceThreshold = agentSilenceThreshold
@@ -272,6 +279,6 @@ public final class SessionActivityMonitor: @unchecked Sendable {
         revision &+= 1
         RelayLogger.log(.debug, category: "activity",
             "State: \(oldState.rawValue) → \(newState.rawValue) (rev=\(revision))")
-        onChange(newState, activeAgent, revision)
+        onChange(newState, activeAgent, agentState, title, revision)
     }
 }

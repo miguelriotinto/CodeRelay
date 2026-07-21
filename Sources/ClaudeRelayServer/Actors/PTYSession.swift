@@ -24,10 +24,14 @@ public protocol PTYSessionProtocol: Actor {
     func terminate()
     func getActivityState() -> ActivityState
     func getActiveAgent() -> CodingAgent?
+    func getAgentState() -> AgentDetectedState?
+    func getTitle() -> String?
     /// Activity updates carry a monotonic `revision`. Downstream observers
     /// that cross isolation boundaries drop updates whose revision is older
     /// than what they last recorded — see `SessionManager.reportActivityChange`.
-    func setActivityHandler(_ handler: @escaping @Sendable (ActivityState, CodingAgent?, UInt64) -> Void)
+    func setActivityHandler(
+        _ handler: @escaping @Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void
+    )
     func recordInput()
     /// 1.0 for attached (responsive entry detection); 5.0 for detached.
     func setPollCadence(_ seconds: TimeInterval)
@@ -46,7 +50,7 @@ public enum PTYError: Error {
 /// `onChange` closure captures this box (which is created before `self` is
 /// fully initialized), and `PTYSession` writes the real handler into it later.
 private final class ActivityCallbackBox: @unchecked Sendable {
-    var handler: (@Sendable (ActivityState, CodingAgent?, UInt64) -> Void)?
+    var handler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
 }
 
 // MARK: - PTYSession Actor
@@ -77,7 +81,7 @@ public actor PTYSession: PTYSessionProtocol {
     /// Shared box to bridge the monitor's synchronous onChange callback into the actor.
     /// The monitor captures this box (not `self`) so the closure doesn't require `self` to be fully initialized.
     private let activityCallbackBox = ActivityCallbackBox()
-    private var activityHandler: (@Sendable (ActivityState, CodingAgent?, UInt64) -> Void)?
+    private var activityHandler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
     private var terminated: Bool = false
     private var foregroundPollTimer: DispatchSourceTimer?
     /// Last size applied via init/`resize()`. `forceRepaint()` restores to
@@ -190,8 +194,8 @@ public actor PTYSession: PTYSessionProtocol {
         self.activityMonitor = SessionActivityMonitor(
             silenceThreshold: 1.0,
             agentSilenceThreshold: 2.0,
-            onChange: { newState, agent, revision in
-                box.handler?(newState, agent, revision)
+            onChange: { newState, agent, agentState, title, revision in
+                box.handler?(newState, agent, agentState, title, revision)
             }
         )
     }
@@ -375,10 +379,22 @@ public actor PTYSession: PTYSessionProtocol {
         activityMonitor.activeAgent
     }
 
+    /// Returns the fine-grained agent state detected from the screen, if any.
+    public func getAgentState() -> AgentDetectedState? {
+        activityMonitor.agentState
+    }
+
+    /// Returns the current window title (OSC 0/2), if any.
+    public func getTitle() -> String? {
+        activityMonitor.title
+    }
+
     /// Set callback for activity state changes. The monitor emits a monotonic
     /// `revision` with every change so downstream observers can drop out-of-order
     /// updates that cross isolation boundaries.
-    public func setActivityHandler(_ handler: @escaping @Sendable (ActivityState, CodingAgent?, UInt64) -> Void) {
+    public func setActivityHandler(
+        _ handler: @escaping @Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void
+    ) {
         self.activityHandler = handler
         self.activityCallbackBox.handler = handler
     }

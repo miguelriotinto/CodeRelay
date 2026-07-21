@@ -276,10 +276,12 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                 // The channel can still go inactive while these three actor
                 // calls are in flight; the `isCleanedUp` check in `onSuccess`
                 // covers that case by unregistering what we just installed.
-                let activityId = await manager.addActivityObserver(tokenId: info.id) { [weak self] sessionId, activity, agent in
+                let activityId = await manager.addActivityObserver(tokenId: info.id) {
+                    [weak self] sessionId, activity, agent, agentState, title in
                     observerCtx.value.eventLoop.execute {
                         self?.sendServerMessage(
-                            .sessionActivity(sessionId: sessionId, activity: activity, agent: agent),
+                            .sessionActivity(sessionId: sessionId, activity: activity, agent: agent,
+                                             agentState: agentState, title: title),
                             context: observerCtx.value
                         )
                     }

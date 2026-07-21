@@ -16,6 +16,16 @@ import ClaudeRelayKit
 
 extension RelayMessageHandler {
 
+    /// Bundles the activity fields read off a PTY at attach/resume time.
+    /// Returning a struct instead of a wide tuple keeps the work-closure
+    /// return type under SwiftLint's `large_tuple` threshold.
+    struct ActivitySnapshot {
+        let activity: ActivityState
+        let agent: CodingAgent?
+        let agentState: AgentDetectedState?
+        let title: String?
+    }
+
     // MARK: - Session Create
 
     func handleSessionCreate(name: String?, cols: UInt16?, rows: UInt16?, context: ChannelHandlerContext) {
@@ -70,18 +80,22 @@ extension RelayMessageHandler {
         let myStealId = self.stealObserverId
         bridgeToEventLoopWithCtx(
             context: context,
-            work: { [weak self] ctx -> (SessionInfo, any PTYSessionProtocol, Data, ActivityState, CodingAgent?) in
+            work: { [weak self] ctx -> (SessionInfo, any PTYSessionProtocol, Data, ActivitySnapshot) in
                 await self?.autoDetachIfNeeded(ctx: ctx)
                 let (info, pty) = try await mgr.attachSession(id: sessionId, tokenId: tokenId, excludeObserver: myStealId)
                 let buffered = await pty.readBuffer()
                 let filtered = RelayMessageHandler.filterEscapeResponses(buffered)
-                let activity = await pty.getActivityState()
-                let agent = await pty.getActiveAgent()
+                let snapshot = ActivitySnapshot(
+                    activity: await pty.getActivityState(),
+                    agent: await pty.getActiveAgent(),
+                    agentState: await pty.getAgentState(),
+                    title: await pty.getTitle()
+                )
                 RelayLogger.log(category: "session", "Session attached: \(sessionId)")
-                return (info, pty, filtered, activity, agent)
+                return (info, pty, filtered, snapshot)
             },
             onSuccess: { handler, ctx, tuple in
-                let (info, pty, filtered, activity, agent) = tuple
+                let (info, pty, filtered, snapshot) = tuple
                 handler.attachedSessionId = sessionId
                 handler.attachedPTY = pty
                 handler.sendServerMessage(.sessionAttached(sessionId: sessionId, state: info.state.rawValue), context: ctx)
@@ -89,7 +103,11 @@ extension RelayMessageHandler {
                     handler.sendChunkedBinaryData(filtered, context: ctx)
                 }
                 handler.sendServerMessage(.replayComplete(sessionId: sessionId), context: ctx)
-                handler.sendServerMessage(.sessionActivity(sessionId: sessionId, activity: activity, agent: agent?.id), context: ctx)
+                handler.sendServerMessage(
+                    .sessionActivity(sessionId: sessionId, activity: snapshot.activity, agent: snapshot.agent?.id,
+                                     agentState: snapshot.agentState, title: snapshot.title),
+                    context: ctx
+                )
                 // repaintAfter: the replayed ring-buffer bytes were emitted for
                 // whatever grid existed when they were generated; a SIGWINCH
                 // after the handler is wired makes the foreground app redraw
@@ -111,7 +129,7 @@ extension RelayMessageHandler {
         let myStealId = self.stealObserverId
         bridgeToEventLoopWithCtx(
             context: context,
-            work: { [weak self] ctx -> (any PTYSessionProtocol, Data, ActivityState, CodingAgent?) in
+            work: { [weak self] ctx -> (any PTYSessionProtocol, Data, ActivitySnapshot) in
                 await self?.autoDetachIfNeeded(ctx: ctx)
                 let (_, _, pty) = try await mgr.resumeSession(id: sessionId, tokenId: tokenId, excludeObserver: myStealId)
                 RelayLogger.log(category: "session", "Session resumed: \(sessionId) (skipReplay=\(skipReplay))")
@@ -120,12 +138,16 @@ extension RelayMessageHandler {
                 let buffered = skipReplay ? Data() : await pty.readBuffer()
                 let stripped = RelayMessageHandler.filterEscapeResponses(buffered)
                 let filtered = ScrollbackSanitizer.sanitize(stripped)
-                let activity = await pty.getActivityState()
-                let agent = await pty.getActiveAgent()
-                return (pty, filtered, activity, agent)
+                let snapshot = ActivitySnapshot(
+                    activity: await pty.getActivityState(),
+                    agent: await pty.getActiveAgent(),
+                    agentState: await pty.getAgentState(),
+                    title: await pty.getTitle()
+                )
+                return (pty, filtered, snapshot)
             },
             onSuccess: { handler, ctx, tuple in
-                let (pty, filtered, activity, agent) = tuple
+                let (pty, filtered, snapshot) = tuple
                 handler.attachedSessionId = sessionId
                 handler.attachedPTY = pty
                 handler.sendServerMessage(.sessionResumed(sessionId: sessionId), context: ctx)
@@ -133,7 +155,11 @@ extension RelayMessageHandler {
                     handler.sendChunkedBinaryData(filtered, context: ctx)
                 }
                 handler.sendServerMessage(.replayComplete(sessionId: sessionId), context: ctx)
-                handler.sendServerMessage(.sessionActivity(sessionId: sessionId, activity: activity, agent: agent?.id), context: ctx)
+                handler.sendServerMessage(
+                    .sessionActivity(sessionId: sessionId, activity: snapshot.activity, agent: snapshot.agent?.id,
+                                     agentState: snapshot.agentState, title: snapshot.title),
+                    context: ctx
+                )
                 // repaintAfter even when skipReplay=true: a tab switch back to
                 // a cached terminal can still be stale if the session's grid
                 // changed while another device was attached.
