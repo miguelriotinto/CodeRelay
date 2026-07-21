@@ -33,6 +33,18 @@ public final class ActivityCoordinator: ObservableObject {
     /// `handleActivityUpdate`).
     @Published public var sessionsAwaitingInput: Set<UUID> = []
 
+    /// Fine-grained agent state per session (Phase 2 screen detection).
+    /// Nil-absent when the server doesn't report it (older server / no agent).
+    @Published public var agentStates: [UUID: AgentDetectedState] = [:]
+
+    /// Latest window title per session, surfaced under the session name.
+    @Published public var sessionTitles: [UUID: String] = [:]
+
+    /// Sessions with an unacknowledged blocked/done state — drives the
+    /// "needs attention" affordance. Cleared by `markSeen` when the user
+    /// activates the session. Mirrors herdr's client-side `seen` bit.
+    @Published public var unseenSessions: Set<UUID> = []
+
     /// UI-facing flags for the "Session Moved" alert. Presented by
     /// `WorkspaceView` / macOS equivalent when another device attaches to a
     /// session currently attached here.
@@ -82,6 +94,22 @@ public final class ActivityCoordinator: ObservableObject {
         return sessionsAwaitingInput.contains(sessionId) ? .idle : .active
     }
 
+    /// The fine-grained agent state for a session, or nil.
+    public func agentState(for sessionId: UUID) -> AgentDetectedState? {
+        agentStates[sessionId]
+    }
+
+    /// The window title for a session, or nil.
+    public func title(for sessionId: UUID) -> String? {
+        sessionTitles[sessionId]
+    }
+
+    /// Mark a session's state as seen — clears its "needs attention" flag.
+    /// Called by the coordinator when the session becomes active.
+    public func markSeen(_ sessionId: UUID) {
+        unseenSessions.remove(sessionId)
+    }
+
     // MARK: - Server-event handlers
 
     /// Apply an activity update reported by the server. Mutates
@@ -95,6 +123,8 @@ public final class ActivityCoordinator: ObservableObject {
         sessionId: UUID,
         activity: ActivityState,
         agent: String?,
+        agentState: AgentDetectedState? = nil,
+        title: String? = nil,
         onAgentActiveChange: (UUID, Bool) -> Void = { _, _ in }
     ) {
         // Only persist to UserDefaults on actual state transitions, not redundant updates
@@ -112,6 +142,25 @@ public final class ActivityCoordinator: ObservableObject {
             }
         }
         if changed { ownershipStore.saveAgents(agentSessions) }
+
+        // Fine-grained state + title mirror the agent-running lifecycle: when no
+        // agent runs, clear them so a stale "blocked" never lingers.
+        if agent != nil {
+            if let agentState { agentStates[sessionId] = agentState } else { agentStates.removeValue(forKey: sessionId) }
+            if let title, !title.isEmpty { sessionTitles[sessionId] = title } else { sessionTitles.removeValue(forKey: sessionId) }
+        } else {
+            agentStates.removeValue(forKey: sessionId)
+            sessionTitles.removeValue(forKey: sessionId)
+        }
+
+        // "Needs attention" bucket: a blocked prompt or a just-finished (idle-
+        // after-working "done") agent is worth surfacing until the user looks.
+        // Working is in-progress — not attention-worthy on its own.
+        if agent != nil, let agentState, agentState == .blocked || agentState == .idle {
+            unseenSessions.insert(sessionId)
+        } else if agentState == .working || agent == nil {
+            unseenSessions.remove(sessionId)
+        }
 
         if activity == .agentIdle, agentSessions[sessionId] != nil {
             sessionsAwaitingInput.insert(sessionId)
@@ -137,6 +186,9 @@ public final class ActivityCoordinator: ObservableObject {
     public func forgetSession(_ sessionId: UUID) {
         agentSessions.removeValue(forKey: sessionId)
         sessionsAwaitingInput.remove(sessionId)
+        agentStates.removeValue(forKey: sessionId)
+        sessionTitles.removeValue(forKey: sessionId)
+        unseenSessions.remove(sessionId)
     }
 
     /// Apply the server's pruned-agents set so
@@ -145,6 +197,11 @@ public final class ActivityCoordinator: ObservableObject {
     public func applyPrunedAgents(_ removedAgents: Set<UUID>) {
         if !removedAgents.isEmpty {
             sessionsAwaitingInput.subtract(removedAgents)
+            unseenSessions.subtract(removedAgents)
+            for id in removedAgents {
+                agentStates.removeValue(forKey: id)
+                sessionTitles.removeValue(forKey: id)
+            }
         }
     }
 }

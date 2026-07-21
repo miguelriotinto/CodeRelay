@@ -224,9 +224,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 self.terminalViewModels[sessionId]?.endReplay()
             }
         }
-        connection.onSessionActivity = { [weak self] sessionId, activity, agent in
+        connection.onSessionActivity = { [weak self] sessionId, activity, agent, agentState, title in
             Task { @MainActor [weak self] in
-                self?.handleActivityUpdate(sessionId: sessionId, activity: activity, agent: agent)
+                self?.handleActivityUpdate(sessionId: sessionId, activity: activity, agent: agent,
+                                           agentState: agentState, title: title)
             }
         }
         connection.onSessionStolen = { [weak self] sessionId in
@@ -337,7 +338,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
             for session in sessions {
                 let activity = session.activity ?? .idle
-                handleActivityUpdate(sessionId: session.id, activity: activity, agent: session.agent)
+                handleActivityUpdate(sessionId: session.id, activity: activity, agent: session.agent,
+                                     agentState: session.agentState, title: session.title)
             }
 
             let serverIds = Set(sessions.map { $0.id })
@@ -428,6 +430,21 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         activityCoordinator.activityState(for: sessionId)
     }
 
+    /// Fine-grained agent state for a session (Phase 2), or nil.
+    public func agentState(for sessionId: UUID) -> AgentDetectedState? {
+        activityCoordinator.agentState(for: sessionId)
+    }
+
+    /// Window title for a session, or nil.
+    public func title(for sessionId: UUID) -> String? {
+        activityCoordinator.title(for: sessionId)
+    }
+
+    /// Whether a session has an unacknowledged blocked/done state.
+    public func isUnseen(_ sessionId: UUID) -> Bool {
+        activityCoordinator.unseenSessions.contains(sessionId)
+    }
+
     // MARK: - Create
 
     public func createNewSession() async {
@@ -459,6 +476,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             terminalViewModels[sessionId] = vm
             wireTerminalOutput(to: sessionId)
             activeSessionId = sessionId
+            activityCoordinator.markSeen(sessionId)
             terminalCache.touch(sessionId)
             terminalCache.enforceLimit(activeSessionId: activeSessionId)
 
@@ -496,6 +514,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             }
 
             activeSessionId = id
+            activityCoordinator.markSeen(id)
             terminalCache.touch(id)
             terminalCache.enforceLimit(activeSessionId: activeSessionId)
 
@@ -549,6 +568,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             terminalViewModels[id] = vm
             wireTerminalOutput(to: id)
             activeSessionId = id
+            activityCoordinator.markSeen(id)
             terminalCache.touch(id)
             terminalCache.enforceLimit(activeSessionId: activeSessionId)
 
@@ -651,11 +671,16 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     // `ActivityCoordinator`; the parent only owns the pieces outside that
     // cluster (active-session slot, terminal cache, session names).
 
-    private func handleActivityUpdate(sessionId: UUID, activity: ActivityState, agent: String? = nil) {
+    private func handleActivityUpdate(
+        sessionId: UUID, activity: ActivityState, agent: String? = nil,
+        agentState: AgentDetectedState? = nil, title: String? = nil
+    ) {
         activityCoordinator.handleActivityUpdate(
             sessionId: sessionId,
             activity: activity,
             agent: agent,
+            agentState: agentState,
+            title: title,
             onAgentActiveChange: { [weak self] id, isActive in
                 self?.terminalViewModels[id]?.isAgentActive = isActive
             }
