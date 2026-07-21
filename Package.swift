@@ -18,6 +18,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.18.0"),
         .package(url: "https://github.com/obra/LLM.swift.git", revision: "c2144e1a0e29c280ec6080b7da85e876d51f8509"),
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.2.0"),
     ],
     targets: [
         .target(
@@ -44,8 +45,12 @@ let package = Package(
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOWebSocket", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
-            path: "Sources/ClaudeRelayServer"
+            path: "Sources/ClaudeRelayServer",
+            resources: [
+                .copy("Resources/Agents"),
+            ]
         ),
         .executableTarget(
             name: "ClaudeRelayCLI",
