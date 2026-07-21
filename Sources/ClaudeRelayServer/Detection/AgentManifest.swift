@@ -3,14 +3,23 @@ import ClaudeRelayKit
 
 /// The outcome of evaluating an agent's manifest against a screen snapshot.
 /// Mirrors herdr's `AgentDetection`.
-struct AgentDetection: Equatable {
-    let state: AgentDetectedState
+public struct AgentDetection: Equatable {
+    public let state: AgentDetectedState
     /// When true, the winning rule was a "viewer/menu overlay" — the arbiter
     /// must freeze the session's current state rather than adopt this one.
-    let skipStateUpdate: Bool
-    let visibleIdle: Bool
-    let visibleBlocker: Bool
-    let visibleWorking: Bool
+    public let skipStateUpdate: Bool
+    public let visibleIdle: Bool
+    public let visibleBlocker: Bool
+    public let visibleWorking: Bool
+
+    public init(state: AgentDetectedState, skipStateUpdate: Bool,
+                visibleIdle: Bool, visibleBlocker: Bool, visibleWorking: Bool) {
+        self.state = state
+        self.skipStateUpdate = skipStateUpdate
+        self.visibleIdle = visibleIdle
+        self.visibleBlocker = visibleBlocker
+        self.visibleWorking = visibleWorking
+    }
 }
 
 /// A recursive match gate. All present fields AND together (see

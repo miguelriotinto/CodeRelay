@@ -78,6 +78,8 @@ public actor PTYSession: PTYSessionProtocol {
     private var outputHandler: (@Sendable (Data) -> Void)?
     private var exitHandler: (@Sendable () -> Void)?
     private let activityMonitor: SessionActivityMonitor
+    private let screenModel: TerminalScreenModel
+    private let stateDetector: AgentStateDetector
     /// Shared box to bridge the monitor's synchronous onChange callback into the actor.
     /// The monitor captures this box (not `self`) so the closure doesn't require `self` to be fully initialized.
     private let activityCallbackBox = ActivityCallbackBox()
@@ -198,6 +200,8 @@ public actor PTYSession: PTYSessionProtocol {
                 box.handler?(newState, agent, agentState, title, revision)
             }
         )
+        self.screenModel = TerminalScreenModel(cols: cols, rows: rows)
+        self.stateDetector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
     }
 
     /// Activate the dispatch source that reads PTY output.
@@ -227,6 +231,13 @@ public actor PTYSession: PTYSessionProtocol {
     private func handleForegroundPollResult(agent: CodingAgent?) {
         guard !terminated else { return }
         activityMonitor.updateForegroundProcess(agent: agent)
+        // Screen detection only runs while an agent is active. Snapshot the
+        // emulated grid and evaluate the agent's manifest, then arbitrate.
+        if let agent = activityMonitor.activeAgent {
+            let snapshot = screenModel.snapshot()
+            let detection = stateDetector.detect(agentId: agent.id, snapshot: snapshot)
+            activityMonitor.updateScreenDetection(detection, now: Date())
+        }
     }
 
     // MARK: - Foreground Process Polling
@@ -355,6 +366,7 @@ public actor PTYSession: PTYSessionProtocol {
     /// additionally forwards to the live output handler if attached.
     private func handleOutput(_ data: Data) {
         ringBuffer.write(data)
+        screenModel.feed(data)
         activityMonitor.processOutput(data)
         outputHandler?(data)
     }
@@ -508,6 +520,7 @@ public actor PTYSession: PTYSessionProtocol {
         guard !terminated else { return }
         currentCols = cols
         currentRows = rows
+        screenModel.resize(cols: cols, rows: rows)
         _ = relay_set_winsize(masterFD, rows, cols)
     }
 

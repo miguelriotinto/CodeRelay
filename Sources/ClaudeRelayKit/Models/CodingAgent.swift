@@ -77,7 +77,12 @@ public struct CodingAgent: Codable, Equatable, Hashable, Sendable {
         processNames: ["codex"], titleKeywords: ["codex"]
     )
 
-    public static let all: [CodingAgent] = [.claude, .codex]
+    public static let opencode = CodingAgent(
+        id: "opencode", displayName: "opencode",
+        processNames: ["opencode"], titleKeywords: ["opencode"]
+    )
+
+    public static let all: [CodingAgent] = [.claude, .codex, .opencode]
 
     /// Look up an agent by its wire-protocol ID.
     public static func find(id: String) -> CodingAgent? {
