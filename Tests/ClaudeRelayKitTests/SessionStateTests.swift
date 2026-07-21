@@ -160,6 +160,7 @@ final class SessionStateTests: XCTestCase {
         let now = Date()
         let info = SessionInfo(
             id: id,
+            name: nil,
             state: .activeAttached,
             tokenId: "tok_abc123",
             createdAt: now,
