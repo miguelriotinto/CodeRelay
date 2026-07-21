@@ -26,6 +26,9 @@ struct SessionSidebarView: View {
                             shortId: String(session.id.uuidString.prefix(8)),
                             activity: coordinator.activityState(for: session.id),
                             agentId: coordinator.activeAgent(for: session.id),
+                            agentState: coordinator.agentState(for: session.id),
+                            seen: !coordinator.isUnseen(session.id),
+                            title: coordinator.title(for: session.id),
                             createdAt: session.createdAt
                         )
                         .contextMenu {
@@ -115,17 +118,28 @@ private struct SessionRow: View {
     let shortId: String
     let activity: ActivityState
     let agentId: String?
+    let agentState: AgentDetectedState?
+    let seen: Bool
+    let title: String?
     let createdAt: Date
 
     var body: some View {
         HStack(spacing: 8) {
-            ActivityDot(activity: activity, agentId: agentId, size: 6)
+            ActivityDot(activity: activity, agentId: agentId, agentState: agentState, seen: seen, size: 6)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.body)
-                Text(shortId)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospaced()
+                if let title, !title.isEmpty {
+                    Text(title)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } else {
+                    Text(shortId)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospaced()
+                }
             }
             Spacer()
         }
