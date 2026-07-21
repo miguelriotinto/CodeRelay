@@ -262,7 +262,7 @@ final class ServerMessageTests: ProtocolTestCase {
         let id = "12345678-1234-1234-1234-123456789ABC"
         let json = #"{"type":"session_activity","payload":{"sessionId":"\#(id)","activity":"agent_active","agent":"claude"}}"#
         let envelope = try decoder.decode(MessageEnvelope.self, from: Data(json.utf8))
-        guard case .server(.sessionActivity(let sessionId, let activity, let agent)) = envelope else {
+        guard case .server(.sessionActivity(let sessionId, let activity, let agent, _, _)) = envelope else {
             XCTFail("Expected sessionActivity"); return
         }
         XCTAssertEqual(sessionId.uuidString, id)
@@ -283,6 +283,54 @@ final class ServerMessageTests: ProtocolTestCase {
             }
             XCTAssertEqual(original, roundTripped, "Round-trip failed for activity \(state)")
         }
+    }
+
+    func testSessionActivityEncodesAgentStateAndTitle() throws {
+        let id = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
+        let msg = ServerMessage.sessionActivity(
+            sessionId: id, activity: .agentIdle, agent: "claude",
+            agentState: .blocked, title: "✳ my-project"
+        )
+        let data = try encoder.encode(MessageEnvelope.server(msg))
+        let obj = try jsonObject(data)
+        let payload = obj["payload"] as? [String: Any]
+        XCTAssertEqual(payload?["agentState"] as? String, "blocked")
+        XCTAssertEqual(payload?["title"] as? String, "✳ my-project")
+    }
+
+    func testSessionActivityOmitsNilAgentStateAndTitle() throws {
+        let id = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
+        let msg = ServerMessage.sessionActivity(sessionId: id, activity: .active)
+        let data = try encoder.encode(MessageEnvelope.server(msg))
+        let payload = try jsonObject(data)["payload"] as? [String: Any]
+        XCTAssertNil(payload?["agentState"], "nil agentState must not appear on the wire")
+        XCTAssertNil(payload?["title"], "nil title must not appear on the wire")
+    }
+
+    func testSessionActivityDecodesAgentStateAndTitle() throws {
+        let id = "12345678-1234-1234-1234-123456789ABC"
+        let json = #"{"type":"session_activity","payload":{"sessionId":"\#(id)","activity":"agent_active","agent":"codex","agentState":"working","title":"⠋ build"}}"#
+        let envelope = try decoder.decode(MessageEnvelope.self, from: Data(json.utf8))
+        guard case .server(.sessionActivity(_, let activity, let agent, let agentState, let title)) = envelope else {
+            XCTFail("Expected sessionActivity"); return
+        }
+        XCTAssertEqual(activity, .agentActive)
+        XCTAssertEqual(agent, "codex")
+        XCTAssertEqual(agentState, .working)
+        XCTAssertEqual(title, "⠋ build")
+    }
+
+    func testSessionActivityDecodesWithoutNewFields() throws {
+        // An old server that never sends agentState/title must still decode.
+        let id = "12345678-1234-1234-1234-123456789ABC"
+        let json = #"{"type":"session_activity","payload":{"sessionId":"\#(id)","activity":"idle"}}"#
+        let envelope = try decoder.decode(MessageEnvelope.self, from: Data(json.utf8))
+        guard case .server(.sessionActivity(_, let activity, _, let agentState, let title)) = envelope else {
+            XCTFail("Expected sessionActivity"); return
+        }
+        XCTAssertEqual(activity, .idle)
+        XCTAssertNil(agentState)
+        XCTAssertNil(title)
     }
 
     // MARK: - sessionStolen

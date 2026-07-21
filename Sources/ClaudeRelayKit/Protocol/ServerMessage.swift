@@ -12,7 +12,10 @@ public enum ServerMessage: Equatable, Sendable {
     case sessionTerminated(sessionId: UUID, reason: String)
     case sessionExpired(sessionId: UUID)
     case sessionState(sessionId: UUID, state: String)
-    case sessionActivity(sessionId: UUID, activity: ActivityState, agent: String? = nil)
+    case sessionActivity(
+        sessionId: UUID, activity: ActivityState, agent: String? = nil,
+        agentState: AgentDetectedState? = nil, title: String? = nil
+    )
     case sessionStolen(sessionId: UUID)
     case sessionRenamed(sessionId: UUID, name: String)
     case sessionList(sessions: [SessionInfo])
@@ -65,6 +68,7 @@ public enum ServerMessage: Equatable, Sendable {
 extension ServerMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case reason, sessionId, cols, rows, state, code, message, sessions, activity, agent, name, success, protocolVersion
+        case agentState, title
     }
 
     public func encodePayload(to encoder: Encoder) throws {
@@ -95,10 +99,12 @@ extension ServerMessage: Codable {
         case .sessionState(let sessionId, let state):
             try container.encode(sessionId, forKey: .sessionId)
             try container.encode(state, forKey: .state)
-        case .sessionActivity(let sessionId, let activity, let agent):
+        case .sessionActivity(let sessionId, let activity, let agent, let agentState, let title):
             try container.encode(sessionId, forKey: .sessionId)
             try container.encode(activity, forKey: .activity)
             try container.encodeIfPresent(agent, forKey: .agent)
+            try container.encodeIfPresent(agentState, forKey: .agentState)
+            try container.encodeIfPresent(title, forKey: .title)
         case .sessionStolen(let sessionId):
             try container.encode(sessionId, forKey: .sessionId)
         case .sessionRenamed(let sessionId, let name):
@@ -162,7 +168,10 @@ extension ServerMessage: Codable {
             let sessionId = try container.decode(UUID.self, forKey: .sessionId)
             let activity = try container.decode(ActivityState.self, forKey: .activity)
             let agent = try container.decodeIfPresent(String.self, forKey: .agent)
-            return .sessionActivity(sessionId: sessionId, activity: activity, agent: agent)
+            let agentState = try container.decodeIfPresent(AgentDetectedState.self, forKey: .agentState)
+            let title = try container.decodeIfPresent(String.self, forKey: .title)
+            return .sessionActivity(sessionId: sessionId, activity: activity, agent: agent,
+                                    agentState: agentState, title: title)
         case "session_stolen":
             let sessionId = try container.decode(UUID.self, forKey: .sessionId)
             return .sessionStolen(sessionId: sessionId)

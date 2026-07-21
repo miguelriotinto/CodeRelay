@@ -484,7 +484,7 @@ public final class RelayConnection: ObservableObject {
                     switch serverMessage {
                     case .replayComplete(let sessionId):
                         onReplayComplete?(sessionId)
-                    case .sessionActivity(let sessionId, let activity, let agent):
+                    case .sessionActivity(let sessionId, let activity, let agent, _, _):
                         onSessionActivity?(sessionId, activity, agent)
                     case .sessionStolen(let sessionId):
                         onSessionStolen?(sessionId)
