@@ -7,8 +7,8 @@ final class AgentStateArbiterTests: XCTestCase {
     /// Build a monitor already "inside an agent" so screen detection applies.
     /// `entryDate` stamps agent entry with a CONTROLLED clock so the 3s startup
     /// grace is computed against the same fake timeline the test passes to
-    /// `updateScreenDetection` (a real `Date()` entry vs. a 1970 `now` would
-    /// make every idle look "within startup grace" and be suppressed).
+    /// `updateScreenDetection`. Using the 2001 reference epoch (internal value 0.0)
+    /// keeps arithmetic at small magnitude so floating-point ops remain exact.
     private func makeAgentMonitor(
         entryDate: Date,
         onChange: @escaping @Sendable (AgentDetectedState?) -> Void
@@ -30,7 +30,7 @@ final class AgentStateArbiterTests: XCTestCase {
 
     func testBlockedPublishesImmediately() {
         var last: AgentDetectedState?
-        let entry = Date(timeIntervalSince1970: 100)
+        let entry = Date(timeIntervalSinceReferenceDate: 0)
         let monitor = makeAgentMonitor(entryDate: entry) { last = $0 }
         // Past the 3s startup grace.
         monitor.updateScreenDetection(detection(.blocked, visibleBlocker: true), now: entry.addingTimeInterval(5))
@@ -39,7 +39,7 @@ final class AgentStateArbiterTests: XCTestCase {
 
     func testSkipStateUpdateFreezesState() {
         var updates: [AgentDetectedState?] = []
-        let entry = Date(timeIntervalSince1970: 100)
+        let entry = Date(timeIntervalSinceReferenceDate: 0)
         let monitor = makeAgentMonitor(entryDate: entry) { updates.append($0) }
         let base = entry.addingTimeInterval(5)
         monitor.updateScreenDetection(detection(.working, visibleWorking: true), now: base)
@@ -51,7 +51,7 @@ final class AgentStateArbiterTests: XCTestCase {
 
     func testWorkingToPlainIdleIsHeldThenConfirmed() {
         var last: AgentDetectedState?
-        let entry = Date(timeIntervalSince1970: 100)
+        let entry = Date(timeIntervalSinceReferenceDate: 0)
         let monitor = makeAgentMonitor(entryDate: entry) { last = $0 }
         let t0 = entry.addingTimeInterval(5)
         monitor.updateScreenDetection(detection(.working, visibleWorking: true), now: t0)
@@ -66,7 +66,7 @@ final class AgentStateArbiterTests: XCTestCase {
 
     func testVisibleIdleBypassesHold() {
         var last: AgentDetectedState?
-        let entry = Date(timeIntervalSince1970: 100)
+        let entry = Date(timeIntervalSinceReferenceDate: 0)
         let monitor = makeAgentMonitor(entryDate: entry) { last = $0 }
         let t0 = entry.addingTimeInterval(5)
         monitor.updateScreenDetection(detection(.working, visibleWorking: true), now: t0)

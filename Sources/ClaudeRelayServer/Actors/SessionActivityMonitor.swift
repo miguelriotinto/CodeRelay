@@ -236,8 +236,7 @@ public final class SessionActivityMonitor: @unchecked Sendable {
             pendingIdleConfirmations = 0
             return true
         }
-        // Add 1ms tolerance for floating-point precision when comparing elapsed time
-        if now.timeIntervalSince(startedAt) >= Self.pendingIdleCap - 0.001 {
+        if now.timeIntervalSince(startedAt) >= Self.pendingIdleCap {
             pendingIdleStartedAt = nil
             pendingIdleConfirmations = 0
             return false
