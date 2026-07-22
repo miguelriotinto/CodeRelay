@@ -305,6 +305,36 @@ final class ServerMessageTests: ProtocolTestCase {
         let payload = try jsonObject(data)["payload"] as? [String: Any]
         XCTAssertNil(payload?["agentState"], "nil agentState must not appear on the wire")
         XCTAssertNil(payload?["title"], "nil title must not appear on the wire")
+        XCTAssertNil(payload?["workingDir"], "nil workingDir must not appear on the wire")
+    }
+
+    func testSessionActivityEncodesAndDecodesWorkingDir() throws {
+        // Regression for Codex PR #29 finding 2: workingDir must survive the
+        // session_activity wire round-trip (the live cwd/`cd` regroup channel).
+        let id = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
+        let msg = ServerMessage.sessionActivity(
+            sessionId: id, activity: .agentActive, agent: "claude",
+            agentState: .working, title: nil, workingDir: "/repo/live"
+        )
+        let data = try encoder.encode(MessageEnvelope.server(msg))
+        XCTAssertEqual((try jsonObject(data)["payload"] as? [String: Any])?["workingDir"] as? String,
+                       "/repo/live")
+        let envelope = try decoder.decode(MessageEnvelope.self, from: data)
+        guard case .server(.sessionActivity(_, _, _, _, _, let workingDir)) = envelope else {
+            XCTFail("Expected sessionActivity"); return
+        }
+        XCTAssertEqual(workingDir, "/repo/live")
+    }
+
+    func testSessionActivityDecodesAbsentWorkingDirAsNil() throws {
+        // Wire back-compat: an older server that never sends workingDir decodes nil.
+        let id = "12345678-1234-1234-1234-123456789ABC"
+        let json = #"{"type":"session_activity","payload":{"sessionId":"\#(id)","activity":"agent_active","agent":"codex"}}"#
+        let envelope = try decoder.decode(MessageEnvelope.self, from: Data(json.utf8))
+        guard case .server(.sessionActivity(_, _, _, _, _, let workingDir)) = envelope else {
+            XCTFail("Expected sessionActivity"); return
+        }
+        XCTAssertNil(workingDir)
     }
 
     func testSessionActivityDecodesAgentStateAndTitle() throws {
