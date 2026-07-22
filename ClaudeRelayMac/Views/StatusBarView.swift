@@ -17,7 +17,17 @@ struct StatusBarView: View {
             Spacer()
 
             if let id = coordinator.activeSessionId {
-                ActivityDot(activity: coordinator.activityState(for: id), agentId: coordinator.activeAgent(for: id), size: 6)
+                if let info = coordinator.activeSessions.first(where: { $0.id == id }) {
+                    SessionStatusDot(state: info.state, size: 6)
+                }
+                let agentId = coordinator.activeAgent(for: id)
+                if let agentId, let friendly = AgentDisplayName.friendly(agentId),
+                   let agentState = coordinator.agentState(for: id) {
+                    Text(friendly)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    AgentStatePill(agentState: agentState, agentId: agentId, seen: !coordinator.isUnseen(id))
+                }
             }
         }
         .padding(.horizontal, 12)
