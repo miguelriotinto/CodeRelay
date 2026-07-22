@@ -14,6 +14,27 @@ final class SessionManagerWorkingDirTests: SessionManagerTestCase {
         XCTAssertEqual(listed.first?.workingDir, "/repo/demo")
     }
 
+    func testReportWorkingDirNotifiesObserverWithCwd() async throws {
+        let manager = makeManager()
+        let token = "tok"
+        let info = try await manager.createSession(tokenId: token)
+        // Register AFTER create so the initial replay doesn't race our capture.
+        let received = AsyncCwdBox()
+        _ = await manager.addActivityObserver(tokenId: token) { _, _, _, _, _, workingDir in
+            Task { await received.set(workingDir) }
+        }
+        await manager.reportWorkingDir(sessionId: info.id, workingDir: "/repo/live")
+        try await Task.sleep(for: .milliseconds(100))
+        let last = await received.value
+        XCTAssertEqual(last, "/repo/live")
+    }
+
+    /// Minimal actor to capture the latest workingDir seen by the observer.
+    private actor AsyncCwdBox {
+        private(set) var value: String?
+        func set(_ v: String?) { if v != nil { value = v } }
+    }
+
     func testReportWorkingDirUpdatesListing() async throws {
         let manager = makeManager()
         let info = try await manager.createSession(tokenId: "tok")

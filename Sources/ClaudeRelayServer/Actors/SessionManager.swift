@@ -21,7 +21,7 @@ public actor SessionManager {
     private var sessions: [UUID: ManagedSession] = [:]
     private var detachTimers: [UUID: Task<Void, Never>] = [:]
     public typealias ActivityObserver =
-        @Sendable (UUID, ActivityState, String?, AgentDetectedState?, String?) -> Void
+        @Sendable (UUID, ActivityState, String?, AgentDetectedState?, String?, String?) -> Void
     private var activityObservers = ObserverRegistry<ActivityObserver>()
     public typealias StealObserver = @Sendable (UUID) -> Void
     private var stealObservers = ObserverRegistry<StealObserver>()
@@ -390,7 +390,7 @@ public actor SessionManager {
         for managed in sessions.values where managed.info.tokenId == tokenId {
             guard !managed.info.state.isTerminal else { continue }
             callback(managed.info.id, managed.latestActivity, managed.latestAgent,
-                     managed.latestAgentState, managed.latestTitle)
+                     managed.latestAgentState, managed.latestTitle, managed.latestWorkingDir)
         }
         return observerId
     }
@@ -425,7 +425,7 @@ public actor SessionManager {
         let tokenId = managed.info.tokenId
         for (_, callback) in activityObservers.forToken(tokenId) {
             callback(sessionId, managed.latestActivity, managed.latestAgent,
-                     managed.latestAgentState, managed.latestTitle)
+                     managed.latestAgentState, managed.latestTitle, managed.latestWorkingDir)
         }
     }
 
@@ -455,7 +455,7 @@ public actor SessionManager {
         sessions[sessionId] = managed
         let tokenId = managed.info.tokenId
         for (_, callback) in activityObservers.forToken(tokenId) {
-            callback(sessionId, activity, agent, agentState, title)
+            callback(sessionId, activity, agent, agentState, title, managed.latestWorkingDir)
         }
     }
 

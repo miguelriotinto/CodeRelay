@@ -43,4 +43,15 @@ final class WorkspaceRollupTests: XCTestCase {
             groupKey: { $0.workingDir ?? "~" }, title: { $0 })
         XCTAssertEqual(groups.first?.state, .blocked)
     }
+
+    func testLiveStateWinsEvenWhenSnapshotAgentIsNil() {
+        // A live observer reports a newly-started agent before the SessionInfo
+        // snapshot's `agent` field catches up (agent == nil). The live state
+        // must still drive the rollup — not fall through to .seen.
+        let s = session(nil, nil, dir: "/repo/a")
+        XCTAssertEqual(WorkspaceRollup.rollupState(for: s, unseen: [], liveState: .blocked), .blocked)
+        let groups = WorkspaceRollup.group(sessions: [s], agentStates: [s.id: .working], unseen: [],
+            groupKey: { $0.workingDir ?? "~" }, title: { $0 })
+        XCTAssertEqual(groups.first?.state, .working)
+    }
 }

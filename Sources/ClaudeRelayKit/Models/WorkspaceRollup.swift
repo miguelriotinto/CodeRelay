@@ -37,7 +37,11 @@ public struct WorkspaceRollup: Equatable, Sendable, Identifiable {
     /// snapshot carries) it wins over `session.agentState`.
     public static func rollupState(for session: SessionInfo, unseen: Set<UUID>,
                                    liveState: AgentDetectedState? = nil) -> RollupState {
-        guard session.agent != nil else { return .seen }
+        // A fresh live state implies an agent is present even if the snapshot's
+        // `agent` field hasn't caught up yet, so it must not be gated behind
+        // `session.agent`. Only when there's neither a live state nor a snapshot
+        // agent do we treat the session as "no agent" → seen.
+        guard session.agent != nil || liveState != nil else { return .seen }
         switch liveState ?? session.agentState {
         case .blocked: return .blocked
         case .idle:    return unseen.contains(session.id) ? .finishedUnseen : .seen

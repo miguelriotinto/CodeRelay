@@ -40,4 +40,10 @@ class WorkspaceRollupTest {
             emptySet(), groupKey = { it.workingDir ?: "~" }, title = { it })
         assertEquals(RollupState.BLOCKED, groups.first().state)
     }
+
+    @Test fun `live state wins even when snapshot agent is null`() {
+        val s = session(null, null, "/repo/a")
+        assertEquals(RollupState.BLOCKED,
+            WorkspaceRollup.rollupState(s, emptySet(), liveState = AgentDetectedState.BLOCKED))
+    }
 }

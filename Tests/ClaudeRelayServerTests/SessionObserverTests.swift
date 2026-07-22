@@ -18,7 +18,7 @@ final class SessionObserverTests: SessionManagerTestCase {
         var receivedAgents: [String?] = []
         let expectation = XCTestExpectation(description: "activity callback")
         expectation.expectedFulfillmentCount = 2
-        let observerId = await manager.addActivityObserver(tokenId: tokenInfo.id) { sessionId, activity, agent, _, _ in
+        let observerId = await manager.addActivityObserver(tokenId: tokenInfo.id) { sessionId, activity, agent, _, _, _ in
             XCTAssertEqual(sessionId, session.id)
             received.append(activity)
             receivedAgents.append(agent)
@@ -44,7 +44,7 @@ final class SessionObserverTests: SessionManagerTestCase {
         var receivedSessionIds: [UUID] = []
         let expectation = XCTestExpectation(description: "only token A")
         expectation.expectedFulfillmentCount = 2
-        let observerId = await manager.addActivityObserver(tokenId: tokenA.id) { sessionId, _, _, _, _ in
+        let observerId = await manager.addActivityObserver(tokenId: tokenA.id) { sessionId, _, _, _, _, _ in
             receivedSessionIds.append(sessionId)
             expectation.fulfill()
         }
@@ -65,7 +65,7 @@ final class SessionObserverTests: SessionManagerTestCase {
         let session = try await manager.createSession(tokenId: tokenInfo.id)
 
         var callCount = 0
-        let observerId = await manager.addActivityObserver(tokenId: tokenInfo.id) { _, _, _, _, _ in
+        let observerId = await manager.addActivityObserver(tokenId: tokenInfo.id) { _, _, _, _, _, _ in
             callCount += 1
         }
 
@@ -248,7 +248,7 @@ final class SessionObserverTests: SessionManagerTestCase {
         let (_, tokenInfo) = try await createTestToken()
         let manager = makeManager()
 
-        _ = await manager.addActivityObserver(tokenId: tokenInfo.id) { _, _, _, _, _ in }
+        _ = await manager.addActivityObserver(tokenId: tokenInfo.id) { _, _, _, _, _, _ in }
         _ = await manager.addStealObserver(tokenId: tokenInfo.id) { _ in }
         _ = await manager.addRenameObserver(tokenId: tokenInfo.id) { _, _ in }
 

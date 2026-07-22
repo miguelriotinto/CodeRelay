@@ -14,7 +14,9 @@ public actor GitRootResolver {
     private var order: [String] = []   // simple LRU: most-recent at the end
 
     public init(maxCacheEntries: Int = 256) {
-        self.maxCacheEntries = maxCacheEntries
+        // Clamp: a non-positive cap would let `store`'s eviction loop call
+        // removeFirst() on an empty order array.
+        self.maxCacheEntries = max(1, maxCacheEntries)
     }
 
     /// The git root for `path`, or a normalized fallback. Empty/whitespace →

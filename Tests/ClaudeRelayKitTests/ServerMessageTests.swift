@@ -262,7 +262,7 @@ final class ServerMessageTests: ProtocolTestCase {
         let id = "12345678-1234-1234-1234-123456789ABC"
         let json = #"{"type":"session_activity","payload":{"sessionId":"\#(id)","activity":"agent_active","agent":"claude"}}"#
         let envelope = try decoder.decode(MessageEnvelope.self, from: Data(json.utf8))
-        guard case .server(.sessionActivity(let sessionId, let activity, let agent, _, _)) = envelope else {
+        guard case .server(.sessionActivity(let sessionId, let activity, let agent, _, _, _)) = envelope else {
             XCTFail("Expected sessionActivity"); return
         }
         XCTAssertEqual(sessionId.uuidString, id)
@@ -311,7 +311,7 @@ final class ServerMessageTests: ProtocolTestCase {
         let id = "12345678-1234-1234-1234-123456789ABC"
         let json = #"{"type":"session_activity","payload":{"sessionId":"\#(id)","activity":"agent_active","agent":"codex","agentState":"working","title":"⠋ build"}}"#
         let envelope = try decoder.decode(MessageEnvelope.self, from: Data(json.utf8))
-        guard case .server(.sessionActivity(_, let activity, let agent, let agentState, let title)) = envelope else {
+        guard case .server(.sessionActivity(_, let activity, let agent, let agentState, let title, _)) = envelope else {
             XCTFail("Expected sessionActivity"); return
         }
         XCTAssertEqual(activity, .agentActive)
@@ -325,7 +325,7 @@ final class ServerMessageTests: ProtocolTestCase {
         let id = "12345678-1234-1234-1234-123456789ABC"
         let json = #"{"type":"session_activity","payload":{"sessionId":"\#(id)","activity":"idle"}}"#
         let envelope = try decoder.decode(MessageEnvelope.self, from: Data(json.utf8))
-        guard case .server(.sessionActivity(_, let activity, _, let agentState, let title)) = envelope else {
+        guard case .server(.sessionActivity(_, let activity, _, let agentState, let title, _)) = envelope else {
             XCTFail("Expected sessionActivity"); return
         }
         XCTAssertEqual(activity, .idle)

@@ -159,8 +159,12 @@ static int relay_proc_cwd_walk(int pid, char *buf, int buflen, int depth) {
     int cap = n + 64;   // headroom for pids spawned between sizing and fill
     pid_t *all = (pid_t *)calloc((size_t)cap, sizeof(pid_t));
     if (!all) return -1;
+    // proc_listallpids returns the NUMBER OF PIDS written (the libproc wrapper
+    // already divides the kernel's byte count by sizeof(int)), so `filled` is a
+    // count — do NOT divide again, or only ~1/4 of the array is scanned.
     int filled = proc_listallpids(all, (int)(cap * sizeof(pid_t)));
-    int count = filled > 0 ? filled / (int)sizeof(pid_t) : 0;
+    int count = filled > 0 ? filled : 0;
+    if (count > cap) count = cap;   // never read past the allocation
     int result = -1;
     for (int i = 0; i < count; i++) {
         if (all[i] <= 0) continue;

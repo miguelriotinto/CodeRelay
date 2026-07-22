@@ -32,7 +32,9 @@ data class WorkspaceRollup(
             unseen: Set<UUID>,
             liveState: AgentDetectedState? = null,
         ): RollupState {
-            if (session.agent == null) return RollupState.SEEN
+            // A fresh live state implies an agent even if the snapshot's `agent`
+            // hasn't caught up; only "no live state AND no snapshot agent" → seen.
+            if (session.agent == null && liveState == null) return RollupState.SEEN
             return when (liveState ?: session.agentState) {
                 AgentDetectedState.BLOCKED -> RollupState.BLOCKED
                 AgentDetectedState.IDLE ->
