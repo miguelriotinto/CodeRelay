@@ -224,10 +224,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 self.terminalViewModels[sessionId]?.endReplay()
             }
         }
-        connection.onSessionActivity = { [weak self] sessionId, activity, agent, agentState, title in
+        connection.onSessionActivity = { [weak self] sessionId, activity, agent, agentState, title, workingDir in
             Task { @MainActor [weak self] in
                 self?.handleActivityUpdate(sessionId: sessionId, activity: activity, agent: agent,
-                                           agentState: agentState, title: title)
+                                           agentState: agentState, title: title, workingDir: workingDir)
             }
         }
         connection.onSessionStolen = { [weak self] sessionId in
@@ -673,8 +673,18 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     private func handleActivityUpdate(
         sessionId: UUID, activity: ActivityState, agent: String? = nil,
-        agentState: AgentDetectedState? = nil, title: String? = nil
+        agentState: AgentDetectedState? = nil, title: String? = nil, workingDir: String? = nil
     ) {
+        // Live cwd updates (e.g. after `cd`) arrive on the activity channel;
+        // patch the cached SessionInfo so the grouped sidebar regroups without
+        // waiting for a full session-list refetch.
+        if let workingDir, let idx = sessions.firstIndex(where: { $0.id == sessionId }),
+           sessions[idx].workingDir != workingDir {
+            sessions[idx] = sessions[idx].enriched(
+                activity: sessions[idx].activity, agent: sessions[idx].agent,
+                agentState: sessions[idx].agentState, title: sessions[idx].title,
+                workingDir: workingDir)
+        }
         activityCoordinator.handleActivityUpdate(
             sessionId: sessionId,
             activity: activity,

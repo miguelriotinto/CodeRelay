@@ -543,4 +543,28 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(message.localizedCaseInsensitiveContains("token"))
         XCTAssertTrue(message.localizedCaseInsensitiveContains("re-pair"))
     }
+
+    // MARK: - Live workingDir patch (Codex PR #29 finding 2, client half)
+
+    func testActivityEventPatchesCachedSessionWorkingDir() async {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+        let id = UUID()
+        coordinator.sessions = [SessionInfo(
+            id: id, name: "s", state: .activeAttached, tokenId: "test-token",
+            createdAt: Date(), cols: 80, rows: 24, activity: .agentActive,
+            agent: "claude", agentState: .working, title: nil, workingDir: "/repo/old")]
+
+        // Simulate a live activity push carrying a new cwd (as after `cd`).
+        // The coordinator's handler hops through a Task { @MainActor }, so yield
+        // before asserting.
+        connection.onSessionActivity?(id, .agentActive, "claude", .working, nil, "/repo/new")
+        for _ in 0..<10 where coordinator.sessions.first?.workingDir != "/repo/new" {
+            await Task.yield()
+        }
+
+        // The cached SessionInfo must be patched so the grouped sidebar regroups
+        // without waiting for a full session-list refetch.
+        XCTAssertEqual(coordinator.sessions.first?.workingDir, "/repo/new")
+    }
 }

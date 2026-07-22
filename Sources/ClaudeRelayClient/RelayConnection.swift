@@ -96,7 +96,8 @@ public final class RelayConnection: ObservableObject {
     public var onTerminalOutput: ((Data) -> Void)?
 
     /// Called when the server pushes an activity state change for any session.
-    public var onSessionActivity: ((UUID, ActivityState, String?, AgentDetectedState?, String?) -> Void)?
+    /// Args: sessionId, activity, agent, agentState, title, workingDir.
+    public var onSessionActivity: ((UUID, ActivityState, String?, AgentDetectedState?, String?, String?) -> Void)?
 
     /// Called when the server signals that scrollback replay is complete for a session.
     public var onReplayComplete: ((UUID) -> Void)?
@@ -484,8 +485,8 @@ public final class RelayConnection: ObservableObject {
                     switch serverMessage {
                     case .replayComplete(let sessionId):
                         onReplayComplete?(sessionId)
-                    case .sessionActivity(let sessionId, let activity, let agent, let agentState, let title):
-                        onSessionActivity?(sessionId, activity, agent, agentState, title)
+                    case .sessionActivity(let sessionId, let activity, let agent, let agentState, let title, let workingDir):
+                        onSessionActivity?(sessionId, activity, agent, agentState, title, workingDir)
                     case .sessionStolen(let sessionId):
                         onSessionStolen?(sessionId)
                     case .sessionRenamed(let sessionId, let name):

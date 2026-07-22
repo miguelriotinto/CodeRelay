@@ -36,7 +36,7 @@ final class MessageEnvelopeTests: ProtocolTestCase {
         let id = "12345678-1234-1234-1234-123456789ABC"
         let json = #"{"type":"session_activity","payload":{"sessionId":"\#(id)","activity":"claude_active"}}"#
         let envelope = try decoder.decode(MessageEnvelope.self, from: Data(json.utf8))
-        guard case .server(.sessionActivity(_, let activity, let agent, _, _)) = envelope else {
+        guard case .server(.sessionActivity(_, let activity, let agent, _, _, _)) = envelope else {
             XCTFail("Expected sessionActivity"); return
         }
         XCTAssertEqual(activity, .agentActive)

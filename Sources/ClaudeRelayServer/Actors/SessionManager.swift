@@ -21,7 +21,7 @@ public actor SessionManager {
     private var sessions: [UUID: ManagedSession] = [:]
     private var detachTimers: [UUID: Task<Void, Never>] = [:]
     public typealias ActivityObserver =
-        @Sendable (UUID, ActivityState, String?, AgentDetectedState?, String?) -> Void
+        @Sendable (UUID, ActivityState, String?, AgentDetectedState?, String?, String?) -> Void
     private var activityObservers = ObserverRegistry<ActivityObserver>()
     public typealias StealObserver = @Sendable (UUID) -> Void
     private var stealObservers = ObserverRegistry<StealObserver>()
@@ -42,6 +42,9 @@ public actor SessionManager {
         var latestAgentState: AgentDetectedState?
         /// Latest window title (OSC 0/2).
         var latestTitle: String?
+        /// Latest working directory (git root), resolved from the PTY's cwd on
+        /// the foreground poll. Sticky — a later update without a cwd keeps it.
+        var latestWorkingDir: String?
         /// Monotonic revision of the last activity update we accepted.
         /// `reportActivityChange` drops updates whose revision is not
         /// strictly greater (see C-03).
@@ -50,9 +53,13 @@ public actor SessionManager {
 
     // MARK: - Init
 
-    public init(config: RelayConfig, tokenStore: TokenStore, ptyFactory: PTYFactory? = nil) {
+    private let gitRootResolver: GitRootResolver
+
+    public init(config: RelayConfig, tokenStore: TokenStore, ptyFactory: PTYFactory? = nil,
+                gitRootResolver: GitRootResolver = GitRootResolver()) {
         self.config = config
         self.tokenStore = tokenStore
+        self.gitRootResolver = gitRootResolver
         self.ptyFactory = ptyFactory ?? { id, cols, rows, scrollback in
             try PTYSession(sessionId: id, cols: cols, rows: rows, scrollbackSize: scrollback)
         }
@@ -114,6 +121,9 @@ public actor SessionManager {
                     agentState: agentState, title: title, revision: revision
                 )
             }
+        }
+        await pty.setWorkingDirHandler { [weak self] cwd in
+            Task { await self?.handleWorkingDir(sessionId: sessionId, cwd: cwd) }
         }
 
         // Store session
@@ -354,14 +364,16 @@ public actor SessionManager {
         sessions.values
             .filter { $0.info.tokenId == tokenId }
             .map { $0.info.enriched(activity: $0.latestActivity, agent: $0.latestAgent,
-                                    agentState: $0.latestAgentState, title: $0.latestTitle) }
+                                    agentState: $0.latestAgentState, title: $0.latestTitle,
+                                    workingDir: $0.latestWorkingDir) }
     }
 
     /// List all sessions across all tokens, enriched with cached activity state.
     /// Used for cross-device attach — lets a device see sessions from other tokens.
     public func listAllSessions() -> [SessionInfo] {
         sessions.values.map { $0.info.enriched(activity: $0.latestActivity, agent: $0.latestAgent,
-                                                agentState: $0.latestAgentState, title: $0.latestTitle) }
+                                               agentState: $0.latestAgentState, title: $0.latestTitle,
+                                               workingDir: $0.latestWorkingDir) }
     }
 
     // MARK: - Activity Observers
@@ -378,7 +390,7 @@ public actor SessionManager {
         for managed in sessions.values where managed.info.tokenId == tokenId {
             guard !managed.info.state.isTerminal else { continue }
             callback(managed.info.id, managed.latestActivity, managed.latestAgent,
-                     managed.latestAgentState, managed.latestTitle)
+                     managed.latestAgentState, managed.latestTitle, managed.latestWorkingDir)
         }
         return observerId
     }
@@ -395,12 +407,35 @@ public actor SessionManager {
     ///
     /// `revision` defaults to `.max` so tests / admin tooling can force an
     /// update without having to mint a fresh sequence.
+    /// Resolve a raw cwd from the PTY poll to its git root, then report it.
+    private func handleWorkingDir(sessionId: UUID, cwd: String) async {
+        let root = await gitRootResolver.root(for: cwd)
+        reportWorkingDir(sessionId: sessionId, workingDir: root)
+    }
+
+    /// Update a session's cached working directory (already resolved to a git
+    /// root) and refresh observers with the current activity so grouped clients
+    /// repaint — even when no activity state changed (a plain `cd`).
+    public func reportWorkingDir(sessionId: UUID, workingDir: String) {
+        guard var managed = sessions[sessionId] else { return }
+        guard !managed.info.state.isTerminal else { return }
+        guard managed.latestWorkingDir != workingDir else { return }
+        managed.latestWorkingDir = workingDir
+        sessions[sessionId] = managed
+        let tokenId = managed.info.tokenId
+        for (_, callback) in activityObservers.forToken(tokenId) {
+            callback(sessionId, managed.latestActivity, managed.latestAgent,
+                     managed.latestAgentState, managed.latestTitle, managed.latestWorkingDir)
+        }
+    }
+
     public func reportActivityChange(
         sessionId: UUID,
         activity: ActivityState,
         agent: String? = nil,
         agentState: AgentDetectedState? = nil,
         title: String? = nil,
+        workingDir: String? = nil,
         revision: UInt64 = .max
     ) {
         guard var managed = sessions[sessionId] else { return }
@@ -414,10 +449,13 @@ public actor SessionManager {
         managed.latestAgent = agent
         managed.latestAgentState = agentState
         managed.latestTitle = title
+        // Sticky: a resolved cwd persists until a newer one arrives, so an
+        // activity update that carries no cwd doesn't wipe the group.
+        if let workingDir { managed.latestWorkingDir = workingDir }
         sessions[sessionId] = managed
         let tokenId = managed.info.tokenId
         for (_, callback) in activityObservers.forToken(tokenId) {
-            callback(sessionId, activity, agent, agentState, title)
+            callback(sessionId, activity, agent, agentState, title, managed.latestWorkingDir)
         }
     }
 

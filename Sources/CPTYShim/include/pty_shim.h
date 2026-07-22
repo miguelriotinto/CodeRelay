@@ -36,4 +36,21 @@ int relay_get_parent_pid(int pid);
 /// (process gone, sysctl failed, etc.).
 long long relay_get_process_start_time(int pid);
 
+/// Get the current working directory of the given PID via
+/// proc_pidinfo(PROC_PIDVNODEPATHINFO). Writes the path into `buf` (max
+/// `buflen` bytes, NUL-terminated). Returns 0 on success, -1 on error
+/// (process gone, path longer than `buflen`, or proc_pidinfo failed).
+///
+/// NOTE: proc_pidinfo(PROC_PIDVNODEPATHINFO) returns EPERM for sugid-tainted
+/// processes when the caller is not root — which includes shells spawned via
+/// setuid `login`. Use `relay_proc_cwd_descendant` for the login-shell case.
+int relay_proc_cwd(int pid, char *buf, int buflen);
+
+/// Like `relay_proc_cwd`, but robust to the setuid-`login` shell layering used
+/// by PTYSession: if `pid` itself is not readable (EPERM on a sugid `login`
+/// process), it descends to the first readable child (the real interactive
+/// shell) and returns ITS cwd. Walks up to a small fixed depth. Returns 0 on
+/// success (writing into `buf`), -1 if no descendant cwd is readable.
+int relay_proc_cwd_descendant(int pid, char *buf, int buflen);
+
 #endif /* PTY_SHIM_H */

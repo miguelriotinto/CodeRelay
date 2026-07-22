@@ -218,6 +218,17 @@ fun WorkspaceScreen(
             activityForSession = ::activityFor,
             agentStateForSession = ::agentStateFor,
             seenForSession = ::seenFor,
+            // Build rollups from the collected agentStates/unseenSessions so the
+            // grouping recomposes when live state changes (parity with iOS).
+            rollupsForSessions = { list ->
+                relay.protocol.WorkspaceRollup.group(
+                    sessions = list,
+                    agentStates = agentStates,
+                    unseen = unseenSessions,
+                    groupKey = { it.workingDir ?: "~" },
+                    title = { if (it == "~") "Other" else it.substringAfterLast('/') },
+                )
+            },
             isRefreshing = isLoading,
             onRefresh = { scope.launch { coordinator.fetchSessions() } },
             onNewSession = { scope.launch { coordinator.createNewSession() } },

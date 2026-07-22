@@ -5,6 +5,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import relay.protocol.ActivityState
 import relay.protocol.AgentDetectedState
+import relay.protocol.SessionInfo
+import relay.protocol.WorkspaceRollup
 import java.util.UUID
 
 /**
@@ -160,6 +162,20 @@ class ActivityCoordinator(
     fun markSeen(sessionId: UUID) {
         _unseenSessions.value = _unseenSessions.value - sessionId
     }
+
+    /**
+     * Group [sessions] into workspace rollups (one per working directory / git
+     * root), worst-state first. Parity with Swift `ActivityCoordinator.rollups`:
+     * uses the live [agentStates] map (leads the snapshot) + [unseenSessions].
+     */
+    fun rollups(sessions: List<SessionInfo>): List<WorkspaceRollup> =
+        WorkspaceRollup.group(
+            sessions = sessions,
+            agentStates = _agentStates.value,
+            unseen = _unseenSessions.value,
+            groupKey = { it.workingDir ?: "~" },
+            title = { if (it == "~") "Other" else it.substringAfterLast('/') },
+        )
 
     // MARK: - Server-event handlers
 

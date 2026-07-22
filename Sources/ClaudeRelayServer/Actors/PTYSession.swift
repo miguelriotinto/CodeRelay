@@ -12,6 +12,13 @@ public protocol PTYSessionProtocol: Actor {
     func clearOutputHandler()
     func write(_ data: Data)
     func resize(cols: UInt16, rows: UInt16)
+    /// Best-effort current working directory of the session's shell process
+    /// (the stable workspace anchor). Nil when the process is gone or the
+    /// lookup fails. Actor-isolated — callers await.
+    func currentWorkingDirectory() -> String?
+    /// Set a callback fired from the foreground poll with the session's cwd,
+    /// only when it changes. Used to track `cd` for workspace grouping.
+    func setWorkingDirHandler(_ handler: @escaping @Sendable (String) -> Void)
     /// Asks the foreground app to repaint by wiggling the PTY width (cols−1,
     /// ~150 ms, restore). Used after a ring-buffer replay and for client
     /// tap-to-redraw: the on-screen bytes can be mis-wrapped/garbled until the
@@ -84,6 +91,10 @@ public actor PTYSession: PTYSessionProtocol {
     /// The monitor captures this box (not `self`) so the closure doesn't require `self` to be fully initialized.
     private let activityCallbackBox = ActivityCallbackBox()
     private var activityHandler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
+    /// Callback for working-directory changes, fired from the foreground poll.
+    private var workingDirHandler: (@Sendable (String) -> Void)?
+    /// Last cwd we reported, to fire the handler only on change.
+    private var lastReportedWorkingDir: String?
     private var terminated: Bool = false
     private var foregroundPollTimer: DispatchSourceTimer?
     /// Last size applied via init/`resize()`. `forceRepaint()` restores to
@@ -237,6 +248,12 @@ public actor PTYSession: PTYSessionProtocol {
             let snapshot = screenModel.snapshot()
             let detection = stateDetector.detect(agentId: agent.id, snapshot: snapshot)
             activityMonitor.updateScreenDetection(detection, now: Date())
+        }
+        // Track cwd changes (e.g. `cd`) even without an activity change.
+        if let handler = workingDirHandler, let cwd = currentWorkingDirectory(),
+           cwd != lastReportedWorkingDir {
+            lastReportedWorkingDir = cwd
+            handler(cwd)
         }
     }
 
@@ -411,6 +428,14 @@ public actor PTYSession: PTYSessionProtocol {
         self.activityCallbackBox.handler = handler
     }
 
+    /// Set a callback invoked (on the foreground poll) with the session's
+    /// current working directory. Fires only when the cwd is readable and has
+    /// changed since the last poll, so `cd` is tracked even without an activity
+    /// state change. The handler resolves the git root and reports upward.
+    public func setWorkingDirHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        self.workingDirHandler = handler
+    }
+
     /// Record that input was sent to this session.
     public func recordInput() {
         activityMonitor.recordInput()
@@ -522,6 +547,19 @@ public actor PTYSession: PTYSessionProtocol {
         currentRows = rows
         screenModel.resize(cols: cols, rows: rows)
         _ = relay_set_winsize(masterFD, rows, cols)
+    }
+
+    /// Best-effort cwd of the session's shell (the stable workspace anchor).
+    ///
+    /// `childPID` is the setuid `login` process, whose vnode path info is not
+    /// readable by this non-root server (EPERM on sugid processes). So we
+    /// descend to the first readable child — the real interactive shell — and
+    /// return its cwd. Nil when nothing in the subtree is readable.
+    public func currentWorkingDirectory() -> String? {
+        guard !terminated else { return nil }
+        var buf = [CChar](repeating: 0, count: 1024)   // paths well under PATH_MAX
+        guard relay_proc_cwd_descendant(childPID, &buf, Int32(buf.count)) == 0 else { return nil }
+        return String(cString: buf)
     }
 
     /// Forces the foreground app to re-emit its whole screen by genuinely
