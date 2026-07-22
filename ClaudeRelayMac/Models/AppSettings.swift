@@ -93,6 +93,8 @@ final class AppSettings: ObservableObject {
     @AppStorage("com.clauderelay.mac.launchAtLogin") var launchAtLoginEnabled = false
 
     @AppStorage("com.clauderelay.mac.autoConnectEnabled") var autoConnectEnabled = false
+    @AppStorage("com.clauderelay.mac.pushNotificationsEnabled") var pushNotificationsEnabled = true
+    @AppStorage("com.clauderelay.mac.pushNotifyOnFinished") var pushNotifyOnFinished = false
 
     @AppStorage("com.clauderelay.mac.smartCleanupEnabled") var smartCleanupEnabled = true
     @AppStorage("com.clauderelay.mac.promptEnhancementEnabled") var promptEnhancementEnabled = false

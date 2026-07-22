@@ -48,6 +48,7 @@ targets:
         MARKETING_VERSION: "1.4.1"
         CURRENT_PROJECT_VERSION: "165"
         GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: ClaudeRelayApp/ClaudeRelayApp.entitlements
     info:
       path: ClaudeRelayApp/Info.plist
       properties:

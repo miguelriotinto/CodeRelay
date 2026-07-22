@@ -154,6 +154,7 @@
 		CF311DE62F36AF5A19AB87E9 /* StatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarView.swift; sourceTree = "<group>"; };
 		D056FB2ADC91419A5B818866 /* OnDeviceSpeechEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceSpeechEngineTests.swift; sourceTree = "<group>"; };
 		D4204EB40CF647D61C19C014 /* ClaudeRelayMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeRelayMac.entitlements; sourceTree = "<group>"; };
+		D5CC0C27F254AABEE0CFF19D /* ClaudeRelayApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeRelayApp.entitlements; sourceTree = "<group>"; };
 		D78DC0EE4B30D251D06A848D /* AddEditServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerView.swift; sourceTree = "<group>"; };
 		D7FB5BCA00B611C22E4B93FD /* MainWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow.swift; sourceTree = "<group>"; };
 		DD7FCEC509175BD571CE89C2 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -363,6 +364,7 @@
 			isa = PBXGroup;
 			children = (
 				BA02853D523E6DAF7B5CD68D /* Assets.xcassets */,
+				D5CC0C27F254AABEE0CFF19D /* ClaudeRelayApp.entitlements */,
 				203B7144359F258D91797C4E /* ClaudeRelayApp.swift */,
 				C869AB0FEAB465EB76190FC2 /* Info.plist */,
 				3C544709576E8C546087C992 /* Models */,
@@ -828,6 +830,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = ClaudeRelayApp/ClaudeRelayApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 165;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
@@ -860,6 +863,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = ClaudeRelayApp/ClaudeRelayApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 165;
 				DEVELOPMENT_TEAM = T9WF95GC9T;

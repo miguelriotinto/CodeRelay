@@ -80,6 +80,9 @@ struct MainWindow: View {
                 coordinator = nil
             } else {
                 ActiveCoordinatorRegistry.shared.register(coordinator: c, serverName: config.name)
+                await c.syncPushRegistration(
+                    pushEnabled: AppSettings.shared.pushNotificationsEnabled,
+                    notifyOnFinished: AppSettings.shared.pushNotifyOnFinished)
             }
         } catch {
             loadFailure = error.localizedDescription

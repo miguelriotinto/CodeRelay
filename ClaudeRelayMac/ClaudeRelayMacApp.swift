@@ -20,6 +20,10 @@ struct ClaudeRelayMacApp: App {
                 .onOpenURL { url in
                     handleDeepLink(url)
                 }
+                .onReceive(PushTokenBridge.shared.$pendingDeepLink.compactMap { $0 }) { url in
+                    handleDeepLink(url)
+                    PushTokenBridge.shared.pendingDeepLink = nil
+                }
         }
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))

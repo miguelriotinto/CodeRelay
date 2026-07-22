@@ -62,6 +62,19 @@ struct SettingsView: View {
                     Text("Automatically reconnect to the last server on launch.")
                 }
 
+                Section {
+                    Toggle("Push Notifications", isOn: $settings.pushNotificationsEnabled)
+                    if settings.pushNotificationsEnabled {
+                        Toggle("Notify When Finished", isOn: $settings.pushNotifyOnFinished)
+                    }
+                } header: {
+                    Text("Notifications")
+                } footer: {
+                    Text(settings.pushNotificationsEnabled
+                         ? "Get notified when an agent needs input (blocked). Enable \"Notify When Finished\" to also be alerted when an agent completes."
+                         : "Turn on to be notified when an agent is blocked or finishes, even when the app is in the background.")
+                }
+
                 Section("General") {
                     Toggle("Haptic Feedback", isOn: $settings.hapticFeedbackEnabled)
                     Picker("Session Names", selection: $settings.sessionNamingTheme) {

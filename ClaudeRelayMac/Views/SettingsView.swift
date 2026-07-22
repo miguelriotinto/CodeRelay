@@ -202,6 +202,27 @@ private struct GeneralSettingsTab: View {
                             : "Press \(settings.shortcutDisplayString) to toggle speech recording.")
                 }
 
+                SettingsSectionHeader(title: "Notifications")
+                SettingsGroup {
+                    SettingsGroupRow(showDivider: settings.pushNotificationsEnabled) {
+                        Text("Push notifications")
+                        Spacer()
+                        Toggle("", isOn: $settings.pushNotificationsEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+                    if settings.pushNotificationsEnabled {
+                        SettingsGroupRow(showDivider: false) {
+                            Text("Notify when finished")
+                            Spacer()
+                            Toggle("", isOn: $settings.pushNotifyOnFinished)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                        }
+                    }
+                }
+                SettingsSectionFooter(text: "Get notified when an agent is blocked or (optionally) finishes, even when Code[Relay] is in the background.")
+
                 SettingsSectionHeader(title: "Launch")
                 SettingsGroup {
                     SettingsGroupRow {
