@@ -125,7 +125,7 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ActivityDot(activity: activity, agentId: agentId, agentState: agentState, seen: seen, size: 8)
+            SessionStatusDot(state: session.state, size: 8)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(name)
@@ -148,18 +148,12 @@ private struct SessionRow: View {
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(session.state.rawValue)
-                    .font(.caption2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(badgeColor.opacity(0.15))
-                    .foregroundStyle(badgeColor)
-                    .clipShape(Capsule())
-
-                Text(session.createdAt, style: .relative)
+            if let agentId, let friendly = AgentDisplayName.friendly(agentId), let agentState {
+                Text(friendly)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                AgentStatePill(agentState: agentState, agentId: agentId, seen: seen)
             }
         }
         .contextMenu {
@@ -182,14 +176,6 @@ private struct SessionRow: View {
                 if !trimmed.isEmpty { onRename(trimmed) }
             }
             Button("Cancel", role: .cancel) {}
-        }
-    }
-
-    private var badgeColor: SwiftUI.Color {
-        switch session.state {
-        case .activeAttached, .activeDetached: return .green
-        case .created, .starting, .resuming: return .yellow
-        case .exited, .failed, .terminated, .expired: return .red
         }
     }
 }
