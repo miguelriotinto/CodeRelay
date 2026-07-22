@@ -23,6 +23,7 @@ struct StatusBarView: View {
                 let agentId = coordinator.activeAgent(for: id)
                 if let agentId, let friendly = AgentDisplayName.friendly(agentId),
                    let agentState = coordinator.agentState(for: id) {
+                    AgentSparkleIcon(agentId: agentId, agentState: agentState)
                     Text(friendly)
                         .font(.caption2)
                         .foregroundStyle(.secondary)

@@ -24,12 +24,10 @@ struct SessionSidebarView: View {
                         SessionRow(
                             name: coordinator.name(for: session.id),
                             state: session.state,
-                            shortId: String(session.id.uuidString.prefix(8)),
                             activity: coordinator.activityState(for: session.id),
                             agentId: coordinator.activeAgent(for: session.id),
                             agentState: coordinator.agentState(for: session.id),
                             seen: !coordinator.isUnseen(session.id),
-                            title: coordinator.title(for: session.id),
                             createdAt: session.createdAt
                         )
                         .contextMenu {
@@ -117,33 +115,19 @@ struct SessionSidebarView: View {
 private struct SessionRow: View {
     let name: String
     let state: SessionState
-    let shortId: String
     let activity: ActivityState
     let agentId: String?
     let agentState: AgentDetectedState?
     let seen: Bool
-    let title: String?
     let createdAt: Date
 
     var body: some View {
         HStack(spacing: 8) {
             SessionStatusDot(state: state, size: 6)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(.body)
-                if let title, !title.isEmpty {
-                    Text(title)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                } else {
-                    Text(shortId)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text(name).font(.body).lineLimit(1).truncationMode(.tail)
             Spacer()
             if let agentId, let friendly = AgentDisplayName.friendly(agentId), let agentState {
+                AgentSparkleIcon(agentId: agentId, agentState: agentState)
                 Text(friendly)
                     .font(.caption2)
                     .foregroundStyle(.secondary)

@@ -83,7 +83,6 @@ fun SessionSidebar(
     activityForSession: (UUID) -> ActivityState,
     agentStateForSession: (UUID) -> relay.protocol.AgentDetectedState? = { null },
     seenForSession: (UUID) -> Boolean = { true },
-    titleForSession: (UUID) -> String? = { null },
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     onNewSession: () -> Unit,
@@ -142,7 +141,6 @@ fun SessionSidebar(
                             agentId = agentForSession(session.id),
                             agentState = agentStateForSession(session.id),
                             seen = seenForSession(session.id),
-                            title = titleForSession(session.id),
                             onSelect = { onSelect(session.id) },
                             onTerminate = { onTerminate(session.id) },
                             onRenameRequest = {
@@ -187,7 +185,6 @@ private fun SwipeableSessionRow(
     agentId: String?,
     agentState: relay.protocol.AgentDetectedState?,
     seen: Boolean,
-    title: String?,
     onSelect: () -> Unit,
     onTerminate: () -> Unit,
     onRenameRequest: () -> Unit,
@@ -226,7 +223,6 @@ private fun SwipeableSessionRow(
             agentId = agentId,
             agentState = agentState,
             seen = seen,
-            title = title,
             onSelect = onSelect,
             onRenameRequest = onRenameRequest,
             onShareQr = onShareQr,
@@ -244,13 +240,11 @@ private fun SessionRow(
     agentId: String?,
     agentState: relay.protocol.AgentDetectedState?,
     seen: Boolean,
-    title: String?,
     onSelect: () -> Unit,
     onRenameRequest: () -> Unit,
     onShareQr: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    val shortId = session.id.toString().take(8)
 
     Box {
         Row(
@@ -279,36 +273,21 @@ private fun SessionRow(
                     .background(dotColor ?: Color.Transparent),
             )
 
-            Column(
+            Text(
+                text = name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                )
-                val subtitle = title?.takeIf { it.isNotEmpty() } ?: shortId
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
+            )
 
-            // iOS (SessionSidebarView.swift:137-148) stacks a relative-time
-            // subtitle ("2m ago") under the state badge, rendered from
-            // `session.createdAt`. We render the state badge ONLY: `createdAt` is a
-            // reference-date (Apple-epoch 2001) Double whose absolute conversion is
-            // NOT yet validated (M1 ReferenceDateDoubleSerializer is identity), and
-            // the coordinator tracks no per-session locally-observed first-seen
-            // timestamp to substitute, so any wall-clock "ago" would be wrong.
-            // M-future: relative createdAt subtitle needs validated epoch conversion
-            // (see ReferenceDateDoubleSerializer).
+            // Trailing agent cluster: sparkle micro-icon + friendly name + state
+            // pill. Parity with iOS/macOS `SessionRow`. The terminal window title
+            // (`titleForSession`) is intentionally NOT shown as a subtitle — for a
+            // coding-agent session it just duplicates the friendly name here.
             val friendly = friendlyAgentName(agentId)
             if (friendly != null && agentState != null) {
+                AgentSparkleIcon(agentId = agentId, agentState = agentState)
                 Text(
                     text = friendly,
                     style = MaterialTheme.typography.labelSmall,

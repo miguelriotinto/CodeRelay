@@ -44,13 +44,11 @@ struct SessionSidebarView: View {
                         SessionRow(
                             session: session,
                             name: coordinator.name(for: session.id),
-                            shortId: String(session.id.uuidString.prefix(8)),
                             isActive: session.id == coordinator.activeSessionId,
                             activity: coordinator.activityState(for: session.id),
                             agentId: agentId(for: session.id),
                             agentState: coordinator.agentState(for: session.id),
                             seen: !coordinator.isUnseen(session.id),
-                            title: coordinator.title(for: session.id),
                             onRename: { newName in
                                 coordinator.setName(newName, for: session.id)
                             },
@@ -110,13 +108,11 @@ struct SessionSidebarView: View {
 private struct SessionRow: View {
     let session: SessionInfo
     let name: String
-    let shortId: String
     let isActive: Bool
     let activity: ActivityState
     let agentId: String?
     let agentState: AgentDetectedState?
     let seen: Bool
-    let title: String?
     let onRename: (String) -> Void
     let onShareQR: () -> Void
 
@@ -127,28 +123,15 @@ private struct SessionRow: View {
         HStack(spacing: 10) {
             SessionStatusDot(state: session.state, size: 8)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(name)
-                    .font(.system(.subheadline, design: .rounded, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                if let title, !title.isEmpty {
-                    Text(title)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                } else {
-                    Text(shortId)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                }
-            }
+            Text(name)
+                .font(.system(.subheadline, design: .rounded, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
 
             Spacer()
 
             if let agentId, let friendly = AgentDisplayName.friendly(agentId), let agentState {
+                AgentSparkleIcon(agentId: agentId, agentState: agentState)
                 Text(friendly)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
