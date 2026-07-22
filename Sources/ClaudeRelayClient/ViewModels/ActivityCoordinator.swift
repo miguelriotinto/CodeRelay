@@ -110,6 +110,20 @@ public final class ActivityCoordinator: ObservableObject {
         unseenSessions.remove(sessionId)
     }
 
+    /// Group the given sessions into workspace rollups (one per working
+    /// directory / git root), worst-state first. Uses the live `agentStates`
+    /// map — which leads the session-list snapshot — so a fresh observer event
+    /// wins over stale snapshot state. `unseenSessions` (@Published) drives the
+    /// view refresh; the caller passes its current session list.
+    public func rollups(for sessions: [SessionInfo]) -> [WorkspaceRollup] {
+        WorkspaceRollup.group(
+            sessions: sessions,
+            agentStates: agentStates,
+            unseen: unseenSessions,
+            groupKey: { $0.workingDir ?? "~" },
+            title: { $0 == "~" ? "Other" : ($0 as NSString).lastPathComponent })
+    }
+
     // MARK: - Server-event handlers
 
     /// Apply an activity update reported by the server. Mutates
