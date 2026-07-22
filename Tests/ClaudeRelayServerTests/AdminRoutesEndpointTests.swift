@@ -49,8 +49,11 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
         XCTAssertEqual(json?["status"] as? String, "running")
         XCTAssertNotNil(json?["version"])
         XCTAssertNotNil(json?["pid"])
-        XCTAssertNotNil(json?["uptime_seconds"])
         XCTAssertNotNil(json?["session_count"])
+        // Uptime is derived from the kernel-reported process start time, not a
+        // lazily-initialized `Date()`. It must be a valid non-negative integer.
+        let uptime = try XCTUnwrap(json?["uptime_seconds"] as? Int)
+        XCTAssertGreaterThanOrEqual(uptime, 0)
     }
 
     // MARK: - Sessions

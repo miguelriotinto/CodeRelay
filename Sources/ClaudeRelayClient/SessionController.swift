@@ -72,7 +72,8 @@ public final class SessionController: ObservableObject {
     /// Includes the client's protocol version; checks the server's version on success.
     public func authenticate(token: String) async throws {
         let response = try await sendAndWaitForResponse(
-            .authRequest(token: token, protocolVersion: ClaudeRelayKit.protocolVersion)
+            .authRequest(token: token, protocolVersion: ClaudeRelayKit.protocolVersion),
+            expected: ["auth_success", "auth_failure"]
         )
 
         switch response {
@@ -100,7 +101,10 @@ public final class SessionController: ObservableObject {
     /// Creates a new terminal session on the server. Returns the session UUID.
     @discardableResult
     public func createSession(name: String? = nil, cols: UInt16? = nil, rows: UInt16? = nil) async throws -> UUID {
-        let response = try await sendAndWaitForResponse(.sessionCreate(name: name, cols: cols, rows: rows))
+        let response = try await sendAndWaitForResponse(
+            .sessionCreate(name: name, cols: cols, rows: rows),
+            expected: ["session_created"]
+        )
 
         switch response {
         case .sessionCreated(let id, _, _):
@@ -116,7 +120,10 @@ public final class SessionController: ObservableObject {
     /// Attaches to a session that may still be active on another connection.
     /// Unlike resume, this does not require the session to be detached first.
     public func attachSession(id: UUID) async throws {
-        let response = try await sendAndWaitForResponse(.sessionAttach(sessionId: id))
+        let response = try await sendAndWaitForResponse(
+            .sessionAttach(sessionId: id),
+            expected: ["session_attached"]
+        )
 
         switch response {
         case .sessionAttached(let attachedId, _):
@@ -134,7 +141,8 @@ public final class SessionController: ObservableObject {
     ///   terminals and already has the full scrollback on screen.
     public func resumeSession(id: UUID, skipReplay: Bool = false) async throws {
         let response = try await sendAndWaitForResponse(
-            .sessionResume(sessionId: id, skipReplay: skipReplay)
+            .sessionResume(sessionId: id, skipReplay: skipReplay),
+            expected: ["session_resumed"]
         )
 
         switch response {
@@ -183,7 +191,10 @@ public final class SessionController: ObservableObject {
 
     /// Detaches from the current session without terminating it.
     public func detach() async throws {
-        let response = try await sendAndWaitForResponse(.sessionDetach)
+        let response = try await sendAndWaitForResponse(
+            .sessionDetach,
+            expected: ["session_detached"]
+        )
 
         switch response {
         case .sessionDetached:
@@ -197,7 +208,10 @@ public final class SessionController: ObservableObject {
 
     // MARK: - Internal Helpers
 
-    /// Response message types we expect from command requests.
+    /// Full set of command-reply types. Used only as a defensive fallback for a
+    /// caller that doesn't pass an explicit `expected:` set — every real caller
+    /// now scopes its own reply type (see the cross-delivery note below), so a
+    /// waiter never matches an unrelated reply like a concurrent `auth_success`.
     private static let responseTypes: Set<String> = [
         "auth_success", "auth_failure",
         "session_created", "session_attached", "session_resumed", "session_detached",

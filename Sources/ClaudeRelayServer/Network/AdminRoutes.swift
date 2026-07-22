@@ -2,6 +2,7 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 import ClaudeRelayKit
+import CPTYShim
 
 /// Routes for the admin HTTP API.
 ///
@@ -9,7 +10,13 @@ import ClaudeRelayKit
 /// so access is restricted to processes running on the same machine. This localhost-only
 /// binding is the intentional security boundary — no additional authentication is applied.
 enum AdminRoutes {
-    private static let startTime = Date()
+    /// Process start time in microseconds since the epoch, read from the kernel
+    /// (`sysctl` via CPTYShim). Unlike a `static let startTime = Date()`, which is
+    /// lazily initialized on first access and would report ~0s uptime on the first
+    /// `/status` call, this reflects the actual server boot time regardless of when
+    /// the property is first touched. `-1` means the lookup failed.
+    private static let processStartMicros: Int64 =
+        relay_get_process_start_time(ProcessInfo.processInfo.processIdentifier)
 
     static func handle(
         method: HTTPMethod,
@@ -64,13 +71,22 @@ enum AdminRoutes {
     ) async -> AdminResponse {
         guard components == ["status"] else { return .error("Not found", status: 404) }
         let sessions = await sessionManager.listSessions()
-        let uptime = Date().timeIntervalSince(startTime)
+        // Compute uptime from the kernel-reported process start time. If the
+        // lookup failed (-1), report 0 rather than a bogus epoch-based value.
+        let uptimeSeconds: Int
+        if processStartMicros > 0 {
+            let nowSeconds = Date().timeIntervalSince1970
+            let startSeconds = Double(processStartMicros) / 1_000_000.0
+            uptimeSeconds = max(0, Int(nowSeconds - startSeconds))
+        } else {
+            uptimeSeconds = 0
+        }
         let info: [String: Any] = [
             "status": "running",
             "version": ClaudeRelayKit.version,
             "protocolVersion": ClaudeRelayKit.protocolVersion,
             "pid": ProcessInfo.processInfo.processIdentifier,
-            "uptime_seconds": Int(uptime),
+            "uptime_seconds": uptimeSeconds,
             "session_count": sessions.count
         ]
         return .json(info)
