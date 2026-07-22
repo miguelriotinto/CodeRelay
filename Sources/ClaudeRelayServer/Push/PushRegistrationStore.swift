@@ -19,7 +19,7 @@ public actor PushRegistrationStore {
     private var loaded = false
 
     public init(directory: URL, maxPerToken: Int = 20, maxTotal: Int = 5000,
-                ttl: TimeInterval = 90 * 24 * 3600, now: @escaping @Sendable () -> Date = Date.init) {
+                ttl: TimeInterval = 90 * 24 * 3600, now: @escaping @Sendable () -> Date = { Date() }) {
         self.directory = directory
         self.maxPerToken = max(1, maxPerToken)
         self.maxTotal = max(1, maxTotal)
