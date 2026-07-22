@@ -375,7 +375,7 @@ final class WebSocketIntegrationTests: XCTestCase {
         connection.onReplayComplete = { _ in
             receivedMessages.append("replay_complete")
         }
-        connection.onSessionActivity = { _, _, _ in
+        connection.onSessionActivity = { _, _, _, _, _ in
             receivedMessages.append("session_activity")
         }
 
