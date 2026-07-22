@@ -53,7 +53,10 @@ final class TerminalScreenModel {
     private let terminal: Terminal
 
     init(cols: UInt16, rows: UInt16) {
-        let options = TerminalOptions(cols: Int(cols), rows: Int(rows))
+        // Detection reads only the visible viewport (see snapshot()), so keep
+        // the emulator's scrollback minimal — no need to retain history buffers
+        // across up to maxSessionsPerToken concurrent sessions.
+        let options = TerminalOptions(cols: Int(cols), rows: Int(rows), scrollback: Int(rows))
         terminal = Terminal(delegate: delegate, options: options)
     }
 

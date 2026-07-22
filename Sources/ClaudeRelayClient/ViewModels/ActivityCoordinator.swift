@@ -125,6 +125,7 @@ public final class ActivityCoordinator: ObservableObject {
         agent: String?,
         agentState: AgentDetectedState? = nil,
         title: String? = nil,
+        isActiveSession: Bool = false,
         onAgentActiveChange: (UUID, Bool) -> Void = { _, _ in }
     ) {
         // Only persist to UserDefaults on actual state transitions, not redundant updates
@@ -155,8 +156,12 @@ public final class ActivityCoordinator: ObservableObject {
 
         // "Needs attention" bucket: a blocked prompt or a just-finished (idle-
         // after-working "done") agent is worth surfacing until the user looks.
-        // Working is in-progress — not attention-worthy on its own.
-        if agent != nil, let agentState, agentState == .blocked || agentState == .idle {
+        // Working is in-progress — not attention-worthy on its own. The session
+        // the user is CURRENTLY viewing is by definition seen: never flag it,
+        // and clear any stale flag if an update arrives while it is on screen.
+        if isActiveSession {
+            unseenSessions.remove(sessionId)
+        } else if agent != nil, let agentState, agentState == .blocked || agentState == .idle {
             unseenSessions.insert(sessionId)
         } else if agentState == .working || agent == nil {
             unseenSessions.remove(sessionId)

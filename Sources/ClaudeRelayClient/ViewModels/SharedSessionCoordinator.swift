@@ -681,6 +681,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             agent: agent,
             agentState: agentState,
             title: title,
+            isActiveSession: sessionId == activeSessionId,
             onAgentActiveChange: { [weak self] id, isActive in
                 self?.terminalViewModels[id]?.isAgentActive = isActive
             }

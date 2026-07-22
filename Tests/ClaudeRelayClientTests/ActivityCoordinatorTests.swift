@@ -76,4 +76,27 @@ final class ActivityCoordinatorTests: XCTestCase {
         XCTAssertNil(coord.agentState(for: id))
         XCTAssertNil(coord.title(for: id))
     }
+
+    func testActiveSessionIsNotMarkedUnseen() {
+        let coord = makeCoordinator()
+        let id = UUID()
+        // Agent blocks while the user is looking at this very session.
+        coord.handleActivityUpdate(sessionId: id, activity: .agentIdle, agent: "claude",
+                                   agentState: .blocked, title: nil, isActiveSession: true)
+        XCTAssertFalse(coord.unseenSessions.contains(id),
+                       "the session currently on screen must never be flagged unseen")
+    }
+
+    func testUpdateForActiveSessionClearsStaleUnseen() {
+        let coord = makeCoordinator()
+        let id = UUID()
+        // First, a background update flags it unseen.
+        coord.handleActivityUpdate(sessionId: id, activity: .agentIdle, agent: "claude",
+                                   agentState: .blocked, title: nil)
+        XCTAssertTrue(coord.unseenSessions.contains(id))
+        // Then an update arrives while it IS the active session — clears the flag.
+        coord.handleActivityUpdate(sessionId: id, activity: .agentIdle, agent: "claude",
+                                   agentState: .blocked, title: nil, isActiveSession: true)
+        XCTAssertFalse(coord.unseenSessions.contains(id))
+    }
 }
