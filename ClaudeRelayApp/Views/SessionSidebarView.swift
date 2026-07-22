@@ -10,6 +10,7 @@ struct SessionSidebarView: View {
     @State private var isLoadingAttachable = false
     @State private var showQRSheet = false
     @State private var qrSessionId: UUID?
+    @State private var collapse = SidebarCollapseModel()
 
     var body: some View {
         List {
@@ -39,35 +40,17 @@ struct SessionSidebarView: View {
                     description: Text("Create a new session to get started.")
                 )
             } else {
-                Section("Sessions") {
-                    ForEach(coordinator.activeSessions, id: \.id) { session in
-                        SessionRow(
-                            session: session,
-                            name: coordinator.name(for: session.id),
-                            isActive: session.id == coordinator.activeSessionId,
-                            activity: coordinator.activityState(for: session.id),
-                            agentId: agentId(for: session.id),
-                            agentState: coordinator.agentState(for: session.id),
-                            seen: !coordinator.isUnseen(session.id),
-                            onRename: { newName in
-                                coordinator.setName(newName, for: session.id)
-                            },
-                            onShareQR: {
-                                qrSessionId = session.id
-                                showQRSheet = true
-                            }
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            Task { await coordinator.switchToSession(id: session.id) }
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                Task { await coordinator.terminateSession(id: session.id) }
-                            } label: {
-                                Label("Kill", systemImage: "xmark.circle")
+                let sessions = coordinator.activeSessions
+                let byId = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+                ForEach(coordinator.activityCoordinator.rollups(for: sessions)) { group in
+                    Section {
+                        if !collapse.isCollapsed(group.id) {
+                            ForEach(group.sessionIds.compactMap { byId[$0] }, id: \.id) { session in
+                                sessionRow(session)
                             }
                         }
+                    } header: {
+                        rollupHeader(group)
                     }
                 }
             }
@@ -100,6 +83,61 @@ struct SessionSidebarView: View {
 
     private func agentId(for id: UUID) -> String? {
         coordinator.activeAgent(for: id)
+    }
+
+    /// A single session row with its tap / swipe actions.
+    @ViewBuilder
+    private func sessionRow(_ session: SessionInfo) -> some View {
+        SessionRow(
+            session: session,
+            name: coordinator.name(for: session.id),
+            isActive: session.id == coordinator.activeSessionId,
+            activity: coordinator.activityState(for: session.id),
+            agentId: agentId(for: session.id),
+            agentState: coordinator.agentState(for: session.id),
+            seen: !coordinator.isUnseen(session.id),
+            onRename: { newName in coordinator.setName(newName, for: session.id) },
+            onShareQR: {
+                qrSessionId = session.id
+                showQRSheet = true
+            }
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Task { await coordinator.switchToSession(id: session.id) }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                Task { await coordinator.terminateSession(id: session.id) }
+            } label: {
+                Label("Kill", systemImage: "xmark.circle")
+            }
+        }
+    }
+
+    /// Collapsible group header: chevron + rollup dot + title + attention count.
+    @ViewBuilder
+    private func rollupHeader(_ group: WorkspaceRollup) -> some View {
+        Button {
+            collapse.toggle(group.id)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: collapse.isCollapsed(group.id) ? "chevron.right" : "chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Circle().fill(group.state.badgeColor).frame(width: 8, height: 8)
+                Text(group.title).font(.subheadline.weight(.semibold))
+                Spacer()
+                if group.attentionCount > 0 {
+                    Text("\(group.attentionCount)")
+                        .font(.caption2.monospacedDigit())
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.red.opacity(0.85)))
+                        .foregroundStyle(.white)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

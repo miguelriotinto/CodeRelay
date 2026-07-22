@@ -8,6 +8,7 @@ struct SessionSidebarView: View {
     @State private var renameText: String = ""
     @State private var terminateTarget: UUID?
     @State private var showAttachSheet = false
+    @State private var collapse = SidebarCollapseModel()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,27 +21,18 @@ struct SessionSidebarView: View {
                         }
                     }
                 )) {
-                    ForEach(coordinator.activeSessions, id: \.id) { session in
-                        SessionRow(
-                            name: coordinator.name(for: session.id),
-                            state: session.state,
-                            activity: coordinator.activityState(for: session.id),
-                            agentId: coordinator.activeAgent(for: session.id),
-                            agentState: coordinator.agentState(for: session.id),
-                            seen: !coordinator.isUnseen(session.id),
-                            createdAt: session.createdAt
-                        )
-                        .contextMenu {
-                            Button("Rename") {
-                                renameText = coordinator.name(for: session.id)
-                                renameTarget = session.id
+                    let sessions = coordinator.activeSessions
+                    let byId = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+                    ForEach(coordinator.activityCoordinator.rollups(for: sessions)) { group in
+                        Section {
+                            if !collapse.isCollapsed(group.id) {
+                                ForEach(group.sessionIds.compactMap { byId[$0] }, id: \.id) { session in
+                                    sessionRow(session).tag(session.id)
+                                }
                             }
-                            Divider()
-                            Button("Terminate", role: .destructive) {
-                                terminateTarget = session.id
-                            }
+                        } header: {
+                            rollupHeader(group)
                         }
-                        .tag(session.id)
                     }
                 }
                 .listStyle(.sidebar)
@@ -109,6 +101,55 @@ struct SessionSidebarView: View {
             }
             Button("Cancel", role: .cancel) { terminateTarget = nil }
         }
+    }
+
+    /// A single session row with its context menu.
+    @ViewBuilder
+    private func sessionRow(_ session: SessionInfo) -> some View {
+        SessionRow(
+            name: coordinator.name(for: session.id),
+            state: session.state,
+            activity: coordinator.activityState(for: session.id),
+            agentId: coordinator.activeAgent(for: session.id),
+            agentState: coordinator.agentState(for: session.id),
+            seen: !coordinator.isUnseen(session.id),
+            createdAt: session.createdAt
+        )
+        .contextMenu {
+            Button("Rename") {
+                renameText = coordinator.name(for: session.id)
+                renameTarget = session.id
+            }
+            Divider()
+            Button("Terminate", role: .destructive) {
+                terminateTarget = session.id
+            }
+        }
+    }
+
+    /// Collapsible group header: chevron + rollup dot + title + attention count.
+    @ViewBuilder
+    private func rollupHeader(_ group: WorkspaceRollup) -> some View {
+        Button {
+            collapse.toggle(group.id)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: collapse.isCollapsed(group.id) ? "chevron.right" : "chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Circle().fill(group.state.badgeColor).frame(width: 8, height: 8)
+                Text(group.title).font(.caption.weight(.semibold))
+                Spacer()
+                if group.attentionCount > 0 {
+                    Text("\(group.attentionCount)")
+                        .font(.caption2.monospacedDigit())
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.red.opacity(0.85)))
+                        .foregroundStyle(.white)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

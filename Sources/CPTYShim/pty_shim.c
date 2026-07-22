@@ -5,7 +5,13 @@
 #include <stdlib.h>
 #include <sys/sysctl.h>
 #include <sys/proc.h>
+#include <TargetConditionals.h>
+// libproc (proc_pidinfo / proc_listallpids) is macOS-only — absent from the
+// iOS SDK. The cwd helpers below are used only by the macOS server, but this
+// shim also compiles into the iOS app, so guard the include + implementations.
+#if TARGET_OS_OSX
 #include <libproc.h>
+#endif
 
 int relay_forkpty(int *master_fd, struct winsize *ws) {
     return forkpty(master_fd, NULL, NULL, ws);
@@ -118,6 +124,8 @@ long long relay_get_process_start_time(int pid) {
     return secs * 1000000LL + usecs;
 }
 
+#if TARGET_OS_OSX
+
 int relay_proc_cwd(int pid, char *buf, int buflen) {
     struct proc_vnodepathinfo vpi;
     int ret = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vpi, sizeof(vpi));
@@ -167,3 +175,18 @@ int relay_proc_cwd_descendant(int pid, char *buf, int buflen) {
     // Depth 4 covers login → -zsh → (agent/subshell) with headroom.
     return relay_proc_cwd_walk(pid, buf, buflen, 4);
 }
+
+#else  // !TARGET_OS_OSX — libproc unavailable (iOS). The server never runs on
+       // iOS, so these are stubs that report "cwd unknown".
+
+int relay_proc_cwd(int pid, char *buf, int buflen) {
+    (void)pid; (void)buf; (void)buflen;
+    return -1;
+}
+
+int relay_proc_cwd_descendant(int pid, char *buf, int buflen) {
+    (void)pid; (void)buf; (void)buflen;
+    return -1;
+}
+
+#endif
