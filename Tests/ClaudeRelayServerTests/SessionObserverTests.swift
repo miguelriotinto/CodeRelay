@@ -244,6 +244,36 @@ final class SessionObserverTests: SessionManagerTestCase {
 
     // MARK: - Periodic Observer Cleanup
 
+    func testGlobalActivityObserverReceivesTokenIdAndRevision() async throws {
+        let (_, tokenInfo) = try await createTestToken()
+        let manager = makeManager()
+        let session = try await manager.createSession(tokenId: tokenInfo.id)
+
+        actor Capture {
+            var events: [(UUID, String, AgentDetectedState?, UInt64)] = []
+            func add(_ e: (UUID, String, AgentDetectedState?, UInt64)) { events.append(e) }
+            func all() -> [(UUID, String, AgentDetectedState?, UInt64)] { events }
+        }
+        let capture = Capture()
+        let id = await manager.addGlobalActivityObserver { sid, tid, _, agentState, revision in
+            Task { await capture.add((sid, tid, agentState, revision)) }
+        }
+
+        await manager.reportActivityChange(sessionId: session.id, activity: .agentActive,
+                                           agent: "claude", agentState: .working, revision: 7)
+        try await Task.sleep(for: .milliseconds(50))
+        let events = await capture.all()
+        XCTAssertTrue(events.contains { $0.0 == session.id && $0.1 == tokenInfo.id
+            && $0.2 == .working && $0.3 == 7 })
+
+        await manager.removeGlobalActivityObserver(id: id)
+        await manager.reportActivityChange(sessionId: session.id, activity: .agentIdle,
+                                           agent: "claude", agentState: .idle, revision: 8)
+        try await Task.sleep(for: .milliseconds(50))
+        let after = await capture.all()
+        XCTAssertFalse(after.contains { $0.3 == 8 }, "removed observer must stop receiving")
+    }
+
     func testPurgeStaleObserversRemovesOldEntries() async throws {
         let (_, tokenInfo) = try await createTestToken()
         let manager = makeManager()

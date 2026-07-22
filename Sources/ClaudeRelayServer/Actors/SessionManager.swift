@@ -27,6 +27,13 @@ public actor SessionManager {
     private var stealObservers = ObserverRegistry<StealObserver>()
     public typealias RenameObserver = @Sendable (UUID, String) -> Void
     private var renameObservers = ObserverRegistry<RenameObserver>()
+    /// Token-agnostic activity observer, carrying the owning token id + the
+    /// event's activity/agent state + revision. Used by the push dispatcher,
+    /// which must see transitions across ALL tokens (not scoped to one).
+    public typealias GlobalActivityObserver =
+        @Sendable (_ sessionId: UUID, _ tokenId: String, _ activity: ActivityState,
+                   _ agentState: AgentDetectedState?, _ revision: UInt64) -> Void
+    private var globalActivityObservers: [UUID: GlobalActivityObserver] = [:]
 
     struct ManagedSession {
         var info: SessionInfo
@@ -457,6 +464,24 @@ public actor SessionManager {
         for (_, callback) in activityObservers.forToken(tokenId) {
             callback(sessionId, activity, agent, agentState, title, managed.latestWorkingDir)
         }
+        // Token-agnostic fan-out (push dispatcher). Carries the accepted
+        // revision so the dispatcher preserves ordering.
+        for callback in globalActivityObservers.values {
+            callback(sessionId, tokenId, activity, agentState, managed.activityRevision)
+        }
+    }
+
+    // MARK: - Global Activity Observers
+
+    @discardableResult
+    public func addGlobalActivityObserver(_ callback: @escaping GlobalActivityObserver) -> UUID {
+        let id = UUID()
+        globalActivityObservers[id] = callback
+        return id
+    }
+
+    public func removeGlobalActivityObserver(id: UUID) {
+        globalActivityObservers.removeValue(forKey: id)
     }
 
     // MARK: - Steal Observers
