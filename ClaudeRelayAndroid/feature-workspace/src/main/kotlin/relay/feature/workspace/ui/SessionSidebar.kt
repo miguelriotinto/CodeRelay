@@ -78,6 +78,9 @@ fun SessionSidebar(
     nameForSession: (UUID) -> String,
     agentForSession: (UUID) -> String?,
     activityForSession: (UUID) -> ActivityState,
+    agentStateForSession: (UUID) -> relay.protocol.AgentDetectedState? = { null },
+    seenForSession: (UUID) -> Boolean = { true },
+    titleForSession: (UUID) -> String? = { null },
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     onNewSession: () -> Unit,
@@ -134,6 +137,9 @@ fun SessionSidebar(
                             isActive = session.id == activeSessionId,
                             activity = activityForSession(session.id),
                             agentId = agentForSession(session.id),
+                            agentState = agentStateForSession(session.id),
+                            seen = seenForSession(session.id),
+                            title = titleForSession(session.id),
                             onSelect = { onSelect(session.id) },
                             onTerminate = { onTerminate(session.id) },
                             onRenameRequest = {
@@ -176,6 +182,9 @@ private fun SwipeableSessionRow(
     isActive: Boolean,
     activity: ActivityState,
     agentId: String?,
+    agentState: relay.protocol.AgentDetectedState?,
+    seen: Boolean,
+    title: String?,
     onSelect: () -> Unit,
     onTerminate: () -> Unit,
     onRenameRequest: () -> Unit,
@@ -212,6 +221,9 @@ private fun SwipeableSessionRow(
             isActive = isActive,
             activity = activity,
             agentId = agentId,
+            agentState = agentState,
+            seen = seen,
+            title = title,
             onSelect = onSelect,
             onRenameRequest = onRenameRequest,
             onShareQr = onShareQr,
@@ -227,6 +239,9 @@ private fun SessionRow(
     isActive: Boolean,
     activity: ActivityState,
     agentId: String?,
+    agentState: relay.protocol.AgentDetectedState?,
+    seen: Boolean,
+    title: String?,
     onSelect: () -> Unit,
     onRenameRequest: () -> Unit,
     onShareQr: () -> Unit,
@@ -253,7 +268,7 @@ private fun SessionRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            ActivityDot(activity = activity, agentId = agentId)
+            ActivityDot(activity = activity, agentId = agentId, agentState = agentState, seen = seen)
 
             Column(
                 modifier = Modifier.weight(1f),
@@ -265,10 +280,12 @@ private fun SessionRow(
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                 )
+                val subtitle = title?.takeIf { it.isNotEmpty() } ?: shortId
                 Text(
-                    text = shortId,
+                    text = subtitle,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
                 )
             }
 

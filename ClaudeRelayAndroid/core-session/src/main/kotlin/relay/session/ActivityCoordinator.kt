@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import relay.protocol.ActivityState
+import relay.protocol.AgentDetectedState
 import java.util.UUID
 
 /**
@@ -79,6 +80,29 @@ class ActivityCoordinator(
      */
     val sessionsAwaitingInput: StateFlow<Set<UUID>> = _sessionsAwaitingInput.asStateFlow()
 
+    private val _agentStates = MutableStateFlow<Map<UUID, AgentDetectedState>>(emptyMap())
+
+    /**
+     * Fine-grained agent state per session (server screen-detection). Nil-absent
+     * when the server doesn't report it (older server / no agent). Ports the
+     * Swift `agentStates` map added in Task 5.
+     */
+    val agentStates: StateFlow<Map<UUID, AgentDetectedState>> = _agentStates.asStateFlow()
+
+    private val _sessionTitles = MutableStateFlow<Map<UUID, String>>(emptyMap())
+
+    /** Latest window title per session, surfaced under the session name. */
+    val sessionTitles: StateFlow<Map<UUID, String>> = _sessionTitles.asStateFlow()
+
+    private val _unseenSessions = MutableStateFlow<Set<UUID>>(emptySet())
+
+    /**
+     * Sessions with an unacknowledged blocked/done state — drives the "needs
+     * attention" affordance. Cleared by [markSeen] when the user activates the
+     * session. Mirrors herdr's client-side `seen` bit.
+     */
+    val unseenSessions: StateFlow<Set<UUID>> = _unseenSessions.asStateFlow()
+
     private val _sessionsStolen = MutableStateFlow<Set<UUID>>(emptySet())
 
     /**
@@ -123,6 +147,20 @@ class ActivityCoordinator(
         }
     }
 
+    /** The fine-grained agent state for [sessionId], or null. */
+    fun agentState(sessionId: UUID): AgentDetectedState? = _agentStates.value[sessionId]
+
+    /** The window title for [sessionId], or null. */
+    fun title(sessionId: UUID): String? = _sessionTitles.value[sessionId]
+
+    /**
+     * Mark [sessionId]'s state as seen — clears its "needs attention" flag.
+     * Called by the coordinator when the session becomes (or is) active.
+     */
+    fun markSeen(sessionId: UUID) {
+        _unseenSessions.value = _unseenSessions.value - sessionId
+    }
+
     // MARK: - Server-event handlers
 
     /**
@@ -139,6 +177,9 @@ class ActivityCoordinator(
         sessionId: UUID,
         activity: ActivityState,
         agent: String?,
+        agentState: AgentDetectedState? = null,
+        title: String? = null,
+        isActiveSession: Boolean = false,
         onAgentActiveChange: (UUID, Boolean) -> Unit = { _, _ -> },
     ) {
         val current = _agentSessions.value
@@ -158,9 +199,40 @@ class ActivityCoordinator(
             }
         }
 
+        // Fine-grained state + title mirror the agent-running lifecycle: when no
+        // agent runs, clear them so a stale "blocked" never lingers
+        // (ActivityCoordinator.swift Task 5).
+        if (agent != null) {
+            _agentStates.value = if (agentState != null) {
+                _agentStates.value + (sessionId to agentState)
+            } else {
+                _agentStates.value - sessionId
+            }
+            _sessionTitles.value = if (!title.isNullOrEmpty()) {
+                _sessionTitles.value + (sessionId to title)
+            } else {
+                _sessionTitles.value - sessionId
+            }
+        } else {
+            _agentStates.value = _agentStates.value - sessionId
+            _sessionTitles.value = _sessionTitles.value - sessionId
+        }
+
+        // "Needs attention" bucket: a blocked prompt or a just-finished (idle-
+        // after-working "done") agent is worth surfacing until the user looks.
+        // The session the user is CURRENTLY viewing is by definition seen: never
+        // flag it, and clear any stale flag if an update arrives while on screen.
+        _unseenSessions.value = when {
+            isActiveSession -> _unseenSessions.value - sessionId
+            agent != null && (agentState == AgentDetectedState.BLOCKED || agentState == AgentDetectedState.IDLE) ->
+                _unseenSessions.value + sessionId
+            agentState == AgentDetectedState.WORKING || agent == null ->
+                _unseenSessions.value - sessionId
+            else -> _unseenSessions.value
+        }
+
         // Awaiting-input is derived: only set when agentIdle AND an agent is
         // currently mapped for the session (ActivityCoordinator.swift:116-120).
-        // Read the freshly-updated map so a same-event agent-exit clears it.
         val awaiting = activity == ActivityState.AGENT_IDLE &&
             _agentSessions.value.containsKey(sessionId)
         _sessionsAwaitingInput.value = if (awaiting) {
@@ -193,6 +265,9 @@ class ActivityCoordinator(
             persistence.setAgent(sessionId, null)
         }
         _sessionsAwaitingInput.value = _sessionsAwaitingInput.value - sessionId
+        _agentStates.value = _agentStates.value - sessionId
+        _sessionTitles.value = _sessionTitles.value - sessionId
+        _unseenSessions.value = _unseenSessions.value - sessionId
 
         // Relinquish ownership — this device no longer holds the session.
         persistence.unclaim(sessionId)
@@ -223,6 +298,9 @@ class ActivityCoordinator(
             persistence.setAgent(sessionId, null)
         }
         _sessionsAwaitingInput.value = _sessionsAwaitingInput.value - sessionId
+        _agentStates.value = _agentStates.value - sessionId
+        _sessionTitles.value = _sessionTitles.value - sessionId
+        _unseenSessions.value = _unseenSessions.value - sessionId
         _sessionsStolen.value = _sessionsStolen.value - sessionId
         if (_stolenAlert.value?.sessionId == sessionId) {
             _stolenAlert.value = null
@@ -237,6 +315,9 @@ class ActivityCoordinator(
     fun applyPrunedAgents(removedAgents: Set<UUID>) {
         if (removedAgents.isNotEmpty()) {
             _sessionsAwaitingInput.value = _sessionsAwaitingInput.value - removedAgents
+            _unseenSessions.value = _unseenSessions.value - removedAgents
+            _agentStates.value = _agentStates.value - removedAgents
+            _sessionTitles.value = _sessionTitles.value - removedAgents
         }
     }
 }

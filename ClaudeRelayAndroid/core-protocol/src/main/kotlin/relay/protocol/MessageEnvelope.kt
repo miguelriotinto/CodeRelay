@@ -114,6 +114,8 @@ object MessageEnvelope {
                 sessionId = payload.uuid("sessionId"),
                 activity = ActivityState.fromRaw(payload.string("activity")),
                 agent = payload.stringOrNull("agent"),
+                agentState = payload.stringOrNull("agentState")?.let(AgentDetectedState::fromRaw),
+                title = payload.stringOrNull("title"),
             )
             "session_stolen" -> ServerMessage.SessionStolen(payload.uuid("sessionId"))
             "session_renamed" -> ServerMessage.SessionRenamed(

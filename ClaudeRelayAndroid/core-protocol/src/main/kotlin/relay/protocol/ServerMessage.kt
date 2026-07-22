@@ -57,6 +57,8 @@ sealed interface ServerMessage {
         val sessionId: UUID,
         val activity: ActivityState,
         val agent: String? = null,
+        val agentState: AgentDetectedState? = null,
+        val title: String? = null,
     ) : ServerMessage {
         override val typeString get() = "session_activity"
     }

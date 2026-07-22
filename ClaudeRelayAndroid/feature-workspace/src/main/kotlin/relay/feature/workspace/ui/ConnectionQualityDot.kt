@@ -48,6 +48,8 @@ fun shouldBlink(quality: ConnectionQuality): Boolean =
 internal val QualityGreen = Color(0xFF4CAF50)
 internal val QualityYellow = Color(0xFFFFC107)
 internal val QualityRed = Color(0xFFF44336)
+internal val DoneTeal = Color(0xFF30B0C7)   // iOS .teal (done: idle + unseen)
+internal val UnknownGray = Color(0xFF9E9E9E) // unknown agent state
 
 /**
  * Small colored dot visualizing the current [ConnectionQuality], shown in the
