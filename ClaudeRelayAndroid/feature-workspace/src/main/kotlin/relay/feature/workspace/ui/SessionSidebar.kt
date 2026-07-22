@@ -14,13 +14,20 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallSplit
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -40,6 +47,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -83,6 +91,9 @@ fun SessionSidebar(
     activityForSession: (UUID) -> ActivityState,
     agentStateForSession: (UUID) -> relay.protocol.AgentDetectedState? = { null },
     seenForSession: (UUID) -> Boolean = { true },
+    rollupsForSessions: (List<SessionInfo>) -> List<relay.protocol.WorkspaceRollup> =
+        { list -> listOf(relay.protocol.WorkspaceRollup("~", "Sessions", list.map { it.id },
+            relay.protocol.RollupState.SEEN, 0)) },
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     onNewSession: () -> Unit,
@@ -131,23 +142,40 @@ fun SessionSidebar(
             if (sessions.isEmpty()) {
                 EmptySessionsState(modifier = Modifier.fillMaxSize())
             } else {
+                val byId = sessions.associateBy { it.id }
+                val groups = rollupsForSessions(sessions)
+                val collapsed = remember { mutableStateListOf<String>() }
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(sessions, key = { it.id }) { session ->
-                        SwipeableSessionRow(
-                            session = session,
-                            name = nameForSession(session.id),
-                            isActive = session.id == activeSessionId,
-                            activity = activityForSession(session.id),
-                            agentId = agentForSession(session.id),
-                            agentState = agentStateForSession(session.id),
-                            seen = seenForSession(session.id),
-                            onSelect = { onSelect(session.id) },
-                            onTerminate = { onTerminate(session.id) },
-                            onRenameRequest = {
-                                renameTarget = RenameTarget(session.id, nameForSession(session.id))
-                            },
-                            onShareQr = { onShareQr(session.id) },
-                        )
+                    groups.forEach { group ->
+                        item(key = "hdr-${group.id}") {
+                            RollupHeader(
+                                group = group,
+                                collapsed = collapsed.contains(group.id),
+                                onToggle = {
+                                    if (collapsed.contains(group.id)) collapsed.remove(group.id)
+                                    else collapsed.add(group.id)
+                                },
+                            )
+                        }
+                        if (!collapsed.contains(group.id)) {
+                            items(group.sessionIds.mapNotNull { byId[it] }, key = { it.id }) { session ->
+                                SwipeableSessionRow(
+                                    session = session,
+                                    name = nameForSession(session.id),
+                                    isActive = session.id == activeSessionId,
+                                    activity = activityForSession(session.id),
+                                    agentId = agentForSession(session.id),
+                                    agentState = agentStateForSession(session.id),
+                                    seen = seenForSession(session.id),
+                                    onSelect = { onSelect(session.id) },
+                                    onTerminate = { onTerminate(session.id) },
+                                    onRenameRequest = {
+                                        renameTarget = RenameTarget(session.id, nameForSession(session.id))
+                                    },
+                                    onShareQr = { onShareQr(session.id) },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -358,5 +386,67 @@ private fun EmptySessionsState(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/** Badge/dot color for a workspace group's aggregate rollup state. Mirrors the
+ * iOS RollupState.badgeColor + the per-session ActivityDot palette. */
+private fun relay.protocol.RollupState.badgeColor(): Color = when (this) {
+    relay.protocol.RollupState.BLOCKED -> QualityRed
+    relay.protocol.RollupState.FINISHED_UNSEEN -> IdleYellow
+    relay.protocol.RollupState.WORKING -> Color(red = 84 / 255f, green = 132 / 255f, blue = 137 / 255f)
+    relay.protocol.RollupState.UNKNOWN -> UnknownGray
+    relay.protocol.RollupState.SEEN -> QualityGreen
+}
+
+/** Collapsible workspace-group header: chevron + rollup dot + title + count. */
+@Composable
+private fun RollupHeader(
+    group: relay.protocol.WorkspaceRollup,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = if (collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight
+                          else Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(4.dp))
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(group.state.badgeColor()),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = group.title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.weight(1f))
+        if (group.attentionCount > 0) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(QualityRed.copy(alpha = 0.85f))
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+            ) {
+                Text(
+                    text = group.attentionCount.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                )
+            }
+        }
     }
 }

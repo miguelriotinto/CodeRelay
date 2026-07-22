@@ -52,4 +52,7 @@ data class SessionInfo(
     val agent: String? = null,
     @Serializable(with = AgentDetectedStateSerializer::class) val agentState: AgentDetectedState? = null,
     val title: String? = null,
+    /// The session's working directory (git root when available), used to group
+    /// sessions into workspace rollups. Null when unknown / older server.
+    val workingDir: String? = null,
 )
