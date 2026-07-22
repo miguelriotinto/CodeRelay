@@ -43,7 +43,7 @@ public struct ActivityDot: View, Equatable {
             switch agentState {
             case .blocked: return .red
             case .working: return AgentColorPalette.color(for: agentId)
-            case .idle:    return seen ? .green : .teal
+            case .idle:    return seen ? .green : .yellow
             case .unknown: return .gray
             }
         }

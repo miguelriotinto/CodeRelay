@@ -28,7 +28,7 @@ import relay.protocol.AgentDetectedState
  * look unchanged.
  *  - blocked → red
  *  - working → agentColor(agentId)
- *  - idle && !seen → teal ("done")
+ *  - idle && !seen → yellow (waiting)
  *  - idle && seen  → green
  *  - unknown → gray
  *  - agentState == null → legacy: active/idle → green; agent* → agentColor
@@ -41,7 +41,7 @@ fun activityDotColor(
 ): Color = when (agentState) {
     AgentDetectedState.BLOCKED -> QualityRed
     AgentDetectedState.WORKING -> agentColor(agentId)
-    AgentDetectedState.IDLE -> if (seen) QualityGreen else DoneTeal
+    AgentDetectedState.IDLE -> if (seen) QualityGreen else IdleYellow
     AgentDetectedState.UNKNOWN -> UnknownGray
     null -> when (activity) {
         ActivityState.ACTIVE, ActivityState.IDLE -> QualityGreen

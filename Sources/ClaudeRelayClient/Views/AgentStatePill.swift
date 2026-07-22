@@ -17,7 +17,7 @@ public enum AgentStatePillModel {
         switch s {
         case .blocked: return .red
         case .working: return AgentColorPalette.color(for: agentId)
-        case .idle: return seen ? .green : .teal
+        case .idle: return seen ? .green : .yellow
         case .unknown: return .gray
         }
     }

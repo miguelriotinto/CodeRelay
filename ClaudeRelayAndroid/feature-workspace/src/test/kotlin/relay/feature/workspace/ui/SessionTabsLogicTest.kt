@@ -58,7 +58,7 @@ class SessionTabsLogicTest {
     @Test
     fun `idle agentState is done teal`() {
         assertEquals(
-            DoneTeal,
+            IdleYellow,
             tabBackground("claude", needsAttention = false, flashOn = true, agentState = AgentDetectedState.IDLE),
         )
     }

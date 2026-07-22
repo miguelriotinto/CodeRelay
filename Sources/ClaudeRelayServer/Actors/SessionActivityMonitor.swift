@@ -67,11 +67,11 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     private var silenceTask: Task<Void, Never>?
     private var cancelled = false
 
-    /// Exit debounce: counts consecutive non-agent signals from **any source**
-    /// (foreground-process poll and/or OSC title change). The two inputs share a
-    /// single counter, so exit fires when any two consecutive non-agent signals
-    /// arrive — e.g. poll+poll, title+title, or poll+title in either order.
-    /// Any agent-positive signal resets the counter to 0.
+    /// Exit debounce: counts consecutive non-agent foreground-process polls.
+    /// Exit is owned by the poll alone (kernel process-tree ground truth) — the
+    /// OSC-title path drives entry only and never contributes here, so agents
+    /// that churn their terminal title while working can't self-evict. Any
+    /// agent-positive poll resets the counter to 0.
     private var consecutiveNoAgentPolls = 0
     private static let exitDebounceThreshold = 2
 
@@ -288,17 +288,20 @@ public final class SessionActivityMonitor: @unchecked Sendable {
 
     private func handleTitle(_ title: String) {
         self.title = title
+        // The OSC-title path drives agent *entry* only. Exit is owned solely by
+        // the foreground-process poll (`updateForegroundProcess`), which has
+        // kernel process-tree ground truth. A non-agent title must NOT count
+        // toward exit: agents like Claude Code continuously rewrite their
+        // terminal title to non-keyword strings ("Previewly", "esc to
+        // interrupt", …) while working, and treating those as no-agent signals
+        // falsely evicts a still-running agent — the client then flickers the
+        // agent name/state cluster and tab color every few seconds.
         if let agent = CodingAgent.matching(title: title) {
             consecutiveNoAgentPolls = 0
             if activeAgent?.id != agent.id {
                 activeAgent = agent
                 transition(to: .agentActive)
                 resetSilenceTimer()
-            }
-        } else if activeAgent != nil {
-            consecutiveNoAgentPolls += 1
-            if consecutiveNoAgentPolls >= Self.exitDebounceThreshold {
-                exitAgent()
             }
         }
     }

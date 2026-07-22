@@ -154,27 +154,47 @@ final class SessionActivityMonitorTests: XCTestCase {
         XCTAssertEqual(states, [.agentActive])
     }
 
-    func testDetectsAgentExitFromNonAgentTitleDebounced() {
+    /// Exit is owned by the foreground-process poll (kernel process-tree ground
+    /// truth). A non-agent title alone must NOT contribute to exit: agents like
+    /// Claude Code continuously rewrite their terminal title to non-"claude"
+    /// strings ("Previewly", "esc to interrupt", …) while working, so counting
+    /// those as exit signals falsely evicts a still-running agent. See
+    /// `testWorkingAgentTitleChurnDoesNotFlicker` for the production repro.
+    func testAgentExitRequiresForegroundPoll() {
         var states: [ActivityState] = []
         let monitor = makeMonitorStateOnly { states.append($0) }
         monitor.processOutput(titleSequence("claude"))
         XCTAssertEqual(monitor.state, .agentActive)
+        // Two consecutive non-agent titles used to force an exit — no longer.
         monitor.processOutput(titleSequence("zsh"))
-        XCTAssertEqual(monitor.state, .agentActive, "Single non-agent signal should not exit")
+        monitor.processOutput(titleSequence("bash"))
+        XCTAssertEqual(monitor.state, .agentActive, "Non-agent titles must not exit the agent")
+        // The authoritative poll is what confirms exit (two ticks, debounced).
+        monitor.updateForegroundProcess(agent: nil)
+        XCTAssertEqual(monitor.state, .agentActive, "Single non-agent poll should not exit")
         monitor.updateForegroundProcess(agent: nil)
         XCTAssertEqual(monitor.state, .active)
         XCTAssertEqual(states, [.agentActive, .active])
     }
 
-    func testTwoNonAgentTitlesExitAgent() {
-        var states: [ActivityState] = []
-        let monitor = makeMonitorStateOnly { states.append($0) }
-        monitor.processOutput(titleSequence("claude"))
+    /// Production repro (session "Previewly"): while a detached Claude session
+    /// works, the 5 s foreground poll keeps confirming the agent, but output
+    /// chunks carry OSC title changes with no "claude" keyword. This churn must
+    /// not flap the agent out — the row's agent cluster and the tab color would
+    /// otherwise disappear and reappear every few seconds.
+    func testWorkingAgentTitleChurnDoesNotFlicker() {
+        var agents: [CodingAgent?] = []
+        let monitor = makeMonitor { _, agent in agents.append(agent) }
+        monitor.updateForegroundProcess(agent: .claude)
+        XCTAssertEqual(monitor.activeAgent, .claude)
+        // Simulate many working-title updates between poll ticks.
+        for title in ["Previewly", "esc to interrupt", "✳ Herding", "Previewly", "bash"] {
+            monitor.processOutput(titleSequence(title))
+        }
+        XCTAssertEqual(monitor.activeAgent, .claude, "Agent must survive title churn while working")
         XCTAssertEqual(monitor.state, .agentActive)
-        monitor.processOutput(titleSequence("zsh"))
-        monitor.processOutput(titleSequence("bash"))
-        XCTAssertEqual(monitor.state, .active)
-        XCTAssertEqual(states, [.agentActive, .active])
+        // The agent field never went nil, so no flicker reaches the client.
+        XCTAssertFalse(agents.contains(where: { $0 == nil }), "Agent must never flap to nil during title churn")
     }
 
     func testShellPromptDoesNotExitAgent() {
@@ -516,6 +536,9 @@ final class SessionActivityMonitorTests: XCTestCase {
 
     // MARK: - Mixed Signal Edge Cases
 
+    /// Entry via title, exit via poll. Non-agent titles in between are inert
+    /// (they don't count toward exit), so exit still needs the poll's full
+    /// two-tick debounce.
     func testTitleEntryThenPollExitCrossSignal() {
         var states: [ActivityState] = []
         let monitor = makeMonitorStateOnly { states.append($0) }
@@ -524,17 +547,22 @@ final class SessionActivityMonitorTests: XCTestCase {
         monitor.processOutput(titleSequence("zsh"))
         XCTAssertEqual(monitor.state, .agentActive)
         monitor.updateForegroundProcess(agent: nil)
+        XCTAssertEqual(monitor.state, .agentActive, "One poll is not enough to exit")
+        monitor.updateForegroundProcess(agent: nil)
         XCTAssertEqual(monitor.state, .active)
     }
 
-    func testPollEntryThenTitleExitCrossSignal() {
+    /// Entry via poll, then only non-agent titles: the agent must NOT exit,
+    /// because the title path cannot evict a poll-confirmed agent. Guards the
+    /// production flicker (Claude rewriting its title while working).
+    func testPollEntryThenTitleChurnDoesNotExit() {
         var states: [ActivityState] = []
         let monitor = makeMonitorStateOnly { states.append($0) }
         monitor.updateForegroundProcess(agent: .claude)
         XCTAssertEqual(monitor.state, .agentActive)
         monitor.processOutput(titleSequence("bash"))
         monitor.processOutput(titleSequence("user@host ~ %"))
-        XCTAssertEqual(monitor.state, .active)
+        XCTAssertEqual(monitor.state, .agentActive, "Titles must not exit a poll-confirmed agent")
     }
 
     // MARK: - Cleanup

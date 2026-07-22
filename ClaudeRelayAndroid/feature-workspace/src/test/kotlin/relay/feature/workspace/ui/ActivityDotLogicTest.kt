@@ -41,7 +41,7 @@ class ActivityDotLogicTest {
     fun `phase2 color map`() {
         assertEquals(QualityRed, activityDotColor(ActivityState.AGENT_IDLE, "claude", AgentDetectedState.BLOCKED, seen = false))
         assertEquals(agentColor("claude"), activityDotColor(ActivityState.AGENT_ACTIVE, "claude", AgentDetectedState.WORKING))
-        assertEquals(DoneTeal, activityDotColor(ActivityState.AGENT_IDLE, "claude", AgentDetectedState.IDLE, seen = false))
+        assertEquals(IdleYellow, activityDotColor(ActivityState.AGENT_IDLE, "claude", AgentDetectedState.IDLE, seen = false))
         assertEquals(QualityGreen, activityDotColor(ActivityState.AGENT_IDLE, "claude", AgentDetectedState.IDLE, seen = true))
         assertEquals(UnknownGray, activityDotColor(ActivityState.AGENT_ACTIVE, "claude", AgentDetectedState.UNKNOWN))
     }

@@ -29,7 +29,7 @@ fun agentStateWord(s: AgentDetectedState): String = when (s) {
 fun agentStatePillColor(s: AgentDetectedState, agentId: String?, seen: Boolean): Color = when (s) {
     AgentDetectedState.BLOCKED -> QualityRed
     AgentDetectedState.WORKING -> agentColor(agentId)
-    AgentDetectedState.IDLE -> if (seen) QualityGreen else DoneTeal
+    AgentDetectedState.IDLE -> if (seen) QualityGreen else IdleYellow
     AgentDetectedState.UNKNOWN -> UnknownGray
 }
 

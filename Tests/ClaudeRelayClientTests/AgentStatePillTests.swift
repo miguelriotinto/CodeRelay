@@ -19,8 +19,8 @@ final class AgentStatePillTests: XCTestCase {
             AgentColorPalette.color(for: "claude")
         )
     }
-    func testWaitingSeenIsGreenUnseenIsTeal() {
+    func testWaitingSeenIsGreenUnseenIsYellow() {
         XCTAssertEqual(AgentStatePillModel.color(.idle, agentId: "claude", seen: true), Color.green)
-        XCTAssertEqual(AgentStatePillModel.color(.idle, agentId: "claude", seen: false), Color.teal)
+        XCTAssertEqual(AgentStatePillModel.color(.idle, agentId: "claude", seen: false), Color.yellow)
     }
 }

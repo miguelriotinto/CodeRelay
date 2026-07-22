@@ -21,7 +21,7 @@ class AgentStatePillTest {
     }
     @Test fun waitingSeenGreenUnseenTeal() {
         assertEquals(QualityGreen, agentStatePillColor(AgentDetectedState.IDLE, "claude", true))
-        assertEquals(DoneTeal, agentStatePillColor(AgentDetectedState.IDLE, "claude", false))
+        assertEquals(IdleYellow, agentStatePillColor(AgentDetectedState.IDLE, "claude", false))
     }
     @Test fun dotColorAttachedGreenDetachedYellowTerminalNull() {
         assertEquals(QualityGreen, sessionStatusDotColor(SessionState.ACTIVE_ATTACHED))

@@ -418,13 +418,13 @@ private struct SessionTab: View {
     private var tabBackground: SwiftUI.Color {
         // When fine-grained agentState is present it drives the color (parity
         // with ActivityDot and the Android tab): blocked=red+flash, working=agent
-        // color, waiting(idle)=teal, unknown=gray. Otherwise fall back to the
+        // color, waiting(idle)=yellow, unknown=gray. Otherwise fall back to the
         // legacy awaiting-input pulse / agent-color fill.
         if let agentState {
             switch agentState {
             case .blocked: return flashOn ? .red : SwiftUI.Color.white.opacity(0.15)
             case .working: return agentColor
-            case .idle:    return .teal
+            case .idle:    return .yellow
             case .unknown: return .gray
             }
         }
