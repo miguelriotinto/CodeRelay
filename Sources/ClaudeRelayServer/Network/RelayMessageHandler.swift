@@ -251,6 +251,12 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             sendServerMessage(.pushTokenAck(accepted: false), context: context); return
         }
         pushMutations += 1
+        // Bound deviceId (same 128-char limit as registration) and enforce the
+        // per-connection mutation cap — a malicious client must not be able to
+        // spam atomic rewrites of push-tokens.json with unbounded input.
+        guard !deviceId.isEmpty, deviceId.count <= 128, pushMutations <= maxPushMutations else {
+            sendServerMessage(.pushTokenAck(accepted: false), context: context); return
+        }
         let transferCtx = UnsafeTransfer(context)
         Task { [pushStore] in
             await pushStore.remove(deviceId: deviceId, forTokenId: tokenId)

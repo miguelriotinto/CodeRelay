@@ -130,9 +130,21 @@ public actor PushRegistrationStore {
         guard let data = try? Data(contentsOf: filePath) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        if let decoded = try? decoder.decode([String: [PushRegistration]].self, from: data) {
-            byToken = decoded
+        guard let decoded = try? decoder.decode([String: [PushRegistration]].self, from: data) else { return }
+        byToken = decoded
+        // A previously-oversized or externally-edited file must not bypass the
+        // caps/TTL: drop expired entries and re-apply the per-token + global caps
+        // that a live upsert would have enforced.
+        let cutoff = now().addingTimeInterval(-ttl)
+        for key in byToken.keys {
+            var list = (byToken[key] ?? []).filter { $0.updatedAt >= cutoff }
+            if list.count > maxPerToken {
+                list.sort { $0.updatedAt < $1.updatedAt }
+                list.removeFirst(list.count - maxPerToken)
+            }
+            if list.isEmpty { byToken[key] = nil } else { byToken[key] = list }
         }
+        enforceGlobalCap()
     }
 
     private func persist() {

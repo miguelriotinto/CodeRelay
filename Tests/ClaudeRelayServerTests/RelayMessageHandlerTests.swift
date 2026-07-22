@@ -214,6 +214,18 @@ final class RelayMessageHandlerTests: XCTestCase {
         XCTAssertTrue(stored.isEmpty)
     }
 
+    func testUnregisterPushTokenRejectsOversizeDeviceId() async throws {
+        let fixture = try await makeFixture()
+        defer { Task { await cleanup(fixture) } }
+        fixture.handler.authenticatedTokenId = "R"
+        fixture.handler.isAuthenticated = true
+        let bigDevice = String(repeating: "d", count: 129)
+        let json = #"{"type":"unregister_push_token","payload":{"deviceId":"\#(bigDevice)"}}"#
+        try await send(textFrame(json), on: fixture)
+        let response = try await firstServerMessage(fixture.channel)
+        XCTAssertEqual(response, .pushTokenAck(accepted: false))
+    }
+
     // MARK: - Frame size limits (413)
 
     /// Text frames over `maxTextFrameSize` (10 MB) must be rejected with 413

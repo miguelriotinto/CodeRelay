@@ -21,7 +21,9 @@ public struct ActivityEvent: Sendable {
 /// Delivery policy.
 public struct PushNotifyConfig: Sendable {
     public let debounceInterval: TimeInterval
-    /// Server-wide default; a device's own `notifyOnFinished` still gates delivery.
+    /// Server-wide gate for agent-finished notifications: a finish push fires
+    /// only when this is true AND the target device opted in. Lets an admin
+    /// globally disable finish pushes regardless of per-device preference.
     public let notifyOnFinished: Bool
     public init(debounceInterval: TimeInterval, notifyOnFinished: Bool) {
         self.debounceInterval = debounceInterval
@@ -56,7 +58,7 @@ public actor PushDispatcher {
     private let maxTrackedSessions = 4000
     private let maxTrackedGroups = 2000
 
-    private var continuation: AsyncStream<ActivityEvent>.Continuation?
+    private nonisolated let continuation: AsyncStream<ActivityEvent>.Continuation
 
     public init(sessionProvider: @escaping SessionProvider,
                 tokenProvider: @escaping TokenProvider,
@@ -79,13 +81,14 @@ public actor PushDispatcher {
 
     /// Enqueue an event for ordered processing. `nonisolated` so the synchronous
     /// `@Sendable` observer closure can call it without `await`.
+    ///
+    /// Yields DIRECTLY into the continuation — `AsyncStream.Continuation.yield`
+    /// is itself thread-safe and preserves call order, so events reach the
+    /// single consumer in arrival order. (A prior `Task { yield }` per event
+    /// did NOT preserve order — tasks could acquire the actor out of sequence,
+    /// letting the revision guard drop a mid-burst blocked edge.)
     public nonisolated func enqueue(_ event: ActivityEvent) {
-        // The continuation is set in init and never cleared, so this is safe.
-        Task { await self.yield(event) }
-    }
-
-    private func yield(_ event: ActivityEvent) {
-        continuation?.yield(event)
+        continuation.yield(event)
     }
 
     /// Process one event in arrival order. `internal` so tests drive it directly.
@@ -101,6 +104,8 @@ public actor PushDispatcher {
         reapIfNeeded()
 
         guard let edge = edgeKind(previous: previous, current: current) else { return }
+        // Server-wide gate: finish pushes require the server default on too.
+        if edge == .finished, !config.notifyOnFinished { return }
         await fire(edge: edge, event: event)
     }
 
@@ -121,12 +126,14 @@ public actor PushDispatcher {
         let groupId = triggering.workingDir ?? "~"
         let members = sessions.filter { ($0.workingDir ?? "~") == groupId }
 
-        // Debounce per (token, group).
+        // Debounce per (token, group). Only the CHECK happens here; the
+        // timestamp is recorded after an actual delivery (below), so a finish
+        // edge that reaches no eligible device — or a total send failure —
+        // doesn't suppress a subsequent, more important blocked edge.
         let debounceKey = "\(event.tokenId)|\(groupId)"
         if let last = lastPush[debounceKey], now().timeIntervalSince(last) < config.debounceInterval {
             return
         }
-        lastPush[debounceKey] = now()
 
         // Body/count/deep-link from the group (display name only — never the path).
         let displayTitle = Self.displayName(for: groupId)
@@ -147,14 +154,21 @@ public actor PushDispatcher {
         let collapseKey = Self.collapseKey(for: groupId)
 
         let registrations = await tokenProvider(event.tokenId)
+        var delivered = false
         for reg in registrations {
             guard reg.enabled else { continue }
             if edge == .finished, !reg.notifyOnFinished { continue }
             let result = await sender.send(
                 deviceToken: reg.token, platform: reg.platform,
                 title: displayTitle, body: body, deepLink: deepLink, collapseKey: collapseKey)
-            if result == .unregistered { onDeadToken(reg.token) }
+            switch result {
+            case .delivered:    delivered = true
+            case .unregistered: onDeadToken(reg.token)
+            case .failed:       break
+            }
         }
+        // Start the debounce window only once something was actually delivered.
+        if delivered { lastPush[debounceKey] = now() }
     }
 
     private func severity(_ state: AgentDetectedState?) -> Int {

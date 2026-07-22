@@ -61,6 +61,27 @@ final class PushDispatcherTests: XCTestCase {
         XCTAssertFalse(sent[0].collapse.contains("/repo/a"), "collapse key must be hashed, not a raw path")
     }
 
+    func testEnqueuePreservesOrderForBurst() async {
+        // Exercises the REAL enqueue → AsyncStream → consumer path (not process
+        // directly), guarding the ordering race Codex flagged: a rapid
+        // working→blocked→idle burst must still fire the blocked edge exactly once.
+        let sid = UUID()
+        let sender = FakeSender()
+        let d = makeDispatcher(sender: sender,
+                               sessions: { _ in [self.session(sid, .idle, dir: "/repo/a")] },
+                               tokens: { _ in [self.reg("dev1", "d1")] })
+        d.enqueue(ActivityEvent(sessionId: sid, tokenId: "R", agentState: .working, revision: 1))
+        d.enqueue(ActivityEvent(sessionId: sid, tokenId: "R", agentState: .blocked, revision: 2))
+        d.enqueue(ActivityEvent(sessionId: sid, tokenId: "R", agentState: .idle, revision: 3))
+        // Poll until the stream drains (bounded).
+        for _ in 0..<50 {
+            if await sender.snapshot().count >= 1 { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        let sent = await sender.snapshot()
+        XCTAssertEqual(sent.count, 1, "enqueue must deliver events in order so the blocked edge survives")
+    }
+
     func testReBlockedDoesNotFireAgain() async {
         let sid = UUID()
         let sender = FakeSender()

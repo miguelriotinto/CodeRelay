@@ -83,4 +83,29 @@ final class PushRegistrationStoreTests: XCTestCase {
         let tokens = await reloaded.registrations(forTokenId: "R").map(\.token)
         XCTAssertEqual(tokens, ["t1"])
     }
+
+    func testLoadReappliesPerTokenCapAndTTL() async throws {
+        // Write an oversized + partly-expired file directly, then load with a
+        // small cap + short TTL. The loader must trim, not import it wholesale.
+        let dir = tmpDir()
+        let fresh = Date()
+        let stale = Date(timeIntervalSince1970: 0)
+        var regs: [PushRegistration] = [
+            PushRegistration(platform: .apns, token: "expired", deviceId: "d0",
+                             enabled: true, notifyOnFinished: false, updatedAt: stale),
+        ]
+        for i in 1...5 {
+            regs.append(PushRegistration(platform: .apns, token: "t\(i)", deviceId: "d\(i)",
+                                         enabled: true, notifyOnFinished: false,
+                                         updatedAt: fresh.addingTimeInterval(Double(i))))
+        }
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(["R": regs])
+        try data.write(to: dir.appendingPathComponent("push-tokens.json"))
+
+        let store = PushRegistrationStore(directory: dir, maxPerToken: 2, ttl: 100)
+        let loaded = await store.registrations(forTokenId: "R")
+        XCTAssertEqual(loaded.count, 2, "load must re-apply the per-token cap")
+        XCTAssertFalse(loaded.contains { $0.token == "expired" }, "expired entries dropped on load")
+    }
 }
