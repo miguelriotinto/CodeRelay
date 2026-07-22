@@ -18,6 +18,11 @@ public struct SessionInfo: Codable, Equatable, Sendable {
     public let agentState: AgentDetectedState?
     /// The session's current window title (OSC 0/2), if any. Surfaced in the sidebar.
     public let title: String?
+    /// The session's current working directory, resolved to a git root when one
+    /// exists (best-effort, refreshed on the server's foreground-process poll).
+    /// Nil when unknown or when the server predates cwd capture. Clients group
+    /// sessions by this to form workspace rollups.
+    public let workingDir: String?
 
     public init(
         id: UUID,
@@ -30,7 +35,8 @@ public struct SessionInfo: Codable, Equatable, Sendable {
         activity: ActivityState? = nil,
         agent: String? = nil,
         agentState: AgentDetectedState? = nil,
-        title: String? = nil
+        title: String? = nil,
+        workingDir: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -43,6 +49,7 @@ public struct SessionInfo: Codable, Equatable, Sendable {
         self.agent = agent
         self.agentState = agentState
         self.title = title
+        self.workingDir = workingDir
     }
 
     // MARK: - Copy Helpers
@@ -51,29 +58,34 @@ public struct SessionInfo: Codable, Equatable, Sendable {
     public func transitioning(to newState: SessionState) -> SessionInfo {
         SessionInfo(id: id, name: name, state: newState, tokenId: tokenId,
                     createdAt: createdAt, cols: cols, rows: rows,
-                    activity: activity, agent: agent, agentState: agentState, title: title)
+                    activity: activity, agent: agent, agentState: agentState,
+                    title: title, workingDir: workingDir)
     }
 
     public func with(name newName: String?) -> SessionInfo {
         SessionInfo(id: id, name: newName, state: state, tokenId: tokenId,
                     createdAt: createdAt, cols: cols, rows: rows,
-                    activity: activity, agent: agent, agentState: agentState, title: title)
+                    activity: activity, agent: agent, agentState: agentState,
+                    title: title, workingDir: workingDir)
     }
 
     public func with(tokenId newTokenId: String) -> SessionInfo {
         SessionInfo(id: id, name: name, state: state, tokenId: newTokenId,
                     createdAt: createdAt, cols: cols, rows: rows,
-                    activity: activity, agent: agent, agentState: agentState, title: title)
+                    activity: activity, agent: agent, agentState: agentState,
+                    title: title, workingDir: workingDir)
     }
 
     public func enriched(
         activity: ActivityState?,
         agent: String?,
         agentState: AgentDetectedState? = nil,
-        title: String? = nil
+        title: String? = nil,
+        workingDir: String? = nil
     ) -> SessionInfo {
         SessionInfo(id: id, name: name, state: state, tokenId: tokenId,
                     createdAt: createdAt, cols: cols, rows: rows,
-                    activity: activity, agent: agent, agentState: agentState, title: title)
+                    activity: activity, agent: agent, agentState: agentState,
+                    title: title, workingDir: workingDir ?? self.workingDir)
     }
 }

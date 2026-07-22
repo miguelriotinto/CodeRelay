@@ -41,4 +41,31 @@ final class SessionInfoTests: XCTestCase {
         let decoded = try JSONDecoder().decode(SessionInfo.self, from: data)
         XCTAssertEqual(decoded, info)
     }
+
+    func testWorkingDirRoundTrips() throws {
+        let info = SessionInfo(id: UUID(), name: "s", state: .activeAttached, tokenId: "t",
+                               createdAt: Date(timeIntervalSince1970: 1), cols: 80, rows: 24,
+                               workingDir: "/repo/x")
+        let back = try JSONDecoder().decode(SessionInfo.self, from: JSONEncoder().encode(info))
+        XCTAssertEqual(back.workingDir, "/repo/x")
+    }
+
+    func testWorkingDirDefaultsNilAndAbsentKeyDecodesNil() throws {
+        XCTAssertNil(base().workingDir)
+        let json = #"{"id":"\#(UUID().uuidString)","state":"active-attached","tokenId":"t","createdAt":1,"cols":80,"rows":24}"#
+        let decoded = try JSONDecoder().decode(SessionInfo.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.workingDir)
+    }
+
+    func testWorkingDirPreservedByCopyHelpersAndEnriched() {
+        let info = SessionInfo(id: UUID(), name: "s", state: .activeAttached, tokenId: "t",
+                               createdAt: Date(), cols: 80, rows: 24, workingDir: "/repo/y")
+        XCTAssertEqual(info.transitioning(to: .activeDetached).workingDir, "/repo/y")
+        XCTAssertEqual(info.with(name: "r").workingDir, "/repo/y")
+        XCTAssertEqual(info.with(tokenId: "t2").workingDir, "/repo/y")
+        // enriched without workingDir preserves the existing value
+        XCTAssertEqual(info.enriched(activity: .active, agent: nil).workingDir, "/repo/y")
+        // enriched with a new workingDir overrides
+        XCTAssertEqual(info.enriched(activity: .active, agent: nil, workingDir: "/repo/z").workingDir, "/repo/z")
+    }
 }
