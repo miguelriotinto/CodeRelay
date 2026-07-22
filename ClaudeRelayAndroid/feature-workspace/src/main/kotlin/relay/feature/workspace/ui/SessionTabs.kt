@@ -215,6 +215,21 @@ internal fun tabBackground(
     }
 }
 
+/**
+ * Legible label color for a tab of the given [fill]: black on light fills
+ * (e.g. the idle yellow), white on dark ones. Parity with the iOS
+ * `Color.contrastingLabel`. Derived from the fill instead of hardcoded so the
+ * number never washes out white-on-yellow when a light state color is added.
+ *
+ * Alpha is folded in by compositing over black (the tab strip's background), so
+ * a translucent fill like [White15] reports low luminance and keeps a white
+ * label rather than flipping to black. Rec. 601 luma; 0.6 threshold matches iOS.
+ */
+internal fun tabLabelColor(fill: Color): Color {
+    val luma = (0.299f * fill.red + 0.587f * fill.green + 0.114f * fill.blue) * fill.alpha
+    return if (luma > 0.6f) Color.Black else Color.White
+}
+
 @Composable
 private fun SessionTab(
     number: Int,
@@ -226,10 +241,11 @@ private fun SessionTab(
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(6.dp)
+    val fill = tabBackground(agentId, needsAttention, flashOn, agentState)
     var box = Modifier
         .defaultMinSize(minWidth = 26.dp, minHeight = 22.dp)
         .clip(shape)
-        .background(tabBackground(agentId, needsAttention, flashOn, agentState))
+        .background(fill)
     if (isSelected) {
         box = box.border(width = 2.dp, color = Color.White, shape = shape)
     }
@@ -240,7 +256,7 @@ private fun SessionTab(
     ) {
         Text(
             text = number.toString(),
-            color = Color.White,
+            color = tabLabelColor(fill),
             fontSize = 12.sp,
             fontFamily = FontFamily.Monospace,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,

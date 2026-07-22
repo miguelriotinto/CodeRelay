@@ -398,7 +398,9 @@ private struct SessionTab: View {
     var body: some View {
         Text("\(number)")
             .font(.system(size: 12, weight: isSelected ? .bold : .semibold, design: .monospaced))
-            .foregroundStyle(.white)
+            // Derive the label color from the fill so it stays legible on light
+            // backgrounds (e.g. the idle-yellow tab) instead of washing out white.
+            .foregroundStyle(tabBackground.contrastingLabel)
             .frame(minWidth: 26, minHeight: 22)
             .background(tabBackground)
             .clipShape(RoundedRectangle(cornerRadius: 6))
