@@ -73,10 +73,16 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: |
+          # Build ONLY the two server products (matches Formula/clauderelay.rb).
+          # A bare `swift build` compiles the whole package — including
+          # ClaudeRelaySpeech → WhisperKit, which the server does not use and
+          # which fails to compile on the CI runner's toolchain (@retroactive /
+          # MLState, and older swift-jinja tools-version conflicts). Scoping to
+          # the products SPM only compiles their dependency subgraph.
           if [ "$ARCH" = "x86_64" ]; then
-            swift build -c release --disable-sandbox -Xswiftc -cross-module-optimization --triple x86_64-apple-macosx
+            swift build -c release --disable-sandbox -Xswiftc -cross-module-optimization --triple x86_64-apple-macosx --product claude-relay-server --product claude-relay
           else
-            swift build -c release --disable-sandbox -Xswiftc -cross-module-optimization
+            swift build -c release --disable-sandbox -Xswiftc -cross-module-optimization --product claude-relay-server --product claude-relay
           fi
 
       - name: Package binaries
