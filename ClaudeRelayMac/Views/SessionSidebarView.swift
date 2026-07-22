@@ -23,6 +23,7 @@ struct SessionSidebarView: View {
                     ForEach(coordinator.activeSessions, id: \.id) { session in
                         SessionRow(
                             name: coordinator.name(for: session.id),
+                            state: session.state,
                             shortId: String(session.id.uuidString.prefix(8)),
                             activity: coordinator.activityState(for: session.id),
                             agentId: coordinator.activeAgent(for: session.id),
@@ -115,6 +116,7 @@ struct SessionSidebarView: View {
 
 private struct SessionRow: View {
     let name: String
+    let state: SessionState
     let shortId: String
     let activity: ActivityState
     let agentId: String?
@@ -125,7 +127,7 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            ActivityDot(activity: activity, agentId: agentId, agentState: agentState, seen: seen, size: 6)
+            SessionStatusDot(state: state, size: 6)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.body)
                 if let title, !title.isEmpty {
@@ -138,10 +140,16 @@ private struct SessionRow: View {
                     Text(shortId)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        .monospaced()
                 }
             }
             Spacer()
+            if let agentId, let friendly = AgentDisplayName.friendly(agentId), let agentState {
+                Text(friendly)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                AgentStatePill(agentState: agentState, agentId: agentId, seen: seen)
+            }
         }
         .padding(.vertical, 2)
     }
