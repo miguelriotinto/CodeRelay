@@ -182,10 +182,17 @@ fun WorkspaceScreen(
     val quality by vm.connectionQuality.collectAsStateWithLifecycle()
     val uptimeSeconds by vm.uptimeSeconds.collectAsStateWithLifecycle()
 
+    val agentStates by coordinator.agentStates.collectAsStateWithLifecycle()
+    val sessionTitles by coordinator.sessionTitles.collectAsStateWithLifecycle()
+    val unseenSessions by coordinator.unseenSessions.collectAsStateWithLifecycle()
+
     fun nameFor(id: UUID): String = sessionNames[id] ?: id.toString().take(8)
     fun agentFor(id: UUID): String? = agentSessions[id]
     fun activityFor(id: UUID): relay.protocol.ActivityState =
         coordinator.activityCoordinator.activityState(id)
+    fun agentStateFor(id: UUID): relay.protocol.AgentDetectedState? = agentStates[id]
+    fun seenFor(id: UUID): Boolean = id !in unseenSessions
+    fun titleFor(id: UUID): String? = sessionTitles[id]
 
     var showKeyBar by remember { mutableStateOf(true) }
     var renameActive by remember { mutableStateOf(false) }
@@ -211,6 +218,9 @@ fun WorkspaceScreen(
             nameForSession = ::nameFor,
             agentForSession = ::agentFor,
             activityForSession = ::activityFor,
+            agentStateForSession = ::agentStateFor,
+            seenForSession = ::seenFor,
+            titleForSession = ::titleFor,
             isRefreshing = isLoading,
             onRefresh = { scope.launch { coordinator.fetchSessions() } },
             onNewSession = { scope.launch { coordinator.createNewSession() } },

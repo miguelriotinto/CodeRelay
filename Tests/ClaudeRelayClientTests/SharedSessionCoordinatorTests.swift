@@ -195,9 +195,9 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         coordinator.claimSession(ownedTerminated)
 
         coordinator.sessions = [
-            SessionInfo(id: ownedActive, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
-            SessionInfo(id: ownedTerminated, state: .terminated, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
-            SessionInfo(id: unowned, state: .activeAttached, tokenId: "t2", createdAt: Date(), cols: 80, rows: 24)
+            SessionInfo(id: ownedActive, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
+            SessionInfo(id: ownedTerminated, name: nil, state: .terminated, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
+            SessionInfo(id: unowned, name: nil, state: .activeAttached, tokenId: "t2", createdAt: Date(), cols: 80, rows: 24)
         ]
 
         let active = coordinator.activeSessions
@@ -386,8 +386,8 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         coordinator.claimSession(keepId)
         coordinator.activeSessionId = stolenId
         coordinator.sessions = [
-            SessionInfo(id: stolenId, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
-            SessionInfo(id: keepId, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
+            SessionInfo(id: stolenId, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
+            SessionInfo(id: keepId, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
         ]
         coordinator.agentSessions[stolenId] = "claude"
         coordinator.sessionsAwaitingInput.insert(stolenId)
@@ -440,8 +440,8 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         coordinator.claimSession(activeId)
         coordinator.activeSessionId = activeId
         coordinator.sessions = [
-            SessionInfo(id: stolenId, state: .activeDetached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
-            SessionInfo(id: activeId, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
+            SessionInfo(id: stolenId, name: nil, state: .activeDetached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
+            SessionInfo(id: activeId, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
         ]
 
         XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
@@ -527,7 +527,7 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         let sessionId = UUID()
         let now = Date()
         coordinator.sessions = [
-            SessionInfo(id: sessionId, state: .activeAttached, tokenId: "t", createdAt: now, cols: 80, rows: 24)
+            SessionInfo(id: sessionId, name: nil, state: .activeAttached, tokenId: "t", createdAt: now, cols: 80, rows: 24)
         ]
 
         XCTAssertEqual(coordinator.createdAt(for: sessionId), now)

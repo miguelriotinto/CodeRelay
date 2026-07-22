@@ -22,6 +22,25 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     /// The coding agent currently detected as running, or nil.
     public private(set) var activeAgent: CodingAgent?
 
+    /// Fine-grained agent state from screen detection (Phase 2). Nil in Phase 1
+    /// — the arbiter that populates it is added in a later task.
+    public private(set) var agentState: AgentDetectedState?
+
+    /// Latest window title (OSC 0/2) observed for this session, if any.
+    public private(set) var title: String?
+
+    // MARK: - Screen-Detection Arbiter (Phase 2)
+
+    private var agentEnteredAt: Date?
+    private var pendingIdleStartedAt: Date?
+    private var pendingIdleConfirmations: Int = 0
+    private var lastVisibleIdle = false
+    private var lastVisibleBlocker = false
+    private var lastVisibleWorking = false
+    private static let pendingIdleCap: TimeInterval = 0.7
+    private static let pendingIdleConfirmationLimit = 3
+    private static let startupGrace: TimeInterval = 3.0
+
     // MARK: - Configuration
 
     private let silenceThreshold: TimeInterval
@@ -31,7 +50,7 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     /// to drop updates that arrived out of order: an older revision must never
     /// overwrite a newer one even if its enqueue-then-await was delayed.
     public private(set) var revision: UInt64 = 0
-    private let onChange: @Sendable (ActivityState, CodingAgent?, UInt64) -> Void
+    private let onChange: @Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void
 
     /// Invoked by the silence timer's Task when the threshold elapses. The
     /// owner (PTYSession) sets this to a closure that re-enters the actor
@@ -64,7 +83,7 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     public init(
         silenceThreshold: TimeInterval = 1.0,
         agentSilenceThreshold: TimeInterval = 2.0,
-        onChange: @escaping @Sendable (ActivityState, CodingAgent?, UInt64) -> Void
+        onChange: @escaping @Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void
     ) {
         self.silenceThreshold = silenceThreshold
         self.agentSilenceThreshold = agentSilenceThreshold
@@ -122,6 +141,10 @@ public final class SessionActivityMonitor: @unchecked Sendable {
             activeAgent = nil
             consecutiveNoAgentPolls = 0
         }
+        agentState = .idle          // process gone: definitively idle
+        agentEnteredAt = nil
+        pendingIdleStartedAt = nil
+        pendingIdleConfirmations = 0
         transition(to: .idle)
     }
 
@@ -141,12 +164,16 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     /// `exitDebounceThreshold` consecutive non-agent signals (counted across
     /// this poll path and the OSC title path combined) to guard against
     /// momentary process group changes during tool launches.
-    public func updateForegroundProcess(agent: CodingAgent?) {
+    public func updateForegroundProcess(agent: CodingAgent?, now: Date = Date()) {
         guard !cancelled else { return }
         if let agent {
             consecutiveNoAgentPolls = 0
             if activeAgent?.id != agent.id {
                 activeAgent = agent
+                agentEnteredAt = now
+                agentState = nil            // clear stale detection on agent change
+                pendingIdleStartedAt = nil
+                pendingIdleConfirmations = 0
                 transition(to: .agentActive)
                 resetSilenceTimer()
             }
@@ -156,6 +183,71 @@ public final class SessionActivityMonitor: @unchecked Sendable {
                 exitAgent()
             }
         }
+    }
+
+    /// Apply a screen-detection result with herdr's anti-flap arbitration.
+    /// Called from PTYSession on each foreground-poll tick with the detector's
+    /// output for the active agent (nil when no agent / no manifest).
+    public func updateScreenDetection(_ detection: AgentDetection?, now: Date) {
+        guard !cancelled, activeAgent != nil, let detection else { return }
+
+        // Overlay (transcript viewer, model picker): freeze current state.
+        if detection.skipStateUpdate { return }
+
+        // Startup grace: ignore a spurious idle right after agent entry.
+        if let enteredAt = agentEnteredAt,
+           detection.state == .idle, !detection.visibleIdle,
+           now.timeIntervalSince(enteredAt) < Self.startupGrace {
+            return
+        }
+
+        let previousState = agentState
+        let next = detection.state
+
+        // Pending-idle hold: only Working→plain-idle, not a visible idle/blocker.
+        let isWorkingToPlainIdle = previousState == .working
+            && next == .idle && !detection.visibleIdle && !detection.visibleBlocker
+        if isWorkingToPlainIdle {
+            if shouldHoldPlainIdle(now: now) { return }
+        } else {
+            pendingIdleStartedAt = nil
+            pendingIdleConfirmations = 0
+        }
+
+        let changed = next != previousState
+            || detection.visibleIdle != lastVisibleIdle
+            || detection.visibleBlocker != lastVisibleBlocker
+            || detection.visibleWorking != lastVisibleWorking
+        guard changed else { return }
+
+        lastVisibleIdle = detection.visibleIdle
+        lastVisibleBlocker = detection.visibleBlocker
+        lastVisibleWorking = detection.visibleWorking
+        agentState = next
+        revision &+= 1
+        onChange(state, activeAgent, agentState, title, revision)
+    }
+
+    /// Returns true while a Working→plain-idle transition should be withheld.
+    /// Publishes (returns false) once 700ms elapse or 3 confirmations accrue.
+    private func shouldHoldPlainIdle(now: Date) -> Bool {
+        guard let startedAt = pendingIdleStartedAt else {
+            pendingIdleStartedAt = now
+            pendingIdleConfirmations = 0
+            return true
+        }
+        if now.timeIntervalSince(startedAt) >= Self.pendingIdleCap {
+            pendingIdleStartedAt = nil
+            pendingIdleConfirmations = 0
+            return false
+        }
+        pendingIdleConfirmations += 1
+        if pendingIdleConfirmations >= Self.pendingIdleConfirmationLimit {
+            pendingIdleStartedAt = nil
+            pendingIdleConfirmations = 0
+            return false
+        }
+        return true
     }
 
     // MARK: - Detection Logic
@@ -195,6 +287,7 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     }
 
     private func handleTitle(_ title: String) {
+        self.title = title
         if let agent = CodingAgent.matching(title: title) {
             consecutiveNoAgentPolls = 0
             if activeAgent?.id != agent.id {
@@ -213,6 +306,9 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     private func exitAgent() {
         activeAgent = nil
         consecutiveNoAgentPolls = 0
+        agentState = nil
+        agentEnteredAt = nil
+        pendingIdleStartedAt = nil
         transition(to: .active)
         resetSilenceTimer()
     }
@@ -272,6 +368,6 @@ public final class SessionActivityMonitor: @unchecked Sendable {
         revision &+= 1
         RelayLogger.log(.debug, category: "activity",
             "State: \(oldState.rawValue) → \(newState.rawValue) (rev=\(revision))")
-        onChange(newState, activeAgent, revision)
+        onChange(newState, activeAgent, agentState, title, revision)
     }
 }

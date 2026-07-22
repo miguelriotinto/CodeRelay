@@ -247,6 +247,9 @@ class SessionCoordinator(
     val sessionsAwaitingInput: StateFlow<Set<UUID>> get() = activityCoordinator.sessionsAwaitingInput
     val sessionsStolen: StateFlow<Set<UUID>> get() = activityCoordinator.sessionsStolen
     val stolenAlert: StateFlow<ActivityCoordinator.StolenAlert?> get() = activityCoordinator.stolenAlert
+    val agentStates: StateFlow<Map<UUID, relay.protocol.AgentDetectedState>> get() = activityCoordinator.agentStates
+    val sessionTitles: StateFlow<Map<UUID, String>> get() = activityCoordinator.sessionTitles
+    val unseenSessions: StateFlow<Set<UUID>> get() = activityCoordinator.unseenSessions
 
     // MARK: - Send-suppression
 
@@ -491,7 +494,14 @@ class SessionCoordinator(
 
         // Re-apply each session's activity so the sidebar reflects server state.
         for (session in list) {
-            activityCoordinator.applyActivity(session.id, session.activity ?: ActivityState.IDLE, session.agent)
+            activityCoordinator.applyActivity(
+                session.id,
+                session.activity ?: ActivityState.IDLE,
+                session.agent,
+                agentState = session.agentState,
+                title = session.title,
+                isActiveSession = _activeSessionId.value == session.id,
+            )
         }
 
         // Capture every owned session missing from THIS token's pane BEFORE the
@@ -604,6 +614,7 @@ class SessionCoordinator(
             terminalCache.put(sessionId, newTerminalVm())
             wireTerminalOutput(sessionId)
             _activeSessionId.value = sessionId
+            activityCoordinator.markSeen(sessionId)
             terminalCache.touch(sessionId)
             terminalCache.enforceLimit(_activeSessionId.value)
 
@@ -657,6 +668,7 @@ class SessionCoordinator(
             }
 
             _activeSessionId.value = id
+            activityCoordinator.markSeen(id)
             terminalCache.touch(id)
             terminalCache.enforceLimit(_activeSessionId.value)
 
@@ -716,6 +728,7 @@ class SessionCoordinator(
             terminalCache.put(id, vm)
             wireTerminalOutput(id)
             _activeSessionId.value = id
+            activityCoordinator.markSeen(id)
             terminalCache.touch(id)
             terminalCache.enforceLimit(_activeSessionId.value)
 
@@ -775,7 +788,7 @@ class SessionCoordinator(
     private fun handleServerMessage(message: ServerMessage) {
         when (message) {
             is ServerMessage.SessionActivity ->
-                onSessionActivity(message.sessionId, message.activity, message.agent)
+                onSessionActivity(message.sessionId, message.activity, message.agent, message.agentState, message.title)
             is ServerMessage.SessionStolen -> onSessionStolen(message.sessionId)
             is ServerMessage.SessionRenamed -> onSessionRenamed(message.sessionId, message.name)
             is ServerMessage.ReplayComplete -> onReplayComplete(message.sessionId)
@@ -784,11 +797,15 @@ class SessionCoordinator(
         }
     }
 
-    private fun onSessionActivity(sessionId: UUID, activity: ActivityState, agent: String?) {
-        // Flip the matching VM's `isAgentActive` on agent entry/exit so the
-        // input-prompt silence detector switches between the 1 s and 2 s
-        // thresholds (SharedSessionCoordinator.swift:595-597).
-        activityCoordinator.applyActivity(sessionId, activity, agent) { id, isActive ->
+    private fun onSessionActivity(sessionId: UUID, activity: ActivityState, agent: String?, agentState: relay.protocol.AgentDetectedState?, title: String?) {
+        activityCoordinator.applyActivity(
+            sessionId,
+            activity,
+            agent,
+            agentState = agentState,
+            title = title,
+            isActiveSession = _activeSessionId.value == sessionId,
+        ) { id, isActive ->
             terminalCache.view(id)?.isAgentActive = isActive
         }
     }

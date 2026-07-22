@@ -15,7 +15,7 @@ final class SessionActivityMonitorTests: XCTestCase {
         SessionActivityMonitor(
             silenceThreshold: silenceThreshold,
             agentSilenceThreshold: agentSilenceThreshold,
-            onChange: { state, agent, _ in onChange(state, agent) }
+            onChange: { state, agent, _, _, _ in onChange(state, agent) }
         )
     }
 
@@ -28,7 +28,7 @@ final class SessionActivityMonitorTests: XCTestCase {
         SessionActivityMonitor(
             silenceThreshold: silenceThreshold,
             agentSilenceThreshold: agentSilenceThreshold,
-            onChange: onChange
+            onChange: { state, agent, _, _, revision in onChange(state, agent, revision) }
         )
     }
 

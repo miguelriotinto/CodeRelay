@@ -50,4 +50,6 @@ data class SessionInfo(
     val rows: UShort,
     @Serializable(with = ActivityStateSerializer::class) val activity: ActivityState? = null,
     val agent: String? = null,
+    @Serializable(with = AgentDetectedStateSerializer::class) val agentState: AgentDetectedState? = null,
+    val title: String? = null,
 )

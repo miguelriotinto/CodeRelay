@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import relay.protocol.ActivityState
+import relay.protocol.AgentDetectedState
 
 /**
  * Verifies the activity dot color + blink decisions match `ActivityDot.swift`:
@@ -34,5 +35,27 @@ class ActivityDotLogicTest {
         assertFalse(activityDotShouldBlink(ActivityState.IDLE))
         assertFalse(activityDotShouldBlink(ActivityState.AGENT_ACTIVE))
         assertTrue(activityDotShouldBlink(ActivityState.AGENT_IDLE))
+    }
+
+    @Test
+    fun `phase2 color map`() {
+        assertEquals(QualityRed, activityDotColor(ActivityState.AGENT_IDLE, "claude", AgentDetectedState.BLOCKED, seen = false))
+        assertEquals(agentColor("claude"), activityDotColor(ActivityState.AGENT_ACTIVE, "claude", AgentDetectedState.WORKING))
+        assertEquals(DoneTeal, activityDotColor(ActivityState.AGENT_IDLE, "claude", AgentDetectedState.IDLE, seen = false))
+        assertEquals(QualityGreen, activityDotColor(ActivityState.AGENT_IDLE, "claude", AgentDetectedState.IDLE, seen = true))
+        assertEquals(UnknownGray, activityDotColor(ActivityState.AGENT_ACTIVE, "claude", AgentDetectedState.UNKNOWN))
+    }
+
+    @Test
+    fun `phase2 blink only on blocked`() {
+        assertTrue(activityDotShouldBlink(ActivityState.AGENT_IDLE, AgentDetectedState.BLOCKED))
+        assertFalse(activityDotShouldBlink(ActivityState.AGENT_IDLE, AgentDetectedState.WORKING))
+        assertFalse(activityDotShouldBlink(ActivityState.AGENT_IDLE, AgentDetectedState.IDLE))
+    }
+
+    @Test
+    fun `null agentState falls back to legacy`() {
+        assertEquals(QualityGreen, activityDotColor(ActivityState.IDLE, null, null))
+        assertTrue(activityDotShouldBlink(ActivityState.AGENT_IDLE, null))
     }
 }

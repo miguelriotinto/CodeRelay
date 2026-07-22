@@ -13,6 +13,11 @@ public struct SessionInfo: Codable, Equatable, Sendable {
     /// The coding agent currently running in this session, if any.
     /// Nil when no agent is running or when the server predates multi-agent support.
     public let agent: String?
+    /// Fine-grained agent state detected from the terminal screen (Phase 2).
+    /// Nil when no agent is running or when the server predates screen detection.
+    public let agentState: AgentDetectedState?
+    /// The session's current window title (OSC 0/2), if any. Surfaced in the sidebar.
+    public let title: String?
 
     public init(
         id: UUID,
@@ -23,7 +28,9 @@ public struct SessionInfo: Codable, Equatable, Sendable {
         cols: UInt16,
         rows: UInt16,
         activity: ActivityState? = nil,
-        agent: String? = nil
+        agent: String? = nil,
+        agentState: AgentDetectedState? = nil,
+        title: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -34,6 +41,8 @@ public struct SessionInfo: Codable, Equatable, Sendable {
         self.rows = rows
         self.activity = activity
         self.agent = agent
+        self.agentState = agentState
+        self.title = title
     }
 
     // MARK: - Copy Helpers
@@ -42,24 +51,29 @@ public struct SessionInfo: Codable, Equatable, Sendable {
     public func transitioning(to newState: SessionState) -> SessionInfo {
         SessionInfo(id: id, name: name, state: newState, tokenId: tokenId,
                     createdAt: createdAt, cols: cols, rows: rows,
-                    activity: activity, agent: agent)
+                    activity: activity, agent: agent, agentState: agentState, title: title)
     }
 
     public func with(name newName: String?) -> SessionInfo {
         SessionInfo(id: id, name: newName, state: state, tokenId: tokenId,
                     createdAt: createdAt, cols: cols, rows: rows,
-                    activity: activity, agent: agent)
+                    activity: activity, agent: agent, agentState: agentState, title: title)
     }
 
     public func with(tokenId newTokenId: String) -> SessionInfo {
         SessionInfo(id: id, name: name, state: state, tokenId: newTokenId,
                     createdAt: createdAt, cols: cols, rows: rows,
-                    activity: activity, agent: agent)
+                    activity: activity, agent: agent, agentState: agentState, title: title)
     }
 
-    public func enriched(activity: ActivityState?, agent: String?) -> SessionInfo {
+    public func enriched(
+        activity: ActivityState?,
+        agent: String?,
+        agentState: AgentDetectedState? = nil,
+        title: String? = nil
+    ) -> SessionInfo {
         SessionInfo(id: id, name: name, state: state, tokenId: tokenId,
                     createdAt: createdAt, cols: cols, rows: rows,
-                    activity: activity, agent: agent)
+                    activity: activity, agent: agent, agentState: agentState, title: title)
     }
 }

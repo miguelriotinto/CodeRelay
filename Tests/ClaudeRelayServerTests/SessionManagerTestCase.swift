@@ -10,7 +10,7 @@ actor MockPTYSession: PTYSessionProtocol {
     private var outputHandler: (@Sendable (Data) -> Void)?
     private var exitHandler: (@Sendable () -> Void)?
     private var terminated = false
-    private var activityHandler: (@Sendable (ActivityState, CodingAgent?, UInt64) -> Void)?
+    private var activityHandler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
     private(set) var clearOutputHandlerCallCount = 0
     private(set) var forceRepaintCallCount = 0
     /// Whether the live output handler was already wired when `forceRepaint()`
@@ -40,7 +40,11 @@ actor MockPTYSession: PTYSessionProtocol {
     func terminate() { terminated = true }
     func getActivityState() -> ActivityState { .active }
     func getActiveAgent() -> CodingAgent? { nil }
-    func setActivityHandler(_ handler: @escaping @Sendable (ActivityState, CodingAgent?, UInt64) -> Void) {
+    func getAgentState() -> AgentDetectedState? { nil }
+    func getTitle() -> String? { nil }
+    func setActivityHandler(
+        _ handler: @escaping @Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void
+    ) {
         activityHandler = handler
     }
     func recordInput() {}

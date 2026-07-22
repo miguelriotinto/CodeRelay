@@ -95,4 +95,14 @@ final class CodingAgentTests: XCTestCase {
         let agent = CodingAgent.matching(title: "claude and codex")
         XCTAssertEqual(agent, .claude)
     }
+
+    func testOpencodeIsRegistered() {
+        XCTAssertNotNil(CodingAgent.find(id: "opencode"))
+        XCTAssertEqual(CodingAgent.matching(processName: "opencode")?.id, "opencode")
+        XCTAssertEqual(CodingAgent.matching(title: "opencode session")?.id, "opencode")
+    }
+
+    func testAllContainsThreeAgents() {
+        XCTAssertEqual(Set(CodingAgent.all.map { $0.id }), ["claude", "codex", "opencode"])
+    }
 }

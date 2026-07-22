@@ -48,6 +48,9 @@ struct SessionSidebarView: View {
                             isActive: session.id == coordinator.activeSessionId,
                             activity: coordinator.activityState(for: session.id),
                             agentId: agentId(for: session.id),
+                            agentState: coordinator.agentState(for: session.id),
+                            seen: !coordinator.isUnseen(session.id),
+                            title: coordinator.title(for: session.id),
                             onRename: { newName in
                                 coordinator.setName(newName, for: session.id)
                             },
@@ -111,6 +114,9 @@ private struct SessionRow: View {
     let isActive: Bool
     let activity: ActivityState
     let agentId: String?
+    let agentState: AgentDetectedState?
+    let seen: Bool
+    let title: String?
     let onRename: (String) -> Void
     let onShareQR: () -> Void
 
@@ -119,7 +125,7 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ActivityDot(activity: activity, agentId: agentId, size: 8)
+            ActivityDot(activity: activity, agentId: agentId, agentState: agentState, seen: seen, size: 8)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(name)
@@ -127,9 +133,17 @@ private struct SessionRow: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                Text(shortId)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                if let title, !title.isEmpty {
+                    Text(title)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } else {
+                    Text(shortId)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
             }
 
             Spacer()

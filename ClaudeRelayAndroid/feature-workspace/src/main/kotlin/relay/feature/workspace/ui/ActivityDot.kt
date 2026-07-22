@@ -19,25 +19,49 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import relay.protocol.ActivityState
+import relay.protocol.AgentDetectedState
 
 /**
- * Pure color mapping for an [ActivityState] dot, ported from
- * `ActivityDot.swift:22-28`:
- *  - active / idle → green
- *  - agentActive / agentIdle → [agentColor] for the running agent
+ * Pure color mapping for the dot, ported from `ActivityDot.swift` (Task 10).
+ * When [agentState] is non-null it drives the color (herdr parity); when null
+ * the dot falls back to the legacy [ActivityState]-based color so older servers
+ * look unchanged.
+ *  - blocked → red
+ *  - working → agentColor(agentId)
+ *  - idle && !seen → teal ("done")
+ *  - idle && seen  → green
+ *  - unknown → gray
+ *  - agentState == null → legacy: active/idle → green; agent* → agentColor
  */
-fun activityDotColor(activity: ActivityState, agentId: String?): Color = when (activity) {
-    ActivityState.ACTIVE, ActivityState.IDLE -> QualityGreen
-    ActivityState.AGENT_ACTIVE, ActivityState.AGENT_IDLE -> agentColor(agentId)
+fun activityDotColor(
+    activity: ActivityState,
+    agentId: String?,
+    agentState: AgentDetectedState? = null,
+    seen: Boolean = true,
+): Color = when (agentState) {
+    AgentDetectedState.BLOCKED -> QualityRed
+    AgentDetectedState.WORKING -> agentColor(agentId)
+    AgentDetectedState.IDLE -> if (seen) QualityGreen else DoneTeal
+    AgentDetectedState.UNKNOWN -> UnknownGray
+    null -> when (activity) {
+        ActivityState.ACTIVE, ActivityState.IDLE -> QualityGreen
+        ActivityState.AGENT_ACTIVE, ActivityState.AGENT_IDLE -> agentColor(agentId)
+    }
 }
 
 /**
- * Whether the dot blinks for [activity]. Ported from `ActivityDot.swift:35` /
- * `:38`: blink iff `agentIdle` (the "agent running but awaiting input" state).
- * Plain `idle` does NOT blink.
+ * Whether the dot blinks. Ported from `ActivityDot.swift` (Task 10): when
+ * [agentState] is present, blink iff blocked (needs attention); otherwise the
+ * legacy rule — blink iff agentIdle.
  */
-fun activityDotShouldBlink(activity: ActivityState): Boolean =
+fun activityDotShouldBlink(
+    activity: ActivityState,
+    agentState: AgentDetectedState? = null,
+): Boolean = if (agentState != null) {
+    agentState == AgentDetectedState.BLOCKED
+} else {
     activity == ActivityState.AGENT_IDLE
+}
 
 /**
  * Small colored dot visualizing a session's [ActivityState]. When an agent is
@@ -50,8 +74,10 @@ fun ActivityDot(
     agentId: String?,
     modifier: Modifier = Modifier,
     size: Dp = 8.dp,
+    agentState: AgentDetectedState? = null,
+    seen: Boolean = true,
 ) {
-    val blink = activityDotShouldBlink(activity)
+    val blink = activityDotShouldBlink(activity, agentState)
     val transition = rememberInfiniteTransition(label = "activityBlink")
     val animatedAlpha by transition.animateFloat(
         initialValue = 1.0f,
@@ -67,7 +93,7 @@ fun ActivityDot(
             .size(size)
             .alpha(if (blink) animatedAlpha else 1.0f)
             .clip(CircleShape)
-            .background(activityDotColor(activity, agentId)),
+            .background(activityDotColor(activity, agentId, agentState, seen)),
     )
 }
 

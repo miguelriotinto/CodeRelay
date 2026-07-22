@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import relay.protocol.ActivityState
+import relay.protocol.AgentDetectedState
 import java.util.UUID
 
 /**
@@ -218,5 +219,57 @@ class ActivityCoordinatorTest {
             assertTrue(awaitItem().isEmpty())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `applyActivity stores agentState and title`() {
+        val coordinator = ActivityCoordinator(FakePersistence())
+        coordinator.applyActivity(id1, ActivityState.AGENT_ACTIVE, agent = "claude",
+            agentState = AgentDetectedState.WORKING, title = "build")
+        assertEquals(AgentDetectedState.WORKING, coordinator.agentState(id1))
+        assertEquals("build", coordinator.title(id1))
+    }
+
+    @Test
+    fun `blocked marks session unseen`() {
+        val coordinator = ActivityCoordinator(FakePersistence())
+        coordinator.applyActivity(id1, ActivityState.AGENT_IDLE, agent = "claude",
+            agentState = AgentDetectedState.BLOCKED)
+        assertTrue(coordinator.unseenSessions.value.contains(id1))
+    }
+
+    @Test
+    fun `working does not mark unseen`() {
+        val coordinator = ActivityCoordinator(FakePersistence())
+        coordinator.applyActivity(id1, ActivityState.AGENT_ACTIVE, agent = "claude",
+            agentState = AgentDetectedState.WORKING)
+        assertFalse(coordinator.unseenSessions.value.contains(id1))
+    }
+
+    @Test
+    fun `active session is never marked unseen`() {
+        val coordinator = ActivityCoordinator(FakePersistence())
+        coordinator.applyActivity(id1, ActivityState.AGENT_IDLE, agent = "claude",
+            agentState = AgentDetectedState.BLOCKED, isActiveSession = true)
+        assertFalse(coordinator.unseenSessions.value.contains(id1))
+    }
+
+    @Test
+    fun `markSeen clears unseen`() {
+        val coordinator = ActivityCoordinator(FakePersistence())
+        coordinator.applyActivity(id1, ActivityState.AGENT_IDLE, agent = "claude",
+            agentState = AgentDetectedState.BLOCKED)
+        coordinator.markSeen(id1)
+        assertFalse(coordinator.unseenSessions.value.contains(id1))
+    }
+
+    @Test
+    fun `agent exit clears agentState and title`() {
+        val coordinator = ActivityCoordinator(FakePersistence())
+        coordinator.applyActivity(id1, ActivityState.AGENT_ACTIVE, agent = "claude",
+            agentState = AgentDetectedState.WORKING, title = "x")
+        coordinator.applyActivity(id1, ActivityState.IDLE, agent = null)
+        assertNull(coordinator.agentState(id1))
+        assertNull(coordinator.title(id1))
     }
 }
