@@ -22,6 +22,11 @@ class Clauderelay < Formula
            "--product", "claude-relay"
     bin.install ".build/release/claude-relay"
     bin.install ".build/release/claude-relay-server"
+    # ClaudeRelayServer bundles agent-detection manifests (Resources/Agents)
+    # loaded at runtime via `Bundle.module`, which resolves the bundle next to
+    # the executable. Without this, the server fatal-errors on the first
+    # agent-detection path (session create). See resource_bundle_accessor.swift.
+    bin.install ".build/release/ClaudeRelay_ClaudeRelayServer.bundle"
   end
 
   service do
