@@ -11,9 +11,11 @@ class MessageTypeTest {
         assertEquals("ping", ClientMessage.Ping.typeString)
     }
 
-    @Test fun `all 13 client type strings present`() {
-        assertEquals(13, ClientMessage.ALL_TYPE_STRINGS.size)
+    @Test fun `all 15 client type strings present`() {
+        assertEquals(15, ClientMessage.ALL_TYPE_STRINGS.size)
         assertTrue("refresh" in ClientMessage.ALL_TYPE_STRINGS)
+        assertTrue("register_push_token" in ClientMessage.ALL_TYPE_STRINGS)
+        assertTrue("unregister_push_token" in ClientMessage.ALL_TYPE_STRINGS)
     }
 
     @Test fun `all 19 server type strings present`() {

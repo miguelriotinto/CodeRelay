@@ -65,6 +65,15 @@ object MessageEnvelope {
                 is ClientMessage.PasteImage ->
                     put("data", JsonPrimitive(message.data))
                 ClientMessage.Ping -> Unit
+                is ClientMessage.RegisterPushToken -> {
+                    put("platform", JsonPrimitive(message.platform.raw))
+                    put("token", JsonPrimitive(message.token))
+                    put("deviceId", JsonPrimitive(message.deviceId))
+                    put("enabled", JsonPrimitive(message.enabled))
+                    put("notifyOnFinished", JsonPrimitive(message.notifyOnFinished))
+                }
+                is ClientMessage.UnregisterPushToken ->
+                    put("deviceId", JsonPrimitive(message.deviceId))
             }
         }
         val envelope = buildJsonObject {
