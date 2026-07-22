@@ -291,7 +291,14 @@ struct ActiveTerminalView: View {
                     ForEach(Array(coordinator.activeSessions.enumerated()), id: \.element.id) { index, session in
                         let isSelected = session.id == coordinator.activeSessionId
                         let agentId = coordinator.activeAgent(for: session.id)
-                        let needsAttention = coordinator.sessionsAwaitingInput.contains(session.id)
+                        let agentState = coordinator.agentState(for: session.id)
+                        // A blocked agent flashes for attention (parity with the
+                        // sidebar's blinking blocked dot and the Android tab); when no
+                        // fine-grained state is reported, fall back to the legacy
+                        // awaiting-input pulse.
+                        let needsAttention = agentState != nil
+                            ? agentState == .blocked
+                            : coordinator.sessionsAwaitingInput.contains(session.id)
                         Button {
                             if settings.hapticFeedbackEnabled {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -303,7 +310,8 @@ struct ActiveTerminalView: View {
                                 isSelected: isSelected,
                                 agentId: agentId,
                                 needsAttention: needsAttention,
-                                flashOn: flashOn
+                                flashOn: flashOn,
+                                agentState: agentState
                             )
                         }
                         .buttonStyle(.plain)
@@ -382,6 +390,10 @@ private struct SessionTab: View {
     /// Shared flash phase passed down from the parent's TimelineView.
     /// Ignored by tabs that don't need attention.
     let flashOn: Bool
+    /// Fine-grained agent state (Phase 2). When present it drives the tab color
+    /// and flash (parity with the sidebar dot and the Android tab); when nil the
+    /// tab falls back to the legacy agent-color + awaiting-input pulse.
+    var agentState: AgentDetectedState?
 
     var body: some View {
         Text("\(number)")
@@ -404,6 +416,18 @@ private struct SessionTab: View {
     }
 
     private var tabBackground: SwiftUI.Color {
+        // When fine-grained agentState is present it drives the color (parity
+        // with ActivityDot and the Android tab): blocked=red+flash, working=agent
+        // color, waiting(idle)=teal, unknown=gray. Otherwise fall back to the
+        // legacy awaiting-input pulse / agent-color fill.
+        if let agentState {
+            switch agentState {
+            case .blocked: return flashOn ? .red : SwiftUI.Color.white.opacity(0.15)
+            case .working: return agentColor
+            case .idle:    return .teal
+            case .unknown: return .gray
+            }
+        }
         if needsAttention {
             return flashOn ? agentColor : SwiftUI.Color.white.opacity(0.15)
         }
