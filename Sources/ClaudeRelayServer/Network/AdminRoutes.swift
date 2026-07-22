@@ -308,8 +308,53 @@ enum AdminRoutes {
         case "bindAll":
             guard let val = value as? Bool else { throw ConfigError(message: "bindAll must be a boolean") }
             config.bindAll = val
+        case "pushEnabled":
+            guard let val = value as? Bool else { throw ConfigError(message: "pushEnabled must be a boolean") }
+            config.pushEnabled = val
+        case "pushNotifyOnFinished":
+            guard let val = value as? Bool else { throw ConfigError(message: "pushNotifyOnFinished must be a boolean") }
+            config.pushNotifyOnFinished = val
+        case "apnsUseSandbox":
+            guard let val = value as? Bool else { throw ConfigError(message: "apnsUseSandbox must be a boolean") }
+            config.apnsUseSandbox = val
+        case "apnsKeyPath":
+            guard let val = value as? String else { throw ConfigError(message: "apnsKeyPath must be a string") }
+            try validateReadableFileOrEmpty(val, name: "apnsKeyPath")
+            config.apnsKeyPath = val.isEmpty ? nil : val
+        case "apnsKeyId":
+            guard let val = value as? String else { throw ConfigError(message: "apnsKeyId must be a string") }
+            config.apnsKeyId = val.isEmpty ? nil : val
+        case "apnsTeamId":
+            guard let val = value as? String else { throw ConfigError(message: "apnsTeamId must be a string") }
+            config.apnsTeamId = val.isEmpty ? nil : val
+        case "apnsBundleId":
+            guard let val = value as? String else { throw ConfigError(message: "apnsBundleId must be a string") }
+            config.apnsBundleId = val.isEmpty ? nil : val
+        case "fcmServiceAccountPath":
+            guard let val = value as? String else { throw ConfigError(message: "fcmServiceAccountPath must be a string") }
+            try validateReadableFileOrEmpty(val, name: "fcmServiceAccountPath")
+            config.fcmServiceAccountPath = val.isEmpty ? nil : val
+        case "fcmProjectId":
+            guard let val = value as? String else { throw ConfigError(message: "fcmProjectId must be a string") }
+            config.fcmProjectId = val.isEmpty ? nil : val
         default:
             throw ConfigError(message: "Unknown config key: \(key)")
+        }
+    }
+
+    /// Validates that a non-empty path points at a readable regular file
+    /// (empty string clears the field). Used for the APNs `.p8` and FCM
+    /// service-account JSON credential paths.
+    private static func validateReadableFileOrEmpty(_ path: String, name: String) throws {
+        guard !path.isEmpty else { return }
+        let expanded = NSString(string: path).expandingTildeInPath
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: expanded, isDirectory: &isDir), !isDir.boolValue else {
+            throw ConfigError(message: "\(name) is not a readable file: \(path)")
+        }
+        guard fm.isReadableFile(atPath: expanded) else {
+            throw ConfigError(message: "\(name) exists but is not readable: \(path)")
         }
     }
 

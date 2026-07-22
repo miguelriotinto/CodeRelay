@@ -37,6 +37,26 @@ public struct RelayConfig: Codable, Sendable {
     /// warns explicitly when `bindAll` is true without TLS.
     public var bindAll: Bool
 
+    // MARK: - Push notifications (all off / nil by default)
+
+    /// Master switch — when false, push tokens are still accepted and stored
+    /// (so enabling later needs no client reconnect) but nothing is delivered.
+    public var pushEnabled: Bool
+    /// Server-wide default for whether to notify on agent-finished (a device's
+    /// own preference overrides this).
+    public var pushNotifyOnFinished: Bool
+    /// APNs token-based auth: path to the `.p8` key, its key id, team id, and
+    /// the app bundle id (`apns-topic`).
+    public var apnsKeyPath: String?
+    public var apnsKeyId: String?
+    public var apnsTeamId: String?
+    public var apnsBundleId: String?
+    /// Use the APNs sandbox host (development builds).
+    public var apnsUseSandbox: Bool
+    /// FCM HTTP v1: path to the service-account JSON and the Firebase project id.
+    public var fcmServiceAccountPath: String?
+    public var fcmProjectId: String?
+
     // MARK: - Initializer
 
     public init(
@@ -48,7 +68,16 @@ public struct RelayConfig: Codable, Sendable {
         tlsKey: String? = nil,
         logLevel: String = "info",
         maxSessionsPerToken: Int = 50,
-        bindAll: Bool = true
+        bindAll: Bool = true,
+        pushEnabled: Bool = false,
+        pushNotifyOnFinished: Bool = false,
+        apnsKeyPath: String? = nil,
+        apnsKeyId: String? = nil,
+        apnsTeamId: String? = nil,
+        apnsBundleId: String? = nil,
+        apnsUseSandbox: Bool = false,
+        fcmServiceAccountPath: String? = nil,
+        fcmProjectId: String? = nil
     ) {
         self.wsPort = wsPort
         self.adminPort = adminPort
@@ -59,6 +88,15 @@ public struct RelayConfig: Codable, Sendable {
         self.logLevel = logLevel
         self.maxSessionsPerToken = maxSessionsPerToken
         self.bindAll = bindAll
+        self.pushEnabled = pushEnabled
+        self.pushNotifyOnFinished = pushNotifyOnFinished
+        self.apnsKeyPath = apnsKeyPath
+        self.apnsKeyId = apnsKeyId
+        self.apnsTeamId = apnsTeamId
+        self.apnsBundleId = apnsBundleId
+        self.apnsUseSandbox = apnsUseSandbox
+        self.fcmServiceAccountPath = fcmServiceAccountPath
+        self.fcmProjectId = fcmProjectId
     }
 
     // MARK: - Static Properties
@@ -88,6 +126,9 @@ public struct RelayConfig: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case wsPort, adminPort, detachTimeout, scrollbackSize
         case tlsCert, tlsKey, logLevel, maxSessionsPerToken, bindAll
+        case pushEnabled, pushNotifyOnFinished
+        case apnsKeyPath, apnsKeyId, apnsTeamId, apnsBundleId, apnsUseSandbox
+        case fcmServiceAccountPath, fcmProjectId
     }
 
     public init(from decoder: Decoder) throws {
@@ -105,5 +146,14 @@ public struct RelayConfig: Codable, Sendable {
         // this default and keep their previous behavior. Set `bindAll=false`
         // explicitly to bind loopback only.
         self.bindAll = try c.decodeIfPresent(Bool.self, forKey: .bindAll) ?? true
+        self.pushEnabled = try c.decodeIfPresent(Bool.self, forKey: .pushEnabled) ?? false
+        self.pushNotifyOnFinished = try c.decodeIfPresent(Bool.self, forKey: .pushNotifyOnFinished) ?? false
+        self.apnsKeyPath = try c.decodeIfPresent(String.self, forKey: .apnsKeyPath)
+        self.apnsKeyId = try c.decodeIfPresent(String.self, forKey: .apnsKeyId)
+        self.apnsTeamId = try c.decodeIfPresent(String.self, forKey: .apnsTeamId)
+        self.apnsBundleId = try c.decodeIfPresent(String.self, forKey: .apnsBundleId)
+        self.apnsUseSandbox = try c.decodeIfPresent(Bool.self, forKey: .apnsUseSandbox) ?? false
+        self.fcmServiceAccountPath = try c.decodeIfPresent(String.self, forKey: .fcmServiceAccountPath)
+        self.fcmProjectId = try c.decodeIfPresent(String.self, forKey: .fcmProjectId)
     }
 }

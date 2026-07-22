@@ -66,7 +66,10 @@ struct ConfigSetCommand: AsyncParsableCommand {
         let validKeys: Set<String> = [
             "wsPort", "adminPort", "detachTimeout", "scrollbackSize",
             "tlsCert", "tlsKey", "logLevel", "maxSessionsPerToken",
-            "bindAll"
+            "bindAll",
+            "pushEnabled", "pushNotifyOnFinished",
+            "apnsKeyPath", "apnsKeyId", "apnsTeamId", "apnsBundleId", "apnsUseSandbox",
+            "fcmServiceAccountPath", "fcmProjectId"
         ]
         guard validKeys.contains(key) else {
             FileHandle.standardError.write(Data(

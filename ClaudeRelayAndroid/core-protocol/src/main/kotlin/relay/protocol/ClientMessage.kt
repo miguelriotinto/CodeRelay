@@ -80,12 +80,35 @@ sealed interface ClientMessage {
         override val typeString get() = "ping"
     }
 
+    /** Register (or update) this device's push token + per-device preferences. */
+    data class RegisterPushToken(
+        val platform: PushPlatform,
+        val token: String,
+        val deviceId: String,
+        val enabled: Boolean,
+        val notifyOnFinished: Boolean,
+    ) : ClientMessage {
+        override val typeString get() = "register_push_token"
+    }
+
+    /** Remove this device's push registration. */
+    data class UnregisterPushToken(val deviceId: String) : ClientMessage {
+        override val typeString get() = "unregister_push_token"
+    }
+
     companion object {
         val ALL_TYPE_STRINGS: Set<String> = setOf(
             "auth_request",
             "session_create", "session_attach", "session_resume", "session_detach",
             "session_terminate", "session_list", "session_list_all", "session_rename",
             "resize", "refresh", "paste_image", "ping",
+            "register_push_token", "unregister_push_token",
         )
     }
+}
+
+/** Push delivery platform (parity with Swift `PushPlatform`). */
+enum class PushPlatform(val raw: String) {
+    APNS("apns"),
+    FCM("fcm"),
 }

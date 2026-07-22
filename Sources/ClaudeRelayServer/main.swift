@@ -5,6 +5,7 @@ import NIOHTTP1
 import NIOWebSocket
 import ClaudeRelayKit
 import Foundation
+import AsyncHTTPClient
 
 // Ensure config directory exists
 do {
@@ -26,6 +27,9 @@ let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
 
 let tokenStore = TokenStore(directory: RelayConfig.configDirectory)
 let sessionManager = SessionManager(config: config, tokenStore: tokenStore)
+// Always constructed so devices can register even when push delivery is off;
+// enabling push later then doesn't require every device to reconnect.
+let pushStore = PushRegistrationStore(directory: RelayConfig.configDirectory)
 
 // Shared rate limiter for both the admin HTTP surface and the WebSocket
 // auth surface. A brute-force scanner that hits either path is throttled
@@ -43,10 +47,39 @@ let observerPurgeTask = Task {
     }
 }
 
+// Push notifications: construct a delivery pipeline only when enabled AND at
+// least one provider is configured. Registration still works when off (the
+// store is always constructed above).
+var pushHTTPClient: HTTPClient?
+var pushReapTask: Task<Void, Never>?
+if config.pushEnabled, let sender = PushSenderFactory.make(config: config, group: group, out: &pushHTTPClient) {
+    let dispatcher = PushDispatcher(
+        sessionProvider: { await sessionManager.listSessionsForToken(tokenId: $0) },
+        tokenProvider: { await pushStore.registrations(forTokenId: $0) },
+        sender: sender,
+        config: PushNotifyConfig(debounceInterval: 15, notifyOnFinished: config.pushNotifyOnFinished),
+        onDeadToken: { token in Task { await pushStore.removeToken(token) } }
+    )
+    await sessionManager.addGlobalActivityObserver { sessionId, tokenId, activity, agentState, revision in
+        dispatcher.enqueue(ActivityEvent(sessionId: sessionId, tokenId: tokenId,
+                                         agentState: agentState, revision: revision))
+    }
+    // Reap expired push registrations every 6 hours.
+    pushReapTask = Task {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(6 * 3600))
+            guard !Task.isCancelled else { return }
+            await pushStore.reap()
+        }
+    }
+    RelayLogger.log(category: "server", "Push notifications enabled")
+}
+
 let wsServer = WebSocketServer(
     group: group, config: config,
     sessionManager: sessionManager, tokenStore: tokenStore,
-    rateLimiter: rateLimiter
+    rateLimiter: rateLimiter,
+    pushStore: pushStore
 )
 let adminServer = AdminHTTPServer(
     group: group, port: config.adminPort,
@@ -110,6 +143,8 @@ RelayLogger.log(category: "server", "Shutdown signal received")
 print("\nShutting down...")
 
 observerPurgeTask.cancel()
+pushReapTask?.cancel()
+if let pushHTTPClient { try? await pushHTTPClient.shutdown() }
 
 // Race the graceful-shutdown path against a 10s timer. If the normal
 // teardown stalls (e.g. a stuck PTY terminate), fall through to the forced

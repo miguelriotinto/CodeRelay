@@ -43,11 +43,20 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     private var inflightOutputBytes = 0
     private static let maxInflightOutputBytes = 2 * 1024 * 1024  // 2 MB
 
-    init(sessionManager: SessionManager, tokenStore: TokenStore, rateLimiter: RateLimiter, clipboardService: ClipboardService) {
+    let pushStore: PushRegistrationStore
+    /// Per-connection registration-mutation counter, reset each auth. Bounds
+    /// abuse of the push-token endpoint (Codex plan: rate-limit registrations).
+    private var pushMutations = 0
+    private let maxPushMutations = 20
+
+    init(sessionManager: SessionManager, tokenStore: TokenStore, rateLimiter: RateLimiter,
+         clipboardService: ClipboardService,
+         pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory)) {
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
         self.rateLimiter = rateLimiter
         self.clipboardService = clipboardService
+        self.pushStore = pushStore
     }
 
     /// This handler is installed by the WebSocket upgrade after the channel
@@ -207,6 +216,53 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             handlePasteImage(base64Data: data, context: context)
         case .ping:
             sendServerMessage(.pong, context: context)
+        case .registerPushToken(let platform, let token, let deviceId, let enabled, let notifyOnFinished):
+            handleRegisterPushToken(platform: platform, token: token, deviceId: deviceId,
+                                    enabled: enabled, notifyOnFinished: notifyOnFinished, context: context)
+        case .unregisterPushToken(let deviceId):
+            handleUnregisterPushToken(deviceId: deviceId, context: context)
+        }
+    }
+
+    private func handleRegisterPushToken(platform: PushPlatform, token: String, deviceId: String,
+                                         enabled: Bool, notifyOnFinished: Bool,
+                                         context: ChannelHandlerContext) {
+        guard let tokenId = authenticatedTokenId else {
+            sendServerMessage(.pushTokenAck(accepted: false), context: context); return
+        }
+        let registration = PushRegistration(platform: platform, token: token, deviceId: deviceId,
+                                            enabled: enabled, notifyOnFinished: notifyOnFinished,
+                                            updatedAt: Date())
+        pushMutations += 1
+        guard registration.isValid, pushMutations <= maxPushMutations else {
+            sendServerMessage(.pushTokenAck(accepted: false), context: context); return
+        }
+        let transferCtx = UnsafeTransfer(context)
+        Task { [pushStore] in
+            await pushStore.upsert(registration, forTokenId: tokenId)
+            transferCtx.value.eventLoop.execute {
+                self.sendServerMessage(.pushTokenAck(accepted: true), context: transferCtx.value)
+            }
+        }
+    }
+
+    private func handleUnregisterPushToken(deviceId: String, context: ChannelHandlerContext) {
+        guard let tokenId = authenticatedTokenId else {
+            sendServerMessage(.pushTokenAck(accepted: false), context: context); return
+        }
+        pushMutations += 1
+        // Bound deviceId (same 128-char limit as registration) and enforce the
+        // per-connection mutation cap — a malicious client must not be able to
+        // spam atomic rewrites of push-tokens.json with unbounded input.
+        guard !deviceId.isEmpty, deviceId.count <= 128, pushMutations <= maxPushMutations else {
+            sendServerMessage(.pushTokenAck(accepted: false), context: context); return
+        }
+        let transferCtx = UnsafeTransfer(context)
+        Task { [pushStore] in
+            await pushStore.remove(deviceId: deviceId, forTokenId: tokenId)
+            transferCtx.value.eventLoop.execute {
+                self.sendServerMessage(.pushTokenAck(accepted: true), context: transferCtx.value)
+            }
         }
     }
 

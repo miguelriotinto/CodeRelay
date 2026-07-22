@@ -125,6 +125,10 @@ final class AppSettings: ObservableObject {
     private var bedrockTokenSubscriptions = Set<AnyCancellable>()
 
     @AppStorage("hapticFeedbackEnabled") var hapticFeedbackEnabled = true
+    /// Push notifications: master toggle + whether to be notified when an agent
+    /// finishes (blocked always notifies when push is on).
+    @AppStorage("pushNotificationsEnabled") var pushNotificationsEnabled = true
+    @AppStorage("pushNotifyOnFinished") var pushNotifyOnFinished = false
     @AppStorage("autoConnectEnabled") var autoConnectEnabled = false
     @AppStorage("lastConnectedServerId") var lastConnectedServerId: String = ""
     @AppStorage("sessionNamingTheme") var sessionNamingTheme: SessionNamingTheme = .gameOfThrones

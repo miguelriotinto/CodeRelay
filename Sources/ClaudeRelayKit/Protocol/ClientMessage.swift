@@ -23,6 +23,12 @@ public enum ClientMessage: Equatable, Sendable {
     case refresh
     case pasteImage(data: String)
     case ping
+    /// Register (or update) this device's push token + per-device delivery
+    /// preferences. Idempotent by `deviceId`.
+    case registerPushToken(platform: PushPlatform, token: String, deviceId: String,
+                           enabled: Bool, notifyOnFinished: Bool)
+    /// Remove this device's push registration (e.g. user turned push off).
+    case unregisterPushToken(deviceId: String)
 
     // MARK: - Wire type strings
 
@@ -41,6 +47,8 @@ public enum ClientMessage: Equatable, Sendable {
         case .refresh:        return "refresh"
         case .pasteImage:     return "paste_image"
         case .ping:           return "ping"
+        case .registerPushToken:   return "register_push_token"
+        case .unregisterPushToken: return "unregister_push_token"
         }
     }
 
@@ -50,7 +58,8 @@ public enum ClientMessage: Equatable, Sendable {
         "auth_request",
         "session_create", "session_attach", "session_resume", "session_detach",
         "session_terminate", "session_list", "session_list_all", "session_rename",
-        "resize", "refresh", "paste_image", "ping"
+        "resize", "refresh", "paste_image", "ping",
+        "register_push_token", "unregister_push_token"
     ]
 }
 
@@ -59,6 +68,7 @@ public enum ClientMessage: Equatable, Sendable {
 extension ClientMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case token, sessionId, cols, rows, name, data, protocolVersion, skipReplay
+        case platform, deviceId, enabled, notifyOnFinished
     }
 
     public func encodePayload(to encoder: Encoder) throws {
@@ -98,6 +108,14 @@ extension ClientMessage: Codable {
             try container.encode(data, forKey: .data)
         case .ping:
             break
+        case .registerPushToken(let platform, let token, let deviceId, let enabled, let notifyOnFinished):
+            try container.encode(platform, forKey: .platform)
+            try container.encode(token, forKey: .token)
+            try container.encode(deviceId, forKey: .deviceId)
+            try container.encode(enabled, forKey: .enabled)
+            try container.encode(notifyOnFinished, forKey: .notifyOnFinished)
+        case .unregisterPushToken(let deviceId):
+            try container.encode(deviceId, forKey: .deviceId)
         }
     }
 
@@ -144,6 +162,15 @@ extension ClientMessage: Codable {
             return .pasteImage(data: data)
         case "ping":
             return .ping
+        case "register_push_token":
+            return .registerPushToken(
+                platform: try container.decode(PushPlatform.self, forKey: .platform),
+                token: try container.decode(String.self, forKey: .token),
+                deviceId: try container.decode(String.self, forKey: .deviceId),
+                enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true,
+                notifyOnFinished: try container.decodeIfPresent(Bool.self, forKey: .notifyOnFinished) ?? false)
+        case "unregister_push_token":
+            return .unregisterPushToken(deviceId: try container.decode(String.self, forKey: .deviceId))
         default:
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(

@@ -64,6 +64,13 @@ struct WorkspaceView: View {
         )
     }
 
+    /// Reconcile this device's push registration with current settings/token.
+    private func syncPush() async {
+        await coordinator.syncPushRegistration(
+            pushEnabled: AppSettings.shared.pushNotificationsEnabled,
+            notifyOnFinished: AppSettings.shared.pushNotifyOnFinished)
+    }
+
     var body: some View {
         Group {
             if sizeClass == .compact {
@@ -106,6 +113,7 @@ struct WorkspaceView: View {
                 await coordinator.attachRemoteSession(id: sessionId)
             }
             await coordinator.fetchSessions()
+            await syncPush()
             if coordinator.activeSessionId == nil {
                 if sizeClass == .compact {
                     showSidebarSheet = true
@@ -113,6 +121,17 @@ struct WorkspaceView: View {
                     columnVisibility = .all
                 }
             }
+        }
+        // Re-sync push registration when the OS vends/rotates a token or the
+        // user changes push settings.
+        .onReceive(PushTokenBridge.shared.$deviceToken) { _ in
+            Task { await syncPush() }
+        }
+        .onChange(of: AppSettings.shared.pushNotificationsEnabled) { _, _ in
+            Task { await syncPush() }
+        }
+        .onChange(of: AppSettings.shared.pushNotifyOnFinished) { _, _ in
+            Task { await syncPush() }
         }
         .onChange(of: coordinator.activeSessionId) { _, newValue in
             if newValue != nil {

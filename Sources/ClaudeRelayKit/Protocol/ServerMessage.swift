@@ -23,6 +23,7 @@ public enum ServerMessage: Equatable, Sendable {
     case resizeAck(cols: UInt16, rows: UInt16)
     case pasteImageResult(success: Bool)
     case pong
+    case pushTokenAck(accepted: Bool)
     case error(code: Int, message: String)
 
     // MARK: - Wire type strings
@@ -47,6 +48,7 @@ public enum ServerMessage: Equatable, Sendable {
         case .resizeAck:           return "resize_ack"
         case .pasteImageResult:    return "paste_image_result"
         case .pong:                return "pong"
+        case .pushTokenAck:        return "push_token_ack"
         case .error:               return "error"
         }
     }
@@ -59,7 +61,7 @@ public enum ServerMessage: Equatable, Sendable {
         "session_terminated", "session_expired", "session_state", "session_activity",
         "session_stolen", "session_renamed",
         "session_list_result", "session_list_all_result",
-        "resize_ack", "paste_image_result", "pong", "error"
+        "resize_ack", "paste_image_result", "pong", "push_token_ack", "error"
     ]
 }
 
@@ -68,7 +70,7 @@ public enum ServerMessage: Equatable, Sendable {
 extension ServerMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case reason, sessionId, cols, rows, state, code, message, sessions, activity, agent, name, success, protocolVersion
-        case agentState, title, workingDir
+        case agentState, title, workingDir, accepted
     }
 
     public func encodePayload(to encoder: Encoder) throws {
@@ -122,6 +124,8 @@ extension ServerMessage: Codable {
             try container.encode(success, forKey: .success)
         case .pong:
             break
+        case .pushTokenAck(let accepted):
+            try container.encode(accepted, forKey: .accepted)
         case .error(let code, let message):
             try container.encode(code, forKey: .code)
             try container.encode(message, forKey: .message)
@@ -196,6 +200,8 @@ extension ServerMessage: Codable {
             return .pasteImageResult(success: success)
         case "pong":
             return .pong
+        case "push_token_ack":
+            return .pushTokenAck(accepted: try container.decode(Bool.self, forKey: .accepted))
         case "error":
             let code = try container.decode(Int.self, forKey: .code)
             let message = try container.decode(String.self, forKey: .message)

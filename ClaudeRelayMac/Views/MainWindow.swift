@@ -57,8 +57,21 @@ struct MainWindow: View {
         .onReceive(NotificationCenter.default.publisher(for: .showServerList)) { _ in
             showServerList = true
         }
+        // Re-sync push registration when APNs vends/rotates a token or the user
+        // changes push settings (parity with iOS WorkspaceView).
+        .onReceive(PushTokenBridge.shared.$deviceToken) { _ in Task { await syncPush() } }
+        .onChange(of: settings.pushNotificationsEnabled) { _, _ in Task { await syncPush() } }
+        .onChange(of: settings.pushNotifyOnFinished) { _, _ in Task { await syncPush() } }
         .preferredColorScheme(.dark)
         .focusedValue(\.sessionCoordinator, coordinator)
+    }
+
+    /// Reconcile this device's push registration with current settings/token.
+    private func syncPush() async {
+        guard let coordinator else { return }
+        await coordinator.syncPushRegistration(
+            pushEnabled: settings.pushNotificationsEnabled,
+            notifyOnFinished: settings.pushNotifyOnFinished)
     }
 
     private func presentServerList() async {
@@ -80,6 +93,9 @@ struct MainWindow: View {
                 coordinator = nil
             } else {
                 ActiveCoordinatorRegistry.shared.register(coordinator: c, serverName: config.name)
+                await c.syncPushRegistration(
+                    pushEnabled: AppSettings.shared.pushNotificationsEnabled,
+                    notifyOnFinished: AppSettings.shared.pushNotifyOnFinished)
             }
         } catch {
             loadFailure = error.localizedDescription

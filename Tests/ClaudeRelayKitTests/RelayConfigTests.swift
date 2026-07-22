@@ -125,4 +125,40 @@ final class RelayConfigTests: XCTestCase {
         XCTAssertEqual(config.wsPort, 65535)
         XCTAssertEqual(config.adminPort, 65535)
     }
+
+    // MARK: - Push configuration
+
+    func testPushDefaultsAreOff() {
+        let config = RelayConfig.default
+        XCTAssertFalse(config.pushEnabled)
+        XCTAssertFalse(config.pushNotifyOnFinished)
+        XCTAssertNil(config.apnsKeyPath)
+        XCTAssertNil(config.fcmServiceAccountPath)
+        XCTAssertFalse(config.apnsUseSandbox)
+    }
+
+    func testPushKeysRoundTripThroughCustomDecoder() throws {
+        let json = """
+        {"pushEnabled":true,"pushNotifyOnFinished":true,"apnsKeyPath":"/k.p8",\
+        "apnsKeyId":"KID","apnsTeamId":"TEAM","apnsBundleId":"com.claude.relay",\
+        "apnsUseSandbox":true,"fcmServiceAccountPath":"/sa.json","fcmProjectId":"proj"}
+        """
+        let config = try decoder.decode(RelayConfig.self, from: Data(json.utf8))
+        XCTAssertTrue(config.pushEnabled)
+        XCTAssertTrue(config.pushNotifyOnFinished)
+        XCTAssertEqual(config.apnsKeyPath, "/k.p8")
+        XCTAssertEqual(config.apnsKeyId, "KID")
+        XCTAssertEqual(config.apnsTeamId, "TEAM")
+        XCTAssertEqual(config.apnsBundleId, "com.claude.relay")
+        XCTAssertTrue(config.apnsUseSandbox)
+        XCTAssertEqual(config.fcmServiceAccountPath, "/sa.json")
+        XCTAssertEqual(config.fcmProjectId, "proj")
+    }
+
+    func testConfigWithoutPushKeysStillDecodes() throws {
+        // Back-compat: an existing config with no push keys decodes fine.
+        let config = try decoder.decode(RelayConfig.self, from: Data(#"{"wsPort":9200}"#.utf8))
+        XCTAssertFalse(config.pushEnabled)
+        XCTAssertNil(config.apnsKeyPath)
+    }
 }

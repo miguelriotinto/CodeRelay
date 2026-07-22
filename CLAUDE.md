@@ -98,7 +98,7 @@ The iOS/macOS apps scope plaintext `ws://` to RFC1918 / loopback / `.local` / li
 
 Two-layer validation:
 - **CLI client-side** (`ConfigSetCommand`): rejects unknown keys, bad port ranges, non-numeric values, invalid log levels, and negative `maxSessionsPerToken` before shipping to the admin API. `claude-relay config validate` runs the same checks against the saved file without touching the server.
-- **Server-side** (`AdminRoutes.applyConfigValue()`): ports must be 1024–65535, `scrollbackSize` >= 1024, `detachTimeout` >= 0, `maxSessionsPerToken` >= 0, `logLevel` one of trace/debug/info/warning/error.
+- **Server-side** (`AdminRoutes.applyConfigValue()`): ports must be 1024–65535, `scrollbackSize` >= 1024, `detachTimeout` >= 0, `maxSessionsPerToken` >= 0, `logLevel` one of trace/debug/info/warning/error; push bools (`pushEnabled`/`pushNotifyOnFinished`/`apnsUseSandbox`) must parse as bool, and `apnsKeyPath`/`fcmServiceAccountPath` must be readable regular files.
 
 The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments. `ConfigManager.load()` returns `RelayConfig.default` (logging to stderr) when `config.json` is corrupt, so a bad edit never takes launchd down.
 
@@ -151,6 +151,19 @@ Named caps across the stack:
 - `TerminalViewModel.pendingOutputByteLimit` — 4 MB client-side (logs once-per-session on first drop)
 - `AudioCaptureSession.maximumDuration` — 300 s (5 min) auto-stop to cap `Float`-sample memory growth
 - `SharedSessionCoordinator` terminal-cache — LRU-bounded at 8 sessions
+- `PushRegistrationStore` — `maxPerToken` (20) + `maxTotal` (5 k) registrations, TTL-reaped (90 d), atomic `0o600` write
+- `PushDispatcher` — `previousSessionState`/`lastRevision` capped at 4 k sessions, debounce map at 2 k groups (age-reaped)
+- `PushHTTP` — 64 KB response-body cap, 10 s request timeout, ≤2 retries; APNs/FCM provider-token caches ~50/55 min
+- `RelayMessageHandler.maxPushMutations` — 20 registration mutations per connection (abuse bound)
+
+### Push Notifications
+
+Off by default (`pushEnabled=false`); device tokens are still accepted + stored so enabling later needs no reconnect. Pipeline: client `register_push_token` (platform/token/deviceId + per-device `enabled`/`notifyOnFinished`) → `RelayMessageHandler` (validated, rate-limited) → `PushRegistrationStore` (per-relay-token, capped, TTL-reaped, `0o600`) → a **global** `SessionManager` activity observer → `PushDispatcher`. The dispatcher does **per-session ordered edge detection**: `ActivityEvent`s carry the state at the edge and flow through an `AsyncStream` (single consumer), with a per-session revision guard, so a fast `working→blocked→idle` burst never loses the blocked edge and one session finishing fires even when a sibling stays `working`. It coalesces one push per `(token, workspace-group)` (debounced), keyed on a **hashed** collapse id (`ws_<sha256-prefix>` — never the raw host path), body/deep-link derived from the F2 rollup. Delivery: `APNsClient` (ES256 JWT/HTTP2, `Crypto`) and `FCMClient` (service-account RS256 → OAuth v1, `_CryptoExtras`) via the bounded/retrying `PushHTTP` (`AsyncHTTPClient`); a 410/`UNREGISTERED` result purges the dead token. Clients decide register-vs-update-vs-unregister via the shared `PushRegistrationController` (Swift + Kotlin) and send on connect / token rotation / settings change; taps route a `clauderelay://session/<uuid>` deep link.
+
+**Human/portal setup (required for real delivery):**
+- **iOS/macOS:** enable the Push Notifications capability on the App ID in the Apple Developer portal (the `aps-environment` entitlement is already in `project.yml`/`.entitlements`; a signed build fails without the capability on the profile). Upload an APNs auth key (`.p8`) and set `apnsKeyPath/apnsKeyId/apnsTeamId/apnsBundleId` (+ `apnsUseSandbox` for dev).
+- **Android (deferred):** create a Firebase project, add `google-services.json` + the `com.google.gms.google-services` Gradle plugin + `firebase-messaging`, an FCM service, a notification channel, and the `POST_NOTIFICATIONS` runtime permission. The wire messages + `PushRegistrationController` exist; the messaging service is gated on that Firebase config (adding the plugin without the JSON breaks the Gradle build). Server side: set `fcmServiceAccountPath` + `fcmProjectId`.
+- Secrets (`.p8`, service-account JSON) are server-only, never logged (`PushHTTP.redact` strips `bearer` tokens); device push tokens persist `0o600`.
 
 ### Key Pattern: sendAndWaitForResponse
 
@@ -239,7 +252,7 @@ the Settings toggle (macOS). No background audio entitlement is used.
 
 Config stored in `~/.claude-relay/config.json`. Default ports: WS=9200, Admin=9100. On this dev machine, admin port is configured as 9100.
 
-**Config keys**: `wsPort`, `adminPort`, `detachTimeout`, `scrollbackSize`, `tlsCert`, `tlsKey`, `logLevel`, `maxSessionsPerToken` (default 50, 0 = unlimited), `bindAll` (default `true` — WebSocket server binds `0.0.0.0` and accepts connections from any interface. Set `false` to restrict to `127.0.0.1`. When `true` without TLS, startup logs a warning because tokens travel in the clear).
+**Config keys**: `wsPort`, `adminPort`, `detachTimeout`, `scrollbackSize`, `tlsCert`, `tlsKey`, `logLevel`, `maxSessionsPerToken` (default 50, 0 = unlimited), `bindAll` (default `true` — WebSocket server binds `0.0.0.0` and accepts connections from any interface. Set `false` to restrict to `127.0.0.1`. When `true` without TLS, startup logs a warning because tokens travel in the clear). **Push (all off/nil by default):** `pushEnabled`, `pushNotifyOnFinished` (server-wide default; per-device pref overrides), `apnsKeyPath`/`apnsKeyId`/`apnsTeamId`/`apnsBundleId`/`apnsUseSandbox`, `fcmServiceAccountPath`/`fcmProjectId`. See "Push Notifications" above.
 
 App-side (not in `config.json`, stored via `@AppStorage`): `terminalScrollbackLines` (per-app, default 5000, max 25000). The server's `RingBuffer` still replays anything that falls off this edge on reattach. Continuous-listening settings persisted via `@AppStorage` are the on/off toggle and the wake word — `turnEndSilenceTimeout` is **not** user-tunable (defaults from `SpeechProcessingOptions`).
 

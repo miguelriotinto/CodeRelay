@@ -22,18 +22,21 @@ public final class WebSocketServer {
     private let rateLimiter: RateLimiter
     private let clipboardService: ClipboardService
     private let config: RelayConfig
+    private let pushStore: PushRegistrationStore
     private var channel: Channel?
 
     public init(group: EventLoopGroup, config: RelayConfig,
                 sessionManager: SessionManager, tokenStore: TokenStore,
                 rateLimiter: RateLimiter = RateLimiter(maxAttempts: 10, windowSeconds: 60),
-                clipboardService: ClipboardService = MacClipboardService()) {
+                clipboardService: ClipboardService = MacClipboardService(),
+                pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory)) {
         self.group = group
         self.config = config
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
         self.rateLimiter = rateLimiter
         self.clipboardService = clipboardService
+        self.pushStore = pushStore
     }
 
     /// Create SSL context from configured cert and key files.
@@ -69,6 +72,7 @@ public final class WebSocketServer {
     public func start() async throws {
         let sessionManager = self.sessionManager
         let tokenStore = self.tokenStore
+        let pushStore = self.pushStore
         let rateLimiter = self.rateLimiter
         let clipboardService = self.clipboardService
         let sslContext: NIOSSLContext? = try createSSLContextIfConfigured()
@@ -83,7 +87,8 @@ public final class WebSocketServer {
                     sessionManager: sessionManager,
                     tokenStore: tokenStore,
                     rateLimiter: rateLimiter,
-                    clipboardService: clipboardService
+                    clipboardService: clipboardService,
+                    pushStore: pushStore
                 )
                 return channel.pipeline.addHandler(handler)
             }

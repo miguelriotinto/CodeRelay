@@ -316,6 +316,38 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     // MARK: - Session List
 
+    /// Reconciles this device's push registration with the OS token, the
+    /// notification permission, and the app's push settings, then sends the
+    /// appropriate wire message. Idempotent — safe to call on auth, on a
+    /// settings change, or when the OS vends a token. No-ops when disconnected.
+    public func syncPushRegistration(pushEnabled: Bool, notifyOnFinished: Bool) async {
+        let bridge = PushTokenBridge.shared
+        let action = PushRegistrationController.decide(
+            permissionGranted: bridge.permissionGranted ?? false,
+            deviceToken: bridge.deviceToken,
+            connected: connection.state == .connected,
+            pushEnabledSetting: pushEnabled,
+            notifyOnFinished: notifyOnFinished)
+
+        let deviceId = DeviceIdentifier().currentID
+        do {
+            switch action {
+            case .register(let enabled, let notify):
+                guard let token = bridge.deviceToken else { return }
+                try await connection.send(.registerPushToken(
+                    platform: .apns, token: token, deviceId: deviceId,
+                    enabled: enabled, notifyOnFinished: notify))
+            case .unregister:
+                try await connection.send(.unregisterPushToken(deviceId: deviceId))
+            case .noop:
+                break
+            }
+        } catch {
+            // Registration is best-effort; a failed send is retried on the next
+            // sync trigger (reconnect / settings change / token arrival).
+        }
+    }
+
     public func fetchSessions() async {
         let now = Date()
         guard now.timeIntervalSince(lastFetchTime) >= 0.5 else { return }
