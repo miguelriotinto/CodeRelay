@@ -12,6 +12,10 @@ public protocol PTYSessionProtocol: Actor {
     func clearOutputHandler()
     func write(_ data: Data)
     func resize(cols: UInt16, rows: UInt16)
+    /// Best-effort current working directory of the session's shell process
+    /// (the stable workspace anchor). Nil when the process is gone or the
+    /// lookup fails. Actor-isolated — callers await.
+    func currentWorkingDirectory() -> String?
     /// Asks the foreground app to repaint by wiggling the PTY width (cols−1,
     /// ~150 ms, restore). Used after a ring-buffer replay and for client
     /// tap-to-redraw: the on-screen bytes can be mis-wrapped/garbled until the
@@ -522,6 +526,19 @@ public actor PTYSession: PTYSessionProtocol {
         currentRows = rows
         screenModel.resize(cols: cols, rows: rows)
         _ = relay_set_winsize(masterFD, rows, cols)
+    }
+
+    /// Best-effort cwd of the session's shell (the stable workspace anchor).
+    ///
+    /// `childPID` is the setuid `login` process, whose vnode path info is not
+    /// readable by this non-root server (EPERM on sugid processes). So we
+    /// descend to the first readable child — the real interactive shell — and
+    /// return its cwd. Nil when nothing in the subtree is readable.
+    public func currentWorkingDirectory() -> String? {
+        guard !terminated else { return nil }
+        var buf = [CChar](repeating: 0, count: 1024)   // paths well under PATH_MAX
+        guard relay_proc_cwd_descendant(childPID, &buf, Int32(buf.count)) == 0 else { return nil }
+        return String(cString: buf)
     }
 
     /// Forces the foreground app to re-emit its whole screen by genuinely

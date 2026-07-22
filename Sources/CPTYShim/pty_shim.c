@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <sys/sysctl.h>
 #include <sys/proc.h>
+#include <libproc.h>
 
 int relay_forkpty(int *master_fd, struct winsize *ws) {
     return forkpty(master_fd, NULL, NULL, ws);
@@ -115,4 +116,54 @@ long long relay_get_process_start_time(int pid) {
     long long secs = (long long)info.kp_proc.p_starttime.tv_sec;
     long long usecs = (long long)info.kp_proc.p_starttime.tv_usec;
     return secs * 1000000LL + usecs;
+}
+
+int relay_proc_cwd(int pid, char *buf, int buflen) {
+    struct proc_vnodepathinfo vpi;
+    int ret = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vpi, sizeof(vpi));
+    if (ret <= 0) return -1;
+    size_t len = strlen(vpi.pvi_cdir.vip_path);
+    if ((int)len + 1 > buflen) return -1;
+    memcpy(buf, vpi.pvi_cdir.vip_path, len + 1);
+    return 0;
+}
+
+// Parent PID of `pid` via sysctl (same mechanism as relay_get_parent_pid).
+static int relay_ppid(int pid) {
+    struct kinfo_proc info;
+    memset(&info, 0, sizeof(info));
+    size_t size = sizeof(info);
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
+    if (sysctl(mib, 4, &info, &size, NULL, 0) < 0 || size == 0) return -1;
+    return (int)info.kp_eproc.e_ppid;
+}
+
+// Recursive helper: try `pid`; else scan all live pids for children of `pid`
+// and recurse. Uses proc_listallpids + a parent check rather than
+// proc_listchildpids, which proved unreliable (returns a bogus size and 0
+// children for setuid `login` processes). `depth` bounds the descent.
+static int relay_proc_cwd_walk(int pid, char *buf, int buflen, int depth) {
+    if (relay_proc_cwd(pid, buf, buflen) == 0) return 0;
+    if (depth <= 0) return -1;
+
+    int n = proc_listallpids(NULL, 0);
+    if (n <= 0) return -1;
+    int cap = n + 64;   // headroom for pids spawned between sizing and fill
+    pid_t *all = (pid_t *)calloc((size_t)cap, sizeof(pid_t));
+    if (!all) return -1;
+    int filled = proc_listallpids(all, (int)(cap * sizeof(pid_t)));
+    int count = filled > 0 ? filled / (int)sizeof(pid_t) : 0;
+    int result = -1;
+    for (int i = 0; i < count; i++) {
+        if (all[i] <= 0) continue;
+        if (relay_ppid(all[i]) != pid) continue;
+        if (relay_proc_cwd_walk(all[i], buf, buflen, depth - 1) == 0) { result = 0; break; }
+    }
+    free(all);
+    return result;
+}
+
+int relay_proc_cwd_descendant(int pid, char *buf, int buflen) {
+    // Depth 4 covers login → -zsh → (agent/subshell) with headroom.
+    return relay_proc_cwd_walk(pid, buf, buflen, 4);
 }

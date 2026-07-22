@@ -32,6 +32,10 @@ actor MockPTYSession: PTYSessionProtocol {
     }
     func write(_ data: Data) {}
     func resize(cols: UInt16, rows: UInt16) {}
+    /// Test hook: settable cwd returned by `currentWorkingDirectory()`.
+    var mockCwd: String?
+    func setMockCwd(_ path: String?) { mockCwd = path }
+    func currentWorkingDirectory() -> String? { mockCwd }
     func forceRepaint() {
         forceRepaintCallCount += 1
         forceRepaintSawOutputHandler = outputHandler != nil
