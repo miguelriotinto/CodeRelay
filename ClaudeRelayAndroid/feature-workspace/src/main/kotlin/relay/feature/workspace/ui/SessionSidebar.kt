@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -43,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -268,7 +271,13 @@ private fun SessionRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            ActivityDot(activity = activity, agentId = agentId, agentState = agentState, seen = seen)
+            val dotColor = sessionStatusDotColor(session.state)
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(dotColor ?: Color.Transparent),
+            )
 
             Column(
                 modifier = Modifier.weight(1f),
@@ -298,7 +307,16 @@ private fun SessionRow(
             // timestamp to substitute, so any wall-clock "ago" would be wrong.
             // M-future: relative createdAt subtitle needs validated epoch conversion
             // (see ReferenceDateDoubleSerializer).
-            StateBadge(state = session.state)
+            val friendly = friendlyAgentName(agentId)
+            if (friendly != null && agentState != null) {
+                Text(
+                    text = friendly,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+                AgentStatePill(agentState = agentState, agentId = agentId, seen = seen)
+            }
         }
 
         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
@@ -314,27 +332,6 @@ private fun SessionRow(
             )
         }
     }
-}
-
-/** State badge capsule colored by [WorkspaceLogic.badgeBucket]. */
-@Composable
-private fun StateBadge(state: relay.protocol.SessionState) {
-    val color = when (WorkspaceLogic.badgeBucket(state)) {
-        WorkspaceLogic.BadgeBucket.GREEN -> QualityGreen
-        WorkspaceLogic.BadgeBucket.YELLOW -> QualityYellow
-        WorkspaceLogic.BadgeBucket.RED -> QualityRed
-    }
-    Text(
-        text = state.raw,
-        style = MaterialTheme.typography.labelSmall,
-        color = color,
-        modifier = Modifier
-            .background(
-                color = color.copy(alpha = 0.15f),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
-            )
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    )
 }
 
 @Composable
