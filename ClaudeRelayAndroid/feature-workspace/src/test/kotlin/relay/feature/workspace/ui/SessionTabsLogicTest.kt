@@ -3,6 +3,7 @@ package relay.feature.workspace.ui
 import androidx.compose.ui.graphics.Color
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import relay.protocol.AgentDetectedState
 
 /**
  * Verifies the tab background decision matches `ActiveTerminalView.swift:318-324`:
@@ -30,6 +31,51 @@ class SessionTabsLogicTest {
     fun `attention flashes between agent color and dim white`() {
         assertEquals(agentColor("claude"), tabBackground("claude", needsAttention = true, flashOn = true))
         assertEquals(white15, tabBackground("claude", needsAttention = true, flashOn = false))
+    }
+
+    // --- agentState (fine-grained) drives the fill when present ---
+
+    @Test
+    fun `blocked agentState flashes between red and dim white`() {
+        assertEquals(
+            QualityRed,
+            tabBackground("claude", needsAttention = true, flashOn = true, agentState = AgentDetectedState.BLOCKED),
+        )
+        assertEquals(
+            white15,
+            tabBackground("claude", needsAttention = true, flashOn = false, agentState = AgentDetectedState.BLOCKED),
+        )
+    }
+
+    @Test
+    fun `working agentState is the agent color`() {
+        assertEquals(
+            agentColor("claude"),
+            tabBackground("claude", needsAttention = false, flashOn = false, agentState = AgentDetectedState.WORKING),
+        )
+    }
+
+    @Test
+    fun `idle agentState is done teal`() {
+        assertEquals(
+            DoneTeal,
+            tabBackground("claude", needsAttention = false, flashOn = true, agentState = AgentDetectedState.IDLE),
+        )
+    }
+
+    @Test
+    fun `unknown agentState is gray`() {
+        assertEquals(
+            UnknownGray,
+            tabBackground("claude", needsAttention = false, flashOn = false, agentState = AgentDetectedState.UNKNOWN),
+        )
+    }
+
+    @Test
+    fun `null agentState falls back to legacy fill`() {
+        // Same as the legacy cases above — agentState=null takes the old branch.
+        assertEquals(agentColor("codex"), tabBackground("codex", needsAttention = false, flashOn = false, agentState = null))
+        assertEquals(white15, tabBackground(null, needsAttention = false, flashOn = true, agentState = null))
     }
 
     // --- revealTarget: minimal-reveal scroll decision ---
