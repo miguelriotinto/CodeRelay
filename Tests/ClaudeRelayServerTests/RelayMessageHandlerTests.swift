@@ -26,6 +26,7 @@ final class RelayMessageHandlerTests: XCTestCase {
         let channel: NIOAsyncTestingChannel
         let handler: RelayMessageHandler
         let tokenStore: TokenStore
+        let pushStore: PushRegistrationStore
         let tempDir: URL
     }
 
@@ -46,11 +47,13 @@ final class RelayMessageHandlerTests: XCTestCase {
             }
         )
 
+        let pushStore = PushRegistrationStore(directory: tempDir)
         let handler = RelayMessageHandler(
             sessionManager: manager,
             tokenStore: tokenStore,
             rateLimiter: rateLimiter ?? RateLimiter(maxAttempts: 100, windowSeconds: 60),
-            clipboardService: NoopClipboardService()
+            clipboardService: NoopClipboardService(),
+            pushStore: pushStore
         )
 
         let channel = await NIOAsyncTestingChannel(handler: handler)
@@ -65,7 +68,8 @@ final class RelayMessageHandlerTests: XCTestCase {
         // (rate-limit check) then back to the event loop (timer arm). Yield
         // so that work settles before tests start sending frames.
         try await Task.sleep(for: .milliseconds(30))
-        return Fixture(channel: channel, handler: handler, tokenStore: tokenStore, tempDir: tempDir)
+        return Fixture(channel: channel, handler: handler, tokenStore: tokenStore,
+                       pushStore: pushStore, tempDir: tempDir)
     }
 
     private func cleanup(_ fixture: Fixture) async {
@@ -161,6 +165,53 @@ final class RelayMessageHandlerTests: XCTestCase {
         try await send(textFrame(#"{"type":"ping","payload":{}}"#), on: fixture)
         let response = try await firstServerMessage(fixture.channel)
         XCTAssertEqual(response, .pong)
+    }
+
+    // MARK: - Push token registration
+
+    func testRegisterPushTokenWhenAuthedAcksAndStores() async throws {
+        let fixture = try await makeFixture()
+        defer { Task { await cleanup(fixture) } }
+        fixture.handler.authenticatedTokenId = "R"
+        fixture.handler.isAuthenticated = true
+
+        let json = #"{"type":"register_push_token","payload":{"platform":"apns","token":"tok-abc","deviceId":"dev-1","enabled":true,"notifyOnFinished":false}}"#
+        try await send(textFrame(json), on: fixture)
+        let response = try await firstServerMessage(fixture.channel)
+        XCTAssertEqual(response, .pushTokenAck(accepted: true))
+
+        let stored = await fixture.pushStore.registrations(forTokenId: "R")
+        XCTAssertEqual(stored.map(\.token), ["tok-abc"])
+    }
+
+    func testRegisterPushTokenWhenUnauthedIsRejected() async throws {
+        let fixture = try await makeFixture()
+        defer { Task { await cleanup(fixture) } }
+        // No authenticatedTokenId set — the pre-auth gate rejects with 401
+        // before the push arm runs, and nothing is stored.
+        let json = #"{"type":"register_push_token","payload":{"platform":"apns","token":"t","deviceId":"d","enabled":true,"notifyOnFinished":false}}"#
+        try await send(textFrame(json), on: fixture)
+        let response = try await firstServerMessage(fixture.channel)
+        guard case .error(let code, _) = try XCTUnwrap(response) else {
+            XCTFail("Expected .error, got \(String(describing: response))"); return
+        }
+        XCTAssertEqual(code, 401)
+        let stored = await fixture.pushStore.registrations(forTokenId: "R")
+        XCTAssertTrue(stored.isEmpty)
+    }
+
+    func testRegisterPushTokenRejectsOversizeToken() async throws {
+        let fixture = try await makeFixture()
+        defer { Task { await cleanup(fixture) } }
+        fixture.handler.authenticatedTokenId = "R"
+        fixture.handler.isAuthenticated = true
+        let big = String(repeating: "x", count: 513)
+        let json = #"{"type":"register_push_token","payload":{"platform":"apns","token":"\#(big)","deviceId":"d","enabled":true,"notifyOnFinished":false}}"#
+        try await send(textFrame(json), on: fixture)
+        let response = try await firstServerMessage(fixture.channel)
+        XCTAssertEqual(response, .pushTokenAck(accepted: false))
+        let stored = await fixture.pushStore.registrations(forTokenId: "R")
+        XCTAssertTrue(stored.isEmpty)
     }
 
     // MARK: - Frame size limits (413)

@@ -26,6 +26,9 @@ let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
 
 let tokenStore = TokenStore(directory: RelayConfig.configDirectory)
 let sessionManager = SessionManager(config: config, tokenStore: tokenStore)
+// Always constructed so devices can register even when push delivery is off;
+// enabling push later then doesn't require every device to reconnect.
+let pushStore = PushRegistrationStore(directory: RelayConfig.configDirectory)
 
 // Shared rate limiter for both the admin HTTP surface and the WebSocket
 // auth surface. A brute-force scanner that hits either path is throttled
@@ -46,7 +49,8 @@ let observerPurgeTask = Task {
 let wsServer = WebSocketServer(
     group: group, config: config,
     sessionManager: sessionManager, tokenStore: tokenStore,
-    rateLimiter: rateLimiter
+    rateLimiter: rateLimiter,
+    pushStore: pushStore
 )
 let adminServer = AdminHTTPServer(
     group: group, port: config.adminPort,
