@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import relay.protocol.AgentDetectedState
 import relay.protocol.SessionInfo
 import java.util.UUID
 
@@ -59,6 +60,7 @@ fun SessionTabs(
     awaitingInput: Set<UUID>,
     onSelect: (UUID) -> Unit,
     modifier: Modifier = Modifier,
+    agentStateForSession: (UUID) -> AgentDetectedState? = { null },
 ) {
     // Shared flash phase for all "needs attention" tabs. 0..1 triangle wave; we
     // bucket it to a boolean "flashOn" at the 0.5 midpoint so the fill snaps
@@ -120,13 +122,22 @@ fun SessionTabs(
         itemsIndexed(sessions, key = { _, s -> s.id }) { index, session ->
             val isSelected = session.id == activeSessionId
             val agentId = agentForSession(session.id)
-            val needsAttention = awaitingInput.contains(session.id)
+            val agentState = agentStateForSession(session.id)
+            // A blocked agent flashes for attention (parity with the sidebar's
+            // blinking blocked dot); when no fine-grained state is reported, fall
+            // back to the legacy awaiting-input pulse.
+            val needsAttention = if (agentState != null) {
+                agentState == AgentDetectedState.BLOCKED
+            } else {
+                awaitingInput.contains(session.id)
+            }
             SessionTab(
                 number = index + 1,
                 isSelected = isSelected,
                 agentId = agentId,
                 needsAttention = needsAttention,
                 flashOn = flashOn,
+                agentState = agentState,
                 onClick = { onSelect(session.id) },
             )
         }
@@ -173,18 +184,34 @@ internal fun revealTarget(
 }
 
 /**
- * Computes a tab's background fill, ported from
- * `ActiveTerminalView.swift:318-324`:
+ * Computes a tab's background fill.
+ *
+ * When [agentState] is present (server screen-detection, parity with the
+ * sidebar [activityDotColor]) it drives the color: blocked=red, working=agent
+ * color, done(idle)=teal, unknown=gray — and a blocked tab flashes between red
+ * and dim white via [flashOn]. When [agentState] is null the tab falls back to
+ * the legacy fill ported from `ActiveTerminalView.swift:318-324`:
  *  - needsAttention → `flashOn ? agentColor : white15`
  *  - else agentId != null → agentColor
  *  - else → white15
  */
-internal fun tabBackground(agentId: String?, needsAttention: Boolean, flashOn: Boolean): Color {
-    val agent = agentColor(agentId)
-    return when {
-        needsAttention -> if (flashOn) agent else White15
-        agentId != null -> agent
-        else -> White15
+internal fun tabBackground(
+    agentId: String?,
+    needsAttention: Boolean,
+    flashOn: Boolean,
+    agentState: AgentDetectedState? = null,
+): Color = when (agentState) {
+    AgentDetectedState.BLOCKED -> if (flashOn) QualityRed else White15
+    AgentDetectedState.WORKING -> agentColor(agentId)
+    AgentDetectedState.IDLE -> DoneTeal
+    AgentDetectedState.UNKNOWN -> UnknownGray
+    null -> {
+        val agent = agentColor(agentId)
+        when {
+            needsAttention -> if (flashOn) agent else White15
+            agentId != null -> agent
+            else -> White15
+        }
     }
 }
 
@@ -195,13 +222,14 @@ private fun SessionTab(
     agentId: String?,
     needsAttention: Boolean,
     flashOn: Boolean,
+    agentState: AgentDetectedState?,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(6.dp)
     var box = Modifier
         .defaultMinSize(minWidth = 26.dp, minHeight = 22.dp)
         .clip(shape)
-        .background(tabBackground(agentId, needsAttention, flashOn))
+        .background(tabBackground(agentId, needsAttention, flashOn, agentState))
     if (isSelected) {
         box = box.border(width = 2.dp, color = Color.White, shape = shape)
     }

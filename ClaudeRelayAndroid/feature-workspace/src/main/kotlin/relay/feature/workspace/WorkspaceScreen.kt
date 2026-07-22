@@ -245,6 +245,7 @@ fun WorkspaceScreen(
                 sessions = sessions,
                 activeSessionId = activeSessionId,
                 agentFor = ::agentFor,
+                agentStateFor = ::agentStateFor,
                 awaitingInput = awaitingInput,
                 quality = quality,
                 uptimeSeconds = uptimeSeconds,
@@ -437,6 +438,7 @@ private fun TerminalColumn(
     sessions: List<relay.protocol.SessionInfo>,
     activeSessionId: UUID?,
     agentFor: (UUID) -> String?,
+    agentStateFor: (UUID) -> relay.protocol.AgentDetectedState?,
     awaitingInput: Set<UUID>,
     quality: relay.protocol.ConnectionQuality,
     uptimeSeconds: Long,
@@ -523,6 +525,7 @@ private fun TerminalColumn(
                     agentForSession = agentFor,
                     awaitingInput = awaitingInput,
                     onSelect = onSelectTab,
+                    agentStateForSession = agentStateFor,
                 )
             }
 
