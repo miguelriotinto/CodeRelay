@@ -15,6 +15,94 @@ final class AgentStateDetectorTests: XCTestCase {
         XCTAssertNotNil(manifests["claude"])
         XCTAssertNotNil(manifests["codex"])
         XCTAssertNotNil(manifests["opencode"])
+        XCTAssertNotNil(manifests["copilot"])
+        XCTAssertNotNil(manifests["cursor-agent"])
+        XCTAssertNotNil(manifests["droid"])
+    }
+
+    // MARK: - cursor-agent rules (fully binary-verified patterns)
+
+    func testCursorBlockedOnCommandApproval() {
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        Run this command?
+          rm -rf build/
+        Allow once   Allow always   Reject
+        ↑↓ to select • Enter to confirm • Esc to cancel
+        """
+        let detection = detector.detect(agentId: "cursor-agent", snapshot: snap(screen))
+        XCTAssertEqual(detection?.state, .blocked)
+        XCTAssertTrue(detection?.visibleBlocker ?? false)
+    }
+
+    func testCursorWorkingFromStopHint() {
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let detection = detector.detect(agentId: "cursor-agent", snapshot: snap("Thinking...\nctrl+c to stop"))
+        XCTAssertEqual(detection?.state, .working)
+        XCTAssertTrue(detection?.visibleWorking ?? false)
+    }
+
+    func testCursorIdleFromPlaceholder() {
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let detection = detector.detect(agentId: "cursor-agent", snapshot: snap("Plan, search, build anything"))
+        XCTAssertEqual(detection?.state, .idle)
+    }
+
+    func testCursorIdlePlaceholderNotBlockedDuringApproval() {
+        // The idle placeholder must NOT win when an approval footer is present.
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = "Run this command?\nAllow once\nEnter to confirm • Esc to cancel"
+        let detection = detector.detect(agentId: "cursor-agent", snapshot: snap(screen))
+        XCTAssertEqual(detection?.state, .blocked)
+    }
+
+    // MARK: - copilot rules (BLOCKED only; WORKING/IDLE deliberately absent)
+
+    func testCopilotBlockedOnToolApproval() {
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        Allow Copilot to run this command?
+        1. Yes
+        2. Yes, and approve git for the rest of the running session
+        3. No, and tell Copilot what to do differently (Esc)
+        """
+        let detection = detector.detect(agentId: "copilot", snapshot: snap(screen))
+        XCTAssertEqual(detection?.state, .blocked)
+        XCTAssertTrue(detection?.visibleBlocker ?? false)
+    }
+
+    func testCopilotBenignOutputIsNotBlocked() {
+        // A conservative manifest must not false-fire on ordinary output. With no
+        // WORKING/IDLE rules (unverified for Copilot), a non-blocked screen falls
+        // back to .idle — which never triggers a push. The contract we assert is
+        // simply "not .blocked".
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let detection = detector.detect(agentId: "copilot", snapshot: snap("Here is the refactored function."))
+        XCTAssertNotEqual(detection?.state, .blocked)
+    }
+
+    // MARK: - droid rules (BLOCKED only; command-approval prompt unverified, omitted)
+
+    func testDroidBlockedOnMissionProposal() {
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        Mission proposal
+        1. Proceed with the proposal
+        2. Proceed with comment
+        3. Manually edit mission
+        4. No and explain why
+        """
+        let detection = detector.detect(agentId: "droid", snapshot: snap(screen))
+        XCTAssertEqual(detection?.state, .blocked)
+        XCTAssertTrue(detection?.visibleBlocker ?? false)
+    }
+
+    func testDroidBenignOutputIsNotBlocked() {
+        // Bare "Autonomy: High" / ">" are too generic to match as blocked — the
+        // manifest deliberately requires the specific mission/spec prompt tokens.
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let detection = detector.detect(agentId: "droid", snapshot: snap("Autonomy: High\n> analyze this codebase"))
+        XCTAssertNotEqual(detection?.state, .blocked)
     }
 
     // MARK: - claude rules
