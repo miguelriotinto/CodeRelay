@@ -67,7 +67,7 @@ final class APNsClientTests: XCTestCase {
         let http = MockHTTP()
         await http.configure(status: 200)
         let client = try APNsClient(config: config(sandbox: true), http: http)
-        let result = await client.send(deviceToken: "abc123", platform: .apns,
+        let result = await client.send(deviceToken: "abc123", platform: .apns, topic: nil,
                                        title: "demo", body: "1 agent blocked",
                                        deepLink: "clauderelay://session/xyz", collapseKey: "ws_hash")
         XCTAssertEqual(result, .delivered)
@@ -75,7 +75,8 @@ final class APNsClientTests: XCTestCase {
         let url = await http.url()
         XCTAssertEqual(url, "https://api.sandbox.push.apple.com/3/device/abc123")
         let headers = await http.headers()
-        XCTAssertTrue(headers.contains { $0.0 == "apns-topic" && $0.1 == "com.claude.relay" })
+        XCTAssertTrue(headers.contains { $0.0 == "apns-topic" && $0.1 == "com.claude.relay" },
+                      "nil topic falls back to the configured bundle id")
         XCTAssertTrue(headers.contains { $0.0 == "apns-push-type" && $0.1 == "alert" })
         XCTAssertTrue(headers.contains { $0.0 == "apns-collapse-id" && $0.1 == "ws_hash" })
         XCTAssertTrue(headers.contains { $0.0 == "authorization" && $0.1.hasPrefix("bearer ") })
@@ -106,9 +107,20 @@ final class APNsClientTests: XCTestCase {
         let http = MockHTTP()
         await http.configure(status: 410)
         let client = try APNsClient(config: config(), http: http)
-        let result = await client.send(deviceToken: "dead", platform: .apns, title: "t", body: "b",
+        let result = await client.send(deviceToken: "dead", platform: .apns, topic: nil, title: "t", body: "b",
                                        deepLink: "d", collapseKey: "k")
         XCTAssertEqual(result, .unregistered)
+    }
+
+    func testExplicitTopicOverridesConfiguredBundleId() async throws {
+        let http = MockHTTP()
+        await http.configure(status: 200)
+        let client = try APNsClient(config: config(sandbox: true), http: http)
+        _ = await client.send(deviceToken: "abc123", platform: .apns, topic: "com.claude.relay.mac",
+                              title: "t", body: "b", deepLink: "d", collapseKey: "k")
+        let headers = await http.headers()
+        XCTAssertTrue(headers.contains { $0.0 == "apns-topic" && $0.1 == "com.claude.relay.mac" },
+                      "a per-device topic must override the configured bundle id")
     }
 }
 

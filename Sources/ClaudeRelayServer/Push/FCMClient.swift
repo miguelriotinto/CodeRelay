@@ -79,8 +79,10 @@ public actor FCMClient: PushSending {
 
     // MARK: - Send
 
-    public func send(deviceToken: String, platform: PushPlatform, title: String, body: String,
-                     deepLink: String, collapseKey: String) async -> PushResult {
+    public func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+                     body: String, deepLink: String, collapseKey: String) async -> PushResult {
+        // `topic` is APNs-only (per-app bundle id); FCM addresses the device
+        // token directly, so it is intentionally ignored here.
         do {
             let token = try await accessToken()
             let message: [String: Any] = [

@@ -26,7 +26,7 @@ public enum ClientMessage: Equatable, Sendable {
     /// Register (or update) this device's push token + per-device delivery
     /// preferences. Idempotent by `deviceId`.
     case registerPushToken(platform: PushPlatform, token: String, deviceId: String,
-                           enabled: Bool, notifyOnFinished: Bool)
+                           enabled: Bool, notifyOnFinished: Bool, topic: String? = nil)
     /// Remove this device's push registration (e.g. user turned push off).
     case unregisterPushToken(deviceId: String)
 
@@ -68,7 +68,7 @@ public enum ClientMessage: Equatable, Sendable {
 extension ClientMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case token, sessionId, cols, rows, name, data, protocolVersion, skipReplay
-        case platform, deviceId, enabled, notifyOnFinished
+        case platform, deviceId, enabled, notifyOnFinished, topic
     }
 
     public func encodePayload(to encoder: Encoder) throws {
@@ -108,12 +108,13 @@ extension ClientMessage: Codable {
             try container.encode(data, forKey: .data)
         case .ping:
             break
-        case .registerPushToken(let platform, let token, let deviceId, let enabled, let notifyOnFinished):
+        case .registerPushToken(let platform, let token, let deviceId, let enabled, let notifyOnFinished, let topic):
             try container.encode(platform, forKey: .platform)
             try container.encode(token, forKey: .token)
             try container.encode(deviceId, forKey: .deviceId)
             try container.encode(enabled, forKey: .enabled)
             try container.encode(notifyOnFinished, forKey: .notifyOnFinished)
+            try container.encodeIfPresent(topic, forKey: .topic)
         case .unregisterPushToken(let deviceId):
             try container.encode(deviceId, forKey: .deviceId)
         }
@@ -168,7 +169,8 @@ extension ClientMessage: Codable {
                 token: try container.decode(String.self, forKey: .token),
                 deviceId: try container.decode(String.self, forKey: .deviceId),
                 enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true,
-                notifyOnFinished: try container.decodeIfPresent(Bool.self, forKey: .notifyOnFinished) ?? false)
+                notifyOnFinished: try container.decodeIfPresent(Bool.self, forKey: .notifyOnFinished) ?? false,
+                topic: try container.decodeIfPresent(String.self, forKey: .topic))
         case "unregister_push_token":
             return .unregisterPushToken(deviceId: try container.decode(String.self, forKey: .deviceId))
         default:

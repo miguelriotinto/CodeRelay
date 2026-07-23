@@ -336,7 +336,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 guard let token = bridge.deviceToken else { return }
                 try await connection.send(.registerPushToken(
                     platform: .apns, token: token, deviceId: deviceId,
-                    enabled: enabled, notifyOnFinished: notify))
+                    enabled: enabled, notifyOnFinished: notify,
+                    topic: Bundle.main.bundleIdentifier))
             case .unregister:
                 try await connection.send(.unregisterPushToken(deviceId: deviceId))
             case .noop:

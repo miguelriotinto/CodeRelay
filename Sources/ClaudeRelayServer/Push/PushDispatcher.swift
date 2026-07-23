@@ -159,7 +159,7 @@ public actor PushDispatcher {
             guard reg.enabled else { continue }
             if edge == .finished, !reg.notifyOnFinished { continue }
             let result = await sender.send(
-                deviceToken: reg.token, platform: reg.platform,
+                deviceToken: reg.token, platform: reg.platform, topic: reg.topic,
                 title: displayTitle, body: body, deepLink: deepLink, collapseKey: collapseKey)
             switch result {
             case .delivered:    delivered = true

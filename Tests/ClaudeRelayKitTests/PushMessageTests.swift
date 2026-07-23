@@ -5,9 +5,9 @@ final class PushMessageTests: ProtocolTestCase {
     func testRegisterPushTokenRoundTrips() throws {
         let original = ClientMessage.registerPushToken(
             platform: .apns, token: "abc123", deviceId: "dev-1",
-            enabled: true, notifyOnFinished: false)
+            enabled: true, notifyOnFinished: false, topic: "com.claude.relay.mac")
         let data = try encoder.encode(MessageEnvelope.client(original))
-        guard case .client(.registerPushToken(let p, let t, let d, let en, let nf)) =
+        guard case .client(.registerPushToken(let p, let t, let d, let en, let nf, let topic)) =
                 try decoder.decode(MessageEnvelope.self, from: data) else {
             XCTFail("Expected registerPushToken"); return
         }
@@ -16,6 +16,20 @@ final class PushMessageTests: ProtocolTestCase {
         XCTAssertEqual(d, "dev-1")
         XCTAssertTrue(en)
         XCTAssertFalse(nf)
+        XCTAssertEqual(topic, "com.claude.relay.mac")
+    }
+
+    func testRegisterPushTokenDecodesWithoutTopic() throws {
+        // Older clients omit `topic`; it must decode to nil (server then falls
+        // back to the configured bundle id), proving backward compatibility.
+        let json = #"{"type":"register_push_token","payload":{"platform":"apns","token":"t","deviceId":"d"}}"#
+        guard case .client(.registerPushToken(_, _, _, let en, let nf, let topic)) =
+                try decoder.decode(MessageEnvelope.self, from: Data(json.utf8)) else {
+            XCTFail("Expected registerPushToken"); return
+        }
+        XCTAssertTrue(en, "enabled defaults to true when omitted")
+        XCTAssertFalse(nf, "notifyOnFinished defaults to false when omitted")
+        XCTAssertNil(topic)
     }
 
     func testUnregisterPushTokenRoundTrips() throws {

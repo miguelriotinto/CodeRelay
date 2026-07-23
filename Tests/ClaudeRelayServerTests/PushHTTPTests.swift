@@ -26,8 +26,8 @@ private actor RecordingSender: PushSending {
     let label: String
     private(set) var calls = 0
     init(_ label: String) { self.label = label }
-    func send(deviceToken: String, platform: PushPlatform, title: String, body: String,
-              deepLink: String, collapseKey: String) async -> PushResult {
+    func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+              body: String, deepLink: String, collapseKey: String) async -> PushResult {
         calls += 1
         return .delivered
     }
@@ -40,9 +40,9 @@ final class CompositePushSenderTests: XCTestCase {
         let fcm = RecordingSender("fcm")
         let composite = CompositePushSender(apns: apns, fcm: fcm)
 
-        _ = await composite.send(deviceToken: "t", platform: .apns, title: "x", body: "y",
+        _ = await composite.send(deviceToken: "t", platform: .apns, topic: nil, title: "x", body: "y",
                                  deepLink: "z", collapseKey: "k")
-        _ = await composite.send(deviceToken: "t", platform: .fcm, title: "x", body: "y",
+        _ = await composite.send(deviceToken: "t", platform: .fcm, topic: nil, title: "x", body: "y",
                                  deepLink: "z", collapseKey: "k")
 
         let apnsCalls = await apns.callCount()
@@ -53,7 +53,7 @@ final class CompositePushSenderTests: XCTestCase {
 
     func testMissingProviderFailsGracefully() async {
         let composite = CompositePushSender(apns: nil, fcm: nil)
-        let result = await composite.send(deviceToken: "t", platform: .apns, title: "x", body: "y",
+        let result = await composite.send(deviceToken: "t", platform: .apns, topic: nil, title: "x", body: "y",
                                           deepLink: "z", collapseKey: "k")
         XCTAssertEqual(result, .failed("no sender configured for apns"))
     }
