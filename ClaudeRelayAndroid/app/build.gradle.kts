@@ -26,7 +26,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "relay.app"
+        // Matches the Firebase project's registered Android app (google-services.json
+        // package_name) so the com.google.gms.google-services plugin resolves.
+        // Independent of `namespace`/Kotlin `package relay.*` (AGP decouples the
+        // app's install identity from its source namespace).
+        applicationId = "com.singular.coderelay"
         minSdk = 28
         targetSdk = 34
         // M36 version. Milestone naming ("0.3-m36") chosen over a bare "1.0"
