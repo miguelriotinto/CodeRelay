@@ -105,6 +105,34 @@ final class AgentStateDetectorTests: XCTestCase {
         XCTAssertNotEqual(detection?.state, .blocked)
     }
 
+    func testDroidNarrationProseIsNotBlocked() {
+        // Regression: the spec-approval rule must anchor on the UI button label
+        // "approve spec", NOT on conversational prose. An agent narrating
+        // "I'll proceed with implementation…" while a persistent key-hint footer
+        // shows "esc to cancel" must NOT be misread as a blocked approval prompt
+        // (that would fire a spurious push).
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        I'll now proceed with implementation of the auth layer and run the tests.
+        esc to cancel
+        """
+        let detection = detector.detect(agentId: "droid", snapshot: snap(screen))
+        XCTAssertNotEqual(detection?.state, .blocked)
+    }
+
+    func testDroidBlockedOnSpecApproval() {
+        // The genuine spec-approval screen (UI button + footer) still fires.
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        Spec ready for review.
+        Approve Spec
+        ↑↓ Navigate · Enter to select · Esc to cancel
+        """
+        let detection = detector.detect(agentId: "droid", snapshot: snap(screen))
+        XCTAssertEqual(detection?.state, .blocked)
+        XCTAssertTrue(detection?.visibleBlocker ?? false)
+    }
+
     // MARK: - claude rules
 
     func testClaudeBlockedOnBashPermissionPrompt() {
