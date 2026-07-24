@@ -10,6 +10,9 @@ public protocol PTYSessionProtocol: Actor {
     func setOutputHandler(_ handler: @escaping @Sendable (Data) -> Void)
     func setExitHandler(_ handler: @escaping @Sendable () -> Void)
     func clearOutputHandler()
+    /// Set a callback fired with decoded OSC 52 clipboard text written by the
+    /// terminal (F11 terminal-copy → device). Cleared by `clearOutputHandler`.
+    func setClipboardHandler(_ handler: @escaping @Sendable (String) -> Void)
     func write(_ data: Data)
     func resize(cols: UInt16, rows: UInt16)
     /// Best-effort current working directory of the session's shell process
@@ -87,6 +90,8 @@ public actor PTYSession: PTYSessionProtocol {
     private var ringBuffer: RingBuffer
     private var readSource: DispatchSourceRead?
     private var outputHandler: (@Sendable (Data) -> Void)?
+    /// F11: invoked with decoded OSC 52 clipboard text (terminal copy → device).
+    private var clipboardHandler: (@Sendable (String) -> Void)?
     private var exitHandler: (@Sendable () -> Void)?
     private let activityMonitor: SessionActivityMonitor
     private let screenModel: TerminalScreenModel
@@ -405,6 +410,12 @@ public actor PTYSession: PTYSessionProtocol {
         screenModel.feed(data)
         activityMonitor.processOutput(data)
         outputHandler?(data)
+        // F11: surface OSC 52 clipboard writes (terminal copy → device). The
+        // raw bytes still flow through outputHandler unchanged — OSC 52 is
+        // invisible to the emulator, so the terminal render is unaffected.
+        if let clipboardHandler {
+            for text in OSC52Parser.parse(data) { clipboardHandler(text) }
+        }
     }
 
     /// Called from the read source on EOF (child exited).
@@ -472,6 +483,11 @@ public actor PTYSession: PTYSessionProtocol {
         self.outputHandler = handler
     }
 
+    /// Set callback for OSC 52 clipboard writes from the terminal (F11).
+    public func setClipboardHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        self.clipboardHandler = handler
+    }
+
     /// Set callback for process exit.
     public func setExitHandler(_ handler: @escaping @Sendable () -> Void) {
         self.exitHandler = handler
@@ -480,6 +496,7 @@ public actor PTYSession: PTYSessionProtocol {
     /// Clear output handler (when client detaches -- output goes to ring buffer).
     public func clearOutputHandler() {
         self.outputHandler = nil
+        self.clipboardHandler = nil
     }
 
     /// Write data to PTY (terminal input from client). Non-blocking: on EAGAIN

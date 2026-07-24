@@ -495,9 +495,18 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     func wirePTYOutput(pty: any PTYSessionProtocol, context: ChannelHandlerContext, repaintAfter: Bool = false) {
         let ctx = UnsafeTransfer(context)
         Task { [weak self] in
+            let sessionId = await pty.sessionId
             await pty.setOutputHandler { [weak self] data in
                 ctx.value.eventLoop.execute {
                     self?.sendBinaryData(data, context: ctx.value)
+                }
+            }
+            // F11: mirror OSC 52 clipboard writes from the terminal to the
+            // client's device clipboard.
+            await pty.setClipboardHandler { [weak self] text in
+                ctx.value.eventLoop.execute {
+                    self?.sendServerMessage(.clipboardUpdate(sessionId: sessionId, text: text),
+                                            context: ctx.value)
                 }
             }
             if repaintAfter {

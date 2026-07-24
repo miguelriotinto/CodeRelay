@@ -26,8 +26,13 @@ actor MockPTYSession: PTYSessionProtocol {
     func startReading() {}
     func setOutputHandler(_ handler: @escaping @Sendable (Data) -> Void) { outputHandler = handler }
     func setExitHandler(_ handler: @escaping @Sendable () -> Void) { exitHandler = handler }
+    private var clipboardHandler: (@Sendable (String) -> Void)?
+    func setClipboardHandler(_ handler: @escaping @Sendable (String) -> Void) { clipboardHandler = handler }
+    /// Test hook: simulate the terminal emitting an OSC 52 clipboard write.
+    func emitClipboard(_ text: String) { clipboardHandler?(text) }
     func clearOutputHandler() {
         outputHandler = nil
+        clipboardHandler = nil
         clearOutputHandlerCallCount += 1
     }
     func write(_ data: Data) {}
