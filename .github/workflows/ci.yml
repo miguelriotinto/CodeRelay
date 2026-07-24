@@ -17,6 +17,10 @@ jobs:
   swift:
     name: swift build + test + lint
     runs-on: macos-15
+    # The full suite runs in ~20s; a healthy job finishes in a few minutes
+    # (incl. the WhisperKit/swift-syntax compile). Cap the job so a hung test
+    # fails fast (~15 min) instead of stalling toward GitHub's 6h default.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
