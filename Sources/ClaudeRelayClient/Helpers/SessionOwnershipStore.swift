@@ -31,6 +31,12 @@ public final class SessionOwnershipStore {
     public let ownedKey: String
     /// Key for the UUID→agentId dictionary (plain per-app; device-independent).
     public let agentsKey: String
+    /// Key for the last active/focused session id (per-device: which tab this
+    /// device had selected — must not stomp another device's focus). F3.
+    public let activeSessionKey: String
+    /// Key for the set of collapsed workspace-group ids (per-device sidebar
+    /// layout). F3.
+    public let collapsedGroupsKey: String
 
     // MARK: - Dependencies
 
@@ -46,6 +52,8 @@ public final class SessionOwnershipStore {
     private var persistedNames: [UUID: String] = [:]
     private var persistedOwned: Set<UUID> = []
     private var persistedAgents: [UUID: String] = [:]
+    private var persistedActiveSession: UUID?
+    private var persistedCollapsedGroups: Set<String> = []
     private var loaded = false
 
     // MARK: - Init
@@ -56,6 +64,10 @@ public final class SessionOwnershipStore {
         self.namesKey = "\(keyPrefix).sessionNames"
         self.ownedKey = "\(keyPrefix).ownedSessions.\(deviceId)"
         self.agentsKey = "\(keyPrefix).agentSessions"
+        // Per-device layout state (F3): scoped by deviceId like `owned`, so one
+        // device's focus/collapse never overwrites another's.
+        self.activeSessionKey = "\(keyPrefix).activeSession.\(deviceId)"
+        self.collapsedGroupsKey = "\(keyPrefix).collapsedGroups.\(deviceId)"
         self.defaults = defaults
         loadSnapshots()
     }
@@ -69,6 +81,8 @@ public final class SessionOwnershipStore {
         persistedNames = loadNames()
         persistedOwned = loadOwned()
         persistedAgents = loadAgents()
+        persistedActiveSession = loadActiveSession()
+        persistedCollapsedGroups = loadCollapsedGroups()
         loaded = true
     }
 
@@ -99,6 +113,17 @@ public final class SessionOwnershipStore {
                 result[uuid] = pair.value
             }
         }
+    }
+
+    /// Load the persisted active/focused session id for this device (F3).
+    public func loadActiveSession() -> UUID? {
+        guard let str = defaults.string(forKey: activeSessionKey) else { return nil }
+        return UUID(uuidString: str)
+    }
+
+    /// Load the persisted set of collapsed workspace-group ids (F3).
+    public func loadCollapsedGroups() -> Set<String> {
+        Set(defaults.stringArray(forKey: collapsedGroupsKey) ?? [])
     }
 
     // MARK: - Saving (diff-checked)
@@ -138,6 +163,29 @@ public final class SessionOwnershipStore {
         return false
     }
 
+    /// Persist the active/focused session id for this device (F3). Passing nil
+    /// clears it. Diff-checked like the others.
+    @discardableResult
+    public func saveActiveSession(_ id: UUID?) -> Bool {
+        guard id != persistedActiveSession else { return false }
+        if let id {
+            defaults.set(id.uuidString, forKey: activeSessionKey)
+        } else {
+            defaults.removeObject(forKey: activeSessionKey)
+        }
+        persistedActiveSession = id
+        return true
+    }
+
+    /// Persist the set of collapsed workspace-group ids for this device (F3).
+    @discardableResult
+    public func saveCollapsedGroups(_ groups: Set<String>) -> Bool {
+        guard groups != persistedCollapsedGroups else { return false }
+        defaults.set(Array(groups), forKey: collapsedGroupsKey)
+        persistedCollapsedGroups = groups
+        return true
+    }
+
     // MARK: - Stale pruning
 
     /// Remove any name/owned/agent entries whose session id is not in
@@ -175,6 +223,12 @@ public final class SessionOwnershipStore {
         if !staleOwned.isEmpty { saveOwned(owned) }
         if !staleAgents.isEmpty { saveAgents(agents) }
 
+        // F3: a persisted active session that the server no longer knows about
+        // must not be restored as a dead tab — clear it.
+        if let active = persistedActiveSession, !serverIds.contains(active) {
+            saveActiveSession(nil)
+        }
+
         return PruneResult(removedNames: staleNames, removedOwned: staleOwned, removedAgents: staleAgents)
     }
 
@@ -183,4 +237,6 @@ public final class SessionOwnershipStore {
     public var _testOnly_persistedNames: [UUID: String] { persistedNames }
     public var _testOnly_persistedOwned: Set<UUID> { persistedOwned }
     public var _testOnly_persistedAgents: [UUID: String] { persistedAgents }
+    public var _testOnly_persistedActiveSession: UUID? { persistedActiveSession }
+    public var _testOnly_persistedCollapsedGroups: Set<String> { persistedCollapsedGroups }
 }

@@ -11,7 +11,22 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     // MARK: - Published State
 
     @Published public var sessions: [SessionInfo] = []
-    @Published public var activeSessionId: UUID?
+    @Published public var activeSessionId: UUID? {
+        didSet {
+            // F3: persist the focused tab per-device so relaunch restores it.
+            // `isRestoringLayout` suppresses the write while we're applying the
+            // restored value back into the property during init.
+            guard !isRestoringLayout, activeSessionId != oldValue else { return }
+            ownershipStore.saveActiveSession(activeSessionId)
+        }
+    }
+    /// True only while `restorePersistedLayout()` is writing restored state back
+    /// into `@Published` properties, so their `didSet` hooks don't re-persist.
+    private var isRestoringLayout = false
+    /// F3: the active session is restored from persistence exactly once, on the
+    /// first successful session fetch — not on every reconnect (which would
+    /// fight the user's live selection).
+    private var didRestoreActiveSession = false
     @Published public var sessionNames: [UUID: String] = [:]
     @Published public var terminalTitles: [UUID: String] = [:]
     @Published public var isLoading = false
@@ -289,6 +304,21 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     // stay on the coordinator for SwiftUI binding; the store handles the
     // UserDefaults encoding and diff-checked writes (C-21).
 
+    // MARK: - Sidebar layout (F3)
+
+    /// Load the persisted collapsed workspace-group ids (per-device). Sidebar
+    /// views seed their `SidebarCollapseModel` from this at appear time so the
+    /// collapse layout survives relaunch.
+    public func loadCollapsedGroups() -> Set<String> {
+        ownershipStore.loadCollapsedGroups()
+    }
+
+    /// Persist the collapsed workspace-group ids after a toggle (per-device,
+    /// diff-checked).
+    public func saveCollapsedGroups(_ groups: Set<String>) {
+        ownershipStore.saveCollapsedGroups(groups)
+    }
+
     // MARK: - Ownership
 
     public func claimSession(_ id: UUID) {
@@ -431,6 +461,22 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                     // `refetch: false` — we're already inside `fetchSessions`.
                     claimSession(id)
                     cleanUpStolenSession(id, alert: aliveElsewhere.contains(id), refetch: false)
+                }
+            }
+
+            // F3: restore the focused tab once, on the first fetch. The prune
+            // above already dropped a persisted active id the server no longer
+            // knows about, so this only restores a session that still exists
+            // and is owned by this device. Only when the user hasn't already
+            // selected something this launch.
+            if !didRestoreActiveSession {
+                didRestoreActiveSession = true
+                if activeSessionId == nil,
+                   let restored = ownershipStore.loadActiveSession(),
+                   serverIds.contains(restored) {
+                    isRestoringLayout = true
+                    activeSessionId = restored
+                    isRestoringLayout = false
                 }
             }
         } catch {

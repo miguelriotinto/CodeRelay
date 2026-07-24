@@ -56,6 +56,10 @@ struct SessionSidebarView: View {
             }
         }
         .navigationTitle("Sessions")
+        .onAppear {
+            // F3: seed collapse layout from persistence once per appear.
+            collapse = SidebarCollapseModel(collapsed: coordinator.loadCollapsedGroups())
+        }
         .sheet(isPresented: $showQRSheet) {
             if let sessionId = qrSessionId {
                 QRCodeSheet(
@@ -120,6 +124,7 @@ struct SessionSidebarView: View {
     private func rollupHeader(_ group: WorkspaceRollup) -> some View {
         Button {
             collapse.toggle(group.id)
+            coordinator.saveCollapsedGroups(collapse.collapsedGroupIds)  // F3
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: collapse.isCollapsed(group.id) ? "chevron.right" : "chevron.down")

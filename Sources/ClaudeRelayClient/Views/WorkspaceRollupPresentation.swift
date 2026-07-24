@@ -6,7 +6,12 @@ import ClaudeRelayKit
 public struct SidebarCollapseModel: Equatable {
     private var collapsed: Set<String> = []
     public init() {}
+    /// Seed from persisted state (F3). Kept UI-agnostic: the caller (a view)
+    /// loads the set from the coordinator's store and hands it in.
+    public init(collapsed: Set<String>) { self.collapsed = collapsed }
     public func isCollapsed(_ groupId: String) -> Bool { collapsed.contains(groupId) }
+    /// The current collapsed set, for persisting after a toggle (F3).
+    public var collapsedGroupIds: Set<String> { collapsed }
     public mutating func toggle(_ groupId: String) {
         if collapsed.contains(groupId) { collapsed.remove(groupId) } else { collapsed.insert(groupId) }
     }
