@@ -68,6 +68,10 @@ All WebSocket messages use `MessageEnvelope`: `{"type":"<type_string>","payload"
 
 **Scrollback replay**: After `session_attached` / `session_resumed`, the server sends ring-buffer scrollback as binary frames, then a `replay_complete` envelope, then `session_activity`, before live PTY output begins. Always emitted, even when the buffer is empty — clients use it as the "you can render now" signal. The client (`TerminalViewModel`) holds incoming bytes in `pendingOutput` while `isReplaying` is true (set by the coordinator before attach/resume) and flushes them in one batch on `endReplay()`. This keeps SwiftTerm's `queuePendingDisplay` coalescing 60 fps frames into a single render, so the user sees the final terminal state instead of watching history scroll past.
 
+### Clipboard Bridging (F11)
+
+Two-way clipboard: device→host was already covered by `paste_image` (base64 PNG → `MacClipboardService`). Host→device is F11: `PTYSession.handleOutput` runs `OSC52Parser` (a pure, tested value type) over the raw PTY stream, decoding OSC 52 clipboard-write sequences (`ESC ] 52 ; <sel> ; <base64> BEL`, or `ESC \` terminator; `?` read-requests are ignored so the device clipboard never leaks into the session; 1 MB decoded cap). A match fires `clipboardHandler`, which `RelayMessageHandler` forwards as a new `clipboard_update` `ServerMessage`. The client (`RelayConnection.onClipboardUpdate` → `SharedSessionCoordinator`) writes it to the device clipboard via the cross-platform `DeviceClipboard` seam (`UIPasteboard`/`NSPasteboard`), **only for the active session** so a background session's copy can't hijack the pasteboard. Any PTY tool that already speaks OSC 52 (tmux, vim, kitty) gets clipboard-to-device sync with no per-tool integration. Host auto-provisioning (the spec's other, "exploratory" F11 half) is intentionally deferred.
+
 ### Date Encoding Caveat
 
 The WebSocket server uses default `JSONEncoder` (Double timestamps). The Admin HTTP API uses `.iso8601`. Do not mix encoders between these two paths.

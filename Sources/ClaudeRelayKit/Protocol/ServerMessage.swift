@@ -24,6 +24,9 @@ public enum ServerMessage: Equatable, Sendable {
     case pasteImageResult(success: Bool)
     case pong
     case pushTokenAck(accepted: Bool)
+    /// F11: the terminal wrote to the clipboard via OSC 52 — the client mirrors
+    /// `text` to the device clipboard.
+    case clipboardUpdate(sessionId: UUID, text: String)
     case error(code: Int, message: String)
 
     // MARK: - Wire type strings
@@ -49,6 +52,7 @@ public enum ServerMessage: Equatable, Sendable {
         case .pasteImageResult:    return "paste_image_result"
         case .pong:                return "pong"
         case .pushTokenAck:        return "push_token_ack"
+        case .clipboardUpdate:     return "clipboard_update"
         case .error:               return "error"
         }
     }
@@ -61,7 +65,7 @@ public enum ServerMessage: Equatable, Sendable {
         "session_terminated", "session_expired", "session_state", "session_activity",
         "session_stolen", "session_renamed",
         "session_list_result", "session_list_all_result",
-        "resize_ack", "paste_image_result", "pong", "push_token_ack", "error"
+        "resize_ack", "paste_image_result", "pong", "push_token_ack", "clipboard_update", "error"
     ]
 }
 
@@ -70,7 +74,7 @@ public enum ServerMessage: Equatable, Sendable {
 extension ServerMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case reason, sessionId, cols, rows, state, code, message, sessions, activity, agent, name, success, protocolVersion
-        case agentState, title, workingDir, accepted
+        case agentState, title, workingDir, accepted, text
     }
 
     public func encodePayload(to encoder: Encoder) throws {
@@ -126,6 +130,9 @@ extension ServerMessage: Codable {
             break
         case .pushTokenAck(let accepted):
             try container.encode(accepted, forKey: .accepted)
+        case .clipboardUpdate(let sessionId, let text):
+            try container.encode(sessionId, forKey: .sessionId)
+            try container.encode(text, forKey: .text)
         case .error(let code, let message):
             try container.encode(code, forKey: .code)
             try container.encode(message, forKey: .message)
@@ -202,6 +209,10 @@ extension ServerMessage: Codable {
             return .pong
         case "push_token_ack":
             return .pushTokenAck(accepted: try container.decode(Bool.self, forKey: .accepted))
+        case "clipboard_update":
+            let sessionId = try container.decode(UUID.self, forKey: .sessionId)
+            let text = try container.decode(String.self, forKey: .text)
+            return .clipboardUpdate(sessionId: sessionId, text: text)
         case "error":
             let code = try container.decode(Int.self, forKey: .code)
             let message = try container.decode(String.self, forKey: .message)

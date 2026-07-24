@@ -191,6 +191,8 @@ final class ServerMessageTests: ProtocolTestCase {
             .sessionRenamed(sessionId: id, name: "Varys"),
             .resizeAck(cols: 120, rows: 40),
             .pong,
+            .pushTokenAck(accepted: true),
+            .clipboardUpdate(sessionId: id, text: "copied from terminal"),
             .error(code: 500, message: "internal")
         ]
 

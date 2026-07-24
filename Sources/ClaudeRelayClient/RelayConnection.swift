@@ -108,6 +108,10 @@ public final class RelayConnection: ObservableObject {
     /// Push callback: server renamed a session (another device renamed it).
     public var onSessionRenamed: ((UUID, String) -> Void)?
 
+    /// F11: the terminal wrote to the clipboard via OSC 52; mirror `text` to
+    /// the device clipboard. (sessionId, text)
+    public var onClipboardUpdate: ((UUID, String) -> Void)?
+
     /// Called when a user-visible send operation fails or the receive loop ends,
     /// indicating the connection is likely dead. The coordinator drives recovery.
     /// Internal pings (keepalive / liveness probes) do NOT trigger this — only
@@ -491,11 +495,21 @@ public final class RelayConnection: ObservableObject {
                         onSessionStolen?(sessionId)
                     case .sessionRenamed(let sessionId, let name):
                         onSessionRenamed?(sessionId, name)
+                    case .clipboardUpdate(let sessionId, let text):
+                        onClipboardUpdate?(sessionId, text)
                     default:
                         break
                     }
                 }
             } catch {
+                // Forward-compat: an OLD client that predates a newer additive
+                // ServerMessage type (e.g. clipboard_update) throws "unknown
+                // type" here from MessageEnvelope's decoder — NOT the
+                // `default: break` above, which only covers new clients. That's
+                // why unknown server messages are safe on old clients: this
+                // catch logs and continues. Keep it benign — do NOT route
+                // decode failures to onSendFailed or the receive loop, or every
+                // additive message type would kill old-client connections.
                 logger.warning("Failed to decode: \(error.localizedDescription, privacy: .public)")
             }
 
