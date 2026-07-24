@@ -24,9 +24,21 @@ object AgentColorPalette {
     /** The codex teal, also the default for unknown/null agents. */
     private val codexTeal = Color(red = 84 / 255f, green = 132 / 255f, blue = 137 / 255f)
 
+    /** GitHub purple for Copilot CLI (matches AgentColorPalette.swift). */
+    private val copilotPurple = Color(red = 110 / 255f, green = 84 / 255f, blue = 148 / 255f)
+
+    /** Cursor blue for the Cursor Agent CLI. */
+    private val cursorBlue = Color(red = 45 / 255f, green = 125 / 255f, blue = 210 / 255f)
+
+    /** Factory amber for Droid. */
+    private val droidAmber = Color(red = 210 / 255f, green = 120 / 255f, blue = 60 / 255f)
+
     fun color(agentId: String?): Color = when (agentId) {
         "claude" -> claudeOrange
         "codex" -> codexTeal
+        "copilot" -> copilotPurple
+        "cursor-agent" -> cursorBlue
+        "droid" -> droidAmber
         else -> codexTeal
     }
 }

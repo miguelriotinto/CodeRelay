@@ -82,7 +82,31 @@ public struct CodingAgent: Codable, Equatable, Hashable, Sendable {
         processNames: ["opencode"], titleKeywords: ["opencode"]
     )
 
-    public static let all: [CodingAgent] = [.claude, .codex, .opencode]
+    public static let copilot = CodingAgent(
+        id: "copilot", displayName: "Copilot CLI",
+        processNames: ["copilot"], titleKeywords: ["copilot"]
+    )
+
+    // Cursor's installer symlinks both `cursor-agent` and `agent` to the same
+    // binary. `agent` is generic, so it is matched only via the strict
+    // equality/`-`-prefix rule in `matchesProcessName` (never a substring).
+    public static let cursorAgent = CodingAgent(
+        id: "cursor-agent", displayName: "Cursor Agent",
+        processNames: ["cursor-agent", "agent"], titleKeywords: ["cursor agent"]
+    )
+
+    public static let droid = CodingAgent(
+        id: "droid", displayName: "Droid",
+        // Title matching is substring-based (no word boundary), so keep the
+        // keyword specific: bare "factory" would false-match ordinary titles
+        // like "factory-service". Process-name detection ("droid") is the
+        // primary path regardless.
+        processNames: ["droid"], titleKeywords: ["droid"]
+    )
+
+    public static let all: [CodingAgent] = [
+        .claude, .codex, .opencode, .copilot, .cursorAgent, .droid,
+    ]
 
     /// Look up an agent by its wire-protocol ID.
     public static func find(id: String) -> CodingAgent? {

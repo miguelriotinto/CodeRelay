@@ -1,0 +1,9 @@
+{
+  "id": "cursor-agent",
+  "rules": [
+    { "id": "approval_prompt", "state": "blocked", "priority": 900, "region": "whole_recent", "visible_blocker": true, "any": [ {"contains": ["run this command?"]}, {"contains": ["run this command outside the sandbox?"]}, {"contains": ["run this mcp tool?"]}, {"contains": ["proceed with this edit?"]}, {"contains": ["write to this file?"]}, {"contains": ["delete this file?"]}, {"contains": ["allow this web search?"]}, {"contains": ["allow this web fetch?"]} ], "all": [ {"any": [ {"contains": ["enter to confirm", "esc to cancel"]}, {"contains": ["allow always"]}, {"contains": ["allow once"]}, {"contains": ["n or esc to cancel"]} ]} ] },
+    { "id": "mode_switch_prompt", "state": "blocked", "priority": 880, "region": "whole_recent", "visible_blocker": true, "contains": ["approve mode switch (y/n)"] },
+    { "id": "working_stop_hint", "state": "working", "priority": 120, "region": "whole_recent", "visible_working": true, "contains": ["ctrl+c to stop"] },
+    { "id": "idle_prompt_placeholder", "state": "idle", "priority": 100, "region": "whole_recent", "visible_idle": true, "contains": ["plan, search, build anything"], "not": [ {"contains": ["ctrl+c to stop"]}, {"contains": ["esc to cancel"]}, {"contains": ["enter to confirm"]} ] }
+  ]
+}

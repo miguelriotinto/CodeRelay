@@ -41,4 +41,18 @@ class AgentColorPaletteTest {
     fun `claude and codex are distinct`() {
         assertNotEquals(agentColor("claude"), agentColor("codex"))
     }
+
+    @Test
+    fun `F5 agents map to distinct non-default colors`() {
+        val copilot = Color(red = 110 / 255f, green = 84 / 255f, blue = 148 / 255f)
+        val cursor = Color(red = 45 / 255f, green = 125 / 255f, blue = 210 / 255f)
+        val droid = Color(red = 210 / 255f, green = 120 / 255f, blue = 60 / 255f)
+        assertEquals(copilot, agentColor("copilot"))
+        assertEquals(cursor, agentColor("cursor-agent"))
+        assertEquals(droid, agentColor("droid"))
+        // Each is distinct from the codex-teal default.
+        assertNotEquals(agentColor("codex"), agentColor("copilot"))
+        assertNotEquals(agentColor("codex"), agentColor("cursor-agent"))
+        assertNotEquals(agentColor("codex"), agentColor("droid"))
+    }
 }

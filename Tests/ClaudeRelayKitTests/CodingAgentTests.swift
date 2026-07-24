@@ -102,7 +102,40 @@ final class CodingAgentTests: XCTestCase {
         XCTAssertEqual(CodingAgent.matching(title: "opencode session")?.id, "opencode")
     }
 
-    func testAllContainsThreeAgents() {
-        XCTAssertEqual(Set(CodingAgent.all.map { $0.id }), ["claude", "codex", "opencode"])
+    func testAllContainsRegisteredAgents() {
+        XCTAssertEqual(Set(CodingAgent.all.map { $0.id }),
+                       ["claude", "codex", "opencode", "copilot", "cursor-agent", "droid"])
+    }
+
+    // MARK: - F5 new agents
+
+    func testCopilotMatch() {
+        XCTAssertEqual(CodingAgent.matching(processName: "copilot")?.id, "copilot")
+        XCTAssertEqual(CodingAgent.matching(title: "Copilot CLI")?.id, "copilot")
+        XCTAssertEqual(CodingAgent.find(id: "copilot")?.displayName, "Copilot CLI")
+    }
+
+    func testCursorAgentMatch() {
+        XCTAssertEqual(CodingAgent.matching(processName: "cursor-agent")?.id, "cursor-agent")
+        // Cursor's installer also symlinks the binary as `agent`.
+        XCTAssertEqual(CodingAgent.matching(processName: "agent")?.id, "cursor-agent")
+        XCTAssertEqual(CodingAgent.find(id: "cursor-agent")?.displayName, "Cursor Agent")
+    }
+
+    func testCursorAgentGenericNameDoesNotSubstringMatch() {
+        // `agent` matches only by strict equality / `-` prefix, never as a
+        // substring — so unrelated binaries like `agentd` don't false-match.
+        XCTAssertNil(CodingAgent.matching(processName: "agentd"))
+        XCTAssertNil(CodingAgent.matching(processName: "myagent"))
+    }
+
+    func testDroidMatch() {
+        XCTAssertEqual(CodingAgent.matching(processName: "droid")?.id, "droid")
+        XCTAssertEqual(CodingAgent.matching(title: "Droid — Factory")?.id, "droid")
+        // Title matching is substring-based: the generic word "factory" must
+        // NOT classify an ordinary session as Droid (e.g. a "factory-service"
+        // directory title). Only the specific "droid" keyword matches.
+        XCTAssertNil(CodingAgent.matching(title: "factory-service — zsh"))
+        XCTAssertEqual(CodingAgent.find(id: "droid")?.displayName, "Droid")
     }
 }

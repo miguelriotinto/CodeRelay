@@ -1,4 +1,5 @@
 import Foundation
+import ClaudeRelayKit
 
 /// Evaluates a screen snapshot against an agent's manifest and returns the
 /// winning detection. Ported from herdr's `evaluate_loaded_manifest` +
@@ -110,15 +111,21 @@ final class AgentStateDetector {
 
     // MARK: - Bundled manifest loading
 
-    /// Load the three bundled JSON manifests from the target's resource bundle,
-    /// then overlay any user override in `~/.claude-relay/agents/<id>.json`.
+    /// Load the bundled JSON manifests from the target's resource bundle, then
+    /// overlay any user override in `~/.claude-relay/agents/<id>.json`. The set
+    /// of ids is derived from `CodingAgent.all` so registering a new agent (and
+    /// shipping its `<id>.json`) is all that's needed — no second list to edit.
+    /// An agent without a bundled manifest is simply skipped (no error): it is
+    /// still detected/labeled, it just has no screen-state rules.
     static func loadBundled() -> [String: AgentManifest] {
         var result: [String: AgentManifest] = [:]
         let decoder = JSONDecoder()
 
-        for id in ["claude", "codex", "opencode"] {
-            guard let url = Bundle.module.url(forResource: id, withExtension: "json", subdirectory: "Agents"),
-                  let data = try? Data(contentsOf: url),
+        for id in CodingAgent.all.map(\.id) {
+            guard let url = Bundle.module.url(forResource: id, withExtension: "json", subdirectory: "Agents") else {
+                continue
+            }
+            guard let data = try? Data(contentsOf: url),
                   let manifest = try? decoder.decode(AgentManifest.self, from: data) else {
                 RelayLogger.log(.error, category: "detection", "Failed to load bundled manifest: \(id)")
                 continue

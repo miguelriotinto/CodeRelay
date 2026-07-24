@@ -1,0 +1,7 @@
+{
+  "id": "droid",
+  "rules": [
+    { "id": "mission_proposal_prompt", "state": "blocked", "priority": 900, "region": "whole_recent", "visible_blocker": true, "contains": ["proceed with the proposal"], "any": [ {"contains": ["proceed with comment"]}, {"contains": ["manually edit mission"]}, {"contains": ["no and explain why"]} ] },
+    { "id": "spec_approval_prompt", "state": "blocked", "priority": 880, "region": "whole_recent", "visible_blocker": true, "contains": ["approve spec"], "all": [ {"any": [ {"contains": ["enter to select"]}, {"contains": ["enter to confirm"]}, {"contains": ["esc to cancel"]} ]} ] }
+  ]
+}

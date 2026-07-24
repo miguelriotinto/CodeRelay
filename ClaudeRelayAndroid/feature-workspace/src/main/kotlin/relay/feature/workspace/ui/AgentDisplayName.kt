@@ -10,5 +10,8 @@ fun friendlyAgentName(agentId: String?): String? = when (agentId) {
     "claude" -> "Claude Code"
     "codex" -> "Codex"
     "opencode" -> "Open Code"
+    "copilot" -> "Copilot CLI"
+    "cursor-agent" -> "Cursor Agent"
+    "droid" -> "Droid"
     else -> agentId
 }
