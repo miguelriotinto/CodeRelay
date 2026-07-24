@@ -14,19 +14,22 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     @Published public var activeSessionId: UUID? {
         didSet {
             // F3: persist the focused tab per-device so relaunch restores it.
-            // `isRestoringLayout` suppresses the write while we're applying the
-            // restored value back into the property during init.
-            guard !isRestoringLayout, activeSessionId != oldValue else { return }
+            // Restore goes through switchToSession (which sets this to the
+            // persisted value), so the resulting save is a diff-checked no-op —
+            // no suppression flag needed.
+            guard activeSessionId != oldValue else { return }
             ownershipStore.saveActiveSession(activeSessionId)
         }
     }
-    /// True only while `restorePersistedLayout()` is writing restored state back
-    /// into `@Published` properties, so their `didSet` hooks don't re-persist.
-    private var isRestoringLayout = false
     /// F3: the active session is restored from persistence exactly once, on the
     /// first successful session fetch — not on every reconnect (which would
     /// fight the user's live selection).
     private var didRestoreActiveSession = false
+    /// F3: holds the restore-through-switchToSession task so it isn't run
+    /// synchronously inside `fetchSessions` (switchToSession calls fetchSessions
+    /// at its end; the throttle guard makes the nested call a no-op, but
+    /// deferring keeps the two flows cleanly separated).
+    private var restoreActiveTask: Task<Void, Never>?
     @Published public var sessionNames: [UUID: String] = [:]
     @Published public var terminalTitles: [UUID: String] = [:]
     @Published public var isLoading = false
@@ -466,17 +469,24 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
             // F3: restore the focused tab once, on the first fetch. The prune
             // above already dropped a persisted active id the server no longer
-            // knows about, so this only restores a session that still exists
-            // and is owned by this device. Only when the user hasn't already
-            // selected something this launch.
+            // knows about, so `restored` here still exists on the server. Only
+            // when the user hasn't already selected something this launch.
+            //
+            // Restore through switchToSession — NOT a bare activeSessionId
+            // assignment — so the terminal is actually wired: it creates the
+            // TerminalViewModel, wires output, and resumeSession()s (triggering
+            // scrollback replay). A bare assignment would highlight a blank tab
+            // that switchToSession's `id != activeSessionId` guard then refuses
+            // to re-open. `restoreActiveTask` runs it after this fetch returns
+            // so switchToSession's own trailing fetchSessions() doesn't recurse.
             if !didRestoreActiveSession {
                 didRestoreActiveSession = true
                 if activeSessionId == nil,
                    let restored = ownershipStore.loadActiveSession(),
                    serverIds.contains(restored) {
-                    isRestoringLayout = true
-                    activeSessionId = restored
-                    isRestoringLayout = false
+                    restoreActiveTask = Task { [weak self] in
+                        await self?.switchToSession(id: restored)
+                    }
                 }
             }
         } catch {
