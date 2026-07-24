@@ -81,4 +81,83 @@ final class OSC52ParserTests: XCTestCase {
     func testUnicodeRoundTrips() {
         XCTAssertEqual(OSC52Parser.parse(osc52("café — 日本語 🎉")), ["café — 日本語 🎉"])
     }
+
+    // MARK: - Stateful: sequences split across PTY reads (Codex review)
+
+    /// Feed a full OSC 52 sequence one byte at a time; the completed write must
+    /// emerge exactly once, on the read carrying the terminator.
+    func testSequenceSplitByteByByte() {
+        var parser = OSC52Parser()
+        let seq = osc52("split across reads")
+        var results: [String] = []
+        for byte in seq {
+            results += parser.feed(Data([byte]))
+        }
+        XCTAssertEqual(results, ["split across reads"])
+    }
+
+    /// Split at a few representative boundaries (mid-prefix, mid-selection,
+    /// mid-payload, just before the terminator).
+    func testSequenceSplitAtVariousBoundaries() {
+        let seq = [UInt8](osc52("boundary test payload"))
+        for cut in [2, 4, 6, 10, seq.count - 1] {
+            var parser = OSC52Parser()
+            var results = parser.feed(Data(seq[0..<cut]))
+            XCTAssertTrue(results.isEmpty, "no emit before terminator (cut=\(cut))")
+            results += parser.feed(Data(seq[cut...]))
+            XCTAssertEqual(results, ["boundary test payload"], "cut=\(cut)")
+        }
+    }
+
+    /// A large payload that necessarily spans multiple 64 KB-ish reads.
+    func testLargePayloadSpanningReads() {
+        let text = String(repeating: "x", count: 200_000)  // > one PTY read
+        let seq = [UInt8](osc52(text))
+        var parser = OSC52Parser()
+        var results: [String] = []
+        var offset = 0
+        while offset < seq.count {
+            let end = min(offset + 65_536, seq.count)
+            results += parser.feed(Data(seq[offset..<end]))
+            offset = end
+        }
+        XCTAssertEqual(results, [text])
+    }
+
+    /// ST (ESC \) terminator split between its two bytes across reads.
+    func testSTTerminatorSplitAcrossReads() {
+        let seq = [UInt8](osc52("st split", useST: true))
+        var parser = OSC52Parser()
+        // Cut right after the ESC of the ESC-\ terminator.
+        let cut = seq.count - 1
+        var results = parser.feed(Data(seq[0..<cut]))
+        XCTAssertTrue(results.isEmpty)
+        results += parser.feed(Data(seq[cut...]))
+        XCTAssertEqual(results, ["st split"])
+    }
+
+    /// An unterminated sequence that exceeds the pending cap is abandoned, and
+    /// the parser recovers for the next valid sequence.
+    func testRunawaySequenceAbandonedThenRecovers() {
+        var parser = OSC52Parser()
+        // Start a sequence and feed a huge unterminated payload (> cap).
+        var runaway = Data("\u{1B}]52;c;".utf8)
+        runaway.append(Data(repeating: 0x41, count: OSC52Parser.maxPendingBytes + 10))  // 'A'…
+        XCTAssertEqual(parser.feed(runaway), [])
+        // A subsequent well-formed sequence still parses (buffer was reset).
+        XCTAssertEqual(parser.feed(osc52("recovered")), ["recovered"])
+    }
+
+    /// Two sequences, the second split across the boundary, in one stream.
+    func testMixedCompleteAndSplit() {
+        let first = [UInt8](osc52("first"))
+        let second = [UInt8](osc52("second"))
+        var parser = OSC52Parser()
+        // Chunk 1: all of first + half of second.
+        let half = second.count / 2
+        var chunk1 = first; chunk1.append(contentsOf: second[0..<half])
+        XCTAssertEqual(parser.feed(Data(chunk1)), ["first"])
+        // Chunk 2: rest of second.
+        XCTAssertEqual(parser.feed(Data(second[half...])), ["second"])
+    }
 }

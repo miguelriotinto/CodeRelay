@@ -92,6 +92,10 @@ public actor PTYSession: PTYSessionProtocol {
     private var outputHandler: (@Sendable (Data) -> Void)?
     /// F11: invoked with decoded OSC 52 clipboard text (terminal copy → device).
     private var clipboardHandler: (@Sendable (String) -> Void)?
+    /// F11: stateful OSC 52 parser — retains an in-progress clipboard sequence
+    /// across PTY reads (they're arbitrary ≤64 KB chunks, so a large payload
+    /// spans reads). Confined to this actor.
+    private var osc52Parser = OSC52Parser()
     private var exitHandler: (@Sendable () -> Void)?
     private let activityMonitor: SessionActivityMonitor
     private let screenModel: TerminalScreenModel
@@ -412,9 +416,20 @@ public actor PTYSession: PTYSessionProtocol {
         outputHandler?(data)
         // F11: surface OSC 52 clipboard writes (terminal copy → device). The
         // raw bytes still flow through outputHandler unchanged — OSC 52 is
-        // invisible to the emulator, so the terminal render is unaffected.
-        if let clipboardHandler {
-            for text in OSC52Parser.parse(data) { clipboardHandler(text) }
+        // invisible to the emulator, so the terminal render is unaffected. The
+        // parser is stateful: a sequence split across reads completes on a
+        // later chunk. Always feed (even with no handler) so parser state
+        // doesn't desync across attach/detach.
+        //
+        // Coalesce to the LAST write in the chunk: each OSC 52 write REPLACES
+        // the clipboard, so only the final one matters. This also bounds a
+        // flood — a chunk packed with tiny sequences (a 64 KB read can hold
+        // ~5k) must not fan out to thousands of clipboard_update frames +
+        // pasteboard writes (clipboard_update bypasses the inflight-byte
+        // backpressure that guards binary output).
+        let clipboardWrites = osc52Parser.feed(data)
+        if let clipboardHandler, let latest = clipboardWrites.last {
+            clipboardHandler(latest)
         }
     }
 

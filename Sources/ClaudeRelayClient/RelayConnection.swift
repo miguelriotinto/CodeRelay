@@ -502,6 +502,14 @@ public final class RelayConnection: ObservableObject {
                     }
                 }
             } catch {
+                // Forward-compat: an OLD client that predates a newer additive
+                // ServerMessage type (e.g. clipboard_update) throws "unknown
+                // type" here from MessageEnvelope's decoder — NOT the
+                // `default: break` above, which only covers new clients. That's
+                // why unknown server messages are safe on old clients: this
+                // catch logs and continues. Keep it benign — do NOT route
+                // decode failures to onSendFailed or the receive loop, or every
+                // additive message type would kill old-client connections.
                 logger.warning("Failed to decode: \(error.localizedDescription, privacy: .public)")
             }
 
