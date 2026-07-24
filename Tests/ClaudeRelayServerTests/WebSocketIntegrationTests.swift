@@ -316,6 +316,68 @@ final class WebSocketIntegrationTests: XCTestCase {
         connection.disconnect()
     }
 
+    /// Regression: creating a session must NOT send the creating connection a
+    /// `session_stolen` push for the session it just created. `handleSessionCreate`
+    /// creates then immediately attaches; if the attach doesn't exclude the
+    /// creator's own steal observer, the creator is told it "stole" its own new
+    /// session. On iOS this drives `handleSessionStolen` to tear the session down
+    /// and surface "Unexpected server response" / a spurious "Session Moved" alert.
+    @MainActor
+    func testCreateSessionDoesNotSelfSteal() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WSIntegrationSelfSteal-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { try? group.syncShutdownGracefully() }
+
+        var config = RelayConfig.default
+        config.wsPort = UInt16.random(in: 19_000..<20_000)
+        config.adminPort = UInt16.random(in: 20_000..<21_000)
+
+        let tokenStore = TokenStore(directory: tempDir)
+        let (plaintext, _) = try await tokenStore.create(label: "self-steal")
+
+        let sessionManager = SessionManager(
+            config: config,
+            tokenStore: tokenStore,
+            ptyFactory: { id, cols, rows, scrollback in
+                MockPTYSession(sessionId: id, cols: cols, rows: rows, scrollbackSize: scrollback)
+            }
+        )
+
+        let server = WebSocketServer(
+            group: group, config: config,
+            sessionManager: sessionManager, tokenStore: tokenStore
+        )
+        try await server.start()
+        defer { Task { try? await server.stop() } }
+        try? await Task.sleep(for: .milliseconds(100))
+
+        let connection = RelayConnection()
+        let controller = SessionController(connection: connection)
+        let clientConfig = ConnectionConfig(name: "self-steal", host: "127.0.0.1", port: config.wsPort)
+
+        var stolenSessionIds: [UUID] = []
+        connection.onSessionStolen = { id in
+            stolenSessionIds.append(id)
+        }
+
+        try await connection.connect(config: clientConfig, token: plaintext)
+        try await controller.authenticate(token: plaintext)
+
+        let createdId = try await controller.createSession(name: "fresh")
+
+        // Give any (erroneous) steal push time to arrive on this connection.
+        try? await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertFalse(stolenSessionIds.contains(createdId),
+            "Creating connection must not receive a session_stolen for the session it just created")
+
+        connection.disconnect()
+    }
+
     /// Verifies that `replayComplete` is emitted after scrollback binary data
     /// and before `sessionActivity` when attaching to a session with history.
     @MainActor

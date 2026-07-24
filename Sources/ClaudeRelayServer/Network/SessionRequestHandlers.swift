@@ -31,13 +31,16 @@ extension RelayMessageHandler {
     func handleSessionCreate(name: String?, cols: UInt16?, rows: UInt16?, context: ChannelHandlerContext) {
         guard let tokenId = authenticatedTokenId else { return }
         let mgr = self.sessionManager
+        let myStealId = self.stealObserverId
         bridgeToEventLoopWithCtx(
             context: context,
             work: { [weak self] ctx -> (SessionInfo, any PTYSessionProtocol) in
                 await self?.autoDetachIfNeeded(ctx: ctx)
                 let info = try await mgr.createSession(tokenId: tokenId, cols: cols ?? 80, rows: rows ?? 24, name: name)
-                // Attach immediately.
-                let (_, pty) = try await mgr.attachSession(id: info.id, tokenId: tokenId)
+                // Attach immediately. Exclude our own steal observer so the
+                // creating connection isn't told it "stole" the session it just
+                // created (attachSession always fires steal notifications).
+                let (_, pty) = try await mgr.attachSession(id: info.id, tokenId: tokenId, excludeObserver: myStealId)
                 RelayLogger.log(category: "session", "Session created: \(info.id) (name: \(name ?? "nil"))")
                 return (info, pty)
             },
