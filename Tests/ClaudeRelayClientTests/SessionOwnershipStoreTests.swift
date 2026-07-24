@@ -152,4 +152,76 @@ final class SessionOwnershipStoreTests: XCTestCase {
         XCTAssertTrue(result.isEmpty)
         XCTAssertEqual(defaults.writeCount, writesBefore, "No-op prune must not touch UserDefaults")
     }
+
+    // MARK: - F3 layout persistence
+
+    func testLayoutKeysAreDeviceScoped() {
+        let store = SessionOwnershipStore(keyPrefix: "com.clauderelay", deviceId: "DEV-123", defaults: defaults)
+        XCTAssertEqual(store.activeSessionKey, "com.clauderelay.activeSession.DEV-123")
+        XCTAssertEqual(store.collapsedGroupsKey, "com.clauderelay.collapsedGroups.DEV-123")
+        let other = SessionOwnershipStore(keyPrefix: "com.clauderelay", deviceId: "OTHER", defaults: defaults)
+        XCTAssertNotEqual(store.activeSessionKey, other.activeSessionKey,
+                          "one device's focus must not overwrite another's")
+    }
+
+    func testActiveSessionRoundTrips() {
+        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        let id = UUID()
+        XCTAssertTrue(store.saveActiveSession(id))
+        // A fresh store reading the same defaults sees the persisted value.
+        let reopened = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        XCTAssertEqual(reopened.loadActiveSession(), id)
+    }
+
+    func testActiveSessionSaveIsDiffChecked() {
+        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        let id = UUID()
+        XCTAssertTrue(store.saveActiveSession(id))
+        let writes = defaults.writeCount
+        XCTAssertFalse(store.saveActiveSession(id), "re-saving the same id must no-op")
+        XCTAssertEqual(defaults.writeCount, writes)
+    }
+
+    func testActiveSessionClearsWithNil() {
+        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        let id = UUID()
+        store.saveActiveSession(id)
+        XCTAssertTrue(store.saveActiveSession(nil))
+        XCTAssertNil(store.loadActiveSession())
+    }
+
+    func testPruneClearsActiveSessionNoLongerOnServer() {
+        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        let active = UUID()
+        let survivor = UUID()
+        store.saveActiveSession(active)
+        var names: [UUID: String] = [:]; var owned: Set<UUID> = []; var agents: [UUID: String] = [:]
+        // `active` is not in serverIds → prune must clear it so we don't restore a dead tab.
+        _ = store.pruneToServerSessions(serverIds: [survivor], names: &names, owned: &owned, agents: &agents)
+        XCTAssertNil(store.loadActiveSession())
+    }
+
+    func testPrunePreservesActiveSessionStillOnServer() {
+        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        let active = UUID()
+        store.saveActiveSession(active)
+        var names: [UUID: String] = [:]; var owned: Set<UUID> = []; var agents: [UUID: String] = [:]
+        _ = store.pruneToServerSessions(serverIds: [active], names: &names, owned: &owned, agents: &agents)
+        XCTAssertEqual(store.loadActiveSession(), active)
+    }
+
+    func testCollapsedGroupsRoundTrip() {
+        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        XCTAssertTrue(store.saveCollapsedGroups(["/repo/a", "/repo/b"]))
+        let reopened = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        XCTAssertEqual(reopened.loadCollapsedGroups(), ["/repo/a", "/repo/b"])
+    }
+
+    func testCollapsedGroupsSaveIsDiffChecked() {
+        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        _ = store.saveCollapsedGroups(["x"])
+        let writes = defaults.writeCount
+        XCTAssertFalse(store.saveCollapsedGroups(["x"]), "re-saving the same set must no-op")
+        XCTAssertEqual(defaults.writeCount, writes)
+    }
 }

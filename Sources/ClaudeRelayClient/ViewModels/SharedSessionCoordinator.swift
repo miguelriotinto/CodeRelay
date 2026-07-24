@@ -11,7 +11,25 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     // MARK: - Published State
 
     @Published public var sessions: [SessionInfo] = []
-    @Published public var activeSessionId: UUID?
+    @Published public var activeSessionId: UUID? {
+        didSet {
+            // F3: persist the focused tab per-device so relaunch restores it.
+            // Restore goes through switchToSession (which sets this to the
+            // persisted value), so the resulting save is a diff-checked no-op —
+            // no suppression flag needed.
+            guard activeSessionId != oldValue else { return }
+            ownershipStore.saveActiveSession(activeSessionId)
+        }
+    }
+    /// F3: the active session is restored from persistence exactly once, on the
+    /// first successful session fetch — not on every reconnect (which would
+    /// fight the user's live selection).
+    private var didRestoreActiveSession = false
+    /// F3: holds the restore-through-switchToSession task so it isn't run
+    /// synchronously inside `fetchSessions` (switchToSession calls fetchSessions
+    /// at its end; the throttle guard makes the nested call a no-op, but
+    /// deferring keeps the two flows cleanly separated).
+    private var restoreActiveTask: Task<Void, Never>?
     @Published public var sessionNames: [UUID: String] = [:]
     @Published public var terminalTitles: [UUID: String] = [:]
     @Published public var isLoading = false
@@ -289,6 +307,21 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     // stay on the coordinator for SwiftUI binding; the store handles the
     // UserDefaults encoding and diff-checked writes (C-21).
 
+    // MARK: - Sidebar layout (F3)
+
+    /// Load the persisted collapsed workspace-group ids (per-device). Sidebar
+    /// views seed their `SidebarCollapseModel` from this at appear time so the
+    /// collapse layout survives relaunch.
+    public func loadCollapsedGroups() -> Set<String> {
+        ownershipStore.loadCollapsedGroups()
+    }
+
+    /// Persist the collapsed workspace-group ids after a toggle (per-device,
+    /// diff-checked).
+    public func saveCollapsedGroups(_ groups: Set<String>) {
+        ownershipStore.saveCollapsedGroups(groups)
+    }
+
     // MARK: - Ownership
 
     public func claimSession(_ id: UUID) {
@@ -431,6 +464,29 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                     // `refetch: false` — we're already inside `fetchSessions`.
                     claimSession(id)
                     cleanUpStolenSession(id, alert: aliveElsewhere.contains(id), refetch: false)
+                }
+            }
+
+            // F3: restore the focused tab once, on the first fetch. The prune
+            // above already dropped a persisted active id the server no longer
+            // knows about, so `restored` here still exists on the server. Only
+            // when the user hasn't already selected something this launch.
+            //
+            // Restore through switchToSession — NOT a bare activeSessionId
+            // assignment — so the terminal is actually wired: it creates the
+            // TerminalViewModel, wires output, and resumeSession()s (triggering
+            // scrollback replay). A bare assignment would highlight a blank tab
+            // that switchToSession's `id != activeSessionId` guard then refuses
+            // to re-open. `restoreActiveTask` runs it after this fetch returns
+            // so switchToSession's own trailing fetchSessions() doesn't recurse.
+            if !didRestoreActiveSession {
+                didRestoreActiveSession = true
+                if activeSessionId == nil,
+                   let restored = ownershipStore.loadActiveSession(),
+                   serverIds.contains(restored) {
+                    restoreActiveTask = Task { [weak self] in
+                        await self?.switchToSession(id: restored)
+                    }
                 }
             }
         } catch {
