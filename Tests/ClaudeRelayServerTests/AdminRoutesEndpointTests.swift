@@ -161,4 +161,43 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
         XCTAssertEqual(status, 404)
         XCTAssertNotNil(json?["error"])
     }
+
+    // MARK: - F6 hook state endpoint
+
+    func testHookStateForActiveSessionReturns200() async throws {
+        let manager = makeManager()
+        let (_, token) = try await createTestToken()
+        let info = try await manager.createSession(tokenId: token.id, cols: 80, rows: 24)
+        let (status, json) = await route(
+            .POST, "/hook/state",
+            body: ["sessionId": info.id.uuidString, "state": "blocked"],
+            manager: manager)
+        XCTAssertEqual(status, 200)
+        XCTAssertEqual(json?["ok"] as? Bool, true)
+    }
+
+    func testHookStateUnknownSessionReturns404() async throws {
+        let (status, json) = await route(
+            .POST, "/hook/state",
+            body: ["sessionId": UUID().uuidString, "state": "working"])
+        XCTAssertEqual(status, 404)
+        XCTAssertNotNil(json?["error"])
+    }
+
+    func testHookStateInvalidStateReturns400() async throws {
+        let manager = makeManager()
+        let (_, token) = try await createTestToken()
+        let info = try await manager.createSession(tokenId: token.id, cols: 80, rows: 24)
+        // "unknown" is a real enum case but not a valid hook-reportable state.
+        let (status, _) = await route(
+            .POST, "/hook/state",
+            body: ["sessionId": info.id.uuidString, "state": "unknown"],
+            manager: manager)
+        XCTAssertEqual(status, 400)
+    }
+
+    func testHookStateMalformedBodyReturns400() async throws {
+        let (status, _) = await route(.POST, "/hook/state", body: ["state": "working"])
+        XCTAssertEqual(status, 400)
+    }
 }

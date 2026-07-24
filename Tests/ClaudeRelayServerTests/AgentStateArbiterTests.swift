@@ -75,4 +75,68 @@ final class AgentStateArbiterTests: XCTestCase {
         monitor.updateScreenDetection(detection(.idle, visibleIdle: true), now: t0.addingTimeInterval(0.1))
         XCTAssertEqual(last, .idle)
     }
+
+    // MARK: - F6 hook-authored state authority
+
+    func testHookStatePublishesImmediately() {
+        var last: AgentDetectedState?
+        let entry = Date(timeIntervalSinceReferenceDate: 0)
+        let monitor = makeAgentMonitor(entryDate: entry) { last = $0 }
+        monitor.applyHookState(.blocked, now: entry.addingTimeInterval(1))
+        XCTAssertEqual(last, .blocked, "hook state publishes without waiting for screen anti-flap")
+    }
+
+    func testFreshHookStateOverridesScreenDetection() {
+        var last: AgentDetectedState?
+        let entry = Date(timeIntervalSinceReferenceDate: 0)
+        let monitor = makeAgentMonitor(entryDate: entry) { last = $0 }
+        let t0 = entry.addingTimeInterval(5)
+        monitor.applyHookState(.working, now: t0)
+        last = nil
+        // Screen says idle 1s later, but the hook (working) is still fresh → ignored.
+        monitor.updateScreenDetection(detection(.idle, visibleIdle: true), now: t0.addingTimeInterval(1))
+        XCTAssertNil(last, "screen detection must not override a fresh hook state")
+    }
+
+    func testScreenDetectionResumesWhenHookStateGoesStale() {
+        var last: AgentDetectedState?
+        let entry = Date(timeIntervalSinceReferenceDate: 0)
+        let monitor = makeAgentMonitor(entryDate: entry) { last = $0 }
+        let t0 = entry.addingTimeInterval(5)
+        monitor.applyHookState(.working, now: t0)
+        last = nil
+        // 11s later (> 10s TTL) the hook is stale → screen detection wins again.
+        monitor.updateScreenDetection(detection(.idle, visibleIdle: true), now: t0.addingTimeInterval(11))
+        XCTAssertEqual(last, .idle, "stale hook state must let screen detection resume")
+    }
+
+    func testAgentChangeClearsHookAuthority() {
+        // Regression (Codex review): hook authority is scoped to the agent it
+        // was reported for. If agent A's hook fires, then agent B is detected
+        // within the 10s TTL, B must be classified by screen detection from
+        // scratch — A's stale hook timestamp must not suppress it.
+        var last: AgentDetectedState?
+        let entry = Date(timeIntervalSinceReferenceDate: 0)
+        let monitor = makeAgentMonitor(entryDate: entry) { last = $0 }  // agent = claude
+        let t0 = entry.addingTimeInterval(5)
+        monitor.applyHookState(.working, now: t0)
+        last = nil
+        // A different agent enters 1s later (well within the 10s hook TTL).
+        monitor.updateForegroundProcess(agent: .codex, now: t0.addingTimeInterval(1))
+        // Screen detection for the NEW agent must now be honored, not suppressed.
+        monitor.updateScreenDetection(detection(.blocked, visibleBlocker: true),
+                                      now: t0.addingTimeInterval(1 + 3.1))  // past startup grace
+        XCTAssertEqual(last, .blocked, "new agent's screen detection must not be suppressed by prior agent's hook")
+    }
+
+    func testHookStateIgnoredWhenNoAgentActive() {
+        var last: AgentDetectedState?
+        // A monitor with no agent entered — a stray hook must not fabricate one.
+        let monitor = SessionActivityMonitor(
+            silenceThreshold: 10, agentSilenceThreshold: 10,
+            onChange: { _, _, agentState, _, _ in last = agentState }
+        )
+        monitor.applyHookState(.blocked, now: Date(timeIntervalSinceReferenceDate: 0))
+        XCTAssertNil(last, "hook state for a session with no active agent is ignored")
+    }
 }

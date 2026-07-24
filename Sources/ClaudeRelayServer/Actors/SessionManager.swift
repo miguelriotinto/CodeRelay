@@ -67,8 +67,13 @@ public actor SessionManager {
         self.config = config
         self.tokenStore = tokenStore
         self.gitRootResolver = gitRootResolver
+        // Capture the admin port so the default PTY factory can pass it into
+        // each session's environment (F6 hook endpoint). Keeps the PTYFactory
+        // typealias unchanged so test mocks aren't affected.
+        let adminPort = Int(config.adminPort)
         self.ptyFactory = ptyFactory ?? { id, cols, rows, scrollback in
-            try PTYSession(sessionId: id, cols: cols, rows: rows, scrollbackSize: scrollback)
+            try PTYSession(sessionId: id, cols: cols, rows: rows,
+                           scrollbackSize: scrollback, adminPort: adminPort)
         }
     }
 
@@ -434,6 +439,27 @@ public actor SessionManager {
             callback(sessionId, managed.latestActivity, managed.latestAgent,
                      managed.latestAgentState, managed.latestTitle, managed.latestWorkingDir)
         }
+    }
+
+    /// Apply an authoritative agent state reported by a local lifecycle hook
+    /// (F6). Forwarded to the session's PTY monitor, which publishes the change
+    /// through the normal activity-observer chain. Returns false when the
+    /// session is unknown or terminal, so the admin handler can 404.
+    ///
+    /// `await`s the PTY hop (rather than spawning a detached Task) so state is
+    /// applied before the admin handler returns 200. This preserves ordering:
+    /// Claude Code fires lifecycle hooks sequentially (each curl blocks on the
+    /// 200), so a rapid working→idle burst applies in send order. A detached
+    /// Task would let the two hops reach the PTY actor out of order — the
+    /// last-EXECUTED state would win and pin for the full TTL, inverting the
+    /// finish edge and mis-firing the F1 push. `applyHookState` never re-enters
+    /// SessionManager, so awaiting is deadlock-free.
+    @discardableResult
+    public func reportHookState(sessionId: UUID, state: AgentDetectedState) async -> Bool {
+        guard let managed = sessions[sessionId], !managed.info.state.isTerminal,
+              let pty = managed.ptySession else { return false }
+        await pty.applyHookState(state)
+        return true
     }
 
     public func reportActivityChange(

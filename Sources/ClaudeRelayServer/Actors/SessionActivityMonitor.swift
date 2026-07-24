@@ -41,6 +41,28 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     private static let pendingIdleConfirmationLimit = 3
     private static let startupGrace: TimeInterval = 3.0
 
+    // MARK: - Hook-Authored State Authority (F6)
+
+    /// Timestamp of the most recent state authored by a local agent hook (e.g.
+    /// the Claude Code lifecycle hook), or nil if none. While this is *fresh*
+    /// (within `hookStateTTL`), the hook is authoritative: screen detection is
+    /// treated as fallback and does not overwrite `agentState`. When it goes
+    /// stale (hook uninstalled, crashed, or agent that doesn't report), screen
+    /// detection silently resumes — no flag, graceful degradation by design.
+    /// The hook reports STATE only; agent *identity* stays owned by the
+    /// foreground-process poll, so a hook can never evict a running agent.
+    private var hookStateAt: Date?
+    /// Freshness window for hook-authored state. A well-behaved hook fires on
+    /// every lifecycle edge; this bounds how long a single edge suppresses
+    /// screen detection if the hook goes silent mid-session.
+    private static let hookStateTTL: TimeInterval = 10.0
+
+    /// True when hook-authored state was set within the TTL as of `now`.
+    private func hookAuthoritative(now: Date) -> Bool {
+        guard let at = hookStateAt else { return false }
+        return now.timeIntervalSince(at) < Self.hookStateTTL
+    }
+
     // MARK: - Configuration
 
     private let silenceThreshold: TimeInterval
@@ -174,6 +196,11 @@ public final class SessionActivityMonitor: @unchecked Sendable {
                 agentState = nil            // clear stale detection on agent change
                 pendingIdleStartedAt = nil
                 pendingIdleConfirmations = 0
+                // Hook authority is scoped to the agent it was reported for.
+                // A new agent must be classified by screen detection from
+                // scratch — the previous agent's fresh hook timestamp must not
+                // suppress it for the rest of the TTL.
+                hookStateAt = nil
                 transition(to: .agentActive)
                 resetSilenceTimer()
             }
@@ -190,6 +217,13 @@ public final class SessionActivityMonitor: @unchecked Sendable {
     /// output for the active agent (nil when no agent / no manifest).
     public func updateScreenDetection(_ detection: AgentDetection?, now: Date) {
         guard !cancelled, activeAgent != nil, let detection else { return }
+
+        // Hook authority (F6): while a local hook is freshly reporting this
+        // session's state, it wins — screen detection becomes a no-op so its
+        // anti-flap lag and misdetections don't override the authoritative
+        // lifecycle signal. Falls through to screen detection once the hook
+        // state goes stale.
+        if hookAuthoritative(now: now) { return }
 
         // Overlay (transcript viewer, model picker): freeze current state.
         if detection.skipStateUpdate { return }
@@ -224,6 +258,25 @@ public final class SessionActivityMonitor: @unchecked Sendable {
         lastVisibleBlocker = detection.visibleBlocker
         lastVisibleWorking = detection.visibleWorking
         agentState = next
+        revision &+= 1
+        onChange(state, activeAgent, agentState, title, revision)
+    }
+
+    /// Apply an authoritative agent state reported by a local lifecycle hook
+    /// (F6). Refreshes the hook-authority window and, if the state changed,
+    /// publishes it immediately — bypassing screen-detection anti-flap, since
+    /// the hook signal is already authoritative. Reports STATE only: `activeAgent`
+    /// is untouched, so this never asserts or evicts an agent. No-op if the
+    /// session is cancelled or no agent is currently active (a hook for a
+    /// session with no detected agent is ignored rather than fabricating one).
+    public func applyHookState(_ hookState: AgentDetectedState, now: Date) {
+        guard !cancelled, activeAgent != nil else { return }
+        hookStateAt = now
+        // Any pending screen-driven idle hold is moot once the hook speaks.
+        pendingIdleStartedAt = nil
+        pendingIdleConfirmations = 0
+        guard hookState != agentState else { return }
+        agentState = hookState
         revision &+= 1
         onChange(state, activeAgent, agentState, title, revision)
     }
@@ -312,6 +365,7 @@ public final class SessionActivityMonitor: @unchecked Sendable {
         agentState = nil
         agentEnteredAt = nil
         pendingIdleStartedAt = nil
+        hookStateAt = nil   // hook authority does not outlive the agent it tracked
         transition(to: .active)
         resetSilenceTimer()
     }
