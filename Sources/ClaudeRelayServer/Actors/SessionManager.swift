@@ -443,16 +443,22 @@ public actor SessionManager {
 
     /// Apply an authoritative agent state reported by a local lifecycle hook
     /// (F6). Forwarded to the session's PTY monitor, which publishes the change
-    /// through the normal activity-observer chain (so `reportActivityChange`
-    /// still handles fan-out + revision ordering). Returns false when the
-    /// session is unknown or terminal, so the admin handler can 404. Terminal
-    /// PTY hops run in a detached Task since this actor can't await the PTY
-    /// actor synchronously.
+    /// through the normal activity-observer chain. Returns false when the
+    /// session is unknown or terminal, so the admin handler can 404.
+    ///
+    /// `await`s the PTY hop (rather than spawning a detached Task) so state is
+    /// applied before the admin handler returns 200. This preserves ordering:
+    /// Claude Code fires lifecycle hooks sequentially (each curl blocks on the
+    /// 200), so a rapid working→idle burst applies in send order. A detached
+    /// Task would let the two hops reach the PTY actor out of order — the
+    /// last-EXECUTED state would win and pin for the full TTL, inverting the
+    /// finish edge and mis-firing the F1 push. `applyHookState` never re-enters
+    /// SessionManager, so awaiting is deadlock-free.
     @discardableResult
-    public func reportHookState(sessionId: UUID, state: AgentDetectedState) -> Bool {
+    public func reportHookState(sessionId: UUID, state: AgentDetectedState) async -> Bool {
         guard let managed = sessions[sessionId], !managed.info.state.isTerminal,
               let pty = managed.ptySession else { return false }
-        Task { await pty.applyHookState(state) }
+        await pty.applyHookState(state)
         return true
     }
 

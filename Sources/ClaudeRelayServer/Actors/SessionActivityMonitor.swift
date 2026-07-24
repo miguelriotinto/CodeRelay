@@ -196,6 +196,11 @@ public final class SessionActivityMonitor: @unchecked Sendable {
                 agentState = nil            // clear stale detection on agent change
                 pendingIdleStartedAt = nil
                 pendingIdleConfirmations = 0
+                // Hook authority is scoped to the agent it was reported for.
+                // A new agent must be classified by screen detection from
+                // scratch — the previous agent's fresh hook timestamp must not
+                // suppress it for the rest of the TTL.
+                hookStateAt = nil
                 transition(to: .agentActive)
                 resetSilenceTimer()
             }
@@ -360,6 +365,7 @@ public final class SessionActivityMonitor: @unchecked Sendable {
         agentState = nil
         agentEnteredAt = nil
         pendingIdleStartedAt = nil
+        hookStateAt = nil   // hook authority does not outlive the agent it tracked
         transition(to: .active)
         resetSilenceTimer()
     }
