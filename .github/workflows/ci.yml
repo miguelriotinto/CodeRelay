@@ -96,16 +96,20 @@ jobs:
 
   mac-build:
     name: macOS app build
-    runs-on: macos-15
+    # macos-26: the macOS app's toolbar uses macOS 26 SDK APIs (ToolbarSpacer,
+    # guarded at runtime by `if #available(macOS 26.0, *)`). `#available` gates
+    # execution, but the symbol must still exist in the *compile-time SDK* —
+    # Xcode 16.4 (the newest on macos-15) predates it and fails with "cannot
+    # find 'ToolbarSpacer' in scope". Build against the macOS 26 SDK instead.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 16
+      - name: Select newest Xcode 26
         run: |
-          # macos-15 ships multiple Xcode versions; pick the highest 16.x available.
-          # swift-syntax 602.0.0 (pulled via WhisperKit → swift-transformers) needs
-          # Swift 6.1+, which ships with Xcode 16.3.
-          XCODE=$(ls -d /Applications/Xcode_16.*.app 2>/dev/null | sort -V | tail -1)
+          # macos-26 ships Xcode 26.x, whose SDK contains the macOS 26 toolbar
+          # APIs the app uses. Pick the highest 26.x available.
+          XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
