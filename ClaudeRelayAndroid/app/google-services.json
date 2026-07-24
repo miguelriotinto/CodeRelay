@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "223172703400",
+    "project_id": "code-relay-61fc4",
+    "storage_bucket": "code-relay-61fc4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:223172703400:android:62684fefdd6d1753dd7e9d",
+        "android_client_info": {
+          "package_name": "com.singular.coderelay"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAsVcMnZROeYeZFhKJf8x5wLOT5E5Wh0Bk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -37,6 +37,11 @@ onnxruntime = "1.20.0"
 # for arm64-v8a / armeabi-v7a / x86 / x86_64; Apache-2.0.
 termlib = "0.1.0"
 
+# Firebase Cloud Messaging (F1 Android push). google-services applies the
+# google-services.json config; firebase-bom pins the messaging artifact version.
+google-services = "4.4.2"
+firebase-bom = "33.7.0"
+
 androidx-test-ext-junit = "1.2.1"
 androidx-test-runner = "1.6.2"
 androidx-activity-compose = "1.9.3"
@@ -56,6 +61,8 @@ mlkit-barcode = "17.3.0"
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebase-bom" }
+firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
@@ -115,3 +122,4 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+google-services = { id = "com.google.gms.google-services", version.ref = "google-services" }

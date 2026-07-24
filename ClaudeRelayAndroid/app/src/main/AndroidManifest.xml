@@ -75,6 +75,16 @@
             android:name="relay.app.ContinuousListeningService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- FCM push (F1 Android). Receives registration-token refreshes and
+             agent-activity pushes; not exported (system-bound). -->
+        <service
+            android:name="relay.app.RelayFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

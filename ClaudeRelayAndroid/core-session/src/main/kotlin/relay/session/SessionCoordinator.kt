@@ -11,6 +11,7 @@ import relay.net.SessionException
 import relay.protocol.ActivityState
 import relay.protocol.ConnectionConfig
 import relay.protocol.ClientMessage
+import relay.protocol.PushPlatform
 import relay.protocol.ServerMessage
 import relay.protocol.SessionInfo
 import relay.protocol.SessionNamingTheme
@@ -378,6 +379,51 @@ class SessionCoordinator(
         lastHealthyAtMs = nowMs()
         authCoordinator.ensureAuthenticated()
         fetchSessions()
+    }
+
+    /**
+     * (Re)register this device's FCM push token with the server, or unregister
+     * it, per [PushRegistrationController]. Pure at this layer — `:app` supplies
+     * `deviceToken`/`permissionGranted`/`deviceId` (from FcmTokenBridge +
+     * DeviceIdentifier) since those need Android `Context`. Best-effort: a failed
+     * send is retried on the next trigger (connect / token refresh / settings
+     * change). Mirrors the Swift `syncPushRegistration`.
+     */
+    suspend fun syncPushRegistration(
+        deviceToken: String?,
+        permissionGranted: Boolean,
+        deviceId: String,
+        pushEnabled: Boolean,
+        notifyOnFinished: Boolean,
+    ) {
+        val action = PushRegistrationController.decide(
+            permissionGranted = permissionGranted,
+            deviceToken = deviceToken,
+            connected = connection.isAlive(),
+            pushEnabledSetting = pushEnabled,
+            notifyOnFinished = notifyOnFinished,
+        )
+        try {
+            when (action) {
+                is PushRegistrationController.Action.Register -> {
+                    val tok = deviceToken ?: return
+                    connection.send(
+                        ClientMessage.RegisterPushToken(
+                            platform = PushPlatform.FCM,
+                            token = tok,
+                            deviceId = deviceId,
+                            enabled = action.enabled,
+                            notifyOnFinished = action.notifyOnFinished,
+                        )
+                    )
+                }
+                PushRegistrationController.Action.Unregister ->
+                    connection.send(ClientMessage.UnregisterPushToken(deviceId))
+                PushRegistrationController.Action.Noop -> Unit
+            }
+        } catch (_: Throwable) {
+            // Best-effort; retried on the next sync trigger.
+        }
     }
 
     // MARK: - Names

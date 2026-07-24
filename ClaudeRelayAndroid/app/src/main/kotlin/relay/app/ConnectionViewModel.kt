@@ -65,6 +65,12 @@ class ConnectionViewModel : ViewModel() {
             session.coordinator.connect()
             _activeSession.value = session
             settings.setLastConnectedServerId(config.id.toString())
+            // F1 Android push: register this device's FCM token now, and again
+            // whenever the OS vends a fresh token while this session is live.
+            runCatching { PushSync.sync(context, session.coordinator) }
+            FcmTokenBridge.onTokenRefreshed = {
+                session.scope.launch { runCatching { PushSync.sync(context, session.coordinator) } }
+            }
             null
         } catch (e: Throwable) {
             teardown()
@@ -77,6 +83,7 @@ class ConnectionViewModel : ViewModel() {
     /** Tears down the current session (cancel recovery, disconnect, cancel scope). */
     suspend fun teardown() {
         _activeSession.value?.let { session ->
+            FcmTokenBridge.onTokenRefreshed = null  // don't fire into a dead session
             session.speech.stop()
             session.coordinator.tearDown()
             session.scope.cancel()

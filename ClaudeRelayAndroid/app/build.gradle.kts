@@ -5,6 +5,10 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    // FCM: reads google-services.json (com.singular.coderelay) and wires the
+    // Firebase config resources. Safe to apply now that the JSON is present —
+    // the plugin fails the build if it's missing.
+    alias(libs.plugins.google.services)
 }
 
 // Release signing is driven from a NON-COMMITTED `keystore.properties` at the
@@ -99,6 +103,11 @@ kotlin {
 }
 
 dependencies {
+    // Firebase Cloud Messaging (F1 Android push). BOM pins the messaging
+    // version; the messaging artifact provides FirebaseMessagingService.
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
+
     // The full stack — this is the module that proves the whole graph links.
     implementation(project(":core-protocol"))
     implementation(project(":core-net"))
