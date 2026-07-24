@@ -97,7 +97,11 @@ public struct CodingAgent: Codable, Equatable, Hashable, Sendable {
 
     public static let droid = CodingAgent(
         id: "droid", displayName: "Droid",
-        processNames: ["droid"], titleKeywords: ["droid", "factory"]
+        // Title matching is substring-based (no word boundary), so keep the
+        // keyword specific: bare "factory" would false-match ordinary titles
+        // like "factory-service". Process-name detection ("droid") is the
+        // primary path regardless.
+        processNames: ["droid"], titleKeywords: ["droid"]
     )
 
     public static let all: [CodingAgent] = [

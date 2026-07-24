@@ -132,6 +132,10 @@ final class CodingAgentTests: XCTestCase {
     func testDroidMatch() {
         XCTAssertEqual(CodingAgent.matching(processName: "droid")?.id, "droid")
         XCTAssertEqual(CodingAgent.matching(title: "Droid — Factory")?.id, "droid")
+        // Title matching is substring-based: the generic word "factory" must
+        // NOT classify an ordinary session as Droid (e.g. a "factory-service"
+        // directory title). Only the specific "droid" keyword matches.
+        XCTAssertNil(CodingAgent.matching(title: "factory-service — zsh"))
         XCTAssertEqual(CodingAgent.find(id: "droid")?.displayName, "Droid")
     }
 }
