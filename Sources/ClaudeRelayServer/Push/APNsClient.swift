@@ -82,10 +82,13 @@ public actor APNsClient: PushSending {
 
     // MARK: - Send
 
-    public func send(deviceToken: String, platform: PushPlatform, title: String, body: String,
-                     deepLink: String, collapseKey: String) async -> PushResult {
+    public func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+                     body: String, deepLink: String, collapseKey: String) async -> PushResult {
         do {
             let jwt = try currentJWT()
+            // The device reports its own bundle id (iOS vs macOS differ); fall
+            // back to the configured default for older clients that omit it.
+            let apnsTopic = topic ?? config.bundleId
             let payload: [String: Any] = [
                 "aps": [
                     "alert": ["title": title, "body": body],
@@ -98,7 +101,7 @@ public actor APNsClient: PushSending {
             let url = "https://\(host)/3/device/\(deviceToken)"
             let headers = [
                 ("authorization", "bearer \(jwt)"),
-                ("apns-topic", config.bundleId),
+                ("apns-topic", apnsTopic),
                 ("apns-push-type", "alert"),
                 ("apns-collapse-id", String(collapseKey.prefix(64))),
             ]

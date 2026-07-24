@@ -4,15 +4,15 @@ import Foundation
 @testable import ClaudeRelayKit
 
 private actor FakeSender: PushSending {
-    private(set) var sent: [(token: String, body: String, collapse: String, deepLink: String)] = []
+    private(set) var sent: [(token: String, body: String, collapse: String, deepLink: String, topic: String?)] = []
     var result: PushResult = .delivered
     func setResult(_ r: PushResult) { result = r }
-    func send(deviceToken: String, platform: PushPlatform, title: String, body: String,
-              deepLink: String, collapseKey: String) async -> PushResult {
-        sent.append((deviceToken, body, collapseKey, deepLink))
+    func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+              body: String, deepLink: String, collapseKey: String) async -> PushResult {
+        sent.append((deviceToken, body, collapseKey, deepLink, topic))
         return result
     }
-    func snapshot() -> [(token: String, body: String, collapse: String, deepLink: String)] { sent }
+    func snapshot() -> [(token: String, body: String, collapse: String, deepLink: String, topic: String?)] { sent }
 }
 
 final class PushDispatcherTests: XCTestCase {
@@ -23,9 +23,10 @@ final class PushDispatcherTests: XCTestCase {
                     agentState: state, title: nil, workingDir: dir)
     }
 
-    private func reg(_ token: String, _ device: String, notifyOnFinished: Bool = false) -> PushRegistration {
+    private func reg(_ token: String, _ device: String, notifyOnFinished: Bool = false,
+                     topic: String? = nil) -> PushRegistration {
         PushRegistration(platform: .apns, token: token, deviceId: device,
-                         enabled: true, notifyOnFinished: notifyOnFinished, updatedAt: Date())
+                         enabled: true, notifyOnFinished: notifyOnFinished, updatedAt: Date(), topic: topic)
     }
 
     private func makeDispatcher(sender: PushSending,
@@ -59,6 +60,20 @@ final class PushDispatcherTests: XCTestCase {
         XCTAssertEqual(sent.count, 1, "the blocked edge must fire despite ending at idle")
         XCTAssertTrue(sent[0].deepLink.contains(sid.uuidString))
         XCTAssertFalse(sent[0].collapse.contains("/repo/a"), "collapse key must be hashed, not a raw path")
+    }
+
+    func testTopicIsForwardedFromRegistration() async {
+        // A device's per-registration topic (its bundle id) must reach the
+        // sender verbatim so an APNs provider fans out to the right iOS/macOS app.
+        let sid = UUID()
+        let sender = FakeSender()
+        let d = makeDispatcher(sender: sender,
+                               sessions: { _ in [self.session(sid, .blocked, dir: "/repo/a")] },
+                               tokens: { _ in [self.reg("dev1", "d1", topic: "com.claude.relay.mac")] })
+        await d.process(ActivityEvent(sessionId: sid, tokenId: "R", agentState: .blocked, revision: 1))
+        let sent = await sender.snapshot()
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertEqual(sent[0].topic, "com.claude.relay.mac")
     }
 
     func testEnqueuePreservesOrderForBurst() async {

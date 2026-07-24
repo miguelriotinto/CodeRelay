@@ -13,9 +13,13 @@ public enum PushResult: Equatable, Sendable {
 
 /// Sends a single push to one device token. Implemented by `APNsClient`,
 /// `FCMClient`, and `CompositePushSender` (which routes by platform).
+///
+/// `topic` is the device's APNs delivery topic (its bundle id); it lets one
+/// APNs provider fan out to distinct iOS/macOS apps. `nil` means "use the
+/// configured default"; FCM ignores it.
 public protocol PushSending: Sendable {
-    func send(deviceToken: String, platform: PushPlatform, title: String, body: String,
-              deepLink: String, collapseKey: String) async -> PushResult
+    func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+              body: String, deepLink: String, collapseKey: String) async -> PushResult
 }
 
 /// Routes each send to the provider matching the device's platform. Missing a
@@ -29,15 +33,15 @@ public struct CompositePushSender: PushSending {
         self.fcm = fcm
     }
 
-    public func send(deviceToken: String, platform: PushPlatform, title: String, body: String,
-                     deepLink: String, collapseKey: String) async -> PushResult {
+    public func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+                     body: String, deepLink: String, collapseKey: String) async -> PushResult {
         let sender: PushSending?
         switch platform {
         case .apns: sender = apns
         case .fcm:  sender = fcm
         }
         guard let sender else { return .failed("no sender configured for \(platform.rawValue)") }
-        return await sender.send(deviceToken: deviceToken, platform: platform, title: title,
-                                 body: body, deepLink: deepLink, collapseKey: collapseKey)
+        return await sender.send(deviceToken: deviceToken, platform: platform, topic: topic,
+                                 title: title, body: body, deepLink: deepLink, collapseKey: collapseKey)
     }
 }

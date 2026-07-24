@@ -216,23 +216,24 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             handlePasteImage(base64Data: data, context: context)
         case .ping:
             sendServerMessage(.pong, context: context)
-        case .registerPushToken(let platform, let token, let deviceId, let enabled, let notifyOnFinished):
+        case .registerPushToken(let platform, let token, let deviceId, let enabled, let notifyOnFinished, let topic):
             handleRegisterPushToken(platform: platform, token: token, deviceId: deviceId,
-                                    enabled: enabled, notifyOnFinished: notifyOnFinished, context: context)
+                                    enabled: enabled, notifyOnFinished: notifyOnFinished,
+                                    topic: topic, context: context)
         case .unregisterPushToken(let deviceId):
             handleUnregisterPushToken(deviceId: deviceId, context: context)
         }
     }
 
     private func handleRegisterPushToken(platform: PushPlatform, token: String, deviceId: String,
-                                         enabled: Bool, notifyOnFinished: Bool,
+                                         enabled: Bool, notifyOnFinished: Bool, topic: String?,
                                          context: ChannelHandlerContext) {
         guard let tokenId = authenticatedTokenId else {
             sendServerMessage(.pushTokenAck(accepted: false), context: context); return
         }
         let registration = PushRegistration(platform: platform, token: token, deviceId: deviceId,
                                             enabled: enabled, notifyOnFinished: notifyOnFinished,
-                                            updatedAt: Date())
+                                            updatedAt: Date(), topic: topic)
         pushMutations += 1
         guard registration.isValid, pushMutations <= maxPushMutations else {
             sendServerMessage(.pushTokenAck(accepted: false), context: context); return
