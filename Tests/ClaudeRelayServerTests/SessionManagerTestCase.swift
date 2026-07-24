@@ -57,6 +57,10 @@ actor MockPTYSession: PTYSessionProtocol {
     }
     func recordInput() {}
     func setPollCadence(_ seconds: TimeInterval) {}
+    /// Records the last hook state applied, so tests can assert that
+    /// `SessionManager.reportHookState` forwarded to the PTY.
+    private(set) var lastHookState: AgentDetectedState?
+    func applyHookState(_ hookState: AgentDetectedState) { lastHookState = hookState }
 
     /// Test hook: seed the ring buffer with data for replay tests.
     func writeToBuffer(_ data: Data) {

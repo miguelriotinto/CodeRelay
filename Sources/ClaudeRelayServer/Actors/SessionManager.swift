@@ -67,8 +67,13 @@ public actor SessionManager {
         self.config = config
         self.tokenStore = tokenStore
         self.gitRootResolver = gitRootResolver
+        // Capture the admin port so the default PTY factory can pass it into
+        // each session's environment (F6 hook endpoint). Keeps the PTYFactory
+        // typealias unchanged so test mocks aren't affected.
+        let adminPort = Int(config.adminPort)
         self.ptyFactory = ptyFactory ?? { id, cols, rows, scrollback in
-            try PTYSession(sessionId: id, cols: cols, rows: rows, scrollbackSize: scrollback)
+            try PTYSession(sessionId: id, cols: cols, rows: rows,
+                           scrollbackSize: scrollback, adminPort: adminPort)
         }
     }
 
@@ -434,6 +439,21 @@ public actor SessionManager {
             callback(sessionId, managed.latestActivity, managed.latestAgent,
                      managed.latestAgentState, managed.latestTitle, managed.latestWorkingDir)
         }
+    }
+
+    /// Apply an authoritative agent state reported by a local lifecycle hook
+    /// (F6). Forwarded to the session's PTY monitor, which publishes the change
+    /// through the normal activity-observer chain (so `reportActivityChange`
+    /// still handles fan-out + revision ordering). Returns false when the
+    /// session is unknown or terminal, so the admin handler can 404. Terminal
+    /// PTY hops run in a detached Task since this actor can't await the PTY
+    /// actor synchronously.
+    @discardableResult
+    public func reportHookState(sessionId: UUID, state: AgentDetectedState) -> Bool {
+        guard let managed = sessions[sessionId], !managed.info.state.isTerminal,
+              let pty = managed.ptySession else { return false }
+        Task { await pty.applyHookState(state) }
+        return true
     }
 
     public func reportActivityChange(

@@ -53,9 +53,44 @@ enum AdminRoutes {
             return handlePutConfig(components, body: body)
         case (.GET, "logs"):
             return handleLogs(components, query: query)
+        case (.POST, "hook"):
+            return await handleHookState(components, body: body, sessionManager: sessionManager)
         default:
             return .error("Not found", status: 404)
         }
+    }
+
+    // MARK: - Hook State (F6)
+
+    /// `POST /hook/state` — a local agent lifecycle hook reports authoritative
+    /// session state. Body: `{"sessionId": "<uuid>", "state": "working|blocked|idle"}`.
+    /// Localhost-only (the admin server binds 127.0.0.1) — same trust boundary
+    /// as every other admin route; the hook only knows the sessionId because
+    /// the server injected it into the session's own PTY environment.
+    private static func handleHookState(
+        _ components: [String],
+        body: ByteBuffer?,
+        sessionManager: SessionManager
+    ) async -> AdminResponse {
+        guard components == ["hook", "state"] else { return .error("Not found", status: 404) }
+        guard let body = body else { return .error("Missing body", status: 400) }
+        let bodyData = body.withUnsafeReadableBytes { Data($0) }
+        guard let parsed = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+              let sessionIdStr = parsed["sessionId"] as? String,
+              let sessionId = UUID(uuidString: sessionIdStr),
+              let stateStr = parsed["state"] as? String else {
+            return .error("Invalid body: expected {sessionId, state}", status: 400)
+        }
+        // Decode tolerantly to the same enum used on the wire; reject unknowns
+        // rather than silently coercing to .unknown so a typo in a hook script
+        // surfaces instead of masquerading as a real state.
+        guard let state = AgentDetectedState(rawValue: stateStr),
+              state == .working || state == .blocked || state == .idle else {
+            return .error("Invalid state: expected working|blocked|idle", status: 400)
+        }
+        let applied = await sessionManager.reportHookState(sessionId: sessionId, state: state)
+        guard applied else { return .error("Unknown or inactive session", status: 404) }
+        return .json(["ok": true])
     }
 
     // MARK: - Health & Status

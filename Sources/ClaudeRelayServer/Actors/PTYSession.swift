@@ -42,6 +42,10 @@ public protocol PTYSessionProtocol: Actor {
     func recordInput()
     /// 1.0 for attached (responsive entry detection); 5.0 for detached.
     func setPollCadence(_ seconds: TimeInterval)
+    /// Apply an authoritative agent state reported by a local lifecycle hook
+    /// (F6). While fresh, hook state overrides screen detection. No-op when no
+    /// agent is currently active.
+    func applyHookState(_ hookState: AgentDetectedState)
 }
 
 // MARK: - PTYError
@@ -135,12 +139,20 @@ public actor PTYSession: PTYSessionProtocol {
         cols: UInt16,
         rows: UInt16,
         scrollbackSize: Int,
-        command: String = "/opt/homebrew/bin/claude"
+        command: String = "/opt/homebrew/bin/claude",
+        adminPort: Int = 0
     ) throws {
         self.sessionId = sessionId
         self.ringBuffer = RingBuffer(capacity: scrollbackSize)
         self.currentCols = cols
         self.currentRows = rows
+
+        // F6: session identity + admin port for the local lifecycle hook. The
+        // hook (installed in the user's agent config) reads these to POST state
+        // to 127.0.0.1:<port>/hook/state. Resolve to C strings BEFORE fork —
+        // the child may only make POSIX/C calls (no Foundation).
+        let sessionIdCStr = strdup(sessionId.uuidString)
+        let adminPortCStr = strdup(String(adminPort))
 
         var fd: Int32 = 0
         var ws = winsize()
@@ -157,6 +169,8 @@ public actor PTYSession: PTYSessionProtocol {
 
         if pid < 0 {
             free(homeDir)
+            free(sessionIdCStr)
+            free(adminPortCStr)
             throw PTYError.forkFailed(errno)
         }
 
@@ -165,6 +179,9 @@ public actor PTYSession: PTYSessionProtocol {
             setenv("TERM", "xterm-256color", 1)
             setenv("LANG", "en_US.UTF-8", 1)
             setenv("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", 1)
+            // F6: expose session id + admin port to the local lifecycle hook.
+            if let sessionIdCStr { setenv("CLAUDE_RELAY_SESSION_ID", sessionIdCStr, 1) }
+            if let adminPortCStr { setenv("CLAUDE_RELAY_ADMIN_PORT", adminPortCStr, 1) }
             if let homeDir = homeDir {
                 chdir(homeDir)
             }
@@ -189,6 +206,8 @@ public actor PTYSession: PTYSessionProtocol {
         }
 
         free(homeDir)
+        free(sessionIdCStr)
+        free(adminPortCStr)
 
         // Parent process
         self.masterFD = fd
@@ -439,6 +458,11 @@ public actor PTYSession: PTYSessionProtocol {
     /// Record that input was sent to this session.
     public func recordInput() {
         activityMonitor.recordInput()
+    }
+
+    public func applyHookState(_ hookState: AgentDetectedState) {
+        guard !terminated else { return }
+        activityMonitor.applyHookState(hookState, now: Date())
     }
 
     // MARK: - Public API
