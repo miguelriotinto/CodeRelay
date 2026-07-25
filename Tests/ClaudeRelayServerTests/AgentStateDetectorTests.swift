@@ -173,6 +173,63 @@ final class AgentStateDetectorTests: XCTestCase {
         XCTAssertTrue(detection?.visibleWorking ?? false)
     }
 
+    func testClaudeWorkingWhileThinkingWithPromptBoxBelow() {
+        // Regression (real screenshot): while THINKING, Claude shows no
+        // "esc to interrupt" footer — the spinner reads "… (27s · ↓ 1.5k tokens
+        // · thinking)" — and the empty prompt box, status bar, and bypass line
+        // sit BELOW it. So the interrupt-footer rule missed (no footer) and its
+        // bottom_non_empty_lines(5) region never reached the spinner. Meanwhile
+        // live_prompt_box matched the empty ❯ box → idle → sidebar "Waiting".
+        // The spinner line itself is the authoritative working signal.
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        ● The claude-mem Stop hook is the prime suspect — it summarizes the session.
+        · Symbioting… (27s · ↓ 1.5k tokens · thinking)
+          Tip: Use /theme to change the color theme
+        ────
+        ❯
+        ────
+          bypass permissions on (shift+tab to cycle) · ← 1 agent
+        """
+        let detection = detector.detect(agentId: "claude", snapshot: snap(screen, oscTitle: "✳ Symbioting"))
+        XCTAssertEqual(detection?.state, .working,
+                       "a thinking spinner with a prompt box below it must read as working, not idle")
+        XCTAssertTrue(detection?.visibleWorking ?? false)
+    }
+
+    func testClaudeWorkingSpinnerWithTokensAndInterrupt() {
+        // The tool-execution variant: spinner + "esc to interrupt", prompt box
+        // below. Same spinner signal drives it.
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        ● Running the build.
+        · Cerebrating… (1m 4s · ↑ 2.3k tokens · esc to interrupt)
+        ────
+        ❯
+        ────
+        """
+        let detection = detector.detect(agentId: "claude", snapshot: snap(screen, oscTitle: "✳ Cerebrating"))
+        XCTAssertEqual(detection?.state, .working)
+        XCTAssertTrue(detection?.visibleWorking ?? false)
+    }
+
+    func testClaudeWorkingEarlyThinkingBeforeTokens() {
+        // In the first seconds of thinking the spinner has an elapsed timer but
+        // no token count yet: "Pondering… (2s · thinking)". The spinner rule
+        // anchors on the elapsed timer inside the parenthetical, so it still
+        // reads as working.
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        ● Let me look into that.
+        · Pondering… (2s · thinking)
+        ────
+        ❯
+        ────
+        """
+        let detection = detector.detect(agentId: "claude", snapshot: snap(screen, oscTitle: "✳ Pondering"))
+        XCTAssertEqual(detection?.state, .working)
+    }
+
     func testClaudePermissionBeatsInterruptHint() {
         // A genuine permission prompt must still win over a lingering
         // "esc to interrupt" footer (priority + the rule's `not` guard).
