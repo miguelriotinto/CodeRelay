@@ -156,6 +156,38 @@ final class AgentStateDetectorTests: XCTestCase {
         XCTAssertTrue(detection?.visibleWorking ?? false)
     }
 
+    func testClaudeWorkingFromInterruptFooter() {
+        // Regression: Claude Code emits no braille-spinner title, and its
+        // working status word is prefixed with ✳ (U+2733) — which collided with
+        // the osc_title_idle rule, so a working session read as idle ("Waiting").
+        // The screen_working_interrupt rule keys on the stable "esc to interrupt"
+        // footer instead. Mirrors the real screenshot scenario.
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        ● The fix is a decisive success. Let me quantify.
+        + Hullaballooing… (2m 27s · ↓ 6.0k tokens · thinking some more)
+          esc to interrupt
+        """
+        let detection = detector.detect(agentId: "claude", snapshot: snap(screen, oscTitle: "✳ Hullaballooing"))
+        XCTAssertEqual(detection?.state, .working)
+        XCTAssertTrue(detection?.visibleWorking ?? false)
+    }
+
+    func testClaudePermissionBeatsInterruptHint() {
+        // A genuine permission prompt must still win over a lingering
+        // "esc to interrupt" footer (priority + the rule's `not` guard).
+        let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        let screen = """
+        Running a bash command
+        Do you want to proceed?
+        ❯ 1. Yes
+          2. No
+          esc to interrupt
+        """
+        let detection = detector.detect(agentId: "claude", snapshot: snap(screen))
+        XCTAssertEqual(detection?.state, .blocked)
+    }
+
     func testClaudeIdleFromPromptBox() {
         let detector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
         let screen = """
