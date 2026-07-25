@@ -87,6 +87,37 @@ class SessionControllerTest {
     }
 
     @Test
+    fun `authenticate treats 400 Already authenticated as success`() = runTest {
+        // Regression: a redundant auth on an already-authenticated socket gets
+        // `error(400, "Already authenticated")` from the server. That's a
+        // client/server auth-state desync, not a failure — the controller must
+        // adopt the authenticated state (mirrors iOS "Unexpected server
+        // response: error" fix).
+        val conn = FakeConnection(autoRespond = { ServerMessage.Error(code = 400, message = "Already authenticated") })
+        val controller = SessionController(conn)
+
+        controller.authenticate("tok")
+
+        assertTrue(controller.isAuthenticated)
+        assertEquals(conn.generation, controller.authenticatedGeneration)
+    }
+
+    @Test
+    fun `authenticate surfaces real message on non-400 error`() = runTest {
+        // Any other error (rate-limit 429, auth timeout 401, server 500) is a
+        // real failure — the actual message must be surfaced, not the "error"
+        // type string.
+        val conn = FakeConnection(autoRespond = { ServerMessage.Error(code = 429, message = "Too many failed attempts") })
+        val controller = SessionController(conn)
+
+        val ex = assertThrows(SessionException::class.java) {
+            kotlinx.coroutines.runBlocking { controller.authenticate("tok") }
+        }
+        assertTrue(ex.message!!.contains("Too many failed attempts"))
+        assertFalse(controller.isAuthenticated)
+    }
+
+    @Test
     fun `createSession returns id`() = runTest {
         val id = UUID.randomUUID()
         val conn = FakeConnection(autoRespond = { msg ->

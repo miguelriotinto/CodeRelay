@@ -32,6 +32,16 @@ public final class ServerStatusChecker: ObservableObject {
         self.interval = interval
     }
 
+    deinit {
+        // Defense-in-depth: cancel the poll loop the instant the checker is
+        // released, rather than relying on the loop's `[weak self]` guard to
+        // notice on its NEXT tick (which lingers up to `interval` seconds and,
+        // for a checker owned by a persistent window, could otherwise never
+        // fire). Without this, a dropped checker kept probing every server on
+        // its interval — the source of the macOS status-poll reconnect storm.
+        pollTask?.cancel()
+    }
+
     public func startPolling(connections: [ConnectionConfig]) {
         pollTask?.cancel()
         guard !connections.isEmpty else { return }
@@ -49,6 +59,10 @@ public final class ServerStatusChecker: ObservableObject {
         pollTask?.cancel()
         pollTask = nil
     }
+
+    /// Test hook: whether a poll loop is currently installed. Prefix
+    /// `_testOnly_` per convention; do not use from production code.
+    public var _testOnly_isPolling: Bool { pollTask != nil }
 
     public func refresh(connections: [ConnectionConfig]) {
         startPolling(connections: connections)

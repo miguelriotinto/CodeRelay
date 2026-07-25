@@ -91,6 +91,25 @@ public final class SessionController: ObservableObject {
         case .authFailure(let reason):
             isAuthenticated = false
             throw SessionError.authenticationFailed(reason: reason)
+        case .error(let code, let message):
+            // The server can reply with `.error` on the auth path. A 400
+            // "Already authenticated" means this socket is ALREADY authenticated
+            // server-side (a client/server auth-state desync — e.g. a redundant
+            // auth after a reconnect where the server still held the socket
+            // authenticated). That's not a failure: adopt the authenticated
+            // state so session creation proceeds. Without this, the reply fell
+            // through to `default` and threw `unexpectedResponse("error")` (the
+            // detail is `ServerMessage.error`'s type string, "error"), which
+            // surfaced on iOS as "Unexpected server response: error" and blocked
+            // session creation. Every other error (rate-limit 429, auth timeout
+            // 401, server 500) is a real failure — surface its actual message.
+            if code == 400 {
+                isAuthenticated = true
+                authenticatedGeneration = connection.generation
+            } else {
+                isAuthenticated = false
+                throw SessionError.unexpectedResponse(message)
+            }
         default:
             throw SessionError.unexpectedResponse(response.typeString)
         }

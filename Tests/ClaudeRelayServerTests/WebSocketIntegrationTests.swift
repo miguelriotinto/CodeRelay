@@ -80,6 +80,73 @@ final class WebSocketIntegrationTests: XCTestCase {
         try? await server.stop()
     }
 
+    /// A redundant `auth_request` on a socket the server already considers
+    /// authenticated must be idempotent: the server replies
+    /// `.error(400, "Already authenticated")`, and the client must treat that
+    /// as success (the socket IS usable) rather than throwing
+    /// `unexpectedResponse("error")`. Regression for the iOS "Unexpected server
+    /// response: error" that blocked session creation — a client/server
+    /// auth-state desync (e.g. re-auth after a reconnect where the server still
+    /// held the socket authenticated) fell through to `authenticate()`'s
+    /// `default` branch, whose detail is `ServerMessage.error`'s type string,
+    /// literally "error".
+    @MainActor
+    func testRedundantAuthOnAuthenticatedSocketIsIdempotent() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WSIntegrationReauth-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { try? group.syncShutdownGracefully() }
+
+        var config = RelayConfig.default
+        config.wsPort = UInt16.random(in: 19_000..<20_000)
+        config.adminPort = UInt16.random(in: 20_000..<21_000)
+
+        let tokenStore = TokenStore(directory: tempDir)
+        let (plaintext, _) = try await tokenStore.create(label: "reauth")
+
+        let sessionManager = SessionManager(
+            config: config,
+            tokenStore: tokenStore,
+            ptyFactory: { id, cols, rows, scrollback in
+                MockPTYSession(sessionId: id, cols: cols, rows: rows, scrollbackSize: scrollback)
+            }
+        )
+
+        let server = WebSocketServer(
+            group: group,
+            config: config,
+            sessionManager: sessionManager,
+            tokenStore: tokenStore
+        )
+        try await server.start()
+        try? await Task.sleep(for: .milliseconds(100))
+
+        let connection = RelayConnection()
+        let controller = SessionController(connection: connection)
+        let clientConfig = ConnectionConfig(name: "ReauthTest", host: "127.0.0.1", port: config.wsPort)
+
+        try await connection.connect(config: clientConfig, token: plaintext)
+        try await controller.authenticate(token: plaintext)
+        XCTAssertTrue(controller.isAuthenticated)
+
+        // Second auth on the SAME still-authenticated socket. The server replies
+        // .error(400, "Already authenticated"); the client must not throw.
+        try await controller.authenticate(token: plaintext)
+        XCTAssertTrue(controller.isAuthenticated,
+                      "A redundant auth must leave the controller authenticated, not throw")
+
+        // And the socket must still be usable — creating a session must succeed,
+        // proving the desync didn't wedge the connection.
+        let sessionId = try await controller.createSession(name: "after-reauth")
+        XCTAssertNotNil(sessionId)
+
+        connection.disconnect()
+        try? await server.stop()
+    }
+
     /// After `forceReconnect`, the client should obtain a fresh connection
     /// generation and be able to re-authenticate successfully against the
     /// still-running server. This is a lighter-weight proxy for the full

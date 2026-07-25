@@ -65,6 +65,11 @@ struct ServerListWindow: View {
         }
         .background(.black)
         .frame(minWidth: 500, minHeight: 360)
+        // Stop the 5s status poll as soon as the sheet closes. The @StateObject
+        // is released when the sheet dismisses, and `ServerStatusChecker.deinit`
+        // now cancels the loop — but calling it here stops the churn on the same
+        // runloop turn instead of waiting for ARC to release the view model.
+        .onDisappear { viewModel.stopAllPolling() }
         .navigationTitle("Servers")
         .toolbarBackground(.black, for: .windowToolbar)
         .toolbarBackground(.visible, for: .windowToolbar)

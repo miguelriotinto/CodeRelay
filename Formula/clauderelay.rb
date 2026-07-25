@@ -1,8 +1,8 @@
 class Clauderelay < Formula
   desc "Remote terminal relay server and CLI over WebSocket"
   homepage "https://github.com/miguelriotinto/ClaudeRelay"
-  url "https://github.com/miguelriotinto/ClaudeRelay/archive/refs/tags/v0.3.13.tar.gz"
-  sha256 "dd9b536fa58278ad0df49353da9c6b0a0bd406a8c345cbe37eddcd7fe05d1130"
+  url "https://github.com/miguelriotinto/ClaudeRelay/archive/refs/tags/v0.3.14.tar.gz"
+  sha256 "TBD_FILL_AFTER_TAG"
   license "MIT"
   head "https://github.com/miguelriotinto/ClaudeRelay.git", branch: "main"
 

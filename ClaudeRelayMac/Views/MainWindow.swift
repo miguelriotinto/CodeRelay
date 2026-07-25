@@ -4,7 +4,6 @@ import ClaudeRelayClient
 import ClaudeRelaySpeech
 
 struct MainWindow: View {
-    @StateObject private var serverList = ServerListViewModel()
     @StateObject private var speechEngine = OnDeviceSpeechEngine()
     @StateObject private var continuousEngine = ContinuousListeningEngine.makeDefault(
         options: AppSettings.shared.currentSpeechOptions()
