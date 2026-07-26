@@ -127,7 +127,7 @@ fun SessionTabs(
             // blinking blocked dot); when no fine-grained state is reported, fall
             // back to the legacy awaiting-input pulse.
             val needsAttention = if (agentState != null) {
-                agentState == AgentDetectedState.BLOCKED
+                agentState == AgentDetectedState.BLOCKED || agentState == AgentDetectedState.IDLE
             } else {
                 awaitingInput.contains(session.id)
             }
@@ -146,6 +146,13 @@ fun SessionTabs(
 
 /** Translucent white fills the Swift tab uses for the non-agent / dim states. */
 private val White15 = Color.White.copy(alpha = 0.15f)
+
+/** Bright orange for a session waiting on the user (idle). Flashes to keep it
+ * distinct from Claude's steady amber "working" fill — motion is the tell. */
+internal val WaitingOrange = Color(0xFFFF9500)
+
+/** The dark half of the waiting flash. */
+internal val WaitingFlashDark = Color(0xFF1A1A1A)
 
 /** Which edge a minimal-reveal scroll should align the selected tab to. */
 internal enum class RevealEdge { LEADING, TRAILING }
@@ -203,7 +210,7 @@ internal fun tabBackground(
 ): Color = when (agentState) {
     AgentDetectedState.BLOCKED -> if (flashOn) QualityRed else White15
     AgentDetectedState.WORKING -> agentColor(agentId)
-    AgentDetectedState.IDLE -> IdleYellow
+    AgentDetectedState.IDLE -> if (flashOn) WaitingOrange else WaitingFlashDark
     AgentDetectedState.UNKNOWN -> UnknownGray
     null -> {
         val agent = agentColor(agentId)
