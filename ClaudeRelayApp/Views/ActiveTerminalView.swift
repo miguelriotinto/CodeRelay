@@ -141,13 +141,13 @@ struct ActiveTerminalView: View {
                     }
                 }
 
-                if coordinator.sessionsAwaitingInput.isEmpty {
-                    sessionTabBar(flashOn: false)
-                } else {
+                if anyTabNeedsFlash {
                     TimelineView(.periodic(from: .now, by: 0.5)) { context in
                         let flashOn = Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0
                         sessionTabBar(flashOn: flashOn)
                     }
+                } else {
+                    sessionTabBar(flashOn: false)
                 }
 
                 if coordinator.activeSessionId != nil {
@@ -283,6 +283,18 @@ struct ActiveTerminalView: View {
         ].joined(separator: "|")
     }
 
+    /// True when any active session's tab should be flashing — a blocked or
+    /// waiting (idle) agent via fine-grained state, or the legacy awaiting-input
+    /// set when no fine-grained state is reported. Gates the flash TimelineView.
+    private var anyTabNeedsFlash: Bool {
+        coordinator.activeSessions.contains { session in
+            if let state = coordinator.agentState(for: session.id) {
+                return state == .blocked || state == .idle
+            }
+            return coordinator.sessionsAwaitingInput.contains(session.id)
+        }
+    }
+
     @ViewBuilder
     private func sessionTabBar(flashOn: Bool) -> some View {
         ScrollViewReader { proxy in
@@ -297,7 +309,7 @@ struct ActiveTerminalView: View {
                         // fine-grained state is reported, fall back to the legacy
                         // awaiting-input pulse.
                         let needsAttention = agentState != nil
-                            ? agentState == .blocked
+                            ? (agentState == .blocked || agentState == .idle)
                             : coordinator.sessionsAwaitingInput.contains(session.id)
                         Button {
                             if settings.hapticFeedbackEnabled {
@@ -417,6 +429,11 @@ private struct SessionTab: View {
         AgentColorPalette.color(for: agentId)
     }
 
+    /// Bright orange for a session waiting on the user (idle), flashing to the
+    /// dark below. Motion distinguishes it from Claude's steady amber working fill.
+    static let waitingOrange = SwiftUI.Color(red: 1.0, green: 0.584, blue: 0.0)   // #FF9500
+    static let waitingFlashDark = SwiftUI.Color(red: 0.102, green: 0.102, blue: 0.102) // #1A1A1A
+
     private var tabBackground: SwiftUI.Color {
         // When fine-grained agentState is present it drives the color (parity
         // with ActivityDot and the Android tab): blocked=red+flash, working=agent
@@ -426,7 +443,7 @@ private struct SessionTab: View {
             switch agentState {
             case .blocked: return flashOn ? .red : SwiftUI.Color.white.opacity(0.15)
             case .working: return agentColor
-            case .idle:    return .yellow
+            case .idle:    return flashOn ? SessionTab.waitingOrange : SessionTab.waitingFlashDark
             case .unknown: return .gray
             }
         }
