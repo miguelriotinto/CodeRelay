@@ -56,10 +56,14 @@ class SessionTabsLogicTest {
     }
 
     @Test
-    fun `idle agentState is done teal`() {
+    fun `idle agentState flashes between waiting orange and dark`() {
         assertEquals(
-            IdleYellow,
-            tabBackground("claude", needsAttention = false, flashOn = true, agentState = AgentDetectedState.IDLE),
+            WaitingOrange,
+            tabBackground("claude", needsAttention = true, flashOn = true, agentState = AgentDetectedState.IDLE),
+        )
+        assertEquals(
+            WaitingFlashDark,
+            tabBackground("claude", needsAttention = true, flashOn = false, agentState = AgentDetectedState.IDLE),
         )
     }
 
@@ -150,8 +154,7 @@ class SessionTabsLogicTest {
 
     @Test
     fun `label is black on light fills`() {
-        // Regression for white-on-yellow washing out after idle teal→yellow.
-        assertEquals(Color.Black, tabLabelColor(IdleYellow))                 // luma ~0.77
+        assertEquals(Color.Black, tabLabelColor(WaitingOrange))              // orange ~0.64
         assertEquals(Color.Black, tabLabelColor(agentColor("claude")))       // orange ~0.68
         assertEquals(Color.Black, tabLabelColor(UnknownGray))                // gray ~0.62
     }
@@ -160,6 +163,7 @@ class SessionTabsLogicTest {
     fun `label is white on dark and translucent fills`() {
         assertEquals(Color.White, tabLabelColor(agentColor("codex")))        // teal ~0.46
         assertEquals(Color.White, tabLabelColor(QualityRed))                 // red  ~0.46
+        assertEquals(Color.White, tabLabelColor(WaitingFlashDark))           // ~0.10
         // Translucent white over the black strip looks dark, must keep white.
         assertEquals(Color.White, tabLabelColor(white15))                    // ~0.15
     }
