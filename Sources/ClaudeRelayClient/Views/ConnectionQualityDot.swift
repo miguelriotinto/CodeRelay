@@ -25,8 +25,16 @@ public struct ConnectionQualityDot: View, Equatable {
         }
     }
 
+    // Blink is an attention signal, not a health signal: only a genuinely bad
+    // connection pulses. `.good` is the common steady state — blinking it drove
+    // a perpetual `repeatForever` animation that pinned Core Animation at 60fps
+    // for the whole window lifetime (the status bar is always mounted).
+    private static func blinks(_ quality: ConnectionQuality) -> Bool {
+        quality == .veryPoor
+    }
+
     private var shouldBlink: Bool {
-        quality == .good || quality == .veryPoor
+        Self.blinks(quality)
     }
 
     public var body: some View {
@@ -37,7 +45,7 @@ public struct ConnectionQualityDot: View, Equatable {
             .opacity(shouldBlink ? blinkOpacity : 1.0)
             // onAppear for initial state; onChange for transitions during view lifetime
             .onChange(of: quality) { _, newValue in
-                let blink = newValue == .good || newValue == .veryPoor
+                let blink = Self.blinks(newValue)
                 if blink {
                     withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
                         blinkOpacity = 0.3
