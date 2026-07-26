@@ -195,9 +195,9 @@ internal fun revealTarget(
  *
  * When [agentState] is present (server screen-detection, parity with the
  * sidebar [activityDotColor]) it drives the color: blocked=red, working=agent
- * color, waiting(idle)=yellow, unknown=gray — and a blocked tab flashes between red
- * and dim white via [flashOn]. When [agentState] is null the tab falls back to
- * the legacy fill ported from `ActiveTerminalView.swift:318-324`:
+ * color, waiting(idle)=orange, unknown=gray — and both blocked and idle flash via
+ * [flashOn] (blocked: red↔dim-white; idle: orange↔dark). When [agentState] is null
+ * the tab falls back to the legacy fill ported from `ActiveTerminalView.swift:318-324`:
  *  - needsAttention → `flashOn ? agentColor : white15`
  *  - else agentId != null → agentColor
  *  - else → white15
