@@ -645,6 +645,10 @@ final class SharedSessionCoordinatorTests: XCTestCase {
                       "A failed all-sessions RPC must not unclaim anything")
         XCTAssertTrue(coordinator.ownedSessionIds.contains(b),
                       "A failed all-sessions RPC must not unclaim anything")
+
+        // Don't leak these claims into the shared `.standard` device-scoped key.
+        coordinator.unclaimSession(a)
+        coordinator.unclaimSession(b)
     }
 
     /// A session gone from EVERY token (absent from `listAllSessions`) is truly
@@ -666,6 +670,9 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.ownedSessionIds.contains(live))
         XCTAssertFalse(coordinator.ownedSessionIds.contains(dead),
                        "A session gone from all tokens must be pruned")
+
+        // Don't leak the surviving claim into the shared `.standard` key.
+        coordinator.unclaimSession(live)
     }
 
     /// End-to-end shape of the reported bug: a transient failed all-sessions RPC
