@@ -24,17 +24,12 @@ class ActivityCoordinatorTest {
     private class FakePersistence(initial: Map<UUID, String> = emptyMap()) : AgentPersistence {
         private val map = initial.toMutableMap()
         val setAgentCalls = mutableListOf<Pair<UUID, String?>>()
-        val unclaimCalls = mutableListOf<UUID>()
 
         override val agents: Map<UUID, String> get() = map.toMap()
 
         override fun setAgent(id: UUID, agentId: String?) {
             setAgentCalls.add(id to agentId)
             if (agentId == null) map.remove(id) else map[id] = agentId
-        }
-
-        override fun unclaim(id: UUID) {
-            unclaimCalls.add(id)
         }
     }
 
@@ -130,9 +125,10 @@ class ActivityCoordinatorTest {
         assertEquals(listOf(id1 to true, id1 to false), events)
     }
 
-    // sessionStolen → stolen flag set AND unclaim called AND activity cleared.
+    // sessionStolen → stolen flag set AND activity cleared (ownership is not
+    // persisted anymore, so there is no unclaim side effect).
     @Test
-    fun `sessionStolen sets stolen flag and unclaims`() = runTest {
+    fun `sessionStolen sets stolen flag and clears activity`() = runTest {
         val store = FakePersistence(mapOf(id1 to "claude"))
         val coordinator = ActivityCoordinator(store)
         coordinator.applyActivity(id1, ActivityState.AGENT_IDLE, "claude")
@@ -141,7 +137,6 @@ class ActivityCoordinatorTest {
         val alert = coordinator.sessionStolen(id1, nameLookup = { "Brave Otter" })
 
         assertTrue(coordinator.sessionsStolen.value.contains(id1))
-        assertEquals(listOf(id1), store.unclaimCalls)
         assertEquals("Brave Otter", alert.sessionName)
         assertEquals(id1.toString().take(8), alert.shortId)
         assertEquals(alert, coordinator.stolenAlert.value)

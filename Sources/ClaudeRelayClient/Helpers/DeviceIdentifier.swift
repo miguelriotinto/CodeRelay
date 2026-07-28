@@ -6,9 +6,11 @@ import UIKit
 import IOKit
 #endif
 
-/// Returns a stable-per-device identifier suitable for namespacing per-device storage
-/// (e.g. session-ownership keys in UserDefaults, keyed so a shared iCloud account
-/// doesn't cause two devices to see each other's owned sessions).
+/// Returns a stable-per-device identifier suitable for namespacing per-device
+/// storage in UserDefaults (e.g. the F3 per-device active-tab / collapsed-groups
+/// keys, so a shared iCloud account doesn't let two devices stomp each other's
+/// layout). Session ownership is NOT keyed by this — the server's token-scoped
+/// list is authoritative.
 ///
 /// Tests can substitute their own implementation via this protocol.
 public protocol DeviceIdentifying: Sendable {

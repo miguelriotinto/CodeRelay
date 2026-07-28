@@ -22,9 +22,6 @@ public protocol SessionCoordinating: AnyObject {
     /// The session currently attached in the UI, or nil if none is attached.
     var activeSessionId: UUID? { get }
 
-    /// Session IDs this device has created or attached. Ownership is per-device.
-    var ownedSessionIds: Set<UUID> { get }
-
     /// Maps session IDs to the coding agent currently running in them (server-reported).
     var agentSessions: [UUID: String] { get }
 

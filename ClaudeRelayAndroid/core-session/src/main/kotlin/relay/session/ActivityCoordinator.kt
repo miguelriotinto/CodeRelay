@@ -19,9 +19,8 @@ import java.util.UUID
  * pattern `RecoveryController` / `AuthCoordinator` already use.
  *
  * `SessionOwnershipStore` satisfies this shape directly: it has
- * `setAgent(id, agentId?)`, `unclaim(id)`, and an `agents` snapshot. The `:app`
- * layer adapts the concrete store to this interface when constructing the
- * coordinator.
+ * `setAgent(id, agentId?)` and an `agents` snapshot. The `:app` layer adapts the
+ * concrete store to this interface when constructing the coordinator.
  */
 interface AgentPersistence {
     /** Last-seen agent per session (UUID→agentId). Read once at init to hydrate. */
@@ -29,9 +28,6 @@ interface AgentPersistence {
 
     /** Persist (or, when [agentId] is null, remove) the agent for [id]. Diff-checked by the store. */
     fun setAgent(id: UUID, agentId: String?)
-
-    /** Drop [id] from this device's owned set (called when a session is stolen). */
-    fun unclaim(id: UUID)
 }
 
 /**
@@ -259,11 +255,10 @@ class ActivityCoordinator(
     }
 
     /**
-     * Apply "session stolen by another device" semantics (Swift
-     * `handleSessionStolen`, ActivityCoordinator.swift:135-154). Clears the
-     * per-session activity state, raises the alert, and — per the M2 design —
-     * also relinquishes ownership via [AgentPersistence.unclaim] so this device
-     * stops claiming a session that now lives elsewhere.
+     * Apply "attached by another client" semantics (Swift `handleSessionStolen`).
+     * Clears the per-session activity state and raises the alert. The coordinator
+     * separately drops the session from the pane (ownership is the server's
+     * token-scoped list, not a local set).
      *
      * @param nameLookup resolves a display name for the alert; defaults to the
      *   short id when no name is known.
@@ -284,9 +279,6 @@ class ActivityCoordinator(
         _agentStates.value = _agentStates.value - sessionId
         _sessionTitles.value = _sessionTitles.value - sessionId
         _unseenSessions.value = _unseenSessions.value - sessionId
-
-        // Relinquish ownership — this device no longer holds the session.
-        persistence.unclaim(sessionId)
 
         val alert = StolenAlert(sessionId = sessionId, sessionName = name, shortId = shortId)
         _sessionsStolen.value = _sessionsStolen.value + sessionId

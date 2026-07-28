@@ -1,19 +1,18 @@
 import Foundation
 
-/// UserDefaults-backed persistence for three coordinator dictionaries:
-/// `names` (user/server-renamed session names), `owned` (session ids this
-/// device created or attached), `agents` (last-seen agent per session).
+/// UserDefaults-backed persistence for the device-independent auxiliary maps
+/// the coordinator layers on top of the server's session list: `names`
+/// (user/server-renamed session names) and `agents` (last-seen agent per
+/// session), plus the per-device F3 layout state (active tab, collapsed groups).
 ///
-/// Why: the coordinator previously maintained three `save*` helpers that each
-/// re-encoded and wrote to `UserDefaults` on every change, even when nothing
-/// had actually changed (see C-21). This store:
+/// Session OWNERSHIP is deliberately NOT persisted here: the server's
+/// token-scoped `listSessions()` is authoritative, so the pane is driven by the
+/// server list, not a local cache. (A device-scoped owned set used to live here;
+/// it kept drifting from the server and blanking the pane on relaunch, so it was
+/// removed.)
 ///
-/// - Collapses the three persistence flows behind one API.
-/// - Diff-checks before writing — `defaults.set` is called only when the
-///   value actually changed since the last persisted snapshot.
-/// - Centralizes the key construction (`"\(keyPrefix).name"` /
-///   `"\(keyPrefix).ownedSessions.\(deviceId)"` / `"\(keyPrefix).agentSessions"`)
-///   so individual helpers can't drift out of sync.
+/// - Diff-checks before writing — `defaults.set` is called only when the value
+///   actually changed since the last persisted snapshot (C-21).
 ///
 /// Not an `ObservableObject` — the coordinator keeps its own `@Published`
 /// mirrors so SwiftUI can bind to them directly. The store is called on the
@@ -25,10 +24,6 @@ public final class SessionOwnershipStore {
 
     /// Key for the UUID→name dictionary (plain per-app; device-independent).
     public let namesKey: String
-    /// Key for the device-scoped owned-session set (per-device scoping avoids
-    /// two devices sharing an iCloud UserDefaults seeing each other's owned
-    /// lists).
-    public let ownedKey: String
     /// Key for the UUID→agentId dictionary (plain per-app; device-independent).
     public let agentsKey: String
     /// Key for the last active/focused session id (per-device: which tab this
@@ -50,7 +45,6 @@ public final class SessionOwnershipStore {
     // MARK: - Cached last-persisted snapshots (for diff-check)
 
     private var persistedNames: [UUID: String] = [:]
-    private var persistedOwned: Set<UUID> = []
     private var persistedAgents: [UUID: String] = [:]
     private var persistedActiveSession: UUID?
     private var persistedCollapsedGroups: Set<String> = []
@@ -62,10 +56,9 @@ public final class SessionOwnershipStore {
                 deviceId: String,
                 defaults: UserDefaults = .standard) {
         self.namesKey = "\(keyPrefix).sessionNames"
-        self.ownedKey = "\(keyPrefix).ownedSessions.\(deviceId)"
         self.agentsKey = "\(keyPrefix).agentSessions"
-        // Per-device layout state (F3): scoped by deviceId like `owned`, so one
-        // device's focus/collapse never overwrites another's.
+        // Per-device layout state (F3): scoped by deviceId so one device's
+        // focus/collapse never overwrites another's.
         self.activeSessionKey = "\(keyPrefix).activeSession.\(deviceId)"
         self.collapsedGroupsKey = "\(keyPrefix).collapsedGroups.\(deviceId)"
         self.defaults = defaults
@@ -79,7 +72,6 @@ public final class SessionOwnershipStore {
     /// test mutates defaults externally.
     public func loadSnapshots() {
         persistedNames = loadNames()
-        persistedOwned = loadOwned()
         persistedAgents = loadAgents()
         persistedActiveSession = loadActiveSession()
         persistedCollapsedGroups = loadCollapsedGroups()
@@ -96,11 +88,6 @@ public final class SessionOwnershipStore {
                 result[uuid] = pair.value
             }
         }
-    }
-
-    public func loadOwned() -> Set<UUID> {
-        guard let arr = defaults.stringArray(forKey: ownedKey) else { return [] }
-        return Set(arr.compactMap { UUID(uuidString: $0) })
     }
 
     public func loadAgents() -> [UUID: String] {
@@ -144,14 +131,6 @@ public final class SessionOwnershipStore {
     }
 
     @discardableResult
-    public func saveOwned(_ owned: Set<UUID>) -> Bool {
-        guard owned != persistedOwned else { return false }
-        defaults.set(owned.map { $0.uuidString }, forKey: ownedKey)
-        persistedOwned = owned
-        return true
-    }
-
-    @discardableResult
     public func saveAgents(_ agents: [UUID: String]) -> Bool {
         guard agents != persistedAgents else { return false }
         let encoded = agents.reduce(into: [String: String]()) { $0[$1.key.uuidString] = $1.value }
@@ -188,54 +167,36 @@ public final class SessionOwnershipStore {
 
     // MARK: - Stale pruning
 
-    /// Remove any name/owned/agent entries whose session id is not in
-    /// `serverIds`. Returns the ids that were removed from each collection so
-    /// the caller can update its `@Published` mirrors.
-    public struct PruneResult: Equatable {
-        public let removedNames: Set<UUID>
-        public let removedOwned: Set<UUID>
-        public let removedAgents: Set<UUID>
-        public var isEmpty: Bool {
-            removedNames.isEmpty && removedOwned.isEmpty && removedAgents.isEmpty
-        }
-    }
-
-    /// Called by `fetchSessions` after a server list refresh. Mutates the
-    /// three dictionaries in-place on the caller and returns the removed ids.
-    /// The diff-check inside each `save*` method ensures the store does not
-    /// write to UserDefaults when nothing was stale.
-    @discardableResult
+    /// Prune persisted per-session UI state (names, agents) and the F3 active
+    /// tab down to `serverIds` — the sessions the server still lists under this
+    /// token. Ownership itself is NOT persisted anymore (the server is
+    /// authoritative), so this only keeps the auxiliary local maps from growing
+    /// unbounded. Diff-checked writes mean no UserDefaults churn when nothing
+    /// was stale.
     public func pruneToServerSessions(
         serverIds: Set<UUID>,
         names: inout [UUID: String],
-        owned: inout Set<UUID>,
         agents: inout [UUID: String]
-    ) -> PruneResult {
+    ) {
         let staleNames = Set(names.keys).subtracting(serverIds)
-        let staleOwned = owned.subtracting(serverIds)
         let staleAgents = Set(agents.keys).subtracting(serverIds)
 
         for id in staleNames { names.removeValue(forKey: id) }
-        for id in staleOwned { owned.remove(id) }
         for id in staleAgents { agents.removeValue(forKey: id) }
 
         if !staleNames.isEmpty { saveNames(names) }
-        if !staleOwned.isEmpty { saveOwned(owned) }
         if !staleAgents.isEmpty { saveAgents(agents) }
 
-        // F3: a persisted active session that the server no longer knows about
-        // must not be restored as a dead tab — clear it.
+        // F3: a persisted active session the server no longer lists must not be
+        // restored as a dead tab — clear it.
         if let active = persistedActiveSession, !serverIds.contains(active) {
             saveActiveSession(nil)
         }
-
-        return PruneResult(removedNames: staleNames, removedOwned: staleOwned, removedAgents: staleAgents)
     }
 
     // MARK: - Test Hooks
 
     public var _testOnly_persistedNames: [UUID: String] { persistedNames }
-    public var _testOnly_persistedOwned: Set<UUID> { persistedOwned }
     public var _testOnly_persistedAgents: [UUID: String] { persistedAgents }
     public var _testOnly_persistedActiveSession: UUID? { persistedActiveSession }
     public var _testOnly_persistedCollapsedGroups: Set<String> { persistedCollapsedGroups }

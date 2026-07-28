@@ -5,17 +5,20 @@ import android.provider.Settings
 import java.util.UUID
 
 /**
- * Returns a stable-per-install identifier used to namespace per-device storage
- * (e.g. session-ownership keys), the same role `DeviceIdentifier.swift` plays on
- * iOS/macOS.
+ * Returns a stable-per-install identifier, the same role `DeviceIdentifier.swift`
+ * plays on iOS/macOS. Used to identify this device to the server for push
+ * registration (`register_push_token`).
+ *
+ * NOTE: session ownership is NOT keyed by this id — the server's token-scoped
+ * session list is authoritative and the pane renders it directly. (This id once
+ * namespaced a local owned-session set whose instability caused sessions to
+ * vanish from the pane; that set has been removed.)
  *
  * ## Why this is derived from the OS, not a random persisted UUID
  *
- * The ownership store keys the device-owned session set as
- * `ownedSessions.$deviceId`. So the device id MUST return the same value on every
- * launch — if it changes, the owned set is written under one key and read back
- * under another, so `owned` reads empty and the device's sessions vanish from the
- * pane (resurfacing only via "Attach"). The reported Huawei bug.
+ * A stable-per-launch id still matters for push identity: [Settings.Secure.ANDROID_ID]
+ * needs no storage write to stay stable, avoiding the OEM-storage-loss failure
+ * mode a persisted random UUID had.
  *
  * The previous implementation generated a random [UUID] and persisted it in plain
  * SharedPreferences. That is fragile: if the (non-encrypted) write is ever lost —
