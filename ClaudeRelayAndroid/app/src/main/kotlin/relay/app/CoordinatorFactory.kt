@@ -20,7 +20,7 @@ import java.util.UUID
  * Wraps a concrete [SessionOwnershipStore] (an Android type needing a `Context`)
  * as the pure-JVM [OwnershipStore] the coordinator expects.
  *
- * The only impedance is the return type: the concrete store's `unclaim` /
+ * The only impedance is the return type: the concrete store's `setName` /
  * `setAgent` return a `Boolean` ("did state change?"), while [OwnershipStore]
  * (via `AgentPersistence`) declares them `Unit`. The adapter forwards and discards
  * the Boolean. The diff-check the Boolean reports still happens inside the store;
