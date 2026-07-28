@@ -49,8 +49,10 @@ public protocol SessionCoordinating: AnyObject {
 
     // MARK: - Lifecycle
 
-    /// Refresh the session list from the server.
-    func fetchSessions() async
+    /// Refresh the session list from the server. `force` bypasses the
+    /// throttle debounce for post-mutation fetches (create / attach / switch)
+    /// that must refresh immediately.
+    func fetchSessions(force: Bool) async
 
     /// Create a new session, attach to it, and make it active.
     func createNewSession() async
@@ -76,4 +78,11 @@ public protocol SessionCoordinating: AnyObject {
 
     /// Cancel any in-flight recovery, detach the current session, and disconnect.
     func tearDown()
+}
+
+public extension SessionCoordinating {
+    /// Refresh the session list, honoring the throttle debounce. Convenience
+    /// forwarder so callers that don't need to force a refresh can omit the
+    /// argument (Swift protocol requirements can't carry default values).
+    func fetchSessions() async { await fetchSessions(force: false) }
 }

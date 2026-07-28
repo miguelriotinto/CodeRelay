@@ -391,115 +391,158 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         }
     }
 
-    public func fetchSessions() async {
+    public func fetchSessions(force: Bool = false) async {
+        // 0.5 s debounce. `force` bypasses it for post-mutation fetches
+        // (create / attach / switch): those MUST refresh `sessions` so the
+        // just-claimed id appears in the pane. Without it, a create/attach that
+        // lands < 0.5 s after connect()'s initial fetch is debounced away,
+        // leaving the session owned but absent from `sessions` → `activeSessions`
+        // filters it out → invisible until some later fetch.
         let now = Date()
-        guard now.timeIntervalSince(lastFetchTime) >= 0.5 else { return }
+        if !force {
+            guard now.timeIntervalSince(lastFetchTime) >= 0.5 else { return }
+        }
         lastFetchTime = now
 
         isLoading = true
         defer { isLoading = false }
 
         do {
-            sessions = try await withAuth { try await $0.listSessions() }
+            // The pane list is TOKEN-scoped (sessions created/attached under
+            // THIS connection's token) — `session_list`.
+            let tokenScoped = try await withAuth { try await $0.listSessions() }
 
-            for session in sessions {
-                if let serverName = session.name {
-                    sessionNames[session.id] = serverName
-                }
+            // The prune existence set is TOKEN-AGNOSTIC — `session_list_all`
+            // lists every session the server still holds, across all tokens.
+            // `nil` when the RPC fails: reconcile then prunes NOTHING (see
+            // `reconcile`). Fetched here (not in `reconcile`) so the reconcile
+            // logic stays pure and unit-testable without a live connection.
+            let allSessions: [SessionInfo]? = try? await withAuth { try await $0.listAllSessions() }
+
+            reconcile(tokenScoped: tokenScoped, allSessions: allSessions)
+        } catch {
+            // Non-critical refresh.
+        }
+    }
+
+    /// Reconcile local state against the server's two session lists. Pure with
+    /// respect to the network — both lists are passed in — so it can be unit
+    /// tested directly.
+    ///
+    /// - `tokenScoped`: `listSessions()` — sessions under THIS token. Drives
+    ///   the pane (`sessions`) and the F3 active-tab restore.
+    /// - `allSessions`: `listAllSessions()` — every session on the server,
+    ///   across all tokens; `nil` when that RPC failed.
+    ///
+    /// The prune existence set is TOKEN-AGNOSTIC because ownership is
+    /// device-scoped: a session this device created/attached that is currently
+    /// listed under a DIFFERENT token (another device attached it, or
+    /// `attachSession` transferred ownership) is absent from `tokenScoped` but
+    /// still alive. Pruning against the token-scoped list permanently unclaimed
+    /// it AND persisted the shrunk set — so the session vanished from the pane
+    /// on relaunch with no recovery (the reported bug). The server REMOVES
+    /// terminated/cleaned-up sessions from its store, so a truly-dead session is
+    /// absent from `allSessions` too and is still pruned correctly. When
+    /// `allSessions` is nil we prune NOTHING — never destroy ownership on
+    /// incomplete data (a successful-but-empty `tokenScoped` during a flaky
+    /// reconnect was exactly what wiped the owned set before).
+    func reconcile(tokenScoped: [SessionInfo], allSessions: [SessionInfo]?) {
+        sessions = tokenScoped
+
+        for session in sessions {
+            if let serverName = session.name {
+                sessionNames[session.id] = serverName
             }
-            // Diff-checked inside the store — no UserDefaults write when the
-            // names dictionary is unchanged since the last save (C-21).
-            ownershipStore.saveNames(sessionNames)
+        }
+        // Diff-checked inside the store — no UserDefaults write when the names
+        // dictionary is unchanged since the last save (C-21).
+        ownershipStore.saveNames(sessionNames)
 
-            for session in sessions {
-                let activity = session.activity ?? .idle
-                handleActivityUpdate(sessionId: session.id, activity: activity, agent: session.agent,
-                                     agentState: session.agentState, title: session.title)
-            }
+        for session in sessions {
+            let activity = session.activity ?? .idle
+            handleActivityUpdate(sessionId: session.id, activity: activity, agent: session.agent,
+                                 agentState: session.agentState, title: session.title)
+        }
 
-            let serverIds = Set(sessions.map { $0.id })
+        let serverIds = Set(sessions.map { $0.id })
+        let existsIds: Set<UUID>? = allSessions.map { Set($0.map { $0.id }) }
+        // Ids alive (non-terminal) under ANY token — used to tell "moved to
+        // another device" (alert) from "terminated" (silent). Distinct from
+        // `existsIds`, which also includes terminated-but-not-yet-reaped ids.
+        let aliveElsewhere = Set(allSessions?.filter { !$0.state.isTerminal }.map { $0.id } ?? [])
 
-            // Snapshot BEFORE the prune below: any owned session missing from
-            // this token's list was lost (moved to another device or
-            // terminated). We capture it now because `pruneToServerSessions`
-            // unclaims these, which would otherwise defeat the ownership guard
-            // in `cleanUpStolenSession`. Classified into moved-vs-terminated
-            // after the prune (see below).
-            let lostOwned = ownedSessionIds.subtracting(serverIds)
+        // Snapshot BEFORE the prune below: any owned session missing from this
+        // token's list was lost (moved to another device or terminated). We
+        // capture it now because the prune unclaims these, which would otherwise
+        // defeat the ownership guard in `cleanUpStolenSession`. Classified into
+        // moved-vs-terminated after the prune (see below).
+        let lostOwned = ownedSessionIds.subtracting(serverIds)
 
+        // Only prune when we have an authoritative all-sessions set.
+        if let existsIds {
             // Prune names/owned/agents in one pass through the store. Each
             // `save*` inside `pruneToServerSessions` no-ops when nothing was
             // stale, so this does not churn UserDefaults (C-21).
             //
             // `agentSessions` is a computed forwarder onto `activityCoordinator`
-            // and can't be passed as `inout` directly — round-trip via a
-            // local so the prune + save path stays intact.
+            // and can't be passed as `inout` directly — round-trip via a local
+            // so the prune + save path stays intact.
             var agentsScratch = activityCoordinator.agentSessions
             let pruned = ownershipStore.pruneToServerSessions(
-                serverIds: serverIds,
+                serverIds: existsIds,
                 names: &sessionNames,
                 owned: &ownedSessionIds,
                 agents: &agentsScratch
             )
             activityCoordinator.agentSessions = agentsScratch
             activityCoordinator.applyPrunedAgents(pruned.removedAgents)
-            // Evict cached terminal views for sessions that no longer exist
-            // on the server (exited, terminated elsewhere, server restarted).
-            terminalCache.pruneStale(knownSessionIds: serverIds)
+            // Evict cached terminal views for sessions that no longer exist on
+            // the server (exited, terminated elsewhere, server restarted).
+            terminalCache.pruneStale(knownSessionIds: existsIds)
             // Keep terminalViewModels in sync with the cache's evictions above.
             let cachedNow = terminalCache.cachedIds
-            let staleVMs = Set(terminalViewModels.keys).subtracting(serverIds).subtracting(cachedNow)
+            let staleVMs = Set(terminalViewModels.keys).subtracting(existsIds).subtracting(cachedNow)
             for id in staleVMs { terminalViewModels.removeValue(forKey: id) }
 
             // Reconcile EVERY lost owned session (not just the active one):
             // belt-and-suspenders for a missed real-time `session_stolen` push
             // — e.g. the theft happened while this device was disconnected, so
             // it's only discovered now on reconnect. Distinguish "moved to
-            // another device" (still alive on the server under a different
-            // token → alert the user) from "terminated" (gone everywhere →
-            // clean up silently) via the token-agnostic all-sessions list. If
-            // that RPC fails we can't classify, so stay silent to avoid a false
-            // "moved" alert for a session that was actually terminated.
-            if !lostOwned.isEmpty {
-                let aliveElsewhere: Set<UUID>
-                if let all = try? await withAuth({ try await $0.listAllSessions() }) {
-                    aliveElsewhere = Set(all.filter { !$0.state.isTerminal }.map { $0.id })
-                } else {
-                    aliveElsewhere = []
-                }
-                for id in lostOwned {
-                    // Re-claim first so `cleanUpStolenSession`'s ownership guard
-                    // passes even though the prune above already unclaimed it.
-                    // `refetch: false` — we're already inside `fetchSessions`.
-                    claimSession(id)
-                    cleanUpStolenSession(id, alert: aliveElsewhere.contains(id), refetch: false)
-                }
+            // another device" (still alive under a different token → alert the
+            // user) from "terminated" (gone everywhere → clean up silently).
+            // Gated on `existsIds != nil` (same guard as the prune): a failed
+            // all-sessions RPC means we can't tell moved from terminated, so
+            // skip rather than raise a false "moved" alert.
+            for id in lostOwned {
+                // Re-claim first so `cleanUpStolenSession`'s ownership guard
+                // passes even though the prune above already unclaimed it.
+                // `refetch: false` — we're already inside a fetch pass.
+                claimSession(id)
+                cleanUpStolenSession(id, alert: aliveElsewhere.contains(id), refetch: false)
             }
+        }
 
-            // F3: restore the focused tab once, on the first fetch. The prune
-            // above already dropped a persisted active id the server no longer
-            // knows about, so `restored` here still exists on the server. Only
-            // when the user hasn't already selected something this launch.
-            //
-            // Restore through switchToSession — NOT a bare activeSessionId
-            // assignment — so the terminal is actually wired: it creates the
-            // TerminalViewModel, wires output, and resumeSession()s (triggering
-            // scrollback replay). A bare assignment would highlight a blank tab
-            // that switchToSession's `id != activeSessionId` guard then refuses
-            // to re-open. `restoreActiveTask` runs it after this fetch returns
-            // so switchToSession's own trailing fetchSessions() doesn't recurse.
-            if !didRestoreActiveSession {
-                didRestoreActiveSession = true
-                if activeSessionId == nil,
-                   let restored = ownershipStore.loadActiveSession(),
-                   serverIds.contains(restored) {
-                    restoreActiveTask = Task { [weak self] in
-                        await self?.switchToSession(id: restored)
-                    }
+        // F3: restore the focused tab once, on the first fetch. A persisted
+        // active id the server no longer knows about was already dropped by the
+        // prune, so `restored` here still exists on the server. Only when the
+        // user hasn't already selected something this launch.
+        //
+        // Restore through switchToSession — NOT a bare activeSessionId
+        // assignment — so the terminal is actually wired: it creates the
+        // TerminalViewModel, wires output, and resumeSession()s (triggering
+        // scrollback replay). A bare assignment would highlight a blank tab that
+        // switchToSession's `id != activeSessionId` guard then refuses to
+        // re-open. `restoreActiveTask` runs it after this fetch returns so
+        // switchToSession's own trailing fetchSessions() doesn't recurse.
+        if !didRestoreActiveSession {
+            didRestoreActiveSession = true
+            if activeSessionId == nil,
+               let restored = ownershipStore.loadActiveSession(),
+               serverIds.contains(restored) {
+                restoreActiveTask = Task { [weak self] in
+                    await self?.switchToSession(id: restored)
                 }
             }
-        } catch {
-            // Non-critical refresh.
         }
     }
 
@@ -578,7 +621,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             terminalCache.touch(sessionId)
             terminalCache.enforceLimit(activeSessionId: activeSessionId)
 
-            await fetchSessions()
+            // force: bypass the 0.5 s debounce — the just-created session MUST
+            // land in `sessions` now so it appears in the pane (it may land
+            // < 0.5 s after connect()'s initial fetch).
+            await fetchSessions(force: true)
         } catch {
             presentError(error.localizedDescription)
         }
@@ -616,7 +662,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             terminalCache.touch(id)
             terminalCache.enforceLimit(activeSessionId: activeSessionId)
 
-            await fetchSessions()
+            // force: bypass the debounce so the switched-to session refreshes
+            // immediately (see createNewSession).
+            await fetchSessions(force: true)
         } catch {
             presentError(error.localizedDescription)
         }
@@ -680,7 +728,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 try? await controller.renameSession(id: id, name: name)
             }
 
-            await fetchSessions()
+            // force: bypass the debounce — the just-attached session MUST land
+            // in `sessions` now so it appears in the pane (see createNewSession).
+            await fetchSessions(force: true)
         } catch {
             recoveryLog.error("attachRemoteSession failed for \(id): \(error.localizedDescription, privacy: .public)")
             if let previousId {

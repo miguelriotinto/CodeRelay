@@ -567,4 +567,144 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         // without waiting for a full session-list refetch.
         XCTAssertEqual(coordinator.sessions.first?.workingDir, "/repo/new")
     }
+
+    // MARK: - Reconcile / prune (the "empty session list on relaunch" bug)
+
+    private func session(_ id: UUID, token: String, state: SessionState = .activeDetached) -> SessionInfo {
+        SessionInfo(id: id, name: nil, state: state, tokenId: token, createdAt: Date(), cols: 80, rows: 24)
+    }
+
+    /// Product contract (matches Android): a session this device owned that is
+    /// now attached under ANOTHER token has moved to another device — it is
+    /// relinquished (unclaimed) and the user is alerted. Distinct from the bug:
+    /// the fix is that the PRUNE runs against the token-agnostic all-sessions
+    /// list so a session's name/agent/terminal aren't wiped by a token-scoped
+    /// absence; a genuine cross-token move is still surfaced via this dedicated
+    /// reconcile path (with the "moved" alert), not silently dropped.
+    func testReconcileRelinquishesSessionMovedToAnotherTokenAndAlerts() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
+        let movedId = UUID()
+        coordinator.claimSession(movedId)
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(movedId))
+
+        // Absent from this token's list, but alive (non-terminal) under t2.
+        coordinator.reconcile(
+            tokenScoped: [],
+            allSessions: [session(movedId, token: "t2", state: .activeAttached)]
+        )
+
+        XCTAssertFalse(coordinator.ownedSessionIds.contains(movedId),
+                       "A session moved to another device must be relinquished")
+        XCTAssertTrue(coordinator.activityCoordinator.showSessionStolen,
+                      "A moved session must raise the 'Session Moved' alert")
+        XCTAssertEqual(coordinator.activityCoordinator.stolenSessionShortId,
+                       String(movedId.uuidString.prefix(8)))
+    }
+
+    /// Steady-state relaunch (the reported single-device case): a session
+    /// present in BOTH the token-scoped list and the all-sessions list is kept,
+    /// shown in `sessions`, and its owned claim survives to a fresh coordinator
+    /// (relaunch). This is the path that was silently broken when a transient
+    /// empty/failed list persisted a shrunk owned set.
+    func testReconcileKeepsSessionPresentUnderOwnToken() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
+        let id = UUID()
+        coordinator.claimSession(id)
+
+        coordinator.reconcile(
+            tokenScoped: [session(id, token: "t1", state: .activeAttached)],
+            allSessions: [session(id, token: "t1", state: .activeAttached)]
+        )
+
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(id))
+        XCTAssertTrue(coordinator.sessions.contains { $0.id == id })
+        XCTAssertTrue(coordinator.activeSessions.contains { $0.id == id },
+                      "Session under this token must be shown in the pane")
+    }
+
+    /// A failed `listAllSessions` RPC (nil) must prune NOTHING. Before the fix,
+    /// a successful-but-empty `listSessions` during a flaky reconnect wiped the
+    /// owned set. With no authoritative all-sessions set we cannot safely decide
+    /// what's gone, so ownership is left entirely intact.
+    func testReconcileDoesNotPruneWhenAllSessionsUnavailable() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
+        let a = UUID(), b = UUID()
+        coordinator.claimSession(a)
+        coordinator.claimSession(b)
+
+        coordinator.reconcile(tokenScoped: [], allSessions: nil)
+
+        // `.contains` (not equality): the coordinator loads any previously
+        // persisted owned ids at init from shared `.standard` defaults, so other
+        // tests can leave residue. What matters is that neither claimed id was
+        // unclaimed by the nil-all-sessions path.
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(a),
+                      "A failed all-sessions RPC must not unclaim anything")
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(b),
+                      "A failed all-sessions RPC must not unclaim anything")
+
+        // Don't leak these claims into the shared `.standard` device-scoped key.
+        coordinator.unclaimSession(a)
+        coordinator.unclaimSession(b)
+    }
+
+    /// A session gone from EVERY token (absent from `listAllSessions`) is truly
+    /// terminated/reaped server-side and IS pruned — the fix must not leak dead
+    /// ownership.
+    func testReconcilePrunesSessionGoneFromAllTokens() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
+        let live = UUID(), dead = UUID()
+        coordinator.claimSession(live)
+        coordinator.claimSession(dead)
+
+        // `dead` is in neither list; `live` is still under this token.
+        coordinator.reconcile(
+            tokenScoped: [session(live, token: "t1")],
+            allSessions: [session(live, token: "t1")]
+        )
+
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(live))
+        XCTAssertFalse(coordinator.ownedSessionIds.contains(dead),
+                       "A session gone from all tokens must be pruned")
+
+        // Don't leak the surviving claim into the shared `.standard` key.
+        coordinator.unclaimSession(live)
+    }
+
+    /// End-to-end shape of the reported bug: a transient failed all-sessions RPC
+    /// (nil) during a flaky reconnect must NOT persist a shrunk owned set. A
+    /// fresh coordinator (relaunch) reads the same device-scoped UserDefaults and
+    /// must still see the claim — otherwise the session is gone from the pane
+    /// with no recovery. Before the fix, the prune ran against a possibly-empty
+    /// token-scoped list and wrote `owned = {}` to disk.
+    ///
+    /// This drives the real `reconcile(...)` path (not the store directly), then
+    /// constructs a second coordinator sharing the same device-scoped
+    /// UserDefaults to prove the claim survived to "relaunch".
+    func testReconcileWithFailedAllSessionsSurvivesRelaunch() {
+        let ownedId = UUID()
+
+        // First launch: claim, then a reconcile where the all-sessions RPC failed
+        // (nil) and the token-scoped list came back empty (flaky reconnect).
+        let coordinator = SharedSessionCoordinator(connection: RelayConnection(), token: "t1")
+        coordinator.claimSession(ownedId)
+        coordinator.reconcile(tokenScoped: [], allSessions: nil)
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(ownedId),
+                      "nil all-sessions must not unclaim in-memory")
+
+        // Relaunch: a brand-new coordinator on the same device reads the same
+        // device-scoped owned set from UserDefaults. It must still contain the
+        // claim — the failed RPC must not have persisted a shrunk set.
+        let relaunched = SharedSessionCoordinator(connection: RelayConnection(), token: "t1")
+        XCTAssertTrue(relaunched.ownedSessionIds.contains(ownedId),
+                      "Owned set must survive relaunch after a failed all-sessions RPC")
+
+        // Cleanup: unclaim so the shared `.standard` device-scoped key doesn't
+        // leak this id into sibling tests.
+        relaunched.unclaimSession(ownedId)
+    }
 }
