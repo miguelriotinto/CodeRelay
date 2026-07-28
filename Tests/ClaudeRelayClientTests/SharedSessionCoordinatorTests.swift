@@ -589,15 +589,21 @@ final class SharedSessionCoordinatorTests: XCTestCase {
     func testReconcileForgetsStaleActivityState() {
         let coordinator = SharedSessionCoordinator(connection: RelayConnection(), token: "t1")
         let gone = UUID()
+        // Populate all five activity buckets that forgetSession clears.
         coordinator.agentSessions[gone] = "claude"
         coordinator.sessionsAwaitingInput.insert(gone)
+        coordinator.activityCoordinator.agentStates[gone] = .working
+        coordinator.activityCoordinator.sessionTitles[gone] = "old title"
+        coordinator.activityCoordinator.unseenSessions.insert(gone)
 
         // `gone` is absent from the new server list.
         coordinator.reconcile(tokenScoped: [session(UUID())])
 
         XCTAssertNil(coordinator.agentSessions[gone], "stale agent must be forgotten")
-        XCTAssertFalse(coordinator.sessionsAwaitingInput.contains(gone),
-                       "stale awaiting-input must be cleared")
+        XCTAssertFalse(coordinator.sessionsAwaitingInput.contains(gone), "stale awaiting-input cleared")
+        XCTAssertNil(coordinator.activityCoordinator.agentStates[gone], "stale agentState cleared")
+        XCTAssertNil(coordinator.activityCoordinator.sessionTitles[gone], "stale title cleared")
+        XCTAssertFalse(coordinator.activityCoordinator.unseenSessions.contains(gone), "stale unseen cleared")
     }
 
     /// F3 active-tab restore only considers NON-TERMINAL sessions the server

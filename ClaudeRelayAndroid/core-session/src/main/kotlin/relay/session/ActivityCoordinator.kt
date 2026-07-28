@@ -255,11 +255,10 @@ class ActivityCoordinator(
     }
 
     /**
-     * Apply "session stolen by another device" semantics (Swift
-     * `handleSessionStolen`, ActivityCoordinator.swift:135-154). Clears the
-     * per-session activity state, raises the alert, and — per the M2 design —
-     * also relinquishes ownership via [AgentPersistence.unclaim] so this device
-     * stops claiming a session that now lives elsewhere.
+     * Apply "attached by another client" semantics (Swift `handleSessionStolen`).
+     * Clears the per-session activity state and raises the alert. The coordinator
+     * separately drops the session from the pane (ownership is the server's
+     * token-scoped list, not a local set).
      *
      * @param nameLookup resolves a display name for the alert; defaults to the
      *   short id when no name is known.

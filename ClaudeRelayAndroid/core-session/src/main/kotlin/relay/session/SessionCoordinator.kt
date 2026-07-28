@@ -102,16 +102,15 @@ interface OwnershipStore : AgentPersistence {
  * ## The four session ops are DISTINCT sequences
  * They were split deliberately (each fixed a real race) and must not be
  * collapsed into one shared flow. The load-bearing ordering differences:
- *  - **CREATE** (SharedSessionCoordinator.swift:388-421): RPC → claim → wire
- *    AFTER → active → touch → enforce → fetch.
- *  - **SWITCH** (:425-458): wire BEFORE resume (so binary replay frames route to
- *    the right VM from the first frame) → RPC → active → touch → enforce → fetch.
- *    **No claim** — switching is between sessions this device already owns.
- *  - **ATTACH** (:473-522): RPC → claim → beginReplay → wire AFTER → active →
- *    touch → enforce → name → fetch, with **previous-session rollback** on
- *    failure (:510-514).
- *  - **TERMINATE** (:565-578): send terminate → clear active → evict →
- *    forgetSession → unclaim (forget BEFORE unclaim) → drop name/title → fetch.
+ *  - **CREATE**: RPC → optimistic pane insert → wire AFTER → active → touch →
+ *    enforce → forced fetch (which replaces the pane with the server list).
+ *  - **SWITCH**: wire BEFORE resume (so binary replay frames route to the right
+ *    VM from the first frame) → RPC → active → touch → enforce → fetch.
+ *  - **ATTACH**: RPC → optimistic pane insert → beginReplay → wire AFTER →
+ *    active → touch → enforce → name → forced fetch, with **previous-session
+ *    rollback** on failure.
+ *  - **TERMINATE**: send terminate → clear active → evict → forgetSession →
+ *    drop from pane → drop name/title → fetch.
  *
  * Every session-op RPC is wrapped in [AuthCoordinator.withAuth] and guarded by
  * `!recoveryController.isRecovering.value` — ops are no-ops while recovering.
@@ -463,22 +462,22 @@ class SessionCoordinator(
      * Refreshes the session list and prunes per-id ownership/agent/cache state
      * for sessions the server no longer knows about (SharedSessionCoordinator.swift:307-359).
      *
-     * The Android ownership store has only per-id mutators (no bulk prune), so we
-     * reproduce the Swift prune locally: for every locally-known id NOT in the
-     * server set, drop its name, claim, and agent, evict its cached terminal, and
-     * forget its activity state. A non-critical refresh — failures are swallowed.
+     * The Android store has only per-id mutators (no bulk prune), so we reproduce
+     * the Swift prune locally: for every locally-known id NOT in the server set,
+     * drop its name and agent, evict its cached terminal, and forget its activity
+     * state. A non-critical refresh — failures are swallowed. (Ownership itself is
+     * not persisted; the pane IS the server list.)
      */
     suspend fun fetchSessions(force: Boolean = false) {
         // 0.5 s debounce keyed on the injected [nowMs] clock (Swift :308-310).
         // The first fetch (lastFetchMs == null, Swift `.distantPast`) always
         // passes; subsequent calls within 500 ms are dropped.
         //
-        // [force] bypasses the debounce for post-mutation fetches (create / attach):
-        // those MUST refresh `_sessions` so the just-claimed id appears in the pane.
-        // Without it, a create/attach that lands < 500 ms after connect()'s initial
-        // fetch is debounced away, leaving the session `owned` but absent from
-        // `_sessions` → `computeActiveSessions` filters it out → it's invisible until
-        // some later fetch (the "sometimes not visible after attach" symptom).
+        // [force] bypasses the debounce for post-mutation fetches (create /
+        // attach / stolen-cleanup): those MUST refresh `_sessions` promptly so
+        // the authoritative server list lands. Without it, a fetch that lands
+        // < 500 ms after connect()'s initial fetch is debounced away, leaving the
+        // pane stale until some later fetch.
         val last = lastFetchMs
         if (!force && last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
         lastFetchMs = nowMs()
@@ -644,7 +643,7 @@ class SessionCoordinator(
                 incoming.prepareForReplay()
             }
             terminalCache.view(id)?.beginReplay()
-            wireTerminalOutput(id) // BEFORE resume. NO claim — switching owned sessions.
+            wireTerminalOutput(id) // BEFORE resume (route replay frames correctly).
 
             authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
@@ -720,9 +719,8 @@ class SessionCoordinator(
                 runCatching { sessionController.renameSession(id, name) }
             }
 
-            // force: bypass the debounce so the just-attached session lands in
-            // `_sessions` immediately (attach claims it but does not add it to
-            // `_sessions` directly; a debounced fetch would leave it invisible).
+            // force: bypass the debounce so the authoritative server list (now
+            // including the just-attached session under our token) lands promptly.
             fetchSessions(force = true)
         } catch (e: Throwable) {
             // Rollback to the previous session (SharedSessionCoordinator.swift:510-514).

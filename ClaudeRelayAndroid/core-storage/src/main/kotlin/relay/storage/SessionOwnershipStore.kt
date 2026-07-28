@@ -8,31 +8,28 @@ import relay.protocol.WireJson
 import java.util.UUID
 
 /**
- * SharedPreferences-backed persistence for the three coordinator dictionaries:
- * `names` (user/server-renamed session names), `owned` (session ids this device
- * created or attached), `agents` (last-seen agent per session).
+ * SharedPreferences-backed persistence for the device-independent auxiliary maps
+ * the coordinator layers on top of the server's session list: `names`
+ * (user/server-renamed session names) and `agents` (last-seen agent per
+ * session).
  *
- * Ports `SessionOwnershipStore.swift` (ClaudeRelayClient). iOS/macOS back this
- * with `UserDefaults`; Android has no `UserDefaults`, so the equivalent here is a
- * single private [SharedPreferences] file (`relay.ownership`). As in Swift:
+ * Session OWNERSHIP is deliberately NOT persisted here: the server's token-scoped
+ * `session_list` is authoritative, so the pane is driven by the server list, not
+ * a local cache. (A device-scoped `ownedSessions.$deviceId` set used to live
+ * here; it kept drifting from the server and blanking the pane on relaunch, so it
+ * was removed.)
  *
- * - The three persistence flows live behind one API.
- * - Writes are **diff-checked** — `prefs.edit()` is invoked only when the value
- *   actually changed since the last in-memory snapshot.
- * - Key construction is centralized so individual mutators can't drift apart.
+ * Ports `SessionOwnershipStore.swift`. Single private [SharedPreferences] file
+ * (`relay.ownership`). Writes are **diff-checked** — `prefs.edit()` runs only
+ * when the value actually changed since the last in-memory snapshot.
  *
- * ## Key layout (matches the 2026-06-08 errata)
- * - `sessionNames`           — UUID→name map (device-independent)
- * - `ownedSessions.$deviceId` — device-scoped owned-id set (per-device scoping so
- *   two devices don't see each other's owned lists)
- * - `agentSessions`          — UUID→agentId map (device-independent)
+ * ## Key layout
+ * - `sessionNames`  — UUID→name map (device-independent)
+ * - `agentSessions` — UUID→agentId map (device-independent)
  *
- * Maps are persisted as JSON `Map<String,String>`; the owned set as a JSON
- * `List<String>`. UUID keys/values are lowercase hyphenated strings (matching
- * the wire UUID rule). Parse failures degrade to empty rather than throwing.
- *
- * The in-memory caches ([names]/[owned]/[agents]) are the single source of truth
- * during a process lifetime; they're loaded once at construction. Construct a new
+ * Both are persisted as JSON `Map<String,String>` with lowercase hyphenated UUID
+ * keys. Parse failures degrade to empty rather than throwing. The in-memory
+ * caches ([names]/[agents]) are loaded once at construction; construct a new
  * instance to re-read from disk.
  */
 class SessionOwnershipStore(
