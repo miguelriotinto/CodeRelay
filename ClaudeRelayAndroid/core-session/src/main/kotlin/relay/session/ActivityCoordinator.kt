@@ -29,9 +29,6 @@ interface AgentPersistence {
 
     /** Persist (or, when [agentId] is null, remove) the agent for [id]. Diff-checked by the store. */
     fun setAgent(id: UUID, agentId: String?)
-
-    /** Drop [id] from this device's owned set (called when a session is stolen). */
-    fun unclaim(id: UUID)
 }
 
 /**
@@ -284,9 +281,6 @@ class ActivityCoordinator(
         _agentStates.value = _agentStates.value - sessionId
         _sessionTitles.value = _sessionTitles.value - sessionId
         _unseenSessions.value = _unseenSessions.value - sessionId
-
-        // Relinquish ownership — this device no longer holds the session.
-        persistence.unclaim(sessionId)
 
         val alert = StolenAlert(sessionId = sessionId, sessionName = name, shortId = shortId)
         _sessionsStolen.value = _sessionsStolen.value + sessionId

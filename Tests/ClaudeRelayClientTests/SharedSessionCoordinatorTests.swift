@@ -137,30 +137,6 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertFalse(SharedSessionCoordinator.RecoveryPhase.resuming.label.isEmpty)
     }
 
-    // MARK: - Session Ownership
-
-    func testClaimAndUnclaimSession() {
-        let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
-
-        let sessionId = UUID()
-        coordinator.claimSession(sessionId)
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(sessionId))
-
-        coordinator.unclaimSession(sessionId)
-        XCTAssertFalse(coordinator.ownedSessionIds.contains(sessionId))
-    }
-
-    func testClaimSessionIdempotent() {
-        let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
-
-        let sessionId = UUID()
-        coordinator.claimSession(sessionId)
-        coordinator.claimSession(sessionId)
-        XCTAssertEqual(coordinator.ownedSessionIds.filter { $0 == sessionId }.count, 1)
-    }
-
     // MARK: - Session Names
 
     func testNameFallsBackToShortId() {
@@ -183,26 +159,26 @@ final class SharedSessionCoordinatorTests: XCTestCase {
 
     // MARK: - Active Sessions Filter
 
-    func testActiveSessionsFiltersTerminalAndUnowned() {
+    /// The pane renders the server's token-scoped `sessions` directly, minus
+    /// terminal sessions. There is no local owned-set filter — the server list
+    /// IS the ownership boundary.
+    func testActiveSessionsDropsOnlyTerminal() {
         let connection = RelayConnection()
         let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
 
-        let ownedActive = UUID()
-        let ownedTerminated = UUID()
-        let unowned = UUID()
-
-        coordinator.claimSession(ownedActive)
-        coordinator.claimSession(ownedTerminated)
+        let attached = UUID()
+        let detached = UUID()
+        let terminated = UUID()
 
         coordinator.sessions = [
-            SessionInfo(id: ownedActive, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
-            SessionInfo(id: ownedTerminated, name: nil, state: .terminated, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
-            SessionInfo(id: unowned, name: nil, state: .activeAttached, tokenId: "t2", createdAt: Date(), cols: 80, rows: 24)
+            SessionInfo(id: attached, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
+            SessionInfo(id: detached, name: nil, state: .activeDetached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
+            SessionInfo(id: terminated, name: nil, state: .terminated, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
         ]
 
         let active = coordinator.activeSessions
-        XCTAssertEqual(active.count, 1)
-        XCTAssertEqual(active.first?.id, ownedActive)
+        XCTAssertEqual(Set(active.map { $0.id }), [attached, detached],
+                       "Pane shows all non-terminal server sessions; no local owned filter")
     }
 
     // MARK: - Activity Tracking
@@ -361,29 +337,17 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertFalse(coordinator.sessionsAwaitingInput.contains(sessionId))
     }
 
-    /// Regression: before this fix, `handleSessionStolen` cleared `activeSessionId`
-    /// and evicted the TerminalViewModel, but the stolen session remained in
-    /// `ownedSessionIds`, so the sidebar still listed it. Attaching "Gendry" on
-    /// the iPad left Gendry in the iPhone's local session list.
-    ///
-    /// Asserts the full cleanup contract:
-    ///   1. `ownedSessionIds` no longer contains the stolen id (sidebar drops it)
-    ///   2. `activeSessions` no longer surfaces it (the public derived list)
-    ///   3. The stolen session's `TerminalViewModel.isSendingSuppressed == true`
-    ///      so any view still holding a reference can't write to the wire
-    ///   4. `agentSessions` and `sessionsAwaitingInput` no longer reference it
-    func testSessionStolenRemovesFromOwnedSessions() {
+    /// A session attached by another client (server `session_stolen` push) must
+    /// drop out of the pane (`sessions`), suppress its terminal VM, forget its
+    /// activity, and raise the "attached by another client" alert — while
+    /// leaving other sessions untouched.
+    func testSessionStolenRemovesFromPane() {
         let connection = RelayConnection()
         let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
 
         let stolenId = UUID()
         let keepId = UUID()
 
-        // Set up local state: claim both sessions, populate sessions list,
-        // wire up agent + awaiting-input state, and instantiate a VM for the
-        // stolen session so we can assert on `isSendingSuppressed`.
-        coordinator.claimSession(stolenId)
-        coordinator.claimSession(keepId)
         coordinator.activeSessionId = stolenId
         coordinator.sessions = [
             SessionInfo(id: stolenId, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
@@ -394,12 +358,8 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         let stolenVM = TerminalViewModel(sessionId: stolenId, connection: connection)
         coordinator.terminalViewModels[stolenId] = stolenVM
 
-        // Sanity-check the precondition: both sessions are owned and surfaced.
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(stolenId))
         XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
 
-        // Trigger the steal callback (the connection invokes this on the
-        // MainActor — same dispatch-and-wait pattern as the sibling test).
         connection.onSessionStolen?(stolenId)
         let exp = expectation(description: "stolen callback dispatched")
         Task { @MainActor in
@@ -408,36 +368,27 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         }
         wait(for: [exp], timeout: 1.0)
 
-        // The stolen session must be fully evicted from local ownership state.
-        XCTAssertFalse(coordinator.ownedSessionIds.contains(stolenId),
-                       "Stolen session must be removed from ownedSessionIds")
-        XCTAssertFalse(coordinator.activeSessions.contains(where: { $0.id == stolenId }),
-                       "Stolen session must not appear in activeSessions")
+        XCTAssertFalse(coordinator.sessions.contains(where: { $0.id == stolenId }),
+                       "Stolen session must be dropped from the pane source")
+        XCTAssertFalse(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
         XCTAssertNil(coordinator.agentSessions[stolenId])
         XCTAssertFalse(coordinator.sessionsAwaitingInput.contains(stolenId))
+        XCTAssertTrue(stolenVM.isSendingSuppressed, "VM for stolen session must suppress sends")
+        XCTAssertTrue(coordinator.showSessionStolen, "popup must fire")
 
-        // Defense-in-depth: the VM must refuse further writes even if a view
-        // still holds a reference to it.
-        XCTAssertTrue(stolenVM.isSendingSuppressed,
-                      "VM for stolen session must suppress sends")
-
-        // The other session must be untouched.
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(keepId))
+        // The other session is untouched.
         XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == keepId }))
     }
 
-    /// The reported bug: a stolen session that is OWNED but NOT the active one
-    /// (sitting in the sidebar / tab bar) must also disappear immediately AND
-    /// raise the "Session Moved" alert — not clean up silently.
+    /// A non-active session attached by another client (sitting in the sidebar,
+    /// not the focused tab) must also disappear immediately AND raise the alert.
     func testSessionStolenNonActiveStillRemovesAndAlerts() {
         let connection = RelayConnection()
         let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
 
-        let stolenId = UUID()      // owned, shown in sidebar, NOT active
+        let stolenId = UUID()      // shown in sidebar, NOT active
         let activeId = UUID()      // the session the user is actually looking at
 
-        coordinator.claimSession(stolenId)
-        coordinator.claimSession(activeId)
         coordinator.activeSessionId = activeId
         coordinator.sessions = [
             SessionInfo(id: stolenId, name: nil, state: .activeDetached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
@@ -454,14 +405,11 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         }
         wait(for: [exp], timeout: 1.0)
 
-        // Disappears from the sidebar/tab bar…
-        XCTAssertFalse(coordinator.ownedSessionIds.contains(stolenId))
         XCTAssertFalse(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
-        // …and the alert fires even though it wasn't the active session.
         XCTAssertTrue(coordinator.showSessionStolen)
         // The active session the user is looking at is untouched.
         XCTAssertEqual(coordinator.activeSessionId, activeId)
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(activeId))
+        XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == activeId }))
     }
 
     // MARK: - Session Renamed Handling
@@ -568,193 +516,86 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.sessions.first?.workingDir, "/repo/new")
     }
 
-    // MARK: - Reconcile / prune (the "empty session list on relaunch" bug)
+    // MARK: - Reconcile (server is authoritative for ownership)
 
-    private func session(_ id: UUID, token: String, state: SessionState = .activeDetached) -> SessionInfo {
+    private func session(_ id: UUID, token: String = "t1", state: SessionState = .activeDetached) -> SessionInfo {
         SessionInfo(id: id, name: nil, state: state, tokenId: token, createdAt: Date(), cols: 80, rows: 24)
     }
 
-    /// THE REPORTED REGRESSION. A session this device owns, missing from a
-    /// transiently empty token-scoped list but still alive under MY OWN token in
-    /// the all-sessions list, must be RETAINED — never unclaimed. Before the fix
-    /// the `lostOwned` loop unclaimed it (keying off the token-scoped list) and
-    /// persisted the shrunk set, so the pane came up empty on relaunch.
-    func testReconcileRetainsOwnSessionMissingFromTransientTokenScopedList() {
-        let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
-        let mine = UUID()
-        coordinator.claimSession(mine)
-
-        // Cold-launch race: token-scoped list came back empty, but the session
-        // is very much alive under MY token in the all-sessions list.
-        coordinator.reconcile(
-            tokenScoped: [],
-            allSessions: [session(mine, token: "tok-abc", state: .activeAttached)],
-            myTokenId: "tok-abc"
-        )
-
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(mine),
-                      "A session still alive under MY token must never be unclaimed")
-        XCTAssertFalse(coordinator.activityCoordinator.showSessionStolen,
-                       "Retaining my own session must not raise a 'moved' alert")
-
-        coordinator.unclaimSession(mine)
-    }
-
-    /// A session this device owned that is now attached under ANOTHER token has
-    /// genuinely moved to another device — it is relinquished + alerted. The
-    /// classification uses the owning tokenId from the all-sessions list vs. this
-    /// connection's own `myTokenId`, not the mere token-scoped absence.
-    func testReconcileRelinquishesSessionMovedToAnotherTokenAndAlerts() {
-        let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
-        let movedId = UUID()
-        coordinator.claimSession(movedId)
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(movedId))
-
-        // Absent from my token's list; alive (non-terminal) under a DIFFERENT
-        // token. My own token is "tok-mine".
-        coordinator.reconcile(
-            tokenScoped: [],
-            allSessions: [session(movedId, token: "tok-other", state: .activeAttached)],
-            myTokenId: "tok-mine"
-        )
-
-        XCTAssertFalse(coordinator.ownedSessionIds.contains(movedId),
-                       "A session moved to another token must be relinquished")
-        XCTAssertTrue(coordinator.activityCoordinator.showSessionStolen,
-                      "A moved session must raise the 'Session Moved' alert")
-        XCTAssertEqual(coordinator.activityCoordinator.stolenSessionShortId,
-                       String(movedId.uuidString.prefix(8)))
-    }
-
-    /// Safety fallback for older servers that don't send `tokenId` in
-    /// `auth_success` (`myTokenId == nil`): a session still alive on the server
-    /// but missing from the token-scoped list must be RETAINED — we can't prove
-    /// it moved, so we never unclaim it. This guarantees an old server can't
-    /// reproduce the relaunch wipe either.
-    func testReconcileRetainsAliveSessionWhenMyTokenUnknown() {
-        let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
-        let id = UUID()
-        coordinator.claimSession(id)
-
-        coordinator.reconcile(
-            tokenScoped: [],
-            allSessions: [session(id, token: "whatever", state: .activeAttached)],
-            myTokenId: nil
-        )
-
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(id),
-                      "With unknown own-token, a still-alive session must be retained")
-        XCTAssertFalse(coordinator.activityCoordinator.showSessionStolen)
-
-        coordinator.unclaimSession(id)
-    }
-
-    /// Steady-state relaunch (the reported single-device case): a session
-    /// present in BOTH the token-scoped list and the all-sessions list is kept,
-    /// shown in `sessions`, and its owned claim survives to a fresh coordinator
-    /// (relaunch). This is the path that was silently broken when a transient
-    /// empty/failed list persisted a shrunk owned set.
-    func testReconcileKeepsSessionPresentUnderOwnToken() {
-        let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
-        let id = UUID()
-        coordinator.claimSession(id)
-
-        coordinator.reconcile(
-            tokenScoped: [session(id, token: "t1", state: .activeAttached)],
-            allSessions: [session(id, token: "t1", state: .activeAttached)]
-        )
-
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(id))
-        XCTAssertTrue(coordinator.sessions.contains { $0.id == id })
-        XCTAssertTrue(coordinator.activeSessions.contains { $0.id == id },
-                      "Session under this token must be shown in the pane")
-    }
-
-    /// A failed `listAllSessions` RPC (nil) must prune NOTHING. Before the fix,
-    /// a successful-but-empty `listSessions` during a flaky reconnect wiped the
-    /// owned set. With no authoritative all-sessions set we cannot safely decide
-    /// what's gone, so ownership is left entirely intact.
-    func testReconcileDoesNotPruneWhenAllSessionsUnavailable() {
-        let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
-        let a = UUID(), b = UUID()
-        coordinator.claimSession(a)
-        coordinator.claimSession(b)
-
-        coordinator.reconcile(tokenScoped: [], allSessions: nil)
-
-        // `.contains` (not equality): the coordinator loads any previously
-        // persisted owned ids at init from shared `.standard` defaults, so other
-        // tests can leave residue. What matters is that neither claimed id was
-        // unclaimed by the nil-all-sessions path.
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(a),
-                      "A failed all-sessions RPC must not unclaim anything")
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(b),
-                      "A failed all-sessions RPC must not unclaim anything")
-
-        // Don't leak these claims into the shared `.standard` device-scoped key.
-        coordinator.unclaimSession(a)
-        coordinator.unclaimSession(b)
-    }
-
-    /// A session gone from EVERY token (absent from `listAllSessions`) is truly
-    /// terminated/reaped server-side and IS pruned — the fix must not leak dead
-    /// ownership.
-    func testReconcilePrunesSessionGoneFromAllTokens() {
-        let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
-        let live = UUID(), dead = UUID()
-        coordinator.claimSession(live)
-        coordinator.claimSession(dead)
-
-        // `dead` is in neither list; `live` is still under this token.
-        coordinator.reconcile(
-            tokenScoped: [session(live, token: "t1")],
-            allSessions: [session(live, token: "t1")]
-        )
-
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(live))
-        XCTAssertFalse(coordinator.ownedSessionIds.contains(dead),
-                       "A session gone from all tokens must be pruned")
-
-        // Don't leak the surviving claim into the shared `.standard` key.
-        coordinator.unclaimSession(live)
-    }
-
-    /// End-to-end shape of the reported bug: a transient failed all-sessions RPC
-    /// (nil) during a flaky reconnect must NOT persist a shrunk owned set. A
-    /// fresh coordinator (relaunch) reads the same device-scoped UserDefaults and
-    /// must still see the claim — otherwise the session is gone from the pane
-    /// with no recovery. Before the fix, the prune ran against a possibly-empty
-    /// token-scoped list and wrote `owned = {}` to disk.
-    ///
-    /// This drives the real `reconcile(...)` path (not the store directly), then
-    /// constructs a second coordinator sharing the same device-scoped
-    /// UserDefaults to prove the claim survived to "relaunch".
-    func testReconcileWithFailedAllSessionsSurvivesRelaunch() {
-        let ownedId = UUID()
-
-        // First launch: claim, then a reconcile where the all-sessions RPC failed
-        // (nil) and the token-scoped list came back empty (flaky reconnect).
+    /// The pane is the server's token-scoped list, verbatim. reconcile() assigns
+    /// `sessions = tokenScoped`; there is no local owned set that could drift and
+    /// blank the pane on relaunch. THE core guarantee behind the redesign.
+    func testReconcileRendersServerListDirectly() {
         let coordinator = SharedSessionCoordinator(connection: RelayConnection(), token: "t1")
-        coordinator.claimSession(ownedId)
-        coordinator.reconcile(tokenScoped: [], allSessions: nil)
-        XCTAssertTrue(coordinator.ownedSessionIds.contains(ownedId),
-                      "nil all-sessions must not unclaim in-memory")
+        let a = UUID(), b = UUID()
 
-        // Relaunch: a brand-new coordinator on the same device reads the same
-        // device-scoped owned set from UserDefaults. It must still contain the
-        // claim — the failed RPC must not have persisted a shrunk set.
-        let relaunched = SharedSessionCoordinator(connection: RelayConnection(), token: "t1")
-        XCTAssertTrue(relaunched.ownedSessionIds.contains(ownedId),
-                      "Owned set must survive relaunch after a failed all-sessions RPC")
+        coordinator.reconcile(tokenScoped: [session(a, state: .activeAttached), session(b)])
 
-        // Cleanup: unclaim so the shared `.standard` device-scoped key doesn't
-        // leak this id into sibling tests.
-        relaunched.unclaimSession(ownedId)
+        XCTAssertEqual(Set(coordinator.sessions.map { $0.id }), [a, b])
+        XCTAssertEqual(Set(coordinator.activeSessions.map { $0.id }), [a, b],
+                       "Every non-terminal session the server lists under this token shows in the pane")
     }
+
+    /// Relaunch shape: a fresh coordinator (no in-memory state, nothing persisted
+    /// about ownership) shows exactly what the server returns for this token.
+    /// This is the scenario that kept regressing — now it can't, because there is
+    /// no persisted owned set to be missing.
+    func testReconcileOnFreshCoordinatorShowsOwnedSessions() {
+        let coordinator = SharedSessionCoordinator(connection: RelayConnection(), token: "t1")
+        let attached = UUID()
+
+        // Simulate the first post-launch fetch returning our attached session.
+        coordinator.reconcile(tokenScoped: [session(attached, state: .activeAttached)])
+
+        XCTAssertTrue(coordinator.activeSessions.contains { $0.id == attached },
+                      "A session the server lists under this token appears on relaunch with no local persistence")
+    }
+
+    /// A session absent from the server's token-scoped list simply isn't shown —
+    /// no reconciliation, no popup. (Cleanup of a live takeover is the
+    /// session_stolen path, tested separately.)
+    func testReconcileDropsSessionsAbsentFromServerList() {
+        let coordinator = SharedSessionCoordinator(connection: RelayConnection(), token: "t1")
+        let gone = UUID(), present = UUID()
+
+        coordinator.reconcile(tokenScoped: [session(gone), session(present)])
+        XCTAssertEqual(coordinator.sessions.count, 2)
+
+        // Next fetch: `gone` is no longer under our token.
+        coordinator.reconcile(tokenScoped: [session(present)])
+
+        XCTAssertEqual(coordinator.sessions.map { $0.id }, [present])
+        XCTAssertFalse(coordinator.activeSessions.contains { $0.id == gone })
+        XCTAssertFalse(coordinator.showSessionStolen, "a plain list refresh must not raise the takeover popup")
+    }
+
+    /// reconcile evicts stale terminal VMs / cached views for sessions the server
+    /// no longer lists (the bookkeeping the removed claim/unclaim path used to do).
+    func testReconcileEvictsStaleTerminalState() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
+        let stale = UUID()
+        coordinator.terminalViewModels[stale] = TerminalViewModel(sessionId: stale, connection: connection)
+
+        coordinator.reconcile(tokenScoped: [session(UUID())])
+
+        XCTAssertNil(coordinator.terminalViewModels[stale], "VM for a no-longer-listed session must be evicted")
+    }
+
+    /// F3 active-tab restore only considers NON-TERMINAL sessions the server
+    /// lists (a terminal id would error in resumeSession). With only a terminal
+    /// session present, reconcile must not auto-select an active tab.
+    func testReconcileDoesNotRestoreTerminalActiveTab() {
+        let coordinator = SharedSessionCoordinator(connection: RelayConnection(), token: "t1")
+        // Persist a focused id via the setter, then clear it so the F3 restore
+        // branch (`activeSessionId == nil`) is eligible on the next reconcile.
+        let terminalId = UUID()
+        coordinator.activeSessionId = terminalId
+        coordinator.activeSessionId = nil
+
+        coordinator.reconcile(tokenScoped: [session(terminalId, state: .terminated)])
+
+        XCTAssertNil(coordinator.activeSessionId, "must not restore a terminal session as the active tab")
+    }
+
 }

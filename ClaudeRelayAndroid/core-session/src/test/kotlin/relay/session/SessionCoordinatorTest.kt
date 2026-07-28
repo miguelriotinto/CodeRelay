@@ -101,7 +101,9 @@ class SessionCoordinatorTest {
             is ClientMessage.SessionAttach -> ServerMessage.SessionAttached(message.sessionId, "running")
             is ClientMessage.SessionResume -> ServerMessage.SessionResumed(message.sessionId)
             is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
-            is ClientMessage.SessionList -> ServerMessage.SessionList(sessionsOnServer)
+            is ClientMessage.SessionList ->
+                if (failSessionList) ServerMessage.Error(code = 500, message = "session_list unavailable")
+                else ServerMessage.SessionList(sessionsOnServer)
             // SessionListAll defaults to the token-scoped list, but tests can stage a
             // SUPERSET (sessions on OTHER tokens) by setting [allSessionsOnServer] to
             // exercise the prune-against-all-sessions behavior.
@@ -126,6 +128,9 @@ class SessionCoordinatorTest {
 
         /** When true, SessionListAll responds with an Error so listAllSessions throws. */
         var failAllSessions: Boolean = false
+
+        /** When true, SessionList responds with an Error so listSessions throws. */
+        var failSessionList: Boolean = false
 
         /**
          * The token id the server reports in auth_success. Defaults to "tok" to
@@ -198,24 +203,20 @@ class SessionCoordinatorTest {
     private class FakeOwnershipStore(
         private val log: CallLog? = null,
         seedNames: Map<UUID, String> = emptyMap(),
-        seedOwned: Set<UUID> = emptySet(),
         seedAgents: Map<UUID, String> = emptyMap(),
     ) : OwnershipStore {
         private val namesMap = seedNames.toMutableMap()
-        private val ownedSet = seedOwned.toMutableSet()
         private val agentsMap = seedAgents.toMutableMap()
 
         override val names: Map<UUID, String> get() = namesMap.toMap()
-        override val owned: Set<UUID> get() = ownedSet.toSet()
         override val agents: Map<UUID, String> get() = agentsMap.toMap()
 
         override fun setName(id: UUID, name: String?) {
             if (name == null) namesMap.remove(id) else namesMap[id] = name
         }
-        override fun claim(id: UUID) { ownedSet.add(id); log?.add("claim") }
-        override fun unclaim(id: UUID) { ownedSet.remove(id); log?.add("unclaim") }
         override fun setAgent(id: UUID, agentId: String?) {
             if (agentId == null) agentsMap.remove(id) else agentsMap[id] = agentId
+            log?.add("setAgent")
         }
     }
 
@@ -268,12 +269,11 @@ class SessionCoordinatorTest {
         coord.createNewSession()
         advanceUntilIdle()
 
-        // RPC ordering: create happens, then claim, then wire (wire AFTER RPC).
-        assertTrue(log.precedes("rpc:session_create", "claim"), "create RPC precedes claim")
-        assertTrue(log.precedes("claim", "wire"), "claim precedes wire")
+        // RPC ordering: create happens, then wire (wire AFTER RPC).
         assertTrue(log.precedes("rpc:session_create", "wire"), "wire is AFTER the create RPC")
         assertEquals(FakeConnectionSurface.NEW_SESSION_ID, coord.activeSessionId.value)
-        assertTrue(store.owned.contains(FakeConnectionSurface.NEW_SESSION_ID), "session is claimed")
+        assertTrue(coord.activeSessions.value.any { it.id == FakeConnectionSurface.NEW_SESSION_ID },
+                   "created session shows in the pane (from the server's token-scoped list)")
     }
 
     // -------------------------------------------------------------------------
@@ -307,7 +307,7 @@ class SessionCoordinatorTest {
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val target = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(target, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
@@ -315,7 +315,6 @@ class SessionCoordinatorTest {
         advanceUntilIdle()
 
         assertTrue(log.precedes("wire", "rpc:session_resume"), "wire precedes resume RPC")
-        assertFalse("claim" in log, "switch must NOT claim")
         assertEquals(target, coord.activeSessionId.value)
     }
 
@@ -330,7 +329,7 @@ class SessionCoordinatorTest {
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val target = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(target, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
@@ -365,7 +364,7 @@ class SessionCoordinatorTest {
         val conn = FakeCoordinatorConnection(log)
         val previous = UUID.randomUUID()
         val attachTarget = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(previous))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(previous, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
@@ -410,7 +409,7 @@ class SessionCoordinatorTest {
         val conn = FakeCoordinatorConnection(log)
         val onOtherDevice = UUID.randomUUID()   // owned locally (stale), NOT in our pane
         val inOurPane = UUID.randomUUID()        // currently ours, shown in the sidebar
-        val store = FakeOwnershipStore(log, seedOwned = setOf(onOtherDevice, inOurPane))
+        val store = FakeOwnershipStore(log)
         // Token-scoped list (what we currently show) has only `inOurPane`.
         surface.sessionsOnServer = listOf(session(inOurPane, "Ours"))
         // All-tokens list (the server superset) also has the stolen-away one.
@@ -439,7 +438,7 @@ class SessionCoordinatorTest {
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val target = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(target), seedAgents = mapOf(target to "claude"))
+        val store = FakeOwnershipStore(log, seedAgents = mapOf(target to "claude"))
         // Report the target with a running agent so the switch's fetchSessions
         // keeps the agent mapped (an agent==null SessionInfo would clear it).
         surface.sessionsOnServer = listOf(
@@ -461,39 +460,7 @@ class SessionCoordinatorTest {
         assertNull(coord.activeSessionId.value, "active cleared")
         assertNull(coord.terminalCache.view(target), "terminal evicted")
         assertFalse(store.agents.containsKey(target), "agent forgotten")
-        assertFalse(store.owned.contains(target), "session unclaimed")
-    }
-
-    // forget-before-unclaim ordering, asserted directly via a logging store that
-    // records both forget (setAgent null) and unclaim.
-    @Test
-    fun `terminateSession ordering forget precedes unclaim`() = runTest {
-        val log = CallLog()
-        val surface = FakeConnectionSurface(log)
-        val conn = FakeCoordinatorConnection(log)
-        val target = UUID.randomUUID()
-        // A store that logs BOTH setAgent(null) ("forget") and unclaim.
-        val store = object : OwnershipStore {
-            private val n = mutableMapOf<UUID, String>()
-            private val o = mutableSetOf(target)
-            private val a = mutableMapOf(target to "claude")
-            override val names get() = n.toMap()
-            override val owned get() = o.toSet()
-            override val agents get() = a.toMap()
-            override fun setName(id: UUID, name: String?) { if (name == null) n.remove(id) else n[id] = name }
-            override fun claim(id: UUID) { o.add(id) }
-            override fun unclaim(id: UUID) { o.remove(id); log.add("unclaim") }
-            override fun setAgent(id: UUID, agentId: String?) {
-                if (agentId == null) { if (a.remove(id) != null) log.add("forget") } else a[id] = agentId
-            }
-        }
-        surface.sessionsOnServer = emptyList()
-        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
-
-        coord.terminateSession(target)
-        advanceUntilIdle()
-
-        assertTrue(log.precedes("forget", "unclaim"), "forgetSession (setAgent null) precedes unclaim")
+        assertFalse(coord.activeSessions.value.any { it.id == target }, "dropped from pane")
     }
 
     // -------------------------------------------------------------------------
@@ -531,172 +498,108 @@ class SessionCoordinatorTest {
     }
 
     // -------------------------------------------------------------------------
-    // fetchSessions stale-prune: seed A,B,C; server returns only A; B,C are
-    // unclaimed/un-named/un-agented and their cached terminals pruned.
+    // fetchSessions: the pane is the server's token-scoped list, verbatim
+    // (minus terminal). No local owned set — this is what makes a relaunch show
+    // exactly what the server owns for this token.
     // -------------------------------------------------------------------------
 
     @Test
-    fun `fetchSessions prunes ownership and cache for sessions gone from the server`() = runTest {
+    fun `fetchSessions renders the server token-scoped list`() = runTest {
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
         val b = UUID.fromString("00000000-0000-0000-0000-00000000000b")
-        val c = UUID.fromString("00000000-0000-0000-0000-00000000000c")
-        val store = FakeOwnershipStore(
-            log,
-            seedNames = mapOf(a to "Arya", b to "Bran", c to "Cersei"),
-            seedOwned = setOf(a, b, c),
-            seedAgents = mapOf(b to "claude", c to "codex"),
-        )
-        surface.sessionsOnServer = listOf(session(a, "Arya")) // only A survives
-        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
-
-        // Seed cached terminals for B and C.
-        coord.terminalCache.put(b, relay.terminal.TerminalSessionVm())
-        coord.terminalCache.put(c, relay.terminal.TerminalSessionVm())
-
-        coord.fetchSessions()
-        advanceUntilIdle()
-
-        // A survives; B and C are pruned everywhere.
-        assertTrue(store.owned.contains(a))
-        assertFalse(store.owned.contains(b), "B unclaimed")
-        assertFalse(store.owned.contains(c), "C unclaimed")
-        assertFalse(store.names.containsKey(b), "B un-named")
-        assertFalse(store.names.containsKey(c), "C un-named")
-        assertFalse(store.agents.containsKey(b), "B un-agented")
-        assertFalse(store.agents.containsKey(c), "C un-agented")
-        assertNull(coord.terminalCache.view(b), "B terminal evicted")
-        assertNull(coord.terminalCache.view(c), "C terminal evicted")
-        assertFalse(coord.terminalCache.cachedIds.contains(b), "B not cached")
-        assertFalse(coord.terminalCache.cachedIds.contains(c), "C not cached")
-    }
-
-    // -------------------------------------------------------------------------
-    // REGRESSION (device-pin bug): a session this device owns but that lives under
-    // a DIFFERENT token (absent from the token-scoped session_list, present in
-    // session_list_all) must SURVIVE the prune. Previously the prune ran against the
-    // token-scoped list and permanently unclaimed it → the session vanished from the
-    // pane with no recovery.
-    // -------------------------------------------------------------------------
-
-    @Test
-    fun `fetchSessions relinquishes a session moved to another token and alerts`() = runTest {
-        // Behavior change (per product): a session this device owned but that is
-        // now attached under ANOTHER token has moved to another device. The user
-        // wants it to disappear from this device AND be told. So B is unclaimed
-        // and raises the "moved" alert; `gone` (terminated everywhere) is
-        // unclaimed silently; A (still ours) is kept.
-        val log = CallLog()
-        val surface = FakeConnectionSurface(log)
-        val conn = FakeCoordinatorConnection(log)
-        val a = UUID.fromString("00000000-0000-0000-0000-00000000000a") // this token
-        val b = UUID.fromString("00000000-0000-0000-0000-00000000000b") // another token (alive → moved)
-        val gone = UUID.fromString("00000000-0000-0000-0000-00000000000d") // truly gone → silent
-        val store = FakeOwnershipStore(
-            log,
-            seedNames = mapOf(a to "Arya", b to "Bran", gone to "Ghost"),
-            seedOwned = setOf(a, b, gone),
-            seedAgents = mapOf(b to "claude"),
-        )
-        // Token-scoped list: only A (B is attached under another device's token now).
-        surface.sessionsOnServer = listOf(session(a, "Arya"))
-        // All-tokens list: A (ours) and B (under ANOTHER token) exist; `gone` does not.
-        // B's tokenId != our "tok", so it's classified as genuinely moved.
-        surface.allSessionsOnServer = listOf(session(a, "Arya"), session(b, "Bran", token = "other-token"))
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(a, "Arya"), session(b, "Bran"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
         coord.fetchSessions()
         advanceUntilIdle()
 
-        // A (still in our pane) is kept; B and `gone` are relinquished.
-        assertTrue(store.owned.contains(a), "A kept (still ours)")
-        assertFalse(store.owned.contains(b), "B relinquished (moved to another device)")
-        assertFalse(store.owned.contains(gone), "truly-gone session pruned")
-        // B — alive elsewhere — raised the "Session Moved" alert; `gone` did not.
-        assertEquals(b, coord.stolenAlert.value?.sessionId, "moved session B alerts the user")
-        assertFalse(store.names.containsKey(gone), "gone un-named")
+        assertEquals(setOf(a, b), coord.activeSessions.value.map { it.id }.toSet(),
+            "pane shows every non-terminal session the server lists for this token")
     }
 
     // -------------------------------------------------------------------------
-    // THE REPORTED REGRESSION: a session this device owns, missing from a
-    // transiently-empty token-scoped session_list but still alive under MY OWN
-    // token in session_list_all, must be RETAINED — never unclaimed. Before the
-    // fix the reconcile keyed off the token-scoped list and unclaimed it, so the
-    // pane came up empty on relaunch.
+    // Relaunch shape: a fresh coordinator (no persisted ownership) shows exactly
+    // what the server returns. This is the scenario that kept regressing.
     // -------------------------------------------------------------------------
 
     @Test
-    fun `fetchSessions retains own session missing from transient token-scoped list`() = runTest {
+    fun `fetchSessions on a fresh coordinator shows owned sessions with no persistence`() = runTest {
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val mine = UUID.fromString("00000000-0000-0000-0000-0000000000a1")
-        val store = FakeOwnershipStore(log, seedOwned = setOf(mine))
-        // Cold-launch race: token-scoped list empty, but the session is alive
-        // under MY token ("tok") in the all-sessions list.
-        surface.sessionsOnServer = emptyList()
-        surface.allSessionsOnServer = listOf(session(mine, "Mine", token = "tok"))
-        surface.myTokenId = "tok"
+        val store = FakeOwnershipStore(log)   // empty — nothing persisted about ownership
+        surface.sessionsOnServer = listOf(session(mine, "Mine"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
         coord.fetchSessions()
         advanceUntilIdle()
 
-        assertTrue(store.owned.contains(mine), "A session still alive under MY token must never be unclaimed")
-        assertNull(coord.stolenAlert.value, "Retaining my own session must not raise a 'moved' alert")
+        assertTrue(coord.activeSessions.value.any { it.id == mine },
+            "a session the server lists appears on relaunch with no local ownership cache")
+        assertNull(coord.stolenAlert.value, "a plain list refresh must not raise the takeover popup")
     }
 
     // -------------------------------------------------------------------------
-    // Older-server fallback: when auth_success carries no tokenId (myTokenId
-    // null), a session still alive on the server but missing from the
-    // token-scoped list must be RETAINED — we can't prove it moved.
+    // A failed session_list leaves the pane untouched (early return) — a
+    // transient fetch failure must never blank the pane.
     // -------------------------------------------------------------------------
 
     @Test
-    fun `fetchSessions retains alive session when own token unknown`() = runTest {
+    fun `fetchSessions failure leaves the pane untouched`() = runTest {
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
-        val id = UUID.fromString("00000000-0000-0000-0000-0000000000a2")
-        val store = FakeOwnershipStore(log, seedOwned = setOf(id))
-        surface.sessionsOnServer = emptyList()
-        surface.allSessionsOnServer = listOf(session(id, "X", token = "whatever"))
-        surface.myTokenId = null // older server: no tokenId in auth_success
+        val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(a, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
-
         coord.fetchSessions()
         advanceUntilIdle()
+        assertTrue(coord.activeSessions.value.any { it.id == a })
 
-        assertTrue(store.owned.contains(id), "With unknown own-token, a still-alive session must be retained")
-        assertNull(coord.stolenAlert.value)
+        // Next fetch: session_list errors → doFetchSessions early-returns.
+        surface.failSessionList = true
+        coord.fetchSessions(force = true)
+        advanceUntilIdle()
+
+        assertTrue(coord.activeSessions.value.any { it.id == a },
+            "a failed list must not clear the pane")
     }
 
     // -------------------------------------------------------------------------
-    // A failed session_list_all must NOT trigger any unclaim (avoid over-pruning
-    // when the all-sessions RPC is unavailable).
+    // fetchSessions still prunes stale AUXILIARY state (names, agents, cached
+    // terminals) for sessions the server no longer lists — bookkeeping only.
     // -------------------------------------------------------------------------
 
     @Test
-    fun `fetchSessions does not prune when listAllSessions is unavailable`() = runTest {
+    fun `fetchSessions prunes stale names agents and terminals`() = runTest {
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
         val b = UUID.fromString("00000000-0000-0000-0000-00000000000b")
-        val store = FakeOwnershipStore(log, seedOwned = setOf(a, b))
-        surface.sessionsOnServer = listOf(session(a, "Arya"))
-        // Make SessionListAll return no usable response → listAllSessions throws →
-        // existsIds is null → prune is skipped entirely.
-        surface.failAllSessions = true
+        val store = FakeOwnershipStore(
+            log,
+            seedNames = mapOf(a to "Arya", b to "Bran"),
+            seedAgents = mapOf(b to "claude"),
+        )
+        surface.sessionsOnServer = listOf(session(a, "Arya")) // only A survives
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+        coord.terminalCache.put(b, relay.terminal.TerminalSessionVm())
 
         coord.fetchSessions()
         advanceUntilIdle()
 
-        assertTrue(store.owned.contains(a), "A kept (no prune on all-sessions failure)")
-        assertTrue(store.owned.contains(b), "B kept (no prune on all-sessions failure)")
+        assertFalse(store.names.containsKey(b), "B un-named")
+        assertFalse(store.agents.containsKey(b), "B un-agented")
+        assertNull(coord.terminalCache.view(b), "B terminal evicted")
+        assertFalse(coord.activeSessions.value.any { it.id == b }, "B not in pane")
+        assertTrue(coord.activeSessions.value.any { it.id == a }, "A retained")
     }
 
     // -------------------------------------------------------------------------
@@ -730,7 +633,7 @@ class SessionCoordinatorTest {
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val target = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedNames = mapOf(target to "Arya"), seedOwned = setOf(target))
+        val store = FakeOwnershipStore(log, seedNames = mapOf(target to "Arya"))
         surface.sessionsOnServer = listOf(session(target, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
@@ -739,6 +642,9 @@ class SessionCoordinatorTest {
         advanceUntilIdle()
         assertEquals(target, coord.activeSessionId.value)
 
+        // On a real steal the server has reassigned the token, so a follow-up
+        // listSessions no longer returns it.
+        surface.sessionsOnServer = emptyList()
         conn.deliver(ServerMessage.SessionStolen(target))
         advanceUntilIdle()
 
@@ -746,8 +652,7 @@ class SessionCoordinatorTest {
         assertNull(coord.activeSessionId.value, "active cleared on steal of active session")
         assertEquals(target, coord.stolenAlert.value?.sessionId, "stolen alert raised for the active session")
         assertTrue(coord.sessionsStolen.value.contains(target), "session marked stolen")
-        // Both branches: unclaim (sessionStolen unclaims internally here) + evict.
-        assertFalse(store.owned.contains(target), "session unclaimed")
+        assertFalse(coord.activeSessions.value.any { it.id == target }, "dropped from pane")
         assertNull(coord.terminalCache.view(target), "terminal evicted")
     }
 
@@ -761,7 +666,6 @@ class SessionCoordinatorTest {
         val store = FakeOwnershipStore(
             log,
             seedNames = mapOf(active to "Arya", stolen to "Bran"),
-            seedOwned = setOf(active, stolen),
         )
         surface.sessionsOnServer = listOf(session(active, "Arya"), session(stolen, "Bran"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
@@ -773,6 +677,9 @@ class SessionCoordinatorTest {
         coord.terminalCache.put(stolen, relay.terminal.TerminalSessionVm())
         assertEquals(active, coord.activeSessionId.value)
 
+        // The steal reassigns `stolen`'s token server-side; a follow-up
+        // listSessions returns only what's still ours.
+        surface.sessionsOnServer = listOf(session(active, "Arya"))
         conn.deliver(ServerMessage.SessionStolen(stolen))
         advanceUntilIdle()
 
@@ -782,8 +689,7 @@ class SessionCoordinatorTest {
         assertTrue(coord.sessionsStolen.value.contains(stolen), "non-active steal marks the stolen set")
         // The active session the user is looking at is untouched.
         assertEquals(active, coord.activeSessionId.value, "active session unchanged")
-        // Ownership relinquished and the cached terminal evicted.
-        assertFalse(store.owned.contains(stolen), "non-active stolen session unclaimed")
+        assertFalse(coord.activeSessions.value.any { it.id == stolen }, "stolen session dropped from pane")
         assertNull(coord.terminalCache.view(stolen), "non-active stolen terminal evicted")
     }
 
@@ -800,7 +706,7 @@ class SessionCoordinatorTest {
         val conn = FakeCoordinatorConnection(log)
         val idA = UUID.randomUUID()
         val idB = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(idA, idB))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(idA, "Arya"), session(idB, "Bran"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
@@ -851,7 +757,7 @@ class SessionCoordinatorTest {
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val target = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(target, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
@@ -903,7 +809,7 @@ class SessionCoordinatorTest {
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val target = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(target, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
@@ -985,7 +891,7 @@ class SessionCoordinatorTest {
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log).apply { alive = true } // transport looks fine
         val target = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(target, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
@@ -1036,7 +942,7 @@ class SessionCoordinatorTest {
             forceReconnectGate = gate // park the recovery pass so isRecovering stays true
         }
         val target = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(target, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
         coord.switchToSession(target)
@@ -1068,7 +974,7 @@ class SessionCoordinatorTest {
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log).apply { alive = true }
         val target = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(target))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(target, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
@@ -1108,7 +1014,7 @@ class SessionCoordinatorTest {
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
         val a = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(a))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(
             session(a, "Arya"),
             session(FakeConnectionSurface.NEW_SESSION_ID, "Bran"),
@@ -1164,7 +1070,7 @@ class SessionCoordinatorTest {
         val conn = FakeCoordinatorConnection(log).apply { alive = true }
         val a = UUID.randomUUID()
         val b = UUID.randomUUID()
-        val store = FakeOwnershipStore(log, seedOwned = setOf(a, b))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(a, "Arya"), session(b, "Bran"))
         val clock = newClock() // frozen — see comment above
         val coord = SessionCoordinator(
@@ -1343,7 +1249,7 @@ class SessionCoordinatorTest {
         val conn = FakeCoordinatorConnection(log)
         val clock = newClock()
         val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
-        val store = FakeOwnershipStore(log, seedOwned = setOf(a))
+        val store = FakeOwnershipStore(log)
         surface.sessionsOnServer = listOf(session(a, "Arya"))
         val coord = SessionCoordinator(
             this, conn, SessionController(surface), "tok", store, config,
@@ -1392,54 +1298,40 @@ class SessionCoordinatorTest {
         )
 
     @Test
-    fun `computeActiveSessions keeps only owned non-terminal sessions sorted by createdAt ascending`() {
-        val ownedActiveLate = UUID.fromString("00000000-0000-0000-0000-000000000001")
-        val ownedActiveEarly = UUID.fromString("00000000-0000-0000-0000-000000000002")
-        val ownedActiveMid = UUID.fromString("00000000-0000-0000-0000-000000000003")
-        val ownedTerminal = UUID.fromString("00000000-0000-0000-0000-000000000004")
-        val unownedActive = UUID.fromString("00000000-0000-0000-0000-000000000005")
+    fun `computeActiveSessions keeps non-terminal sessions sorted by createdAt ascending`() {
+        val late = UUID.fromString("00000000-0000-0000-0000-000000000001")
+        val early = UUID.fromString("00000000-0000-0000-0000-000000000002")
+        val mid = UUID.fromString("00000000-0000-0000-0000-000000000003")
+        val terminal = UUID.fromString("00000000-0000-0000-0000-000000000004")
 
         val all = listOf(
-            sessionWith(ownedActiveLate, SessionState.ACTIVE_ATTACHED, createdAt = 300.0),
-            sessionWith(ownedActiveEarly, SessionState.ACTIVE_DETACHED, createdAt = 100.0),
-            sessionWith(ownedActiveMid, SessionState.RESUMING, createdAt = 200.0),
-            // Owned but TERMINAL — must be filtered out.
-            sessionWith(ownedTerminal, SessionState.EXITED, createdAt = 50.0),
-            // Non-terminal but NOT owned — must be filtered out.
-            sessionWith(unownedActive, SessionState.ACTIVE_ATTACHED, createdAt = 10.0),
+            sessionWith(late, SessionState.ACTIVE_ATTACHED, createdAt = 300.0),
+            sessionWith(early, SessionState.ACTIVE_DETACHED, createdAt = 100.0),
+            sessionWith(mid, SessionState.RESUMING, createdAt = 200.0),
+            // TERMINAL — must be filtered out.
+            sessionWith(terminal, SessionState.EXITED, createdAt = 50.0),
         )
-        val owned = setOf(ownedActiveLate, ownedActiveEarly, ownedActiveMid, ownedTerminal)
 
-        val result = SessionCoordinator.computeActiveSessions(all, owned)
+        val result = SessionCoordinator.computeActiveSessions(all)
 
-        // Only the three owned non-terminal sessions survive, ascending by createdAt
-        // (early=100 → mid=200 → late=300). Swift sorts `$0.createdAt < $1.createdAt`.
-        assertEquals(
-            listOf(ownedActiveEarly, ownedActiveMid, ownedActiveLate),
-            result.map { it.id },
-        )
+        // The three non-terminal sessions survive, ascending by createdAt
+        // (early=100 → mid=200 → late=300). No owned filter — the server list is
+        // the ownership boundary.
+        assertEquals(listOf(early, mid, late), result.map { it.id })
     }
 
     @Test
-    fun `computeActiveSessions filters every terminal state even when owned`() {
+    fun `computeActiveSessions filters every terminal state`() {
         val survivor = UUID.fromString("00000000-0000-0000-0000-0000000000a0")
-        val unowned = UUID.fromString("00000000-0000-0000-0000-0000000000b0")
         val terminalStates = listOf(
             SessionState.EXITED, SessionState.FAILED, SessionState.TERMINATED, SessionState.EXPIRED,
         )
-        // One OWNED session in each terminal state (all must drop despite being owned),
-        // one OWNED non-terminal survivor, plus an unowned non-terminal (must drop).
         val terminals = terminalStates.mapIndexed { i, st ->
             sessionWith(UUID.randomUUID(), st, createdAt = i.toDouble())
         }
-        val all = terminals +
-            sessionWith(unowned, SessionState.ACTIVE_ATTACHED, createdAt = 99.0) +
-            sessionWith(survivor, SessionState.ACTIVE_ATTACHED, createdAt = 5.0)
-        // Own every terminal session and the survivor — but NOT `unowned` — so the
-        // terminal-state filter is the only thing dropping the terminals.
-        val ownedSet = (terminals.map { it.id } + survivor).toSet()
+        val all = terminals + sessionWith(survivor, SessionState.ACTIVE_ATTACHED, createdAt = 5.0)
 
-        val result = SessionCoordinator.computeActiveSessions(all, ownedSet)
+        val result = SessionCoordinator.computeActiveSessions(all)
 
         assertEquals(listOf(survivor), result.map { it.id })
     }

@@ -30,12 +30,9 @@ private class SessionOwnershipAdapter(
     private val store: SessionOwnershipStore,
 ) : OwnershipStore {
     override val names: Map<UUID, String> get() = store.names
-    override val owned: Set<UUID> get() = store.owned
     override val agents: Map<UUID, String> get() = store.agents
 
     override fun setName(id: UUID, name: String?) { store.setName(id, name) }
-    override fun claim(id: UUID) { store.claim(id) }
-    override fun unclaim(id: UUID) { store.unclaim(id) }
     override fun setAgent(id: UUID, agentId: String?) { store.setAgent(id, agentId) }
 }
 

@@ -32,17 +32,10 @@ final class SessionOwnershipStoreTests: XCTestCase {
 
     // MARK: - Key construction
 
-    func testOwnershipKeyIsDeviceScoped() {
+    func testDeviceIndependentKeys() {
         let store = SessionOwnershipStore(keyPrefix: "com.clauderelay", deviceId: "DEV-123", defaults: defaults)
         XCTAssertEqual(store.namesKey, "com.clauderelay.sessionNames")
-        XCTAssertEqual(store.ownedKey, "com.clauderelay.ownedSessions.DEV-123")
         XCTAssertEqual(store.agentsKey, "com.clauderelay.agentSessions")
-    }
-
-    func testDifferentDeviceIdsProduceDifferentOwnedKeys() {
-        let storeA = SessionOwnershipStore(keyPrefix: "com.clauderelay", deviceId: "A", defaults: defaults)
-        let storeB = SessionOwnershipStore(keyPrefix: "com.clauderelay", deviceId: "B", defaults: defaults)
-        XCTAssertNotEqual(storeA.ownedKey, storeB.ownedKey)
     }
 
     // MARK: - Diff-checked writes
@@ -60,15 +53,6 @@ final class SessionOwnershipStoreTests: XCTestCase {
         XCTAssertFalse(store.saveNames(names))
         let afterSecond = defaults.writeCount
         XCTAssertEqual(afterSecond, afterFirst, "Second identical save must not write")
-    }
-
-    func testSaveOwnedDiffChecks() {
-        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "d", defaults: defaults)
-        let owned: Set<UUID> = [UUID(), UUID()]
-        XCTAssertTrue(store.saveOwned(owned))
-        let afterFirst = defaults.writeCount
-        XCTAssertFalse(store.saveOwned(owned))
-        XCTAssertEqual(defaults.writeCount, afterFirst)
     }
 
     func testSaveAgentsDiffChecks() {
@@ -98,14 +82,6 @@ final class SessionOwnershipStoreTests: XCTestCase {
         XCTAssertEqual(loaded[id], "Rhaegar")
     }
 
-    func testOwnedRoundTrip() {
-        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "d", defaults: defaults)
-        let ids: Set<UUID> = [UUID(), UUID()]
-        XCTAssertTrue(store.saveOwned(ids))
-        let loaded = SessionOwnershipStore(keyPrefix: "p", deviceId: "d", defaults: defaults).loadOwned()
-        XCTAssertEqual(loaded, ids)
-    }
-
     func testAgentsRoundTrip() {
         let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "d", defaults: defaults)
         let id = UUID()
@@ -116,40 +92,31 @@ final class SessionOwnershipStoreTests: XCTestCase {
 
     // MARK: - Prune
 
-    func testPruneRemovesOnlyStale() {
+    func testPruneRemovesOnlyStaleNamesAndAgents() {
         let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "d", defaults: defaults)
         let keep = UUID(), drop = UUID()
         var names: [UUID: String] = [keep: "Tyrion", drop: "Sansa"]
-        var owned: Set<UUID> = [keep, drop]
         var agents: [UUID: String] = [keep: "claude", drop: "codex"]
-        _ = store.saveNames(names); _ = store.saveOwned(owned); _ = store.saveAgents(agents)
+        _ = store.saveNames(names); _ = store.saveAgents(agents)
 
-        let result = store.pruneToServerSessions(
-            serverIds: [keep], names: &names, owned: &owned, agents: &agents
-        )
+        store.pruneToServerSessions(serverIds: [keep], names: &names, agents: &agents)
 
         XCTAssertEqual(names, [keep: "Tyrion"])
-        XCTAssertEqual(owned, [keep])
         XCTAssertEqual(agents, [keep: "claude"])
-        XCTAssertEqual(result.removedNames, [drop])
-        XCTAssertEqual(result.removedOwned, [drop])
-        XCTAssertEqual(result.removedAgents, [drop])
     }
 
     func testPruneWithNoStaleIsFullyNoop() {
         let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "d", defaults: defaults)
         let id = UUID()
         var names: [UUID: String] = [id: "Only"]
-        var owned: Set<UUID> = [id]
         var agents: [UUID: String] = [id: "claude"]
-        _ = store.saveNames(names); _ = store.saveOwned(owned); _ = store.saveAgents(agents)
+        _ = store.saveNames(names); _ = store.saveAgents(agents)
         let writesBefore = defaults.writeCount
 
-        let result = store.pruneToServerSessions(
-            serverIds: [id], names: &names, owned: &owned, agents: &agents
-        )
+        store.pruneToServerSessions(serverIds: [id], names: &names, agents: &agents)
 
-        XCTAssertTrue(result.isEmpty)
+        XCTAssertEqual(names, [id: "Only"])
+        XCTAssertEqual(agents, [id: "claude"])
         XCTAssertEqual(defaults.writeCount, writesBefore, "No-op prune must not touch UserDefaults")
     }
 
@@ -195,9 +162,9 @@ final class SessionOwnershipStoreTests: XCTestCase {
         let active = UUID()
         let survivor = UUID()
         store.saveActiveSession(active)
-        var names: [UUID: String] = [:]; var owned: Set<UUID> = []; var agents: [UUID: String] = [:]
+        var names: [UUID: String] = [:]; var agents: [UUID: String] = [:]
         // `active` is not in serverIds → prune must clear it so we don't restore a dead tab.
-        _ = store.pruneToServerSessions(serverIds: [survivor], names: &names, owned: &owned, agents: &agents)
+        store.pruneToServerSessions(serverIds: [survivor], names: &names, agents: &agents)
         XCTAssertNil(store.loadActiveSession())
     }
 
@@ -205,8 +172,8 @@ final class SessionOwnershipStoreTests: XCTestCase {
         let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
         let active = UUID()
         store.saveActiveSession(active)
-        var names: [UUID: String] = [:]; var owned: Set<UUID> = []; var agents: [UUID: String] = [:]
-        _ = store.pruneToServerSessions(serverIds: [active], names: &names, owned: &owned, agents: &agents)
+        var names: [UUID: String] = [:]; var agents: [UUID: String] = [:]
+        store.pruneToServerSessions(serverIds: [active], names: &names, agents: &agents)
         XCTAssertEqual(store.loadActiveSession(), active)
     }
 

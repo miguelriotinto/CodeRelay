@@ -2,7 +2,6 @@ package relay.storage
 
 import android.content.Context
 import android.content.SharedPreferences
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import relay.protocol.WireJson
@@ -38,42 +37,29 @@ import java.util.UUID
  */
 class SessionOwnershipStore(
     context: Context,
-    deviceId: String,
+    @Suppress("UNUSED_PARAMETER") deviceId: String,
 ) {
-    // MARK: - Keys
+    // Ownership is NOT persisted — the server's token-scoped session list is
+    // authoritative. This store keeps only the device-independent auxiliary
+    // maps (display names, last-seen agent per session) that the UI layers on
+    // top of the server list. `deviceId` is retained in the signature for
+    // call-site compatibility but no longer namespaces any key.
 
     /** Key for the UUID→name map (device-independent). */
     val namesKey: String = NAMES_KEY
-    /** Key for the device-scoped owned-session set. */
-    val ownedKey: String = "$OWNED_KEY_PREFIX.$deviceId"
     /** Key for the UUID→agentId map (device-independent). */
     val agentsKey: String = AGENTS_KEY
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    init {
-        // One-time migration for the deviceId namespace change (the owned-set key
-        // is `ownedSessions.$deviceId`). Older builds keyed `deviceId` off a
-        // persisted random UUID; current builds prefer `aid-<ANDROID_ID>`
-        // (DeviceIdentifier). On the first launch after that change, the new
-        // `ownedKey` is empty while the legacy `ownedSessions.<old-uuid>` still
-        // holds the user's claims — which would surface as an empty pane. If the
-        // active deviceId is the new `aid-*` form and the new key is absent,
-        // forward-copy the legacy key so existing claims survive the upgrade.
-        migrateLegacyOwnedKeyIfNeeded(context, deviceId)
-    }
-
-    // MARK: - In-memory caches (authoritative; loaded once at init)
+    // MARK: - In-memory caches (authoritative for the auxiliary maps; loaded once)
 
     private val namesCache: MutableMap<UUID, String> = load(namesKey)
-    private val ownedCache: MutableSet<UUID> = loadSet(ownedKey)
     private val agentsCache: MutableMap<UUID, String> = load(agentsKey)
 
     /** Snapshot of UUID→name. */
     val names: Map<UUID, String> get() = namesCache.toMap()
-    /** Snapshot of owned session ids (device-scoped). */
-    val owned: Set<UUID> get() = ownedCache.toSet()
     /** Snapshot of UUID→agentId. */
     val agents: Map<UUID, String> get() = agentsCache.toMap()
 
@@ -82,8 +68,6 @@ class SessionOwnershipStore(
     /**
      * Sets (or, when [name] is `null`, removes) the display name for [id].
      * Persists only when the stored value actually changed.
-     *
-     * @return `true` if state (and thus storage) changed.
      */
     fun setName(id: UUID, name: String?): Boolean {
         val changed = if (name == null) {
@@ -96,33 +80,8 @@ class SessionOwnershipStore(
     }
 
     /**
-     * Marks [id] as owned by this device. Persists only when it wasn't already
-     * owned.
-     *
-     * @return `true` if the set changed.
-     */
-    fun claim(id: UUID): Boolean {
-        val changed = ownedCache.add(id)
-        if (changed) persistSet(ownedKey, ownedCache)
-        return changed
-    }
-
-    /**
-     * Removes [id] from this device's owned set. Persists only when it was owned.
-     *
-     * @return `true` if the set changed.
-     */
-    fun unclaim(id: UUID): Boolean {
-        val changed = ownedCache.remove(id)
-        if (changed) persistSet(ownedKey, ownedCache)
-        return changed
-    }
-
-    /**
      * Sets (or, when [agentId] is `null`, removes) the last-seen agent for [id].
      * Persists only when the stored value actually changed.
-     *
-     * @return `true` if state changed.
      */
     fun setAgent(id: UUID, agentId: String?): Boolean {
         val changed = if (agentId == null) {
@@ -132,41 +91,6 @@ class SessionOwnershipStore(
         }
         if (changed) persist(agentsKey, agentsCache)
         return changed
-    }
-
-    /**
-     * If the active [deviceId] is the current `aid-<ANDROID_ID>` form and this
-     * store has no owned set yet, but a legacy `ownedSessions.<persisted-uuid>`
-     * key exists (from when deviceId was a persisted random UUID), forward-copy
-     * that legacy value onto [ownedKey] so the upgrade doesn't drop claims.
-     *
-     * Idempotent: runs only when [ownedKey] is absent (subsequent launches, or a
-     * fresh install with no legacy key, no-op). Best-effort — any failure leaves
-     * the (empty) new key untouched, i.e. no worse than before.
-     */
-    private fun migrateLegacyOwnedKeyIfNeeded(context: Context, deviceId: String) {
-        // Only migrate when we're on the new namespace and haven't already.
-        if (!deviceId.startsWith(AID_PREFIX)) return
-        if (prefs.contains(ownedKey)) return
-
-        // The legacy device UUID persisted by DeviceIdentifier's fallback path.
-        val legacyDeviceId = runCatching {
-            context.getSharedPreferences(LEGACY_DEVICE_PREFS, Context.MODE_PRIVATE)
-                .getString(LEGACY_DEVICE_KEY, null)
-        }.getOrNull() ?: return
-        if (legacyDeviceId.isBlank() || legacyDeviceId == deviceId) return
-
-        val legacyOwnedKey = "$OWNED_KEY_PREFIX.$legacyDeviceId"
-        // Whole read+write is best-effort: a value stored under an unexpected
-        // type would make `getString` throw, and a corrupt prefs file could fail
-        // the commit — neither should crash app launch. On failure the new key
-        // stays absent, i.e. no worse than before the migration ran.
-        runCatching {
-            val legacyJson = prefs.getString(legacyOwnedKey, null) ?: return
-            // Forward-copy verbatim (same JSON list shape). commit() so it
-            // survives a force-kill right after the migrating launch.
-            prefs.edit().putString(ownedKey, legacyJson).commit()
-        }
     }
 
     // MARK: - (De)serialization helpers
@@ -184,52 +108,21 @@ class SessionOwnershipStore(
         return result
     }
 
-    /** Decodes a UUID set (JSON list of strings) from prefs; empty on failure. */
-    private fun loadSet(key: String): MutableSet<UUID> {
-        val json = prefs.getString(key, null) ?: return mutableSetOf()
-        val decoded = runCatching {
-            WireJson.instance.decodeFromString(LIST_SERIALIZER, json)
-        }.getOrNull() ?: return mutableSetOf()
-        return decoded.mapNotNull { runCatching { UUID.fromString(it) }.getOrNull() }
-            .toMutableSet()
-    }
-
     /** Encodes [map] (UUID keys → lowercase strings) and writes it to [key]. */
     private fun persist(key: String, map: Map<UUID, String>) {
         val encoded = map.entries.associate { it.key.toString().lowercase() to it.value }
         val json = WireJson.instance.encodeToString(MAP_SERIALIZER, encoded)
-        // commit() (synchronous), not apply(): a claim/name written right before the
-        // app is force-killed (or a rapid reconnect rebuilds the store from disk)
-        // must already be on disk. apply()'s async flush could otherwise be lost,
-        // dropping the ownership claim so the session vanishes next launch. These
-        // are tiny, infrequent writes — the sync cost is negligible. (DeviceIdentifier
-        // uses commit() for the same reason.)
-        prefs.edit().putString(key, json).commit()
-    }
-
-    /** Encodes [set] (lowercase UUID strings) and writes it to [key]. */
-    private fun persistSet(key: String, set: Set<UUID>) {
-        val encoded = set.map { it.toString().lowercase() }
-        val json = WireJson.instance.encodeToString(LIST_SERIALIZER, encoded)
-        // commit() not apply() — see persist() above; the owned set is the
-        // load-bearing device-pin state and must survive a force-kill.
+        // commit() (synchronous) so a name/agent written right before a
+        // force-kill is already on disk.
         prefs.edit().putString(key, json).commit()
     }
 
     companion object {
         private const val PREFS = "relay.ownership"
         private const val NAMES_KEY = "sessionNames"
-        private const val OWNED_KEY_PREFIX = "ownedSessions"
         private const val AGENTS_KEY = "agentSessions"
-
-        /** Prefix DeviceIdentifier uses for the ANDROID_ID-derived id. */
-        private const val AID_PREFIX = "aid-"
-        /** DeviceIdentifier's legacy persisted-UUID prefs (mirrors its constants). */
-        private const val LEGACY_DEVICE_PREFS = "relay.device"
-        private const val LEGACY_DEVICE_KEY = "deviceId"
 
         private val MAP_SERIALIZER =
             MapSerializer(String.serializer(), String.serializer())
-        private val LIST_SERIALIZER = ListSerializer(String.serializer())
     }
 }

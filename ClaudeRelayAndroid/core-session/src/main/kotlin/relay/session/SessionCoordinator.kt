@@ -15,6 +15,7 @@ import relay.protocol.PushPlatform
 import relay.protocol.ServerMessage
 import relay.protocol.SessionInfo
 import relay.protocol.SessionNamingTheme
+import relay.protocol.SessionState
 import relay.storage.SessionNaming
 import relay.terminal.TerminalSessionVm
 import java.util.UUID
@@ -79,17 +80,8 @@ interface OwnershipStore : AgentPersistence {
     /** Snapshot of UUID → display name. */
     val names: Map<UUID, String>
 
-    /** Snapshot of owned session ids (device-scoped). */
-    val owned: Set<UUID>
-
     /** Sets (or, when [name] is null, removes) the display name for [id]. */
     fun setName(id: UUID, name: String?)
-
-    /** Marks [id] as owned by this device. */
-    fun claim(id: UUID)
-
-    // `unclaim(id)` is inherited from [AgentPersistence] (returns Unit). The
-    // concrete store's `Boolean` return is discarded by the adapter.
 }
 
 /**
@@ -193,38 +185,27 @@ class SessionCoordinator(
     // (SharedSessionCoordinator.swift:642-644). Today only terminate clears it.
     val terminalTitles: StateFlow<Map<UUID, String>> = _terminalTitles.asStateFlow()
 
-    private val _ownedSessionIds = MutableStateFlow<Set<UUID>>(emptySet())
-    val ownedSessionIds: StateFlow<Set<UUID>> = _ownedSessionIds.asStateFlow()
-
     /**
-     * The filtered + sorted session list the tab bar and sidebar render — NOT the
-     * raw [sessions]. Recomputed from the raw list + owned-id set via the pure
-     * [computeActiveSessions] whenever either changes (see [recomputeActiveSessions],
-     * called from the same mutation points that update [_sessions] / [_ownedSessionIds]).
+     * The filtered + sorted session list the tab bar and sidebar render.
      *
-     * Backed by a plain [MutableStateFlow] rather than `combine(...).stateIn(...)`
-     * on purpose: every other flow here is a `MutableStateFlow`, and an eager
-     * `stateIn` collector launched on [scope] never completes, which strands a
-     * coroutine under `runTest` in the coordinator's unit tests. The push model
-     * keeps the same single-(main)-dispatcher confinement the rest of the type uses.
+     * The SERVER is authoritative for ownership: [_sessions] is the token-scoped
+     * `session_list` result — exactly the sessions this token owns — so the pane
+     * renders it directly, dropping only terminal sessions. There is NO local
+     * owned set: a session leaves the pane precisely when the server stops
+     * listing it under this token (attached by another client, or terminated).
+     * This removes the class of "empty pane on relaunch" bugs that a local,
+     * device-scoped ownership cache kept reintroducing.
      *
-     * Source of truth: SharedSessionCoordinator.swift:92-96
-     * ```
-     * public var activeSessions: [SessionInfo] {
-     *     sessions
-     *         .filter { !$0.state.isTerminal && ownedSessionIds.contains($0.id) }
-     *         .sorted { $0.createdAt < $1.createdAt }
-     * }
-     * ```
-     * Filter: keep non-terminal sessions this device owns. Sort: `createdAt`
-     * ASCENDING (Swift `$0.createdAt < $1.createdAt`).
+     * Backed by a plain [MutableStateFlow] (not `combine(...).stateIn(...)`)
+     * because an eager `stateIn` collector on [scope] never completes and
+     * strands a coroutine under `runTest`. Sort: `createdAt` ASCENDING.
      */
     private val _activeSessions = MutableStateFlow<List<SessionInfo>>(emptyList())
     val activeSessions: StateFlow<List<SessionInfo>> = _activeSessions.asStateFlow()
 
-    /** Re-derives [activeSessions] from the current raw list + owned set. */
+    /** Re-derives [activeSessions] from the current raw server list. */
     private fun recomputeActiveSessions() {
-        _activeSessions.value = computeActiveSessions(_sessions.value, _ownedSessionIds.value)
+        _activeSessions.value = computeActiveSessions(_sessions.value)
     }
 
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -298,9 +279,10 @@ class SessionCoordinator(
         )
         activityCoordinator = ActivityCoordinator(persistence = ownershipStore)
 
-        // Hydrate the published mirrors from the persisted store.
+        // Hydrate the published mirrors from the persisted store. Ownership is
+        // NOT persisted — the server's token-scoped list is authoritative and
+        // arrives on the first fetch.
         _sessionNames.value = ownershipStore.names
-        _ownedSessionIds.value = ownershipStore.owned
         recomputeActiveSessions()
 
         // Recovery collaborators: real lambdas bound to the connection + controller.
@@ -452,18 +434,27 @@ class SessionCoordinator(
         runCatching { sessionController.renameSession(id, name) }
     }
 
-    // MARK: - Ownership
+    // MARK: - Pane mutation
+    //
+    // Ownership is not persisted; the pane IS the server's token-scoped list.
+    // These helpers mutate `_sessions` optimistically so a just-created/attached
+    // session shows instantly, or a removed one disappears instantly, before the
+    // authoritative fetch lands.
 
-    private fun claimSession(id: UUID) {
-        ownershipStore.claim(id)
-        _ownedSessionIds.value = ownershipStore.owned
-        recomputeActiveSessions()
+    /** Optimistically add a session to the pane if absent. */
+    private fun addSessionLocal(info: SessionInfo) {
+        if (_sessions.value.none { it.id == info.id }) {
+            _sessions.value = _sessions.value + info
+            recomputeActiveSessions()
+        }
     }
 
-    private fun unclaimSession(id: UUID) {
-        ownershipStore.unclaim(id)
-        _ownedSessionIds.value = ownershipStore.owned
-        recomputeActiveSessions()
+    /** Optimistically drop a session from the pane. */
+    private fun removeSessionLocal(id: UUID) {
+        if (_sessions.value.any { it.id == id }) {
+            _sessions.value = _sessions.value.filterNot { it.id == id }
+            recomputeActiveSessions()
+        }
     }
 
     // MARK: - Session list
@@ -501,45 +492,17 @@ class SessionCoordinator(
     }
 
     private suspend fun doFetchSessions() {
-        // The pane list is TOKEN-scoped (sessions created/attached under THIS
-        // connection's token) — `session_list`.
+        // The server is authoritative for ownership: `session_list` is
+        // TOKEN-scoped — exactly the sessions this token owns. That IS the
+        // "what sessions do I own?" answer; the pane renders it directly. A
+        // failed RPC leaves `_sessions` untouched (early return), so a transient
+        // failure never blanks the pane.
         val list = runCatching { authCoordinator.withAuth { sessionController.listSessions() } }
             .getOrElse { return }
         _sessions.value = list
         recomputeActiveSessions()
 
-        // The PRUNE existence set is TOKEN-AGNOSTIC — `session_list_all` lists every
-        // session the server still holds, across all tokens. We prune local
-        // ownership/names/agents against THIS, not the token-scoped `list`, because
-        // ownership is device-scoped: a session this device created/attached under a
-        // DIFFERENT token (e.g. another device attached it, or a prior launch used a
-        // different token) is absent from `list` but still very much alive. Pruning
-        // against the token-scoped list would permanently unclaim it → the session
-        // vanishes from the pane with no recovery (the reported bug). The server
-        // REMOVES terminated/cleaned-up sessions from its store (SessionManager
-        // `sessions.removeValue`), so a truly-dead session is absent from
-        // `session_list_all` too and is still pruned correctly. The dedicated
-        // `session_stolen` push handles the "another device took it" case.
-        //
-        // If the all-sessions RPC fails, fall back to the token-scoped ids — but
-        // since that risks the over-prune above, treat a failure as "prune nothing"
-        // (null) rather than "prune everything not on this token".
-        val allSessions: List<SessionInfo>? = runCatching {
-            authCoordinator.withAuth { sessionController.listAllSessions() }
-        }.getOrNull()
-        val existsIds: Set<UUID>? = allSessions?.map { it.id }?.toSet()
-        // Ids alive (non-terminal) under ANY token — used to tell "moved to
-        // another device" (alert) from "terminated" (silent). Distinct from
-        // `existsIds`, which also includes terminated-but-not-yet-reaped ids.
-        val aliveElsewhere: Set<UUID> = allSessions?.filter { !it.state.isTerminal }?.map { it.id }?.toSet() ?: emptySet()
-        // Owning token per session id from the all-sessions list — the
-        // authoritative signal for "is this still MY session, or did it move to
-        // another token?" A session under my own token that's merely missing
-        // from a transiently-empty token-scoped `list` must NOT be unclaimed.
-        val tokenById: Map<UUID, String> = allSessions?.associate { it.id to it.tokenId } ?: emptyMap()
-        // This connection's own token id (from auth_success). Null against older
-        // servers → reconcile falls back to a safe "retain if still on server" rule.
-        val myTokenId: String? = sessionController.tokenId
+        val serverIds = list.map { it.id }.toSet()
 
         // Adopt any server-provided names.
         for (session in list) {
@@ -558,77 +521,19 @@ class SessionCoordinator(
             )
         }
 
-        // Capture every owned session missing from THIS token's pane BEFORE the
-        // prune unclaims them. Each was lost — moved to another device or
-        // terminated — and is reconciled (with the right alert/silent choice)
-        // after the prune below. This covers the "stolen while disconnected,
-        // discovered on reconnect" case the live push can't.
-        val shownIds = list.map { it.id }.toSet()
-        val lostOwned = ownershipStore.owned.filter { it !in shownIds }.toSet()
-
-        // Only prune when we have an authoritative all-sessions set; a failed
-        // all-sessions fetch must NOT trigger unclaims (see above).
-        if (existsIds != null) {
-            // Prune names for sessions gone from the server entirely.
-            for (id in ownershipStore.names.keys.toList()) {
-                if (id !in existsIds) setNameLocal(id, null)
-            }
-            // Prune owned ids only when truly gone from the server (any token).
-            for (id in ownershipStore.owned.toList()) {
-                if (id !in existsIds) unclaimSession(id)
-            }
-            // Prune agents gone from the server, forgetting their activity state too.
-            for (id in ownershipStore.agents.keys.toList()) {
-                if (id !in existsIds) activityCoordinator.forgetSession(id)
-            }
-            // Evict cached terminals for sessions that no longer exist on the server.
-            val prunedTerminals = terminalCache.pruneStale(existsIds)
-            // Forget activity for any pruned terminal whose id wasn't already handled
-            // above (e.g. a cached terminal with no agent entry).
-            for (id in prunedTerminals) {
-                if (id !in existsIds) activityCoordinator.forgetSession(id)
-            }
+        // Prune stale local per-session state (names, agents, cached terminals)
+        // to the server's authoritative list. Anything absent was attached
+        // elsewhere, terminated, or lost on a server restart. This is bookkeeping
+        // only — ownership is NOT persisted, so there is nothing to "unclaim".
+        for (id in ownershipStore.names.keys.toList()) {
+            if (id !in serverIds) setNameLocal(id, null)
         }
-
-        // Reconcile each owned session missing from THIS token's list, but
-        // classify against the token-agnostic all-sessions list so we never
-        // unclaim a session that's still ours:
-        //
-        //  • not alive anywhere               → terminated everywhere → unclaim, silent.
-        //  • alive under ANOTHER token        → moved to another device → unclaim + alert.
-        //  • alive under MY OWN token         → RETAIN. Still ours; it was only
-        //                                       missing from a transiently
-        //                                       empty/incomplete token-scoped list
-        //                                       (the cold-launch fetch race). This
-        //                                       is the case that used to wipe the
-        //                                       owned set on relaunch.
-        //  • my token unknown (older server)
-        //    && alive somewhere               → RETAIN (strictly safe: never
-        //                                       unclaim a still-on-server session
-        //                                       when we can't classify).
-        //
-        // Gate on `existsIds != null`: a failed all-sessions RPC means we can't
-        // classify anything, so we skip reconciliation entirely rather than
-        // unclaim on incomplete data — same guard the prune uses.
-        // Re-claim first so `cleanUpStolenSession` runs the full teardown (the
-        // prune above already unclaimed the terminated ones); `refetch=false` —
-        // we're inside doFetchSessions.
-        if (existsIds != null) {
-            for (id in lostOwned) {
-                if (id in aliveElsewhere) {
-                    val owningToken = tokenById[id]
-                    if (myTokenId == null || owningToken == null || owningToken == myTokenId) {
-                        continue // retain — still ours / can't prove otherwise
-                    }
-                    // Genuinely moved to another device.
-                    claimSession(id)
-                    cleanUpStolenSession(id, alert = true, refetch = false)
-                } else {
-                    // Not alive anywhere → terminated everywhere → silent cleanup.
-                    claimSession(id)
-                    cleanUpStolenSession(id, alert = false, refetch = false)
-                }
-            }
+        for (id in ownershipStore.agents.keys.toList()) {
+            if (id !in serverIds) activityCoordinator.forgetSession(id)
+        }
+        val prunedTerminals = terminalCache.pruneStale(serverIds)
+        for (id in prunedTerminals) {
+            if (id !in serverIds) activityCoordinator.forgetSession(id)
         }
     }
 
@@ -684,8 +589,10 @@ class SessionCoordinator(
                 terminalCache.evict(it)
             }
 
-            // claim → name BEFORE wiring; wire AFTER the RPC (create/attach wire after).
-            claimSession(sessionId)
+            // Optimistically show the new session; the forced fetch below
+            // replaces `_sessions` with the authoritative token-scoped list.
+            addSessionLocal(SessionInfo(sessionId, name, SessionState.ACTIVE_ATTACHED,
+                sessionController.tokenId ?: "", 0.0, 0u, 0u, null, null, null, null, null))
             setNameLocal(sessionId, name)
 
             terminalCache.put(sessionId, newTerminalVm())
@@ -759,17 +666,10 @@ class SessionCoordinator(
 
     // MARK: - Attach (SharedSessionCoordinator.swift:462-561)
 
-    /** Lists sessions running on the server that this device is not already
-     *  showing in its own pane, so they can be attached from another device.
-     *
-     *  Filter by the TOKEN-SCOPED session list (`_sessions` — exactly what the
-     *  sidebar shows right now), NOT by `ownershipStore.owned`. The owned set is
-     *  sticky: `doFetchSessions` keeps any session still alive on the server
-     *  under ANY token (to avoid over-pruning), so a session this device once
-     *  attached but that has since moved to another device lingers in `owned`
-     *  forever. Filtering Attach by `owned` therefore hid every such session —
-     *  it was neither in the sidebar (token-scoped) nor offered for attach
-     *  (owned-filtered): invisible AND unattachable. That was the bug. */
+    /** Lists sessions running on the server (across all tokens) that aren't
+     *  already in this token's pane, so they can be attached from another
+     *  device. Filtered against the token-scoped `_sessions` (what the pane
+     *  shows now) so we never offer a session we already own. */
     suspend fun fetchAttachableSessions(): List<SessionInfo> =
         runCatching {
             val shownIds = _sessions.value.map { it.id }.toSet()
@@ -798,8 +698,11 @@ class SessionCoordinator(
                 terminalCache.evict(previousId)
             }
 
-            // claim → beginReplay → wire AFTER the RPC (attach wires after).
-            claimSession(id)
+            // Optimistically show the just-attached session; the forced fetch
+            // below reconciles against the authoritative token-scoped list
+            // (attach reassigned its token to us, so it's now listed).
+            addSessionLocal(SessionInfo(id, serverName, SessionState.ACTIVE_ATTACHED,
+                sessionController.tokenId ?: "", 0.0, 0u, 0u, null, null, null, null, null))
             val vm = newTerminalVm()
             vm.beginReplay()
             terminalCache.put(id, vm)
@@ -849,9 +752,10 @@ class SessionCoordinator(
                 _activeSessionId.value = null
             }
             evictTerminal(id)
-            // forget BEFORE unclaim (the Swift ordering at :573-574).
             activityCoordinator.forgetSession(id)
-            unclaimSession(id)
+            // Drop from the pane immediately; the fetch below reconciles against
+            // the server list (which no longer includes the terminated session).
+            removeSessionLocal(id)
             setNameLocal(id, null)
             _terminalTitles.value = _terminalTitles.value - id
             fetchSessions()
@@ -888,38 +792,32 @@ class SessionCoordinator(
     }
 
     private fun onSessionStolen(sessionId: UUID) {
-        // Idempotency guard: ignore a duplicate/late push (or the reconciliation
-        // backstop) for a session already handled.
-        if (sessionId !in ownershipStore.owned && _activeSessionId.value != sessionId) return
+        // The server sends `session_stolen` to this (previous-owner) token when
+        // ANOTHER client attaches a session we currently hold. Act only if it's
+        // still in our pane / active, so a duplicate or late push doesn't
+        // re-raise the alert for an already-handled session.
+        if (_sessions.value.none { it.id == sessionId } && _activeSessionId.value != sessionId) return
         cleanUpStolenSession(sessionId)
     }
 
     /**
-     * Removes a session lost to another device and (optionally) raises the
-     * "Session Moved" alert. Order matches the product spec: the session
-     * disappears from the sidebar + tab bar FIRST (clear active, unclaim →
-     * drops out of `activeSessions`, evict terminal), THEN the alert is shown —
-     * for ANY lost session, not just the active one.
+     * Handles a session attached by another client: removes it from the pane and
+     * (optionally) raises the "attached by another client" popup. The pane is the
+     * server's token-scoped list, so we drop it from `_sessions` directly (there
+     * is no owned set to unclaim).
      *
-     * @param alert raise the "moved to another device" popup. True for the live
-     *   `session_stolen` push. The reconnect reconciliation passes `false` for
-     *   sessions gone everywhere (terminated) and `true` for those still alive
-     *   under another token (actually moved).
+     * @param alert raise the popup. True for the live `session_stolen` push.
      * @param refetch re-run `fetchSessions` afterward. False when called from
-     *   inside `doFetchSessions` to avoid re-entrancy.
+     *   inside a fetch pass to avoid re-entrancy.
      */
     fun cleanUpStolenSession(sessionId: UUID, alert: Boolean = true, refetch: Boolean = true) {
         if (_activeSessionId.value == sessionId) _activeSessionId.value = null
         if (alert) {
-            // sessionStolen() clears activity, unclaims, AND raises the alert.
             activityCoordinator.sessionStolen(sessionId) { name(it) }
         } else {
-            // Silent path (terminated): clear activity + unclaim, no popup.
             activityCoordinator.forgetSession(sessionId)
-            unclaimSession(sessionId)
         }
-        _ownedSessionIds.value = ownershipStore.owned
-        recomputeActiveSessions()
+        removeSessionLocal(sessionId)
         evictTerminal(sessionId)
         if (refetch) scope.launch { fetchSessions() }
     }
@@ -1251,15 +1149,13 @@ class SessionCoordinator(
         private const val ACTIVITY_PROBE_THROTTLE_MS = 5_000L
 
         /**
-         * Pure derivation of the active-session list, factored out so it is
-         * unit-testable without Android or coroutines. Mirrors the Swift
-         * `activeSessions` computed property exactly
-         * (SharedSessionCoordinator.swift:92-96):
-         *  - filter: keep sessions that are NOT terminal AND that [owned] contains.
-         *  - sort: by [SessionInfo.createdAt] ASCENDING (Swift `$0.createdAt < $1.createdAt`).
+         * Pure derivation of the pane list from the server's token-scoped
+         * session list. The server is authoritative for ownership, so this only
+         * drops terminal sessions and sorts by [SessionInfo.createdAt] ascending.
+         * No local owned-set filter (mirrors Swift `activeSessions`).
          */
-        fun computeActiveSessions(all: List<SessionInfo>, owned: Set<UUID>): List<SessionInfo> =
-            all.filter { !it.state.isTerminal && it.id in owned }
+        fun computeActiveSessions(all: List<SessionInfo>): List<SessionInfo> =
+            all.filter { !it.state.isTerminal }
                 .sortedBy { it.createdAt }
     }
 }

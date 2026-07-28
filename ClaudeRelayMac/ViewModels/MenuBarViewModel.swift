@@ -81,15 +81,10 @@ final class MenuBarViewModel: ObservableObject {
         let sessionsTask = Task { [weak self] in
             for await s in coordinator.$sessions.values {
                 guard let self else { return }
-                // Restrict to sessions this device owns. The server-side list
-                // includes every session under the auth token — the sidebar
-                // filters via `coordinator.activeSessions`, and so must this
-                // dropdown. Cross-device sessions show up under "Attach
-                // Session…", not in the live list.
-                self.sessions = Self.filterOwned(
-                    sessions: s,
-                    owned: coordinator.ownedSessionIds
-                )
+                // The server's token-scoped list IS the set of sessions this
+                // token owns; render it directly (minus terminal), matching the
+                // sidebar's `coordinator.activeSessions`.
+                self.sessions = Self.visibleSessions(s)
                 self.recomputeActivityStates(coordinator: coordinator)
             }
         }
@@ -118,13 +113,11 @@ final class MenuBarViewModel: ObservableObject {
         agentIds = ids
     }
 
-    /// Pure helper used by `followCoordinator` and unit tests.
-    /// Drops terminal sessions and any session not in `owned`.
-    static func filterOwned(
-        sessions: [SessionInfo],
-        owned: Set<UUID>
-    ) -> [SessionInfo] {
-        sessions.filter { !$0.state.isTerminal && owned.contains($0.id) }
+    /// Pure helper used by `followCoordinator` and unit tests. Drops terminal
+    /// sessions; the server's token-scoped list is already the ownership
+    /// boundary, so there is no local owned-set filter.
+    static func visibleSessions(_ sessions: [SessionInfo]) -> [SessionInfo] {
+        sessions.filter { !$0.state.isTerminal }
     }
 
     static func computeActivityStates(
