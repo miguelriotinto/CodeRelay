@@ -391,7 +391,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                 RelayLogger.log(category: "auth",
                     "Auth success for token \(payload.tokenId) (protocol v\(payload.clientVersion))")
                 handler.sendServerMessage(
-                    .authSuccess(protocolVersion: ClaudeRelayKit.protocolVersion),
+                    .authSuccess(protocolVersion: ClaudeRelayKit.protocolVersion, tokenId: payload.tokenId),
                     context: ctx
                 )
             },

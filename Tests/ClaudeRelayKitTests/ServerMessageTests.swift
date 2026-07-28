@@ -527,6 +527,37 @@ final class ServerMessageTests: ProtocolTestCase {
         XCTAssertEqual(original, roundTripped)
     }
 
+    func testAuthSuccessWithTokenIdRoundTrip() throws {
+        let original = ServerMessage.authSuccess(protocolVersion: 3, tokenId: "tok-xyz")
+        let envelope = MessageEnvelope.server(original)
+        let data = try encoder.encode(envelope)
+        let obj = try jsonObject(data)
+        let payload = obj["payload"] as? [String: Any]
+        XCTAssertEqual(payload?["tokenId"] as? String, "tok-xyz")
+
+        let decoded = try decoder.decode(MessageEnvelope.self, from: data)
+        guard case .server(let roundTripped) = decoded else {
+            XCTFail("Expected .server envelope"); return
+        }
+        XCTAssertEqual(original, roundTripped)
+    }
+
+    /// Backward compatibility: an `auth_success` with no `tokenId` (older server)
+    /// still decodes, with `tokenId` nil.
+    func testAuthSuccessWithoutTokenIdDecodes() throws {
+        let original = ServerMessage.authSuccess(protocolVersion: 1)
+        let envelope = MessageEnvelope.server(original)
+        let data = try encoder.encode(envelope)
+        let obj = try jsonObject(data)
+        XCTAssertNil((obj["payload"] as? [String: Any])?["tokenId"])
+
+        let decoded = try decoder.decode(MessageEnvelope.self, from: data)
+        guard case .server(.authSuccess(_, let tokenId)) = decoded else {
+            XCTFail("Expected .authSuccess"); return
+        }
+        XCTAssertNil(tokenId)
+    }
+
     func testSessionActivityWithNilAgent() throws {
         let id = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
         let original = ServerMessage.sessionActivity(sessionId: id, activity: .active, agent: nil)

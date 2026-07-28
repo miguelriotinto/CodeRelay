@@ -419,7 +419,13 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             // logic stays pure and unit-testable without a live connection.
             let allSessions: [SessionInfo]? = try? await withAuth { try await $0.listAllSessions() }
 
-            reconcile(tokenScoped: tokenScoped, allSessions: allSessions)
+            // This connection's own token id (from `auth_success`). `nil`
+            // against older servers that don't send it — `reconcile` then falls
+            // back to a strictly-safe rule (never unclaim a session still on the
+            // server), so an old server can't cause the relaunch wipe either.
+            let myTokenId = sessionController?.tokenId
+
+            reconcile(tokenScoped: tokenScoped, allSessions: allSessions, myTokenId: myTokenId)
         } catch {
             // Non-critical refresh.
         }
@@ -433,6 +439,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     ///   the pane (`sessions`) and the F3 active-tab restore.
     /// - `allSessions`: `listAllSessions()` — every session on the server,
     ///   across all tokens; `nil` when that RPC failed.
+    /// - `myTokenId`: this connection's own token id (from `auth_success`);
+    ///   `nil` against older servers.
     ///
     /// The prune existence set is TOKEN-AGNOSTIC because ownership is
     /// device-scoped: a session this device created/attached that is currently
@@ -446,7 +454,14 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// `allSessions` is nil we prune NOTHING — never destroy ownership on
     /// incomplete data (a successful-but-empty `tokenScoped` during a flaky
     /// reconnect was exactly what wiped the owned set before).
-    func reconcile(tokenScoped: [SessionInfo], allSessions: [SessionInfo]?) {
+    ///
+    /// A session missing from `tokenScoped` is unclaimed ONLY when it is
+    /// genuinely gone (absent from `allSessions`) or genuinely owned by ANOTHER
+    /// token. A session still present under MY OWN token — merely missing from a
+    /// transiently empty/incomplete `tokenScoped` list (a cold-launch fetch
+    /// race) — is RETAINED. Classifying `lostOwned` off the token-scoped list
+    /// alone was the residual wipe path that survived the earlier prune fix.
+    func reconcile(tokenScoped: [SessionInfo], allSessions: [SessionInfo]?, myTokenId: String? = nil) {
         sessions = tokenScoped
 
         for session in sessions {
@@ -470,6 +485,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         // another device" (alert) from "terminated" (silent). Distinct from
         // `existsIds`, which also includes terminated-but-not-yet-reaped ids.
         let aliveElsewhere = Set(allSessions?.filter { !$0.state.isTerminal }.map { $0.id } ?? [])
+        // Owning token per session id from the all-sessions list — the
+        // authoritative signal for "is this still MY session, or did it move to
+        // another token?" A session under my own token that's merely missing
+        // from a transiently-empty `tokenScoped` must NOT be unclaimed.
+        let tokenById: [UUID: String] = Dictionary(
+            (allSessions ?? []).map { ($0.id, $0.tokenId) }, uniquingKeysWith: { first, _ in first })
 
         // Snapshot BEFORE the prune below: any owned session missing from this
         // token's list was lost (moved to another device or terminated). We
@@ -504,21 +525,52 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             let staleVMs = Set(terminalViewModels.keys).subtracting(existsIds).subtracting(cachedNow)
             for id in staleVMs { terminalViewModels.removeValue(forKey: id) }
 
-            // Reconcile EVERY lost owned session (not just the active one):
-            // belt-and-suspenders for a missed real-time `session_stolen` push
-            // — e.g. the theft happened while this device was disconnected, so
-            // it's only discovered now on reconnect. Distinguish "moved to
-            // another device" (still alive under a different token → alert the
-            // user) from "terminated" (gone everywhere → clean up silently).
-            // Gated on `existsIds != nil` (same guard as the prune): a failed
-            // all-sessions RPC means we can't tell moved from terminated, so
-            // skip rather than raise a false "moved" alert.
+            // Reconcile each owned session missing from THIS token's list, but
+            // classify against the token-agnostic all-sessions list so we never
+            // unclaim a session that's still ours:
+            //
+            //  • absent from all-sessions          → genuinely gone (terminated
+            //                                         everywhere) → unclaim, silent.
+            //  • present under ANOTHER token        → moved to another device →
+            //                                         unclaim + "Session Moved" alert.
+            //  • present under MY OWN token         → RETAIN. It's still ours; it
+            //                                         was only missing from a
+            //                                         transiently empty/incomplete
+            //                                         `tokenScoped` list (the
+            //                                         cold-launch fetch race). This
+            //                                         is the case that used to wipe
+            //                                         the owned set on relaunch.
+            //  • my token unknown (older server) &&
+            //    present in all-sessions            → RETAIN (strictly safe: never
+            //                                         unclaim a still-on-server
+            //                                         session when we can't classify).
+            //
+            // The whole loop is gated on `existsIds != nil` (same guard as the
+            // prune): a failed all-sessions RPC means we can't classify anything,
+            // so we leave ownership untouched.
             for id in lostOwned {
-                // Re-claim first so `cleanUpStolenSession`'s ownership guard
-                // passes even though the prune above already unclaimed it.
-                // `refetch: false` — we're already inside a fetch pass.
-                claimSession(id)
-                cleanUpStolenSession(id, alert: aliveElsewhere.contains(id), refetch: false)
+                let owningToken = tokenById[id]
+                // `aliveElsewhere` (non-terminal under any token) — a
+                // terminal-but-not-yet-reaped session still in `existsIds`
+                // counts as gone, not alive.
+                if aliveElsewhere.contains(id) {
+                    // Alive somewhere. Only relinquish if we can prove it belongs
+                    // to a DIFFERENT token; otherwise it's ours (or
+                    // unclassifiable against an older server) → retain.
+                    guard let myTokenId, let owningToken, owningToken != myTokenId else {
+                        continue // retain — still ours / can't prove otherwise
+                    }
+                    // Genuinely moved to another device.
+                    claimSession(id)
+                    cleanUpStolenSession(id, alert: true, refetch: false)
+                } else {
+                    // Not alive anywhere → terminated everywhere → silent cleanup.
+                    // (Already unclaimed by the prune above when absent from
+                    // `existsIds`; re-claim so `cleanUpStolenSession`'s ownership
+                    // guard runs the full UI/terminal teardown.)
+                    claimSession(id)
+                    cleanUpStolenSession(id, alert: false, refetch: false)
+                }
             }
         }
 

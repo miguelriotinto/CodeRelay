@@ -96,7 +96,7 @@ class SessionCoordinatorTest {
         }
 
         private fun defaultResponse(message: ClientMessage): ServerMessage? = when (message) {
-            is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(protocolVersion = 1)
+            is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(protocolVersion = 1, tokenId = myTokenId)
             is ClientMessage.SessionCreate -> ServerMessage.SessionCreated(NEW_SESSION_ID, 80u, 24u)
             is ClientMessage.SessionAttach -> ServerMessage.SessionAttached(message.sessionId, "running")
             is ClientMessage.SessionResume -> ServerMessage.SessionResumed(message.sessionId)
@@ -126,6 +126,14 @@ class SessionCoordinatorTest {
 
         /** When true, SessionListAll responds with an Error so listAllSessions throws. */
         var failAllSessions: Boolean = false
+
+        /**
+         * The token id the server reports in auth_success. Defaults to "tok" to
+         * match the [session] helper's tokenId, so a session in the all-sessions
+         * list is classified as owned by THIS token unless a test overrides it.
+         * Set null to model an older server that doesn't send a token id.
+         */
+        var myTokenId: String? = "tok"
 
         companion object {
             val NEW_SESSION_ID: UUID = UUID.fromString("00000000-0000-0000-0000-0000000000aa")
@@ -215,12 +223,12 @@ class SessionCoordinatorTest {
 
     private val config = ConnectionConfig(name = "test", host = "127.0.0.1")
 
-    private fun session(id: UUID, name: String? = null): SessionInfo =
+    private fun session(id: UUID, name: String? = null, token: String = "tok"): SessionInfo =
         SessionInfo(
             id = id,
             name = name,
             state = SessionState.ACTIVE_ATTACHED,
-            tokenId = "tok",
+            tokenId = token,
             createdAt = 0.0,
             cols = 80u,
             rows = 24u,
@@ -594,8 +602,9 @@ class SessionCoordinatorTest {
         )
         // Token-scoped list: only A (B is attached under another device's token now).
         surface.sessionsOnServer = listOf(session(a, "Arya"))
-        // All-tokens list: A and B exist on the server; `gone` does not.
-        surface.allSessionsOnServer = listOf(session(a, "Arya"), session(b, "Bran"))
+        // All-tokens list: A (ours) and B (under ANOTHER token) exist; `gone` does not.
+        // B's tokenId != our "tok", so it's classified as genuinely moved.
+        surface.allSessionsOnServer = listOf(session(a, "Arya"), session(b, "Bran", token = "other-token"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
 
         coord.fetchSessions()
@@ -608,6 +617,60 @@ class SessionCoordinatorTest {
         // B — alive elsewhere — raised the "Session Moved" alert; `gone` did not.
         assertEquals(b, coord.stolenAlert.value?.sessionId, "moved session B alerts the user")
         assertFalse(store.names.containsKey(gone), "gone un-named")
+    }
+
+    // -------------------------------------------------------------------------
+    // THE REPORTED REGRESSION: a session this device owns, missing from a
+    // transiently-empty token-scoped session_list but still alive under MY OWN
+    // token in session_list_all, must be RETAINED — never unclaimed. Before the
+    // fix the reconcile keyed off the token-scoped list and unclaimed it, so the
+    // pane came up empty on relaunch.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `fetchSessions retains own session missing from transient token-scoped list`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val mine = UUID.fromString("00000000-0000-0000-0000-0000000000a1")
+        val store = FakeOwnershipStore(log, seedOwned = setOf(mine))
+        // Cold-launch race: token-scoped list empty, but the session is alive
+        // under MY token ("tok") in the all-sessions list.
+        surface.sessionsOnServer = emptyList()
+        surface.allSessionsOnServer = listOf(session(mine, "Mine", token = "tok"))
+        surface.myTokenId = "tok"
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.fetchSessions()
+        advanceUntilIdle()
+
+        assertTrue(store.owned.contains(mine), "A session still alive under MY token must never be unclaimed")
+        assertNull(coord.stolenAlert.value, "Retaining my own session must not raise a 'moved' alert")
+    }
+
+    // -------------------------------------------------------------------------
+    // Older-server fallback: when auth_success carries no tokenId (myTokenId
+    // null), a session still alive on the server but missing from the
+    // token-scoped list must be RETAINED — we can't prove it moved.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `fetchSessions retains alive session when own token unknown`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val id = UUID.fromString("00000000-0000-0000-0000-0000000000a2")
+        val store = FakeOwnershipStore(log, seedOwned = setOf(id))
+        surface.sessionsOnServer = emptyList()
+        surface.allSessionsOnServer = listOf(session(id, "X", token = "whatever"))
+        surface.myTokenId = null // older server: no tokenId in auth_success
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.fetchSessions()
+        advanceUntilIdle()
+
+        assertTrue(store.owned.contains(id), "With unknown own-token, a still-alive session must be retained")
+        assertNull(coord.stolenAlert.value)
     }
 
     // -------------------------------------------------------------------------

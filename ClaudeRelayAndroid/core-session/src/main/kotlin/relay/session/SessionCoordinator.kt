@@ -532,6 +532,14 @@ class SessionCoordinator(
         // another device" (alert) from "terminated" (silent). Distinct from
         // `existsIds`, which also includes terminated-but-not-yet-reaped ids.
         val aliveElsewhere: Set<UUID> = allSessions?.filter { !it.state.isTerminal }?.map { it.id }?.toSet() ?: emptySet()
+        // Owning token per session id from the all-sessions list — the
+        // authoritative signal for "is this still MY session, or did it move to
+        // another token?" A session under my own token that's merely missing
+        // from a transiently-empty token-scoped `list` must NOT be unclaimed.
+        val tokenById: Map<UUID, String> = allSessions?.associate { it.id to it.tokenId } ?: emptyMap()
+        // This connection's own token id (from auth_success). Null against older
+        // servers → reconcile falls back to a safe "retain if still on server" rule.
+        val myTokenId: String? = sessionController.tokenId
 
         // Adopt any server-provided names.
         for (session in list) {
@@ -582,21 +590,44 @@ class SessionCoordinator(
             }
         }
 
-        // Reconcile EVERY lost owned session (not just the active one), so a
-        // theft that happened while this device was disconnected is surfaced on
-        // reconnect. Distinguish "moved to another device" (still alive under a
-        // different token → alert) from "terminated" (gone everywhere → silent).
+        // Reconcile each owned session missing from THIS token's list, but
+        // classify against the token-agnostic all-sessions list so we never
+        // unclaim a session that's still ours:
+        //
+        //  • not alive anywhere               → terminated everywhere → unclaim, silent.
+        //  • alive under ANOTHER token        → moved to another device → unclaim + alert.
+        //  • alive under MY OWN token         → RETAIN. Still ours; it was only
+        //                                       missing from a transiently
+        //                                       empty/incomplete token-scoped list
+        //                                       (the cold-launch fetch race). This
+        //                                       is the case that used to wipe the
+        //                                       owned set on relaunch.
+        //  • my token unknown (older server)
+        //    && alive somewhere               → RETAIN (strictly safe: never
+        //                                       unclaim a still-on-server session
+        //                                       when we can't classify).
         //
         // Gate on `existsIds != null`: a failed all-sessions RPC means we can't
-        // authoritatively tell lost-and-moved from lost-and-terminated (or even
-        // a transient blip), so we skip reconciliation entirely rather than
-        // unclaim + alert on incomplete data — same guard the prune uses.
-        // Re-claim first so `cleanUpStolenSession` acts (the prune above already
-        // unclaimed it); `refetch=false` — we're inside doFetchSessions.
+        // classify anything, so we skip reconciliation entirely rather than
+        // unclaim on incomplete data — same guard the prune uses.
+        // Re-claim first so `cleanUpStolenSession` runs the full teardown (the
+        // prune above already unclaimed the terminated ones); `refetch=false` —
+        // we're inside doFetchSessions.
         if (existsIds != null) {
             for (id in lostOwned) {
-                claimSession(id)
-                cleanUpStolenSession(id, alert = id in aliveElsewhere, refetch = false)
+                if (id in aliveElsewhere) {
+                    val owningToken = tokenById[id]
+                    if (myTokenId == null || owningToken == null || owningToken == myTokenId) {
+                        continue // retain — still ours / can't prove otherwise
+                    }
+                    // Genuinely moved to another device.
+                    claimSession(id)
+                    cleanUpStolenSession(id, alert = true, refetch = false)
+                } else {
+                    // Not alive anywhere → terminated everywhere → silent cleanup.
+                    claimSession(id)
+                    cleanUpStolenSession(id, alert = false, refetch = false)
+                }
             }
         }
     }

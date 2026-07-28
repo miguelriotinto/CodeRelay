@@ -52,6 +52,16 @@ class SessionController(private val connection: ConnectionSurface) {
         private set
 
     /**
+     * This connection's own token id, delivered in `auth_success`. Null against
+     * older servers that don't send it — the coordinator's reconcile then falls
+     * back to a strictly-safe "retain if still on the server" rule. Used to tell
+     * "my session, transiently missing from the token-scoped list" from
+     * "genuinely moved to another token".
+     */
+    var tokenId: String? = null
+        private set
+
+    /**
      * The connection generation when auth was established. Used to detect stale
      * auth after the WebSocket reconnects (the server then sees a fresh
      * unauthenticated handler).
@@ -115,6 +125,9 @@ class SessionController(private val connection: ConnectionSurface) {
                 }
                 isAuthenticated = true
                 authenticatedGeneration = connection.generation
+                // Null against older servers; the coordinator's reconcile falls
+                // back to a safe "retain if still on the server" rule when unknown.
+                response.tokenId?.let { tokenId = it }
             }
             is ServerMessage.AuthFailure -> {
                 isAuthenticated = false
