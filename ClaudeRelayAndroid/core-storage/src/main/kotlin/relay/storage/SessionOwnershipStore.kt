@@ -157,11 +157,16 @@ class SessionOwnershipStore(
         if (legacyDeviceId.isBlank() || legacyDeviceId == deviceId) return
 
         val legacyOwnedKey = "$OWNED_KEY_PREFIX.$legacyDeviceId"
-        val legacyJson = prefs.getString(legacyOwnedKey, null) ?: return
-
-        // Forward-copy verbatim (same JSON list shape). commit() so it survives a
-        // force-kill right after the migrating launch.
-        runCatching { prefs.edit().putString(ownedKey, legacyJson).commit() }
+        // Whole read+write is best-effort: a value stored under an unexpected
+        // type would make `getString` throw, and a corrupt prefs file could fail
+        // the commit — neither should crash app launch. On failure the new key
+        // stays absent, i.e. no worse than before the migration ran.
+        runCatching {
+            val legacyJson = prefs.getString(legacyOwnedKey, null) ?: return
+            // Forward-copy verbatim (same JSON list shape). commit() so it
+            // survives a force-kill right after the migrating launch.
+            prefs.edit().putString(ownedKey, legacyJson).commit()
+        }
     }
 
     // MARK: - (De)serialization helpers
