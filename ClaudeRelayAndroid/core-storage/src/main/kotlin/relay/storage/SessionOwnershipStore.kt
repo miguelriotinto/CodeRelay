@@ -13,11 +13,9 @@ import java.util.UUID
  * (user/server-renamed session names) and `agents` (last-seen agent per
  * session).
  *
- * Session OWNERSHIP is deliberately NOT persisted here: the server's token-scoped
+ * Session ownership is deliberately NOT persisted here: the server's token-scoped
  * `session_list` is authoritative, so the pane is driven by the server list, not
- * a local cache. (A device-scoped `ownedSessions.$deviceId` set used to live
- * here; it kept drifting from the server and blanking the pane on relaunch, so it
- * was removed.)
+ * a local cache.
  *
  * Ports `SessionOwnershipStore.swift`. Single private [SharedPreferences] file
  * (`relay.ownership`). Writes are **diff-checked** — `prefs.edit()` runs only

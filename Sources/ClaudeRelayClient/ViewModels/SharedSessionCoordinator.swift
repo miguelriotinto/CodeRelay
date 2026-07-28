@@ -380,11 +380,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     public func fetchSessions(force: Bool = false) async {
         // 0.5 s debounce. `force` bypasses it for post-mutation fetches
-        // (create / attach / switch): those MUST refresh `sessions` so the
-        // just-claimed id appears in the pane. Without it, a create/attach that
-        // lands < 0.5 s after connect()'s initial fetch is debounced away,
-        // leaving the session owned but absent from `sessions` → `activeSessions`
-        // filters it out → invisible until some later fetch.
+        // (create / attach / switch / stolen-cleanup): those MUST refresh the
+        // authoritative `sessions` list promptly. Without it, a fetch that lands
+        // < 0.5 s after connect()'s initial fetch is debounced away, leaving the
+        // pane stale until some later fetch.
         let now = Date()
         if !force {
             guard now.timeIntervalSince(lastFetchTime) >= 0.5 else { return }

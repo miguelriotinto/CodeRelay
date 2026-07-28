@@ -459,8 +459,8 @@ class SessionCoordinator(
     // MARK: - Session list
 
     /**
-     * Refreshes the session list and prunes per-id ownership/agent/cache state
-     * for sessions the server no longer knows about (SharedSessionCoordinator.swift:307-359).
+     * Refreshes the session list and prunes per-id name/agent/cache state for
+     * sessions the server no longer lists (SharedSessionCoordinator.swift reconcile).
      *
      * The Android store has only per-id mutators (no bulk prune), so we reproduce
      * the Swift prune locally: for every locally-known id NOT in the server set,
