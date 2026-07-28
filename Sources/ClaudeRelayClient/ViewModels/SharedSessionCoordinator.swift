@@ -143,6 +143,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// before writing; the coordinator keeps @Published mirrors for SwiftUI.
     private let ownershipStore: SessionOwnershipStore
     private var lastFetchTime: Date = .distantPast
+    /// Single-flight guard for `fetchSessions` — concurrent callers await the
+    /// one in-flight fetch instead of issuing parallel `listSessions` RPCs
+    /// (whose type-matched replies could cross-deliver).
+    private var isFetchingSessions = false
+    private var inFlightSessionsFetch: Task<Void, Never>?
     private var networkMonitor: NetworkMonitor?
     private var networkObserver: NSObjectProtocol?
     /// LRU-bounded cache of native terminal views (NSView on macOS, UIView on
@@ -391,22 +396,42 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         if !force && !sessions.isEmpty {
             guard now.timeIntervalSince(lastFetchTime) >= 0.5 else { return }
         }
-        lastFetchTime = now
 
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            // The server is authoritative for ownership: `listSessions()` is
-            // TOKEN-scoped — exactly the sessions this token owns. That IS the
-            // "what sessions do I own?" answer; the client renders it directly.
-            // A throwing RPC leaves `sessions` untouched (the catch below), so a
-            // transient failure never blanks the pane.
-            let tokenScoped = try await withAuth { try await $0.listSessions() }
-            reconcile(tokenScoped: tokenScoped)
-        } catch {
-            // Non-critical refresh.
+        // Single-flight: coalesce concurrent callers onto the in-flight fetch.
+        // The `listSessions` reply is matched by response TYPE (no request ids),
+        // so two overlapping `listSessions` could cross-deliver each other's
+        // reply. Launch fires several fetches near-simultaneously (WorkspaceView
+        // `.task`, scenePhase→foreground, recovery), so this is a real window —
+        // let the first fetch run and have the rest await its result.
+        if isFetchingSessions {
+            await inFlightSessionsFetch?.value
+            return
         }
+        isFetchingSessions = true
+        lastFetchTime = now
+        isLoading = true
+
+        let task = Task { [weak self] in
+            defer {
+                self?.isLoading = false
+                self?.isFetchingSessions = false
+                self?.inFlightSessionsFetch = nil
+            }
+            do {
+                // The server is authoritative for ownership: `listSessions()` is
+                // TOKEN-scoped — exactly the sessions this token owns. That IS the
+                // "what sessions do I own?" answer; the client renders it
+                // directly. A throwing RPC leaves `sessions` untouched (the catch
+                // below), so a transient failure never blanks the pane.
+                guard let self else { return }
+                let tokenScoped = try await self.withAuth { try await $0.listSessions() }
+                self.reconcile(tokenScoped: tokenScoped)
+            } catch {
+                // Non-critical refresh.
+            }
+        }
+        inFlightSessionsFetch = task
+        await task.value
     }
 
     /// Reconcile local state against the server's authoritative, token-scoped

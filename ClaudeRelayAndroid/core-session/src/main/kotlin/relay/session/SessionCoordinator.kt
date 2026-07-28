@@ -1,6 +1,7 @@
 package relay.session
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -253,6 +254,10 @@ class SessionCoordinator(
      * gate — avoids the `now - MIN_VALUE` overflow a sentinel Long would cause.
      */
     private var lastFetchMs: Long? = null
+    /** Single-flight guard for [fetchSessions] — concurrent callers await the one
+     *  in-flight fetch instead of issuing parallel `session_list` RPCs (whose
+     *  type-matched replies could cross-deliver). */
+    private var inFlightSessionsFetch: Job? = null
 
     /**
      * Timestamp (from [nowMs]) of the last evidence the transport is healthy — a
@@ -483,14 +488,25 @@ class SessionCoordinator(
         // proceeds when `_sessions` is empty; nothing to protect from churn then.
         val last = lastFetchMs
         if (!force && _sessions.value.isNotEmpty() && last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
-        lastFetchMs = nowMs()
 
+        // Single-flight: coalesce concurrent callers onto the in-flight fetch.
+        // `session_list` replies are matched by response TYPE (no request ids),
+        // so two overlapping `listSessions` could cross-deliver each other's
+        // reply. Launch fires several fetches near-simultaneously, so let the
+        // first run and have the rest await its completion.
+        inFlightSessionsFetch?.let { it.join(); return }
+        lastFetchMs = nowMs()
         _isLoading.value = true
-        try {
-            doFetchSessions()
-        } finally {
-            _isLoading.value = false
+        val job = scope.launch {
+            try {
+                doFetchSessions()
+            } finally {
+                _isLoading.value = false
+                inFlightSessionsFetch = null
+            }
         }
+        inFlightSessionsFetch = job
+        job.join()
     }
 
     private suspend fun doFetchSessions() {
