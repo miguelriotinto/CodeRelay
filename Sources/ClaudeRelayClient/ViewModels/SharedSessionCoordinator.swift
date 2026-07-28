@@ -143,6 +143,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// before writing; the coordinator keeps @Published mirrors for SwiftUI.
     private let ownershipStore: SessionOwnershipStore
     private var lastFetchTime: Date = .distantPast
+    /// Single-flight guard for `fetchSessions` — concurrent callers await the
+    /// one in-flight fetch instead of issuing parallel `listSessions` RPCs
+    /// (whose type-matched replies could cross-deliver).
+    private var isFetchingSessions = false
+    private var inFlightSessionsFetch: Task<Void, Never>?
     private var networkMonitor: NetworkMonitor?
     private var networkObserver: NSObjectProtocol?
     /// LRU-bounded cache of native terminal views (NSView on macOS, UIView on
@@ -380,30 +385,59 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     public func fetchSessions(force: Bool = false) async {
         // 0.5 s debounce. `force` bypasses it for post-mutation fetches
-        // (create / attach / switch / stolen-cleanup): those MUST refresh the
-        // authoritative `sessions` list promptly. Without it, a fetch that lands
-        // < 0.5 s after connect()'s initial fetch is debounced away, leaving the
-        // pane stale until some later fetch.
+        // (create / attach / switch / stolen-cleanup). The debounce only exists
+        // to avoid refresh churn — it must NEVER suppress a fetch while the pane
+        // is EMPTY, or a launch/foreground fetch that races another (e.g. a
+        // recovery pass that swapped the socket mid-flight) can leave the pane
+        // permanently blank until the user forces a refresh by attaching. So a
+        // fetch always proceeds when `sessions` is empty; there is nothing to
+        // protect from churn in that state.
         let now = Date()
-        if !force {
+        if !force && !sessions.isEmpty {
             guard now.timeIntervalSince(lastFetchTime) >= 0.5 else { return }
         }
-        lastFetchTime = now
 
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            // The server is authoritative for ownership: `listSessions()` is
-            // TOKEN-scoped — exactly the sessions this token owns. That IS the
-            // "what sessions do I own?" answer; the client renders it directly.
-            // A throwing RPC leaves `sessions` untouched (the catch below), so a
-            // transient failure never blanks the pane.
-            let tokenScoped = try await withAuth { try await $0.listSessions() }
-            reconcile(tokenScoped: tokenScoped)
-        } catch {
-            // Non-critical refresh.
+        // Single-flight: never issue two `listSessions` in parallel — their
+        // replies are matched by response TYPE (no request ids), so overlapping
+        // calls could cross-deliver. Launch fires several fetches
+        // near-simultaneously (WorkspaceView `.task`, scenePhase→foreground,
+        // recovery), so this is a real window.
+        //
+        // A NON-forced caller coalesces: it just awaits the in-flight fetch and
+        // returns (any fetch satisfies "refresh the list"). A FORCED caller
+        // (create / attach / switch / stolen-cleanup) needs a result that
+        // reflects ITS mutation, so it must NOT adopt an in-flight fetch that
+        // may have started before the mutation — it awaits the in-flight one to
+        // clear, then runs its own fresh fetch.
+        while isFetchingSessions {
+            await inFlightSessionsFetch?.value
+            if !force { return }
         }
+        isFetchingSessions = true
+        lastFetchTime = now
+        isLoading = true
+
+        let task = Task { [weak self] in
+            defer {
+                self?.isLoading = false
+                self?.isFetchingSessions = false
+                self?.inFlightSessionsFetch = nil
+            }
+            do {
+                // The server is authoritative for ownership: `listSessions()` is
+                // TOKEN-scoped — exactly the sessions this token owns. That IS the
+                // "what sessions do I own?" answer; the client renders it
+                // directly. A throwing RPC leaves `sessions` untouched (the catch
+                // below), so a transient failure never blanks the pane.
+                guard let self else { return }
+                let tokenScoped = try await self.withAuth { try await $0.listSessions() }
+                self.reconcile(tokenScoped: tokenScoped)
+            } catch {
+                // Non-critical refresh.
+            }
+        }
+        inFlightSessionsFetch = task
+        await task.value
     }
 
     /// Reconcile local state against the server's authoritative, token-scoped

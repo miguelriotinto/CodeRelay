@@ -1,6 +1,7 @@
 package relay.session
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -253,6 +254,10 @@ class SessionCoordinator(
      * gate — avoids the `now - MIN_VALUE` overflow a sentinel Long would cause.
      */
     private var lastFetchMs: Long? = null
+    /** Single-flight guard for [fetchSessions] — concurrent callers await the one
+     *  in-flight fetch instead of issuing parallel `session_list` RPCs (whose
+     *  type-matched replies could cross-deliver). */
+    private var inFlightSessionsFetch: Job? = null
 
     /**
      * Timestamp (from [nowMs]) of the last evidence the transport is healthy — a
@@ -359,7 +364,9 @@ class SessionCoordinator(
         connection.connect(config, token)
         lastHealthyAtMs = nowMs()
         authCoordinator.ensureAuthenticated()
-        fetchSessions()
+        // force: authoritative launch fetch — never debounced behind a racing
+        // recovery/foreground fetch, which left the pane empty on relaunch.
+        fetchSessions(force = true)
     }
 
     /**
@@ -474,20 +481,37 @@ class SessionCoordinator(
         // passes; subsequent calls within 500 ms are dropped.
         //
         // [force] bypasses the debounce for post-mutation fetches (create /
-        // attach / stolen-cleanup): those MUST refresh `_sessions` promptly so
-        // the authoritative server list lands. Without it, a fetch that lands
-        // < 500 ms after connect()'s initial fetch is debounced away, leaving the
-        // pane stale until some later fetch.
+        // attach / stolen-cleanup). The debounce only exists to avoid refresh
+        // churn — it must NEVER suppress a fetch while the pane is EMPTY, or a
+        // launch/foreground fetch that races another can leave the pane blank
+        // until the user forces a refresh by attaching. So a fetch always
+        // proceeds when `_sessions` is empty; nothing to protect from churn then.
         val last = lastFetchMs
-        if (!force && last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
-        lastFetchMs = nowMs()
+        if (!force && _sessions.value.isNotEmpty() && last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
 
-        _isLoading.value = true
-        try {
-            doFetchSessions()
-        } finally {
-            _isLoading.value = false
+        // Single-flight: never issue two `session_list` in parallel — replies
+        // are matched by response TYPE (no request ids) so overlapping calls
+        // could cross-deliver. A NON-forced caller coalesces (await the in-flight
+        // fetch and return). A FORCED caller (create/attach/switch/stolen) needs
+        // a result reflecting ITS mutation, so it awaits any in-flight fetch to
+        // clear, then runs its own fresh one.
+        while (true) {
+            val inFlight = inFlightSessionsFetch ?: break
+            inFlight.join()
+            if (!force) return
         }
+        lastFetchMs = nowMs()
+        _isLoading.value = true
+        val job = scope.launch {
+            try {
+                doFetchSessions()
+            } finally {
+                _isLoading.value = false
+                inFlightSessionsFetch = null
+            }
+        }
+        inFlightSessionsFetch = job
+        job.join()
     }
 
     private suspend fun doFetchSessions() {

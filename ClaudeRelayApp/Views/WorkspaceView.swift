@@ -112,7 +112,11 @@ struct WorkspaceView: View {
             if let sessionId = pendingAttachSessionId {
                 await coordinator.attachRemoteSession(id: sessionId)
             }
-            await coordinator.fetchSessions()
+            // force: this is the authoritative "populate the pane on launch"
+            // fetch. Never let it be swallowed by the debounce behind a racing
+            // recovery/foreground fetch — that left the pane empty on relaunch
+            // until the user manually attached.
+            await coordinator.fetchSessions(force: true)
             await syncPush()
             if coordinator.activeSessionId == nil {
                 if sizeClass == .compact {

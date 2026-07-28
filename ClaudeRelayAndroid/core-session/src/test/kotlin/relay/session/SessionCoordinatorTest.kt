@@ -1276,6 +1276,85 @@ class SessionCoordinatorTest {
         assertEquals(firstCount + 1, log.entries.count { it == "rpc:session_list" }, "fetch past the window issued an RPC")
     }
 
+    // The debounce must NEVER suppress a fetch while the pane is EMPTY, or a
+    // launch fetch that races another (or returns empty on a mid-swap socket) can
+    // leave the pane permanently blank. A second fetch inside the 500 ms window
+    // still issues an RPC as long as `_sessions` is empty.
+    @Test
+    fun `fetchSessions bypasses debounce while the pane is empty`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val clock = newClock()
+        val store = FakeOwnershipStore(log)
+        // First fetch returns EMPTY (models a raced/mid-swap launch fetch).
+        surface.sessionsOnServer = emptyList()
+        val coord = SessionCoordinator(
+            this, conn, SessionController(surface), "tok", store, config,
+            nowMs = { clock.ms },
+        )
+
+        coord.fetchSessions()
+        advanceUntilIdle()
+        val firstCount = log.entries.count { it == "rpc:session_list" }
+        assertEquals(1, firstCount, "first fetch issued one list RPC")
+        assertTrue(coord.activeSessions.value.isEmpty(), "pane still empty after empty result")
+
+        // The server now has a session; a fetch only 100 ms later must NOT be
+        // debounced (pane is empty → nothing to protect) and must render it.
+        val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
+        surface.sessionsOnServer = listOf(session(a, "Arya"))
+        clock.ms += 100
+        coord.fetchSessions()
+        advanceUntilIdle()
+
+        assertEquals(firstCount + 1, log.entries.count { it == "rpc:session_list" },
+            "fetch inside the window still runs while the pane is empty")
+        assertTrue(coord.activeSessions.value.any { it.id == a }, "session now rendered")
+    }
+
+    // Single-flight: a FORCED fetch must NOT coalesce onto an in-flight
+    // (possibly pre-mutation) fetch — it awaits the in-flight one, then runs its
+    // OWN fresh listSessions. Guards the "attach right after a launch fetch could
+    // miss the just-attached session" hazard.
+    @Test
+    fun `forced fetch does not adopt an in-flight fetch and runs fresh`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val store = FakeOwnershipStore(log)
+        val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
+
+        // Hold the FIRST fetch's listSessions in flight, and let it return an
+        // EMPTY list (models a launch fetch that predates the mutation).
+        surface.sessionsOnServer = emptyList()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        surface.sendGate = { msg -> if (msg is ClientMessage.SessionList) gate.await() }
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        val launchFetch = launch { coord.fetchSessions() }
+        testScheduler.runCurrent()
+        assertTrue(coord.activeSessions.value.isEmpty(), "launch fetch parked, pane empty")
+
+        // Server now has the session (as if we just attached it). A forced fetch
+        // starts while the launch fetch is still parked.
+        surface.sessionsOnServer = listOf(session(a, "Arya"))
+        val forced = launch { coord.fetchSessions(force = true) }
+        testScheduler.runCurrent()
+
+        // Release the parked launch fetch; both proceed.
+        gate.complete(Unit)
+        advanceUntilIdle()
+        launchFetch.join(); forced.join()
+
+        // Two distinct listSessions RPCs ran (no coalescing for the forced one),
+        // and the forced fetch rendered the just-added session.
+        assertEquals(2, log.entries.count { it == "rpc:session_list" },
+            "forced fetch issued its own listSessions rather than adopting the in-flight one")
+        assertTrue(coord.activeSessions.value.any { it.id == a },
+            "forced fetch reflects the session added after the launch fetch started")
+    }
+
     // -------------------------------------------------------------------------
     // computeActiveSessions — pure filter+sort parity with the Swift
     // `activeSessions` computed property (SharedSessionCoordinator.swift:92-96):
