@@ -359,7 +359,9 @@ class SessionCoordinator(
         connection.connect(config, token)
         lastHealthyAtMs = nowMs()
         authCoordinator.ensureAuthenticated()
-        fetchSessions()
+        // force: authoritative launch fetch — never debounced behind a racing
+        // recovery/foreground fetch, which left the pane empty on relaunch.
+        fetchSessions(force = true)
     }
 
     /**
@@ -474,12 +476,13 @@ class SessionCoordinator(
         // passes; subsequent calls within 500 ms are dropped.
         //
         // [force] bypasses the debounce for post-mutation fetches (create /
-        // attach / stolen-cleanup): those MUST refresh `_sessions` promptly so
-        // the authoritative server list lands. Without it, a fetch that lands
-        // < 500 ms after connect()'s initial fetch is debounced away, leaving the
-        // pane stale until some later fetch.
+        // attach / stolen-cleanup). The debounce only exists to avoid refresh
+        // churn — it must NEVER suppress a fetch while the pane is EMPTY, or a
+        // launch/foreground fetch that races another can leave the pane blank
+        // until the user forces a refresh by attaching. So a fetch always
+        // proceeds when `_sessions` is empty; nothing to protect from churn then.
         val last = lastFetchMs
-        if (!force && last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
+        if (!force && _sessions.value.isNotEmpty() && last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
         lastFetchMs = nowMs()
 
         _isLoading.value = true

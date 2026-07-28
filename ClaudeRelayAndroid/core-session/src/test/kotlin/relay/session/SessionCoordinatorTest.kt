@@ -1276,6 +1276,43 @@ class SessionCoordinatorTest {
         assertEquals(firstCount + 1, log.entries.count { it == "rpc:session_list" }, "fetch past the window issued an RPC")
     }
 
+    // The debounce must NEVER suppress a fetch while the pane is EMPTY, or a
+    // launch fetch that races another (or returns empty on a mid-swap socket) can
+    // leave the pane permanently blank. A second fetch inside the 500 ms window
+    // still issues an RPC as long as `_sessions` is empty.
+    @Test
+    fun `fetchSessions bypasses debounce while the pane is empty`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val clock = newClock()
+        val store = FakeOwnershipStore(log)
+        // First fetch returns EMPTY (models a raced/mid-swap launch fetch).
+        surface.sessionsOnServer = emptyList()
+        val coord = SessionCoordinator(
+            this, conn, SessionController(surface), "tok", store, config,
+            nowMs = { clock.ms },
+        )
+
+        coord.fetchSessions()
+        advanceUntilIdle()
+        val firstCount = log.entries.count { it == "rpc:session_list" }
+        assertEquals(1, firstCount, "first fetch issued one list RPC")
+        assertTrue(coord.activeSessions.value.isEmpty(), "pane still empty after empty result")
+
+        // The server now has a session; a fetch only 100 ms later must NOT be
+        // debounced (pane is empty → nothing to protect) and must render it.
+        val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
+        surface.sessionsOnServer = listOf(session(a, "Arya"))
+        clock.ms += 100
+        coord.fetchSessions()
+        advanceUntilIdle()
+
+        assertEquals(firstCount + 1, log.entries.count { it == "rpc:session_list" },
+            "fetch inside the window still runs while the pane is empty")
+        assertTrue(coord.activeSessions.value.any { it.id == a }, "session now rendered")
+    }
+
     // -------------------------------------------------------------------------
     // computeActiveSessions — pure filter+sort parity with the Swift
     // `activeSessions` computed property (SharedSessionCoordinator.swift:92-96):

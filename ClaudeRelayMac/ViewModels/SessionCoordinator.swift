@@ -49,7 +49,9 @@ final class SessionCoordinator: SharedSessionCoordinator {
             try await connection.connect(config: config, token: token)
             registerRecoveryObservers()
             _ = try await ensureAuthenticated()
-            await fetchSessions()
+            // force: authoritative launch fetch — never debounced behind a
+            // racing recovery/foreground fetch (see WorkspaceView).
+            await fetchSessions(force: true)
         } catch {
             presentError(error.localizedDescription)
         }

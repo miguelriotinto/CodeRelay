@@ -380,12 +380,15 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     public func fetchSessions(force: Bool = false) async {
         // 0.5 s debounce. `force` bypasses it for post-mutation fetches
-        // (create / attach / switch / stolen-cleanup): those MUST refresh the
-        // authoritative `sessions` list promptly. Without it, a fetch that lands
-        // < 0.5 s after connect()'s initial fetch is debounced away, leaving the
-        // pane stale until some later fetch.
+        // (create / attach / switch / stolen-cleanup). The debounce only exists
+        // to avoid refresh churn — it must NEVER suppress a fetch while the pane
+        // is EMPTY, or a launch/foreground fetch that races another (e.g. a
+        // recovery pass that swapped the socket mid-flight) can leave the pane
+        // permanently blank until the user forces a refresh by attaching. So a
+        // fetch always proceeds when `sessions` is empty; there is nothing to
+        // protect from churn in that state.
         let now = Date()
-        if !force {
+        if !force && !sessions.isEmpty {
             guard now.timeIntervalSince(lastFetchTime) >= 0.5 else { return }
         }
         lastFetchTime = now
