@@ -1313,6 +1313,48 @@ class SessionCoordinatorTest {
         assertTrue(coord.activeSessions.value.any { it.id == a }, "session now rendered")
     }
 
+    // Single-flight: a FORCED fetch must NOT coalesce onto an in-flight
+    // (possibly pre-mutation) fetch — it awaits the in-flight one, then runs its
+    // OWN fresh listSessions. Guards the "attach right after a launch fetch could
+    // miss the just-attached session" hazard.
+    @Test
+    fun `forced fetch does not adopt an in-flight fetch and runs fresh`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val store = FakeOwnershipStore(log)
+        val a = UUID.fromString("00000000-0000-0000-0000-00000000000a")
+
+        // Hold the FIRST fetch's listSessions in flight, and let it return an
+        // EMPTY list (models a launch fetch that predates the mutation).
+        surface.sessionsOnServer = emptyList()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        surface.sendGate = { msg -> if (msg is ClientMessage.SessionList) gate.await() }
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        val launchFetch = launch { coord.fetchSessions() }
+        testScheduler.runCurrent()
+        assertTrue(coord.activeSessions.value.isEmpty(), "launch fetch parked, pane empty")
+
+        // Server now has the session (as if we just attached it). A forced fetch
+        // starts while the launch fetch is still parked.
+        surface.sessionsOnServer = listOf(session(a, "Arya"))
+        val forced = launch { coord.fetchSessions(force = true) }
+        testScheduler.runCurrent()
+
+        // Release the parked launch fetch; both proceed.
+        gate.complete(Unit)
+        advanceUntilIdle()
+        launchFetch.join(); forced.join()
+
+        // Two distinct listSessions RPCs ran (no coalescing for the forced one),
+        // and the forced fetch rendered the just-added session.
+        assertEquals(2, log.entries.count { it == "rpc:session_list" },
+            "forced fetch issued its own listSessions rather than adopting the in-flight one")
+        assertTrue(coord.activeSessions.value.any { it.id == a },
+            "forced fetch reflects the session added after the launch fetch started")
+    }
+
     // -------------------------------------------------------------------------
     // computeActiveSessions — pure filter+sort parity with the Swift
     // `activeSessions` computed property (SharedSessionCoordinator.swift:92-96):

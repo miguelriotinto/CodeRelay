@@ -489,12 +489,17 @@ class SessionCoordinator(
         val last = lastFetchMs
         if (!force && _sessions.value.isNotEmpty() && last != null && nowMs() - last < FETCH_DEBOUNCE_MS) return
 
-        // Single-flight: coalesce concurrent callers onto the in-flight fetch.
-        // `session_list` replies are matched by response TYPE (no request ids),
-        // so two overlapping `listSessions` could cross-deliver each other's
-        // reply. Launch fires several fetches near-simultaneously, so let the
-        // first run and have the rest await its completion.
-        inFlightSessionsFetch?.let { it.join(); return }
+        // Single-flight: never issue two `session_list` in parallel — replies
+        // are matched by response TYPE (no request ids) so overlapping calls
+        // could cross-deliver. A NON-forced caller coalesces (await the in-flight
+        // fetch and return). A FORCED caller (create/attach/switch/stolen) needs
+        // a result reflecting ITS mutation, so it awaits any in-flight fetch to
+        // clear, then runs its own fresh one.
+        while (true) {
+            val inFlight = inFlightSessionsFetch ?: break
+            inFlight.join()
+            if (!force) return
+        }
         lastFetchMs = nowMs()
         _isLoading.value = true
         val job = scope.launch {

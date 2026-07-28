@@ -397,15 +397,21 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             guard now.timeIntervalSince(lastFetchTime) >= 0.5 else { return }
         }
 
-        // Single-flight: coalesce concurrent callers onto the in-flight fetch.
-        // The `listSessions` reply is matched by response TYPE (no request ids),
-        // so two overlapping `listSessions` could cross-deliver each other's
-        // reply. Launch fires several fetches near-simultaneously (WorkspaceView
-        // `.task`, scenePhase→foreground, recovery), so this is a real window —
-        // let the first fetch run and have the rest await its result.
-        if isFetchingSessions {
+        // Single-flight: never issue two `listSessions` in parallel — their
+        // replies are matched by response TYPE (no request ids), so overlapping
+        // calls could cross-deliver. Launch fires several fetches
+        // near-simultaneously (WorkspaceView `.task`, scenePhase→foreground,
+        // recovery), so this is a real window.
+        //
+        // A NON-forced caller coalesces: it just awaits the in-flight fetch and
+        // returns (any fetch satisfies "refresh the list"). A FORCED caller
+        // (create / attach / switch / stolen-cleanup) needs a result that
+        // reflects ITS mutation, so it must NOT adopt an in-flight fetch that
+        // may have started before the mutation — it awaits the in-flight one to
+        // clear, then runs its own fresh fetch.
+        while isFetchingSessions {
             await inFlightSessionsFetch?.value
-            return
+            if !force { return }
         }
         isFetchingSessions = true
         lastFetchTime = now
