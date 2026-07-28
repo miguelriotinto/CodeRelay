@@ -444,12 +444,18 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         // Prune stale local per-session state to the server's authoritative list
         // (anything absent was attached elsewhere, terminated, or lost on a
         // server restart). This is bookkeeping only — ownership is NOT persisted.
+        //
+        // Compute the stale activity ids BEFORE pruning the agents map, then
+        // `forgetSession` each — that clears agentSessions, sessionsAwaitingInput,
+        // agentStates, titles, and unseen together. (Pruning first would empty
+        // the map and make the subtraction below a no-op.)
+        let staleActivity = Set(activityCoordinator.agentSessions.keys).subtracting(serverIds)
+        for id in staleActivity { activityCoordinator.forgetSession(id) }
+        // Prune persisted names to the server list (diff-checked). `agents` is
+        // already reconciled above via forgetSession, so pass the live snapshot.
         var agentsScratch = activityCoordinator.agentSessions
         ownershipStore.pruneToServerSessions(serverIds: serverIds, names: &sessionNames, agents: &agentsScratch)
         activityCoordinator.agentSessions = agentsScratch
-        for id in Set(activityCoordinator.agentSessions.keys).subtracting(serverIds) {
-            activityCoordinator.forgetSession(id)
-        }
         // Evict cached terminal views / VMs for sessions no longer listed.
         terminalCache.pruneStale(knownSessionIds: serverIds)
         let cachedNow = terminalCache.cachedIds
@@ -830,7 +836,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             activityCoordinator.presentStolenAlert(sessionId: sessionId, name: stolenName)
         }
 
-        if refetch { Task { await fetchSessions() } }
+        // force: bypass the debounce so a list response snapshotted before the
+        // server's token reassignment can't slip in and re-add the stolen row.
+        if refetch { Task { await fetchSessions(force: true) } }
     }
 
     private func handleSessionRenamed(sessionId: UUID, name: String) {

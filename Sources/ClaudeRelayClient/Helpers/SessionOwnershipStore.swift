@@ -1,19 +1,18 @@
 import Foundation
 
-/// UserDefaults-backed persistence for three coordinator dictionaries:
-/// `names` (user/server-renamed session names), `owned` (session ids this
-/// device created or attached), `agents` (last-seen agent per session).
+/// UserDefaults-backed persistence for the device-independent auxiliary maps
+/// the coordinator layers on top of the server's session list: `names`
+/// (user/server-renamed session names) and `agents` (last-seen agent per
+/// session), plus the per-device F3 layout state (active tab, collapsed groups).
 ///
-/// Why: the coordinator previously maintained three `save*` helpers that each
-/// re-encoded and wrote to `UserDefaults` on every change, even when nothing
-/// had actually changed (see C-21). This store:
+/// Session OWNERSHIP is deliberately NOT persisted here: the server's
+/// token-scoped `listSessions()` is authoritative, so the pane is driven by the
+/// server list, not a local cache. (A device-scoped owned set used to live here;
+/// it kept drifting from the server and blanking the pane on relaunch, so it was
+/// removed.)
 ///
-/// - Collapses the three persistence flows behind one API.
-/// - Diff-checks before writing — `defaults.set` is called only when the
-///   value actually changed since the last persisted snapshot.
-/// - Centralizes the key construction (`"\(keyPrefix).name"` /
-///   `"\(keyPrefix).ownedSessions.\(deviceId)"` / `"\(keyPrefix).agentSessions"`)
-///   so individual helpers can't drift out of sync.
+/// - Diff-checks before writing — `defaults.set` is called only when the value
+///   actually changed since the last persisted snapshot (C-21).
 ///
 /// Not an `ObservableObject` — the coordinator keeps its own `@Published`
 /// mirrors so SwiftUI can bind to them directly. The store is called on the

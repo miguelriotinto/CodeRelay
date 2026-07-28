@@ -19,9 +19,8 @@ import java.util.UUID
  * pattern `RecoveryController` / `AuthCoordinator` already use.
  *
  * `SessionOwnershipStore` satisfies this shape directly: it has
- * `setAgent(id, agentId?)`, `unclaim(id)`, and an `agents` snapshot. The `:app`
- * layer adapts the concrete store to this interface when constructing the
- * coordinator.
+ * `setAgent(id, agentId?)` and an `agents` snapshot. The `:app` layer adapts the
+ * concrete store to this interface when constructing the coordinator.
  */
 interface AgentPersistence {
     /** Last-seen agent per session (UUID→agentId). Read once at init to hydrate. */

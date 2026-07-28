@@ -811,15 +811,20 @@ class SessionCoordinator(
      *   inside a fetch pass to avoid re-entrancy.
      */
     fun cleanUpStolenSession(sessionId: UUID, alert: Boolean = true, refetch: Boolean = true) {
+        // Remove from the UI FIRST (clear active, drop from the pane, evict the
+        // terminal), THEN raise the popup — so when the user taps OK the UI is
+        // already clean. Matches Swift `cleanUpStolenSession` ordering.
         if (_activeSessionId.value == sessionId) _activeSessionId.value = null
+        removeSessionLocal(sessionId)
+        evictTerminal(sessionId)
         if (alert) {
             activityCoordinator.sessionStolen(sessionId) { name(it) }
         } else {
             activityCoordinator.forgetSession(sessionId)
         }
-        removeSessionLocal(sessionId)
-        evictTerminal(sessionId)
-        if (refetch) scope.launch { fetchSessions() }
+        // force: bypass the debounce so a list response snapshotted before the
+        // server's token reassignment can't slip in and re-add the stolen row.
+        if (refetch) scope.launch { fetchSessions(force = true) }
     }
 
     private fun onSessionRenamed(sessionId: UUID, name: String) {

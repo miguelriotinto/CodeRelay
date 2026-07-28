@@ -582,6 +582,24 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.terminalViewModels[stale], "VM for a no-longer-listed session must be evicted")
     }
 
+    /// Regression (found in review): reconcile must forget ALL activity state
+    /// (agent, awaiting-input, agentState, title, unseen) for a session the
+    /// server no longer lists. A buggy prune-then-diff ordering made the
+    /// forget-set always empty, leaking stale activity.
+    func testReconcileForgetsStaleActivityState() {
+        let coordinator = SharedSessionCoordinator(connection: RelayConnection(), token: "t1")
+        let gone = UUID()
+        coordinator.agentSessions[gone] = "claude"
+        coordinator.sessionsAwaitingInput.insert(gone)
+
+        // `gone` is absent from the new server list.
+        coordinator.reconcile(tokenScoped: [session(UUID())])
+
+        XCTAssertNil(coordinator.agentSessions[gone], "stale agent must be forgotten")
+        XCTAssertFalse(coordinator.sessionsAwaitingInput.contains(gone),
+                       "stale awaiting-input must be cleared")
+    }
+
     /// F3 active-tab restore only considers NON-TERMINAL sessions the server
     /// lists (a terminal id would error in resumeSession). With only a terminal
     /// session present, reconcile must not auto-select an active tab.
