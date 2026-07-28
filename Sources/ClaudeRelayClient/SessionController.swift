@@ -39,6 +39,13 @@ public final class SessionController: ObservableObject {
     @Published public private(set) var sessionId: UUID?
     @Published public private(set) var isAuthenticated = false
 
+    /// The authenticated token's server-side id, delivered in `auth_success`.
+    /// `nil` against older servers that don't send it (the reconcile logic
+    /// falls back to a strictly-safe "retain if still on the server" rule when
+    /// this is unknown). Used to tell "my session, transiently missing from the
+    /// token-scoped list" from "genuinely moved to another token".
+    @Published public private(set) var tokenId: String?
+
     /// The connection generation when auth was established. Used to detect stale auth
     /// after the WebSocket reconnects (server sees a fresh unauthenticated handler).
     public private(set) var authenticatedGeneration: UInt64 = 0
@@ -77,7 +84,7 @@ public final class SessionController: ObservableObject {
         )
 
         switch response {
-        case .authSuccess(let serverProtocolVersion):
+        case .authSuccess(let serverProtocolVersion, let serverTokenId):
             let serverVersion = serverProtocolVersion ?? 0
             if serverVersion < ClaudeRelayKit.minProtocolVersion {
                 isAuthenticated = false
@@ -88,6 +95,9 @@ public final class SessionController: ObservableObject {
             }
             isAuthenticated = true
             authenticatedGeneration = connection.generation
+            // nil against older servers; the coordinator's reconcile falls back
+            // to a safe "retain if still on the server" rule when unknown.
+            if let serverTokenId { tokenId = serverTokenId }
         case .authFailure(let reason):
             isAuthenticated = false
             throw SessionError.authenticationFailed(reason: reason)

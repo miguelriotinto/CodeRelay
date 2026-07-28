@@ -101,7 +101,9 @@ object MessageEnvelope {
         val type = root.getValue("type").jsonPrimitive.content
         val payload = root["payload"]?.jsonObject ?: JsonObject(emptyMap())
         when (type) {
-            "auth_success" -> ServerMessage.AuthSuccess(payload.intOrNull("protocolVersion"))
+            "auth_success" -> ServerMessage.AuthSuccess(
+                payload.intOrNull("protocolVersion"), payload.stringOrNull("tokenId"),
+            )
             "auth_failure" -> ServerMessage.AuthFailure(payload.string("reason"))
             "session_created" -> ServerMessage.SessionCreated(
                 payload.uuid("sessionId"), payload.uShort("cols"), payload.uShort("rows"),

@@ -52,6 +52,18 @@ class SessionOwnershipStore(
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    init {
+        // One-time migration for the deviceId namespace change (the owned-set key
+        // is `ownedSessions.$deviceId`). Older builds keyed `deviceId` off a
+        // persisted random UUID; current builds prefer `aid-<ANDROID_ID>`
+        // (DeviceIdentifier). On the first launch after that change, the new
+        // `ownedKey` is empty while the legacy `ownedSessions.<old-uuid>` still
+        // holds the user's claims — which would surface as an empty pane. If the
+        // active deviceId is the new `aid-*` form and the new key is absent,
+        // forward-copy the legacy key so existing claims survive the upgrade.
+        migrateLegacyOwnedKeyIfNeeded(context, deviceId)
+    }
+
     // MARK: - In-memory caches (authoritative; loaded once at init)
 
     private val namesCache: MutableMap<UUID, String> = load(namesKey)
@@ -122,6 +134,36 @@ class SessionOwnershipStore(
         return changed
     }
 
+    /**
+     * If the active [deviceId] is the current `aid-<ANDROID_ID>` form and this
+     * store has no owned set yet, but a legacy `ownedSessions.<persisted-uuid>`
+     * key exists (from when deviceId was a persisted random UUID), forward-copy
+     * that legacy value onto [ownedKey] so the upgrade doesn't drop claims.
+     *
+     * Idempotent: runs only when [ownedKey] is absent (subsequent launches, or a
+     * fresh install with no legacy key, no-op). Best-effort — any failure leaves
+     * the (empty) new key untouched, i.e. no worse than before.
+     */
+    private fun migrateLegacyOwnedKeyIfNeeded(context: Context, deviceId: String) {
+        // Only migrate when we're on the new namespace and haven't already.
+        if (!deviceId.startsWith(AID_PREFIX)) return
+        if (prefs.contains(ownedKey)) return
+
+        // The legacy device UUID persisted by DeviceIdentifier's fallback path.
+        val legacyDeviceId = runCatching {
+            context.getSharedPreferences(LEGACY_DEVICE_PREFS, Context.MODE_PRIVATE)
+                .getString(LEGACY_DEVICE_KEY, null)
+        }.getOrNull() ?: return
+        if (legacyDeviceId.isBlank() || legacyDeviceId == deviceId) return
+
+        val legacyOwnedKey = "$OWNED_KEY_PREFIX.$legacyDeviceId"
+        val legacyJson = prefs.getString(legacyOwnedKey, null) ?: return
+
+        // Forward-copy verbatim (same JSON list shape). commit() so it survives a
+        // force-kill right after the migrating launch.
+        runCatching { prefs.edit().putString(ownedKey, legacyJson).commit() }
+    }
+
     // MARK: - (De)serialization helpers
 
     /** Decodes a UUID→String map from prefs; empty on missing/parse failure. */
@@ -174,6 +216,12 @@ class SessionOwnershipStore(
         private const val NAMES_KEY = "sessionNames"
         private const val OWNED_KEY_PREFIX = "ownedSessions"
         private const val AGENTS_KEY = "agentSessions"
+
+        /** Prefix DeviceIdentifier uses for the ANDROID_ID-derived id. */
+        private const val AID_PREFIX = "aid-"
+        /** DeviceIdentifier's legacy persisted-UUID prefs (mirrors its constants). */
+        private const val LEGACY_DEVICE_PREFS = "relay.device"
+        private const val LEGACY_DEVICE_KEY = "deviceId"
 
         private val MAP_SERIALIZER =
             MapSerializer(String.serializer(), String.serializer())

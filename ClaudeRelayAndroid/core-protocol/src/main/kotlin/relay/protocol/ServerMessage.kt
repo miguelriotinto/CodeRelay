@@ -13,7 +13,7 @@ import java.util.UUID
 sealed interface ServerMessage {
     val typeString: String
 
-    data class AuthSuccess(val protocolVersion: Int? = null) : ServerMessage {
+    data class AuthSuccess(val protocolVersion: Int? = null, val tokenId: String? = null) : ServerMessage {
         override val typeString get() = "auth_success"
     }
 

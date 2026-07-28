@@ -574,13 +574,37 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         SessionInfo(id: id, name: nil, state: state, tokenId: token, createdAt: Date(), cols: 80, rows: 24)
     }
 
-    /// Product contract (matches Android): a session this device owned that is
-    /// now attached under ANOTHER token has moved to another device — it is
-    /// relinquished (unclaimed) and the user is alerted. Distinct from the bug:
-    /// the fix is that the PRUNE runs against the token-agnostic all-sessions
-    /// list so a session's name/agent/terminal aren't wiped by a token-scoped
-    /// absence; a genuine cross-token move is still surfaced via this dedicated
-    /// reconcile path (with the "moved" alert), not silently dropped.
+    /// THE REPORTED REGRESSION. A session this device owns, missing from a
+    /// transiently empty token-scoped list but still alive under MY OWN token in
+    /// the all-sessions list, must be RETAINED — never unclaimed. Before the fix
+    /// the `lostOwned` loop unclaimed it (keying off the token-scoped list) and
+    /// persisted the shrunk set, so the pane came up empty on relaunch.
+    func testReconcileRetainsOwnSessionMissingFromTransientTokenScopedList() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
+        let mine = UUID()
+        coordinator.claimSession(mine)
+
+        // Cold-launch race: token-scoped list came back empty, but the session
+        // is very much alive under MY token in the all-sessions list.
+        coordinator.reconcile(
+            tokenScoped: [],
+            allSessions: [session(mine, token: "tok-abc", state: .activeAttached)],
+            myTokenId: "tok-abc"
+        )
+
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(mine),
+                      "A session still alive under MY token must never be unclaimed")
+        XCTAssertFalse(coordinator.activityCoordinator.showSessionStolen,
+                       "Retaining my own session must not raise a 'moved' alert")
+
+        coordinator.unclaimSession(mine)
+    }
+
+    /// A session this device owned that is now attached under ANOTHER token has
+    /// genuinely moved to another device — it is relinquished + alerted. The
+    /// classification uses the owning tokenId from the all-sessions list vs. this
+    /// connection's own `myTokenId`, not the mere token-scoped absence.
     func testReconcileRelinquishesSessionMovedToAnotherTokenAndAlerts() {
         let connection = RelayConnection()
         let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
@@ -588,18 +612,44 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         coordinator.claimSession(movedId)
         XCTAssertTrue(coordinator.ownedSessionIds.contains(movedId))
 
-        // Absent from this token's list, but alive (non-terminal) under t2.
+        // Absent from my token's list; alive (non-terminal) under a DIFFERENT
+        // token. My own token is "tok-mine".
         coordinator.reconcile(
             tokenScoped: [],
-            allSessions: [session(movedId, token: "t2", state: .activeAttached)]
+            allSessions: [session(movedId, token: "tok-other", state: .activeAttached)],
+            myTokenId: "tok-mine"
         )
 
         XCTAssertFalse(coordinator.ownedSessionIds.contains(movedId),
-                       "A session moved to another device must be relinquished")
+                       "A session moved to another token must be relinquished")
         XCTAssertTrue(coordinator.activityCoordinator.showSessionStolen,
                       "A moved session must raise the 'Session Moved' alert")
         XCTAssertEqual(coordinator.activityCoordinator.stolenSessionShortId,
                        String(movedId.uuidString.prefix(8)))
+    }
+
+    /// Safety fallback for older servers that don't send `tokenId` in
+    /// `auth_success` (`myTokenId == nil`): a session still alive on the server
+    /// but missing from the token-scoped list must be RETAINED — we can't prove
+    /// it moved, so we never unclaim it. This guarantees an old server can't
+    /// reproduce the relaunch wipe either.
+    func testReconcileRetainsAliveSessionWhenMyTokenUnknown() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "t1")
+        let id = UUID()
+        coordinator.claimSession(id)
+
+        coordinator.reconcile(
+            tokenScoped: [],
+            allSessions: [session(id, token: "whatever", state: .activeAttached)],
+            myTokenId: nil
+        )
+
+        XCTAssertTrue(coordinator.ownedSessionIds.contains(id),
+                      "With unknown own-token, a still-alive session must be retained")
+        XCTAssertFalse(coordinator.activityCoordinator.showSessionStolen)
+
+        coordinator.unclaimSession(id)
     }
 
     /// Steady-state relaunch (the reported single-device case): a session

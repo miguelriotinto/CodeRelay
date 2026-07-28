@@ -2,7 +2,7 @@ import Foundation
 
 /// Messages sent from the server to the client.
 public enum ServerMessage: Equatable, Sendable {
-    case authSuccess(protocolVersion: Int? = nil)
+    case authSuccess(protocolVersion: Int? = nil, tokenId: String? = nil)
     case authFailure(reason: String)
     case sessionCreated(sessionId: UUID, cols: UInt16, rows: UInt16)
     case sessionAttached(sessionId: UUID, state: String)
@@ -74,14 +74,15 @@ public enum ServerMessage: Equatable, Sendable {
 extension ServerMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case reason, sessionId, cols, rows, state, code, message, sessions, activity, agent, name, success, protocolVersion
-        case agentState, title, workingDir, accepted, text
+        case agentState, title, workingDir, accepted, text, tokenId
     }
 
     public func encodePayload(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: PayloadCodingKeys.self)
         switch self {
-        case .authSuccess(let protocolVersion):
+        case .authSuccess(let protocolVersion, let tokenId):
             try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
+            try container.encodeIfPresent(tokenId, forKey: .tokenId)
         case .authFailure(let reason):
             try container.encode(reason, forKey: .reason)
         case .sessionCreated(let sessionId, let cols, let rows):
@@ -144,7 +145,8 @@ extension ServerMessage: Codable {
         switch typeString {
         case "auth_success":
             let protocolVersion = try container.decodeIfPresent(Int.self, forKey: .protocolVersion)
-            return .authSuccess(protocolVersion: protocolVersion)
+            let tokenId = try container.decodeIfPresent(String.self, forKey: .tokenId)
+            return .authSuccess(protocolVersion: protocolVersion, tokenId: tokenId)
         case "auth_failure":
             let reason = try container.decode(String.self, forKey: .reason)
             return .authFailure(reason: reason)
