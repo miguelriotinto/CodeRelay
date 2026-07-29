@@ -238,6 +238,36 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertEqual(sessions.count, 0, "a new generation lifts the poison")
     }
 
+    /// The poison must name the socket the request went out on, NOT whichever one
+    /// happens to be current when the timer fires. If a reconnect intervenes, the
+    /// request died with the old socket and the fresh one can never receive its
+    /// reply — poisoning the fresh socket would refuse every RPC on a healthy
+    /// connection until yet another reconnect, and if none came, forever. That is
+    /// a worse dead end than the hazard the marker exists to prevent.
+    func testATimeoutAfterAReconnectDoesNotPoisonTheFreshSocket() async throws {
+        let conn = FakeConnection()
+        let controller = SessionController(connection: conn, responseTimeout: .milliseconds(50))
+
+        let outcome = Outcome<[SessionInfo]>()
+        let request = Task { await outcome.capture { try await controller.listSessions() } }
+        await waitUntil("the request to go out on generation 1") { conn.sentTypes == ["session_list"] }
+
+        // The socket is replaced while the request is still in flight — so the
+        // pending reply belongs to a generation that no longer exists.
+        conn.generation += 1
+
+        // ...and only THEN does the abandoned request time out.
+        await request.value
+        XCTAssertNotNil(outcome.error, "the abandoned request still fails its caller")
+
+        conn.autoRespond = { _ in .sessionList(sessions: []) }
+        let sessions = try await controller.listSessions()
+        XCTAssertEqual(
+            sessions.count, 0,
+            "the replacement socket must be usable: it cannot receive the old socket's reply"
+        )
+    }
+
     /// The same poison must invalidate auth, or a caller checking `isAuthValid`
     /// would skip the handshake and sit on a socket no RPC can use.
     func testDesyncedSocketReportsAuthInvalid() async throws {

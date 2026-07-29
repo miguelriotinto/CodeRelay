@@ -406,23 +406,43 @@ class SessionController(private val connection: ConnectionSurface) {
                 guard.deliver(serverMessage)
             }
         }
+        // The generation the request actually went out on, and whether it went out
+        // at all. Both are needed by the poison decision in `finally`.
+        var sentGeneration: Long? = null
         try {
             // 2) Send.
             connection.send(message)
+            // Read AFTER the send: a send that threw leaves nothing outstanding, so
+            // it must not poison anything.
+            sentGeneration = connection.generation
 
             // 3) If the response already arrived during send, return it.
             guard.pendingValue?.let { return it }
 
-            // 4) Otherwise wait with a timeout. A null result means the timer won —
-            //    the request stays outstanding server-side even though nobody
-            //    waits for it any more, so the socket is now desynchronized.
+            // 4) Otherwise wait with a timeout.
             return withTimeoutOrNull(RESPONSE_TIMEOUT_MS) { guard.await() }
-                ?: run {
-                    desyncedGeneration = connection.generation
-                    throw SessionException("The operation timed out.")
-                }
+                ?: throw SessionException("The operation timed out.")
         } finally {
             connection.removeSubscriber(subscriptionId)
+            // Sent but never answered ⇒ the request is STILL OUTSTANDING
+            // server-side while nobody waits for it, so its late reply could
+            // resolve some future waiter. Poison the socket it went out on.
+            //
+            // Deliberately in `finally` rather than on the timeout branch alone:
+            // cancellation gets here too. A coroutine cancelled after the send
+            // (scope torn down, recovery superseding a pass) abandons an
+            // outstanding request just as surely as a timeout does, and handling
+            // only the timeout left exactly the original corruption open — the
+            // next same-type RPC would consume the abandoned request's reply.
+            //
+            // The generation is the one captured at send time, NOT the current
+            // one: if a reconnect intervened, the request died with the old
+            // socket and the fresh one can never receive its reply. Poisoning the
+            // fresh socket would refuse every RPC on a healthy connection until
+            // another reconnect — and if none came, permanently.
+            if (sentGeneration != null && guard.pendingValue == null) {
+                desyncedGeneration = sentGeneration
+            }
         }
     }
 

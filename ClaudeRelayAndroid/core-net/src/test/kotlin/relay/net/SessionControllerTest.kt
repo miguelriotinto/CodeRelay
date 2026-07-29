@@ -437,6 +437,72 @@ class SessionControllerTest {
     }
 
     /**
+     * CANCELLATION abandons an outstanding request exactly as a timeout does: the
+     * coroutine goes away, the server still owes a reply, and nobody is waiting for
+     * it. Poisoning only on the timeout branch left the original corruption wide
+     * open here — the next same-type RPC would consume the abandoned request's
+     * reply. This is Kotlin-specific: `withTimeoutOrNull` lets the
+     * `CancellationException` escape, whereas Swift's unstructured timeout task
+     * survives its caller's cancellation and poisons when it fires.
+     */
+    @Test
+    fun `a cancelled RPC poisons the socket it abandoned a request on`() = runTest {
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        val abandoned = launch { controller.listSessions() }
+        yield()
+        runCurrent()
+        assertEquals(1, conn.sentMessages.size) { "the request went out and is now outstanding" }
+
+        // Torn-down scope / superseded recovery pass: the caller goes away while the
+        // server still owes a reply.
+        abandoned.cancel()
+        abandoned.join()
+
+        val refused = runCatching { controller.listSessions() }.exceptionOrNull() as SessionException
+        assertEquals(SessionController.DESYNC_MESSAGE, refused.message)
+        assertEquals(
+            1, conn.sentMessages.size,
+            "the follow-up must never reach the wire, where the abandoned reply could resolve it",
+        )
+    }
+
+    /**
+     * The poison must name the socket the request went out on, NOT whichever one is
+     * current when the timer fires. If a reconnect intervenes, the request died
+     * with the old socket and the fresh one can never receive its reply — poisoning
+     * the fresh socket would refuse every RPC on a healthy connection until yet
+     * another reconnect, and if none came, forever. A worse dead end than the
+     * hazard the marker exists to prevent.
+     */
+    @Test
+    fun `a timeout after a reconnect does not poison the fresh socket`() = runTest {
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        var failure: Throwable? = null
+        val inFlight = launch { failure = runCatching { controller.listSessions() }.exceptionOrNull() }
+        yield()
+        runCurrent()
+
+        // The socket is replaced while the request is still in flight, so its
+        // pending reply belongs to a generation that no longer exists...
+        conn.generation += 1
+        // ...and only THEN does the abandoned request time out.
+        advanceTimeBy(SessionController.RESPONSE_TIMEOUT_MS + 1)
+        inFlight.join()
+        assertEquals("The operation timed out.", (failure as SessionException).message)
+
+        assertFalse(
+            controller.isDesynchronized,
+            "the replacement socket cannot receive the old socket's reply — it must stay usable",
+        )
+        conn.autoRespond = { ServerMessage.SessionList(emptyList()) }
+        assertEquals(emptyList<SessionInfo>(), controller.listSessions())
+    }
+
+    /**
      * The same poison must invalidate auth, or a caller checking [SessionController.isAuthValid]
      * would skip the handshake and sit on a socket no RPC can use.
      */

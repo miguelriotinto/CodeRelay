@@ -439,6 +439,16 @@ public final class SessionController: ObservableObject {
         // 2) Send the message.
         try await connection.send(message)
 
+        // The generation the request actually went out on. The timeout below must
+        // poison THIS socket, not whichever one is current when the timer fires:
+        // if a reconnect intervenes, the request died with the old socket and the
+        // fresh one can never receive its reply. Poisoning the fresh socket would
+        // refuse every RPC on a perfectly good connection until yet another
+        // reconnect — and if none is forthcoming, permanently. Read after the send
+        // rather than before, so a send that threw (no request outstanding) never
+        // reaches it.
+        let sentGeneration = connection.generation
+
         // 3) If the response already arrived during send, return it.
         if let value = guard_.pendingValue {
             return value
@@ -471,7 +481,17 @@ public final class SessionController: ObservableObject {
                 // waits for it any more — mark the socket unusable BEFORE
                 // resuming, so the caller's error handling (which may issue
                 // another RPC immediately) already sees it.
-                if let self { desyncedGeneration = connection.generation }
+                //
+                // This also covers CANCELLATION, by a route the Kotlin port can't
+                // use. This task is unstructured, so a cancelled caller does not
+                // cancel it: it still fires and still poisons the socket the
+                // abandoned request went out on. (The caller stays parked until
+                // then — `withCheckedThrowingContinuation` has no cancellation
+                // handler — which is slow but safe.) Kotlin's `withTimeoutOrNull`
+                // lets a `CancellationException` escape instead, so it poisons in
+                // a `finally` covering both paths. Same invariant, different
+                // mechanics; don't "align" one to the other without re-checking.
+                if let self { desyncedGeneration = sentGeneration }
                 guard_.resume(throwing: SessionError.timeout)
             }
         }
