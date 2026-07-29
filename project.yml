@@ -117,7 +117,7 @@ targets:
         DEVELOPMENT_TEAM: T9WF95GC9T
         SUPPORTED_PLATFORMS: "macosx"
         MARKETING_VERSION: "1.1.1"
-        CURRENT_PROJECT_VERSION: "95"
+        CURRENT_PROJECT_VERSION: "96"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_ENTITLEMENTS: ClaudeRelayMac/ClaudeRelayMac.entitlements
     info:
