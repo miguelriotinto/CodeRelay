@@ -337,7 +337,16 @@ class SessionCoordinator(
         recoveryController = RecoveryController(
             scope = scope,
             // isAlive wraps a 5 s pong wait inside RelayConnection.isAlive().
-            isAlive = { connection.isAlive() },
+            //
+            // A DESYNCHRONIZED socket counts as not-alive even though it pongs
+            // perfectly: pongs are routed inside RelayConnection, so they never
+            // touch the RPC path the desync marker blocks. Without this term the
+            // alive branch would run `restoreSession` on a socket that refuses
+            // every request, fail it as transport-level, and — because nothing on
+            // that path replaces the socket — repeat that on every subsequent
+            // trigger. Reporting not-alive routes it to the reconnect path, whose
+            // generation bump is the only thing that clears the desync.
+            isAlive = { !sessionController.isDesynchronized && connection.isAlive() },
             needsRestore = { needsSessionRestore() },
             reconnect = { connection.forceReconnect() },
             // Reset auth only when it is actually stale for the current
@@ -1241,6 +1250,12 @@ class SessionCoordinator(
      */
     internal fun isApplicationLevelError(error: Throwable): Boolean {
         if (error is SessionException) {
+            // A desynchronized socket is a TRANSPORT condition: the request is fine,
+            // the pipe is unusable until it is replaced. Classifying it app-level
+            // would evict the active terminal and clear the user's session over a
+            // reconnect-able socket. Checked via the typed flag, not the message,
+            // because that misclassification is silent and destructive.
+            if (error.isDesynchronized) return false
             // "not authenticated" maps to a transient/transport-adjacent state in
             // Swift's .timeout branch — treat the rest of the unexpected-response
             // family as app-level. A timeout message is transport-level.

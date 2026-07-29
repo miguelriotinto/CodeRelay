@@ -42,6 +42,11 @@ public final class SessionController: ObservableObject {
         case unexpectedResponse(String)
         case timeout
 
+        /// This socket has an unaccounted-for request on it (an RPC timed out),
+        /// so no further reply on it can be trusted to belong to its sender.
+        /// Retriable only by replacing the socket.
+        case connectionDesynchronized
+
         public var errorDescription: String? {
             switch self {
             case .authenticationFailed(let reason):
@@ -52,6 +57,8 @@ public final class SessionController: ObservableObject {
                 return "Unexpected server response: \(detail)"
             case .timeout:
                 return "The operation timed out."
+            case .connectionDesynchronized:
+                return "The connection to the server needs to be re-established."
             }
         }
 
@@ -89,10 +96,50 @@ public final class SessionController: ObservableObject {
     /// `sendAndWaitForResponse`.
     private var previousRPC: Task<ServerMessage, Error>?
 
+    /// The `connection.generation` of a socket left DESYNCHRONIZED by an RPC
+    /// that timed out, i.e. one with a request outstanding that nobody is
+    /// waiting for any more.
+    ///
+    /// Serializing RPCs guarantees one request in flight at a time, but a
+    /// timeout retires the waiter while leaving the *request* outstanding
+    /// server-side. Its late reply then lands on whichever waiter is installed
+    /// when it arrives — and because there are no request ids, that waiter has
+    /// no way to reject it. Two consecutive `session_list`s is the worst case
+    /// and the original bug verbatim: the launch list times out, a post-create
+    /// list follows, and the late pre-create reply resolves it, so the new
+    /// session is missing from the sidebar.
+    ///
+    /// So a timeout poisons the socket rather than just failing one call: every
+    /// later RPC on it throws `connectionDesynchronized` until it is replaced.
+    /// Keying on the generation makes that self-expiring — any reconnect
+    /// (`connect()` or `markConnectionDead()`) bumps it, and a fresh socket
+    /// cannot carry the old one's in-flight reply. `SessionHandshake` recovers
+    /// without a special case: its catch-all already does `resetAuth()` +
+    /// `disconnect()` and retries, which is exactly the required response.
+    private var desyncedGeneration: UInt64?
+
+    /// Whether the CURRENT socket is desynchronized — no RPC can run on it and
+    /// only replacing it will help. Private, unlike the Kotlin port's public
+    /// equivalent: there, the recovery layer has to consult it because its
+    /// alive-restore path would otherwise loop on an unusable socket. Swift has
+    /// no such path — `restoreSession` is only ever reached after a successful
+    /// `forceReconnect()`, whose generation bump has already cleared this — and
+    /// the handshake's catch-all cures it by disconnecting and retrying.
+    private var isDesynchronized: Bool {
+        desyncedGeneration == connection.generation
+    }
+
+    /// How long a single RPC waits for its reply. The Kotlin port's
+    /// `RESPONSE_TIMEOUT_MS`. Injectable only so tests can exercise the timeout
+    /// path without a 10-second wall-clock wait — production always takes the
+    /// default.
+    private let responseTimeout: Duration
+
     // MARK: - Init
 
-    public init(connection: any ConnectionSurface) {
+    public init(connection: any ConnectionSurface, responseTimeout: Duration = .seconds(10)) {
         self.connection = connection
+        self.responseTimeout = responseTimeout
     }
 
     // MARK: - Authentication
@@ -112,6 +159,9 @@ public final class SessionController: ObservableObject {
         isAuthenticated
             && authenticatedGeneration == connection.generation
             && connection.isConnected
+            // A desynchronized socket can't carry an RPC, so auth over it is of
+            // no use to a caller — report invalid and let the handshake replace it.
+            && !isDesynchronized
     }
 
     /// Resets authentication state so the next operation will re-authenticate.
@@ -361,6 +411,12 @@ public final class SessionController: ObservableObject {
         _ message: ClientMessage,
         expected: Set<String>
     ) async throws -> ServerMessage {
+        // A previous RPC on this socket timed out, so it still owes a reply that
+        // this waiter would happily accept. Refuse until the socket is replaced.
+        guard !isDesynchronized else {
+            throw SessionError.connectionDesynchronized
+        }
+
         let guard_ = ResumeGuard()
 
         // "error" is always accepted — the server answers any request with it.
@@ -398,8 +454,24 @@ public final class SessionController: ObservableObject {
                 return
             }
 
-            guard_.timeoutTask = Task { @MainActor [guard_] in
-                try? await Task.sleep(for: .seconds(10))
+            let timeout = responseTimeout
+            guard_.timeoutTask = Task { @MainActor [weak self, guard_] in
+                // `try await`, NOT `try?`: `ResumeGuard.resume` cancels this task
+                // when the reply lands, and a cancelled `Task.sleep` throws
+                // immediately. Swallowing that would run the rest of this body on
+                // every SUCCESSFUL RPC — which used to be harmless (a second
+                // `resume` is a no-op) but now marks the socket desynchronized,
+                // failing every subsequent request on a healthy connection.
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return   // cancelled: the reply arrived, nothing is outstanding
+                }
+                // The request stays outstanding server-side even though nobody
+                // waits for it any more — mark the socket unusable BEFORE
+                // resuming, so the caller's error handling (which may issue
+                // another RPC immediately) already sees it.
+                if let self { desyncedGeneration = connection.generation }
                 guard_.resume(throwing: SessionError.timeout)
             }
         }

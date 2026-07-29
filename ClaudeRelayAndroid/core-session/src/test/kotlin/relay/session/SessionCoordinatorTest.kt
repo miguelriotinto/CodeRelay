@@ -643,20 +643,23 @@ class SessionCoordinatorTest {
         assertFalse(coord.needsSessionRestore(), "fresh attachment needs no restore")
 
         // 2) Phone sleeps; the socket dies. Auto-recovery reconnects (generation
-        // bump) and reauths fine, but the resume RPC gets no response — the 10 s
-        // timeout makes it a TRANSPORT-shaped failure, so the active id survives
-        // (only app-level failures clear it).
+        // bump) and reauths fine, but the resume RPC fails on the WIRE: its send
+        // throws, the way a write to a half-dead socket does. That is a
+        // TRANSPORT-shaped failure, so the active id survives (only app-level
+        // failures clear it).
+        //
+        // Deliberately a failed send rather than an unanswered request: an
+        // unanswered request would hit the response timeout, and a timeout leaves
+        // the socket DESYNCHRONIZED (it still owes a reply nobody is waiting for),
+        // which mandates a reconnect before any further RPC. This test is about the
+        // opposite case — the orphaned attachment on a socket that is still
+        // correlated and therefore still usable in place.
         conn.alive = false
-        surface.responder = { msg ->
-            when (msg) {
-                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
-                is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
-                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
-                else -> null // SessionResume never answered → timeout
-            }
+        surface.sendGate = { msg ->
+            if (msg is ClientMessage.SessionResume) error("socket write failed")
         }
         conn.onSendFailed?.invoke()
-        advanceUntilIdle() // virtual time runs through the 10 s resume timeout
+        advanceUntilIdle()
 
         // The trap state: transport healthy again, attachment orphaned.
         conn.alive = true
@@ -665,8 +668,9 @@ class SessionCoordinatorTest {
         assertFalse(coord.sessionAttachFailed.value)
         assertTrue(coord.needsSessionRestore(), "stale attachment detected on the live socket")
 
-        // 3) Wake: the server answers again. The next foreground trigger must
+        // 3) Wake: the wire works again. The next foreground trigger must
         // RESTORE — not reconnect, not blind-reauth, not bare-fetch.
+        surface.sendGate = null
         surface.responder = { msg ->
             when (msg) {
                 is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
@@ -688,6 +692,87 @@ class SessionCoordinatorTest {
         )
         assertTrue("rpc:session_resume" in log, "the orphaned session was resumed on the live socket")
         assertFalse(coord.needsSessionRestore(), "attachment is current again after the restore")
+        assertEquals(target, coord.activeSessionId.value)
+        assertFalse(coord.isRecovering.value)
+    }
+
+    // -------------------------------------------------------------------------
+    // The OTHER half of that trap: when the orphaning failure was a TIMEOUT, the
+    // socket is left desynchronized (it still owes a reply nobody awaits) and no
+    // RPC may run on it until it is replaced. The alive-restore path above must
+    // therefore NOT be taken — and, critically, the pass must not simply give up:
+    // the desync is only ever cured by a reconnect, and the ping/pong probe that
+    // decides whether to reconnect cannot see it (pongs bypass the RPC path). A
+    // socket that pongs while refusing every request would otherwise re-enter the
+    // same doomed restore on every trigger — a permanent blank/dead terminal,
+    // which is the exact failure class this whole change set exists to remove.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `wake after a timed-out restore reconnects instead of retrying the desynchronized socket`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val controller = SessionController(surface)
+        val coord = SessionCoordinator(this, conn, controller, "tok", store, config)
+
+        conn.onForceReconnect = { surface.generation += 1 }
+
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertFalse(coord.needsSessionRestore(), "fresh attachment needs no restore")
+
+        // The socket dies; recovery reconnects and reauths, then the resume gets no
+        // answer at all and hits the response timeout.
+        conn.alive = false
+        surface.responder = { msg ->
+            when (msg) {
+                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
+                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
+                else -> null // SessionResume never answered → timeout → desync
+            }
+        }
+        conn.onSendFailed?.invoke()
+        advanceUntilIdle() // virtual time runs through the 10 s resume timeout
+
+        // A timeout is transport-shaped, so the session is kept, not discarded...
+        assertEquals(target, coord.activeSessionId.value, "a timeout must not discard the session")
+        assertFalse(
+            coord.sessionAttachFailed.value,
+            "a desynchronized socket is a transport condition — misclassifying it app-level " +
+                "would evict the terminal and clear the user's session",
+        )
+        // ...and it left the socket unusable even though the transport is fine.
+        conn.alive = true
+        assertTrue(controller.isDesynchronized, "the timed-out request poisoned the socket")
+        assertTrue(coord.needsSessionRestore(), "the attachment is still orphaned")
+
+        // Wake. The server is answering again, but the socket is still the poisoned
+        // one, so the pass must REPLACE it rather than restore over it.
+        surface.responder = { msg ->
+            when (msg) {
+                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
+                is ClientMessage.SessionResume -> ServerMessage.SessionResumed(msg.sessionId)
+                is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
+                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
+                is ClientMessage.SessionListAll -> ServerMessage.SessionListAll(surface.sessionsOnServer)
+                else -> null
+            }
+        }
+        log.entries.clear()
+        coord.handleForegroundTransition()
+        advanceUntilIdle()
+
+        assertTrue(
+            "forceReconnect" in log,
+            "a desynchronized socket must be replaced — no RPC on it can succeed",
+        )
+        assertFalse(controller.isDesynchronized, "the new generation lifted the poison")
+        assertTrue("rpc:session_resume" in log, "and the session was restored on the fresh socket")
+        assertFalse(coord.needsSessionRestore(), "attachment is current again")
         assertEquals(target, coord.activeSessionId.value)
         assertFalse(coord.isRecovering.value)
     }

@@ -264,7 +264,11 @@ public final class SessionHandshake {
         switch error {
         case .authenticationFailed, .versionIncompatible:
             return true
-        case .unexpectedResponse, .timeout:
+        // `connectionDesynchronized` is emphatically retriable: it means a
+        // previous RPC timed out and left the socket uncorrelated, and this
+        // catch's `resetAuth()` + `disconnect()` is precisely the cure — the
+        // next attempt reconnects onto a clean socket.
+        case .unexpectedResponse, .timeout, .connectionDesynchronized:
             return false
         }
     }

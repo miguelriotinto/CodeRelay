@@ -27,6 +27,16 @@ class SessionException(
     message: String,
     /** True when the failure indicates the server saw us as not authenticated. */
     val isNotAuthenticated: Boolean = false,
+    /**
+     * True for the refusal raised on a DESYNCHRONIZED socket (see
+     * [SessionController.isDesynchronized]). A typed flag rather than another
+     * message match, because the caller's classification is load-bearing: this is
+     * a TRANSPORT condition, and treating it as app-level would evict the active
+     * terminal and clear the user's session over what is really just a socket that
+     * needs replacing. Swift distinguishes it by enum case
+     * (`SessionError.connectionDesynchronized`); this is the port of that.
+     */
+    val isDesynchronized: Boolean = false,
 ) : Exception(message)
 
 /**
@@ -100,7 +110,47 @@ class SessionController(private val connection: ConnectionSurface) {
     val isAuthValid: Boolean
         get() = isAuthenticated &&
             authenticatedGeneration == connection.generation &&
-            connection.isConnected
+            connection.isConnected &&
+            // A desynchronized socket can't carry an RPC, so auth over it is of no
+            // use to a caller — report invalid and let the handshake replace it.
+            !isDesynchronized
+
+    /**
+     * The generation of a socket left DESYNCHRONIZED by an RPC that timed out,
+     * i.e. one with a request outstanding that nobody is waiting for any more.
+     *
+     * [rpcLock] guarantees one request in flight at a time, but a timeout retires
+     * the waiter while leaving the *request* outstanding server-side. Its late
+     * reply then lands on whichever waiter is installed when it arrives — and
+     * with no request ids, that waiter cannot reject it. Two consecutive
+     * `session_list`s is the worst case and the original bug verbatim: the launch
+     * list times out, a post-create list follows, and the late pre-create reply
+     * resolves it, so the new session is missing from the sidebar.
+     *
+     * So a timeout poisons the socket rather than just failing one call: every
+     * later RPC on it fails until it is replaced. Keying on the generation makes
+     * that self-expiring — any reconnect bumps it, and a fresh socket cannot
+     * carry the old one's in-flight reply. `SessionHandshake` recovers with no
+     * special case: its catch-all already does `resetAuth()` + `disconnect()`
+     * and retries, which is exactly the required response.
+     */
+    private var desyncedGeneration: Long? = null
+
+    /**
+     * Whether the CURRENT socket is desynchronized — i.e. no RPC can run on it and
+     * only replacing it will help.
+     *
+     * Public because the recovery layer has to know. Its "is the connection usable"
+     * probe is a ping/pong, and pongs are routed inside the connection rather than
+     * through this controller's RPC path, so a desynchronized socket pongs
+     * perfectly while refusing every request. Recovery would then see a healthy
+     * transport, decline to reconnect, and re-enter the same doomed restore on
+     * every trigger — the socket is only ever cured by a reconnect, so something
+     * has to ask for one. That is the same shape as the bug the liveness term in
+     * [isAuthValid] fixed: "the transport is up" is not "the transport is usable".
+     */
+    val isDesynchronized: Boolean
+        get() = desyncedGeneration == connection.generation
 
     /**
      * Whether [sessionId]'s server-side attachment was established on the
@@ -339,6 +389,12 @@ class SessionController(private val connection: ConnectionSurface) {
         message: ClientMessage,
         expected: Set<String>,
     ): ServerMessage {
+        // A previous RPC on this socket timed out, so it still owes a reply that
+        // this waiter would happily accept. Refuse until the socket is replaced.
+        if (isDesynchronized) {
+            throw SessionException(DESYNC_MESSAGE, isDesynchronized = true)
+        }
+
         val guard = ResumeGuard()
 
         // 1) Install subscription BEFORE sending. The subscriber resumes the
@@ -357,9 +413,14 @@ class SessionController(private val connection: ConnectionSurface) {
             // 3) If the response already arrived during send, return it.
             guard.pendingValue?.let { return it }
 
-            // 4) Otherwise wait with a timeout. A null result means the timer won.
+            // 4) Otherwise wait with a timeout. A null result means the timer won —
+            //    the request stays outstanding server-side even though nobody
+            //    waits for it any more, so the socket is now desynchronized.
             return withTimeoutOrNull(RESPONSE_TIMEOUT_MS) { guard.await() }
-                ?: throw SessionException("The operation timed out.")
+                ?: run {
+                    desyncedGeneration = connection.generation
+                    throw SessionException("The operation timed out.")
+                }
         } finally {
             connection.removeSubscriber(subscriptionId)
         }
@@ -367,6 +428,9 @@ class SessionController(private val connection: ConnectionSurface) {
 
     companion object {
         const val RESPONSE_TIMEOUT_MS = 10_000L
+
+        /** User-facing text for the desynchronized-socket refusal. */
+        const val DESYNC_MESSAGE = "The connection to the server needs to be re-established."
     }
 }
 

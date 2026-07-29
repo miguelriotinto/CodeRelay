@@ -62,10 +62,35 @@ private final class Outcome<T> {
 @MainActor
 final class SessionControllerTests: XCTestCase {
 
-    /// Swift has no virtual clock here, so tests hand control back to the
-    /// scheduler a few times to let the RPC tasks reach their next await. Never
-    /// long enough to reach the 10 s response timeout — no test relies on it.
-    private func settle() async {
+    /// Polls until `condition` holds, then returns; fails the test on timeout.
+    ///
+    /// Deliberately condition-based. An earlier version yielded a fixed number of
+    /// times, which is a timing assumption dressed up as a barrier: `Task.yield()`
+    /// hands control to whatever is queued on the executor, so once any test in
+    /// the suite scheduled timed work, the yields were spent elsewhere and an RPC
+    /// that was merely *slow* read as "never sent". It passed alone and failed in
+    /// the suite.
+    private func waitUntil(
+        _ description: String,
+        timeout: Duration = .seconds(2),
+        _ condition: @MainActor () -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        XCTFail("timed out waiting for \(description)", file: file, line: line)
+    }
+
+    /// A bounded quiet period, for asserting something has NOT happened. There is
+    /// no sound way to prove a negative here, so this gives pending work a real
+    /// chance to run first and is named for what it is. Kept well under the
+    /// response timeout so no test trips it accidentally.
+    private func quiesce() async {
+        try? await Task.sleep(for: .milliseconds(30))
         for _ in 0..<20 { await Task.yield() }
     }
 
@@ -101,11 +126,10 @@ final class SessionControllerTests: XCTestCase {
         let createOutcome = Outcome<UUID>()
 
         let first = Task { await listOutcome.capture { try await controller.listSessions() } }
-        await settle()
-        XCTAssertEqual(conn.sentTypes, ["session_list"], "the first RPC should have sent and parked")
+        await waitUntil("the first RPC to send and park") { conn.sentTypes == ["session_list"] }
 
         let second = Task { await createOutcome.capture { try await controller.createSession(name: "queued") } }
-        await settle()
+        await quiesce()
         XCTAssertEqual(
             conn.sentTypes, ["session_list"],
             "the second RPC must wait for the first: no overlapping request on the wire"
@@ -115,7 +139,7 @@ final class SessionControllerTests: XCTestCase {
         // outstanding. With one waiter installed it cannot be mis-consumed — and,
         // crucially, an `error` here would not resolve the parked list either.
         conn.deliver(.sessionCreated(sessionId: created, cols: 80, rows: 24))
-        await settle()
+        await quiesce()
         XCTAssertNil(listOutcome.value, "session_created must not resolve a parked session_list")
         XCTAssertNil(listOutcome.error, "...nor fail it")
         XCTAssertNil(createOutcome.value, "the queued RPC hasn't sent, so it cannot have resolved")
@@ -125,8 +149,9 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertEqual(listOutcome.value?.count, 0)
 
         // The queue released: the second RPC now sends and takes its own reply.
-        await settle()
-        XCTAssertEqual(conn.sentTypes, ["session_list", "session_create"])
+        await waitUntil("the queued RPC to send once the first answered") {
+            conn.sentTypes == ["session_list", "session_create"]
+        }
         conn.deliver(.sessionCreated(sessionId: created, cols: 80, rows: 24))
         await second.value
         XCTAssertEqual(createOutcome.value, created)
@@ -152,22 +177,85 @@ final class SessionControllerTests: XCTestCase {
         let createOutcome = Outcome<UUID>()
 
         let first = Task { await listOutcome.capture { try await controller.listSessions() } }
-        await settle()
+        await waitUntil("the failing RPC to send") { conn.sentTypes == ["session_list"] }
         let second = Task {
             await createOutcome.capture { try await controller.createSession(name: "behind a failure") }
         }
         await first.value
-        await settle()
 
         XCTAssertNotNil(listOutcome.error, "an `error` reply must fail the list")
-        XCTAssertEqual(
-            conn.sentTypes, ["session_list", "session_create"],
-            "a predecessor that threw must release the queue, not fail what's behind it"
-        )
+        await waitUntil("the successor to be released by the failed predecessor") {
+            conn.sentTypes == ["session_list", "session_create"]
+        }
         conn.deliver(.sessionCreated(sessionId: created, cols: 80, rows: 24))
         await second.value
         XCTAssertEqual(createOutcome.value, created)
         XCTAssertNil(createOutcome.error, "the successor must not inherit its predecessor's error")
+    }
+
+    /// A timeout retires the waiter but leaves the REQUEST outstanding
+    /// server-side, so its late reply lands on whichever waiter is installed
+    /// when it arrives — and without request ids that waiter cannot reject it.
+    /// Two consecutive `session_list`s is the original bug verbatim: the launch
+    /// list times out, a post-create list follows, and the late pre-create reply
+    /// resolves it, so the new session is missing from the sidebar. A timeout
+    /// therefore poisons the socket until it is replaced.
+    func testATimedOutRPCPoisonsTheSocketUntilItIsReplaced() async throws {
+        let conn = FakeConnection()
+        // A short timeout so the timeout path runs without a 10 s wall-clock wait.
+        let controller = SessionController(connection: conn, responseTimeout: .milliseconds(20))
+
+        do {
+            _ = try await controller.listSessions()
+            XCTFail("no reply was delivered, so the RPC must time out")
+        } catch {
+            XCTAssertTrue(error is SessionController.SessionError)
+        }
+
+        // The socket still looks fine to the transport — that is exactly why the
+        // controller has to remember, rather than probe.
+        XCTAssertTrue(conn.isConnected)
+        do {
+            _ = try await controller.listSessions()
+            XCTFail("a second RPC must not run on a socket with an unanswered request on it")
+        } catch let error as SessionController.SessionError {
+            guard case .connectionDesynchronized = error else {
+                return XCTFail("expected connectionDesynchronized, got \(error)")
+            }
+        }
+        XCTAssertEqual(
+            conn.sentTypes, ["session_list"],
+            "the refused RPC must never reach the wire, where the late reply could meet it"
+        )
+
+        // Replacing the socket clears it, with no explicit reset call: a fresh
+        // connection cannot carry the old one's in-flight reply. This is what
+        // lets `SessionHandshake` recover through its existing
+        // resetAuth + disconnect + retry path.
+        conn.generation += 1
+        conn.autoRespond = { _ in .sessionList(sessions: []) }
+        let sessions = try await controller.listSessions()
+        XCTAssertEqual(sessions.count, 0, "a new generation lifts the poison")
+    }
+
+    /// The same poison must invalidate auth, or a caller checking `isAuthValid`
+    /// would skip the handshake and sit on a socket no RPC can use.
+    func testDesyncedSocketReportsAuthInvalid() async throws {
+        let conn = FakeConnection()
+        conn.autoRespond = { _ in .authSuccess(protocolVersion: 1, tokenId: "tok") }
+        let controller = SessionController(connection: conn, responseTimeout: .milliseconds(20))
+
+        try await controller.authenticate(token: "tok")
+        XCTAssertTrue(controller.isAuthValid)
+
+        conn.autoRespond = nil
+        _ = try? await controller.listSessions()   // times out → poisons
+
+        XCTAssertFalse(controller.isAuthValid, "auth over a desynchronized socket is unusable")
+        conn.generation += 1
+        // Still invalid, but now for the ordinary reason (stale generation), which
+        // is the state that makes the handshake re-authenticate.
+        XCTAssertFalse(controller.isAuthValid)
     }
 
     // MARK: - Type scoping (the second half of the correlation story)
@@ -186,10 +274,10 @@ final class SessionControllerTests: XCTestCase {
 
         let outcome = Outcome<[SessionInfo]>()
         let request = Task { await outcome.capture { try await controller.listAllSessions() } }
-        await settle()
+        await waitUntil("the request to send and park") { conn.sentTypes == ["session_list_all"] }
 
         conn.deliver(.sessionList(sessions: []))
-        await settle()
+        await quiesce()
         XCTAssertNil(outcome.value, "listAllSessions must not resolve on session_list_result")
         XCTAssertNil(outcome.error, "...nor fail its type check on it")
 

@@ -769,7 +769,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             switch sessionErr {
             case .unexpectedResponse, .authenticationFailed, .versionIncompatible:
                 return true
-            case .timeout:
+            // Both are transport conditions, not the server rejecting the
+            // request: `connectionDesynchronized` means an earlier RPC timed out
+            // and the socket must be replaced before another can run.
+            case .timeout, .connectionDesynchronized:
                 return false
             }
         }

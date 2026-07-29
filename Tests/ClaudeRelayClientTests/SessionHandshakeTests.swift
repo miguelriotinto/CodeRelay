@@ -196,4 +196,36 @@ final class SessionHandshakeTests: XCTestCase {
         connection._testOnly_setState(.disconnected)
         XCTAssertFalse(controller.isAuthValid, "no live socket → invalid regardless of generation")
     }
+
+    // MARK: - Desynchronized sockets are a TRANSPORT condition
+
+    /// A desynchronized socket (an earlier RPC timed out and still owes a reply)
+    /// must classify as transport-level, not application-level. App-level means
+    /// "the server rejected this request": the recovery path responds by evicting
+    /// the active terminal and clearing the user's session. Doing that over a
+    /// socket that merely needs replacing would destroy live work.
+    ///
+    /// Swift gets this right by construction — the classification switches over
+    /// an exhaustive enum, so adding `connectionDesynchronized` forced the
+    /// decision at compile time. The Kotlin port classifies by matching the error
+    /// *message*, where the same addition silently fell through to the app-level
+    /// default; it now carries an explicit `isDesynchronized` flag. This test
+    /// pins the Swift half of that parity so a later "simplification" of the
+    /// switch can't quietly reintroduce it.
+    func testDesynchronizedIsTransportLevelNotApplicationLevel() {
+        XCTAssertFalse(
+            SharedSessionCoordinator.isApplicationLevelError(
+                SessionController.SessionError.connectionDesynchronized
+            ),
+            "a socket that needs replacing must not be reported as the server rejecting the request"
+        )
+        // The neighbouring cases, so the assertion above is meaningful rather
+        // than passing because everything returns false.
+        XCTAssertFalse(SharedSessionCoordinator.isApplicationLevelError(
+            SessionController.SessionError.timeout
+        ))
+        XCTAssertTrue(SharedSessionCoordinator.isApplicationLevelError(
+            SessionController.SessionError.unexpectedResponse("session_not_found")
+        ))
+    }
 }

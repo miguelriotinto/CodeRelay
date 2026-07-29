@@ -362,36 +362,104 @@ class SessionControllerTest {
 
     /**
      * The queue must not be able to strand: a first RPC that never gets an answer
-     * releases the lock when its timeout fires, and the one behind it then runs.
-     * (Worst-case wait for a queued RPC is [SessionController.RESPONSE_TIMEOUT_MS] —
-     * bounded, unlike the silent state corruption serializing replaces.)
+     * releases the lock when its timeout fires, so the one behind it is not stuck
+     * on the mutex forever. It does NOT get to run, though — see the desync test
+     * below for why. What this test pins is that the queued caller is *released*
+     * with an error rather than deadlocked.
      */
     @Test
     fun `a timed-out RPC releases the queue`() = runTest {
-        val id = UUID.randomUUID()
         val conn = FakeConnection()
         val controller = SessionController(conn)
 
         var listError: Throwable? = null
-        var created: UUID? = null
+        var createError: Throwable? = null
         val first = launch { listError = runCatching { controller.listSessions() }.exceptionOrNull() }
         yield()
         runCurrent()
-        val second = launch { created = controller.createSession("behind a timeout") }
+        val second = launch {
+            createError = runCatching { controller.createSession("behind a timeout") }.exceptionOrNull()
+        }
         yield()
         runCurrent()
         assertEquals(1, conn.sentMessages.size)
 
         advanceTimeBy(SessionController.RESPONSE_TIMEOUT_MS + 1)
         first.join()
-        runCurrent()
+        second.join()
 
         assertEquals("The operation timed out.", (listError as SessionException).message)
-        assertEquals(2, conn.sentMessages.size) { "the queued RPC must run after the timeout releases the lock" }
+        assertEquals(
+            "The connection to the server needs to be re-established.",
+            (createError as SessionException).message,
+        ) { "the queued RPC must be released by the mutex, not left waiting on it" }
+    }
 
-        conn.deliver(ServerMessage.SessionCreated(id, cols = 80u, rows = 24u))
-        second.join()
-        assertEquals(id, created)
+    /**
+     * A timeout retires the waiter but leaves the REQUEST outstanding server-side,
+     * so its late reply lands on whichever waiter is installed when it arrives —
+     * and without request ids that waiter cannot reject it. Two consecutive
+     * `session_list`s is the original bug verbatim: the launch list times out, a
+     * post-create list follows, and the late pre-create reply resolves it, so the
+     * new session is missing from the sidebar. A timeout therefore poisons the
+     * socket until it is replaced.
+     */
+    @Test
+    fun `a timed-out RPC poisons the socket until it is replaced`() = runTest {
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        var first: Throwable? = null
+        val timedOut = launch { first = runCatching { controller.listSessions() }.exceptionOrNull() }
+        yield()
+        runCurrent()
+        advanceTimeBy(SessionController.RESPONSE_TIMEOUT_MS + 1)
+        timedOut.join()
+        assertEquals("The operation timed out.", (first as SessionException).message)
+
+        // The socket still looks fine to the transport — that is exactly why the
+        // controller has to remember, rather than probe.
+        assertTrue(conn.isConnected)
+        // Fails fast, without suspending on a timer, so it can be awaited inline.
+        val refused = runCatching { controller.listSessions() }.exceptionOrNull() as SessionException
+        assertEquals("The connection to the server needs to be re-established.", refused.message)
+        assertEquals(
+            1, conn.sentMessages.size,
+            "the refused RPC must never reach the wire, where the late reply could meet it",
+        )
+
+        // Replacing the socket clears it, with no explicit reset call: a fresh
+        // connection cannot carry the old one's in-flight reply. This is what lets
+        // the handshake recover through its existing disconnect + retry path.
+        conn.generation += 1
+        conn.autoRespond = { ServerMessage.SessionList(emptyList()) }
+        assertEquals(emptyList<SessionInfo>(), controller.listSessions()) { "a new generation lifts the poison" }
+    }
+
+    /**
+     * The same poison must invalidate auth, or a caller checking [SessionController.isAuthValid]
+     * would skip the handshake and sit on a socket no RPC can use.
+     */
+    @Test
+    fun `a desynchronized socket reports auth invalid`() = runTest {
+        val conn = FakeConnection(autoRespond = { ServerMessage.AuthSuccess(protocolVersion = 1) })
+        val controller = SessionController(conn)
+
+        controller.authenticate("tok")
+        assertTrue(controller.isAuthValid)
+
+        conn.autoRespond = null
+        val timedOut = launch { runCatching { controller.listSessions() } }
+        yield()
+        runCurrent()
+        advanceTimeBy(SessionController.RESPONSE_TIMEOUT_MS + 1)
+        timedOut.join()
+
+        assertFalse(controller.isAuthValid, "auth over a desynchronized socket is unusable")
+        // Still invalid after a reconnect, but now for the ordinary reason (stale
+        // generation) — the state that makes the handshake re-authenticate.
+        conn.generation += 1
+        assertFalse(controller.isAuthValid)
     }
 
     @Test
