@@ -45,7 +45,7 @@ class SessionException(
  *
  * The critical correctness property is replicated exactly: every request
  * installs its response subscriber **before** sending, so a response that beats
- * the await is still captured (via [ResumeGuard.pendingValue]). The guard
+ * the await is still captured (the guard's deferred holds it). The guard
  * guarantees the awaiting coroutine is resumed exactly once even when the
  * response, the timeout, and a duplicate response all race.
  *
@@ -367,7 +367,7 @@ class SessionController(private val connection: ConnectionSurface) {
      * Installs a response subscription, sends [message], and waits up to
      * [RESPONSE_TIMEOUT_MS] for a reply whose type is in [expected] (or `error`).
      * The subscriber is installed **before** the send so a response that arrives
-     * during/just after the send is captured by [ResumeGuard.pendingValue] rather
+     * during/just after the send is held by the [ResumeGuard]'s deferred rather
      * than lost.
      *
      * [expected] is deliberately **required**, with no permissive default. It is
@@ -416,8 +416,13 @@ class SessionController(private val connection: ConnectionSurface) {
             // it must not poison anything.
             sentGeneration = connection.generation
 
-            // 3) If the response already arrived during send, return it.
-            guard.pendingValue?.let { return it }
+            // 3) If the response already arrived during send, return it. `await()`
+            //    on a completed deferred returns without suspending, so this is a
+            //    fast path rather than a correctness requirement — but it keeps a
+            //    reply that beat the await out of `withTimeoutOrNull`, which would
+            //    throw on an already-cancelled caller instead of handing the value
+            //    over.
+            if (guard.isDelivered) return guard.await()
 
             // 4) Otherwise wait with a timeout.
             return withTimeoutOrNull(RESPONSE_TIMEOUT_MS) { guard.await() }
@@ -440,7 +445,13 @@ class SessionController(private val connection: ConnectionSurface) {
             // socket and the fresh one can never receive its reply. Poisoning the
             // fresh socket would refuse every RPC on a healthy connection until
             // another reconnect — and if none came, permanently.
-            if (sentGeneration != null && guard.pendingValue == null) {
+            //
+            // "Answered" is read from the guard's atomic completion state rather
+            // than any field published alongside it: `deliver` runs on the
+            // connection's dispatcher and this runs on the caller's, so a mirrored
+            // flag can still be unpublished here for an RPC that already succeeded
+            // — which would poison a healthy socket on the happy path.
+            if (sentGeneration != null && !guard.isDelivered) {
                 desyncedGeneration = sentGeneration
             }
         }
@@ -455,23 +466,35 @@ class SessionController(private val connection: ConnectionSurface) {
 }
 
 /**
- * Ensures a waiter is resumed exactly once. Ports the Swift `ResumeGuard`. A
- * response that arrives before [await] is parked in [pendingValue]; the first
- * [deliver] wins, all later deliveries (including a duplicate response) are no-ops.
+ * Ensures a waiter is resumed exactly once. Ports the Swift `ResumeGuard`. The
+ * first [deliver] wins; all later deliveries (including a duplicate response) are
+ * no-ops. A response that arrives before [await] is not lost — the deferred holds
+ * it, so a later [await] returns without suspending.
+ *
+ * The deferred is the **single** source of truth, deliberately: [deliver] runs on
+ * the connection's confinement dispatcher while the awaiter runs on the caller's,
+ * so any state mirrored *alongside* the deferred is published on one thread and
+ * read on another. An earlier version kept a `pendingValue` field assigned after
+ * `complete()`, and `complete()` can resume the awaiter on the other thread before
+ * that assignment lands — so the awaiter could reach its own `finally` and read
+ * "no response" for an RPC that had in fact just been answered, poisoning a
+ * perfectly healthy socket. Keep every question about this guard answerable from
+ * [CompletableDeferred]'s own atomic state.
  */
 private class ResumeGuard {
     private val deferred = CompletableDeferred<ServerMessage>()
 
-    /** Set when a matching response arrives before the awaiter is suspended. */
-    @Volatile
-    var pendingValue: ServerMessage? = null
-        private set
+    /**
+     * Whether a response has been delivered — true from the instant of delivery,
+     * atomically, because it *is* the deferred's completion state rather than a
+     * copy of it.
+     */
+    val isDelivered: Boolean
+        get() = deferred.isCompleted
 
+    /** complete() returns false if already completed → "resume exactly once". */
     fun deliver(value: ServerMessage) {
-        // complete() returns false if already completed → "resume exactly once".
-        if (deferred.complete(value)) {
-            pendingValue = value
-        }
+        deferred.complete(value)
     }
 
     suspend fun await(): ServerMessage = deferred.await()

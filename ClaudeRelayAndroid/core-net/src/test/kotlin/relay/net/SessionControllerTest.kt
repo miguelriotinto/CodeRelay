@@ -1,7 +1,10 @@
 package relay.net
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -16,6 +19,8 @@ import relay.protocol.ServerMessage
 import relay.protocol.SessionInfo
 import relay.protocol.SessionState
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 
 /**
  * Test double for [ConnectionSurface]. [autoRespond] feeds a canned server
@@ -24,39 +29,54 @@ import java.util.UUID
  * without any real socket or timer. [deliver] feeds the installed subscribers a
  * message out-of-band (after the awaiter has suspended) for the async/duplicate
  * delivery paths.
+ *
+ * Subscriber bookkeeping is lock-guarded and [sentMessages] is copy-on-write
+ * because the real [RelayConnection] fans messages out on its own confinement
+ * dispatcher while the controller installs and removes subscribers on the caller's
+ * thread. Most tests here run single-threaded and don't need that, but the ones
+ * that reproduce cross-dispatcher delivery do — and an unsynchronized
+ * `LinkedHashMap` would fail them with a spurious `ConcurrentModificationException`
+ * instead of the assertion under test. Insertion order is preserved (rather than
+ * switching to a `ConcurrentHashMap`) because the fan-out-order tests depend on it.
  */
 private class FakeConnection(
     var autoRespond: ((ClientMessage) -> ServerMessage?)? = null,
 ) : ConnectionSurface {
+    @Volatile
     override var generation: Long = 7L
 
     /** Whether a socket is up. Mutable so a test can model the receive-loop
      *  failure that drops the socket WITHOUT bumping [generation]. */
+    @Volatile
     override var isConnected: Boolean = true
-    var sentMessages = mutableListOf<ClientMessage>()
+    var sentMessages: MutableList<ClientMessage> = CopyOnWriteArrayList()
+    private val lock = Any()
     private val subscribers = LinkedHashMap<UUID, (ServerMessage) -> Unit>()
 
     override fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID {
         val id = UUID.randomUUID()
-        subscribers[id] = handler
+        synchronized(lock) { subscribers[id] = handler }
         return id
     }
 
     override fun removeSubscriber(id: UUID) {
-        subscribers.remove(id)
+        synchronized(lock) { subscribers.remove(id) }
     }
+
+    private fun currentSubscribers(): List<(ServerMessage) -> Unit> =
+        synchronized(lock) { subscribers.values.toList() }
 
     override suspend fun send(message: ClientMessage) {
         sentMessages.add(message)
         autoRespond?.invoke(message)?.let { response ->
             // Deliver synchronously, mirroring a response that arrives during send.
-            subscribers.values.toList().forEach { it(response) }
+            currentSubscribers().forEach { it(response) }
         }
     }
 
     /** Fans [response] out to every installed subscriber (out-of-band delivery). */
     fun deliver(response: ServerMessage) {
-        subscribers.values.toList().forEach { it(response) }
+        currentSubscribers().forEach { it(response) }
     }
 }
 
@@ -500,6 +520,56 @@ class SessionControllerTest {
         )
         conn.autoRespond = { ServerMessage.SessionList(emptyList()) }
         assertEquals(emptyList<SessionInfo>(), controller.listSessions())
+    }
+
+    /**
+     * A SUCCESSFUL RPC must never poison the socket — checked with real threads,
+     * because that is the only setting where it can go wrong.
+     *
+     * The poison gate asks "was this request answered?", and the answer has to come
+     * from the guard's own atomic completion state. The real [RelayConnection]
+     * delivers replies on its confinement dispatcher while the awaiter resumes on
+     * the caller's, so a flag published *after* the deferred completes can still
+     * read as unset on the resumed awaiter's thread — and a request that plainly
+     * succeeded would then mark its socket unusable, failing every later RPC until
+     * a reconnect. Every other test in this file runs on one dispatcher and cannot
+     * observe that at all.
+     *
+     * Honest about its limits: this is a guard for the property, not a reproducer
+     * for the interleaving. The window was two instructions wide, so no stress loop
+     * can be relied on to land inside it; the test was validated by widening the
+     * window artificially, and it fails immediately when the state is mirrored
+     * rather than read from the deferred.
+     */
+    @Test
+    fun `a successful RPC never poisons the socket when the reply comes from another thread`() {
+        val deliverOn = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        val callOn = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        try {
+            repeat(200) { iteration ->
+                val conn = FakeConnection()
+                val controller = SessionController(conn)
+
+                runBlocking(callOn) {
+                    val rpc = launch { controller.listSessions() }
+                    withContext(deliverOn) {
+                        // The subscriber is installed before the send, so a recorded
+                        // message means the waiter is in place and parked.
+                        while (conn.sentMessages.isEmpty()) Thread.yield()
+                        conn.deliver(ServerMessage.SessionList(emptyList()))
+                    }
+                    rpc.join()
+                }
+
+                assertFalse(
+                    controller.isDesynchronized,
+                    "iteration $iteration: an answered RPC poisoned its own socket",
+                )
+            }
+        } finally {
+            deliverOn.close()
+            callOn.close()
+        }
     }
 
     /**
