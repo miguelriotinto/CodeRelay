@@ -84,10 +84,21 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /**
      * Whether the controller is authenticated on the **current** connection.
-     * False once the socket has been replaced since auth was established.
+     * False once the socket has been replaced since auth was established, and
+     * false when there is no live socket at all.
+     *
+     * The liveness term is load-bearing, not belt-and-braces: a receive-loop
+     * failure nils the socket WITHOUT bumping [ConnectionSurface.generation], so
+     * generation equality alone reported "authenticated" over a socket that had
+     * already gone. Callers then skipped re-auth, sent the RPC, and got
+     * `notConnected` — an error `withAuth` does not retry, i.e. a silent dead end
+     * (a blank session pane). Reporting invalid instead makes the handshake
+     * reconnect first.
      */
     val isAuthValid: Boolean
-        get() = isAuthenticated && authenticatedGeneration == connection.generation
+        get() = isAuthenticated &&
+            authenticatedGeneration == connection.generation &&
+            connection.isConnected
 
     /**
      * Whether [sessionId]'s server-side attachment was established on the
@@ -113,6 +124,7 @@ class SessionController(private val connection: ConnectionSurface) {
     suspend fun authenticate(token: String) {
         val response = sendAndWaitForResponse(
             ClientMessage.AuthRequest(token = token, protocolVersion = ProtocolVersions.CURRENT),
+            expected = setOf("auth_success", "auth_failure"),
         )
         when (response) {
             is ServerMessage.AuthSuccess -> {
@@ -160,7 +172,10 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /** Creates a new terminal session on the server. Returns the session UUID. */
     suspend fun createSession(name: String? = null, cols: UShort? = null, rows: UShort? = null): UUID {
-        val response = sendAndWaitForResponse(ClientMessage.SessionCreate(name, cols, rows))
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionCreate(name, cols, rows),
+            expected = setOf("session_created"),
+        )
         return when (response) {
             is ServerMessage.SessionCreated -> response.sessionId.also { recordAttachment(it) }
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -173,7 +188,10 @@ class SessionController(private val connection: ConnectionSurface) {
      * Unlike resume, this does not require the session to be detached first.
      */
     suspend fun attachSession(id: UUID) {
-        val response = sendAndWaitForResponse(ClientMessage.SessionAttach(id))
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionAttach(id),
+            expected = setOf("session_attached"),
+        )
         when (response) {
             is ServerMessage.SessionAttached -> recordAttachment(response.sessionId)
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -186,7 +204,10 @@ class SessionController(private val connection: ConnectionSurface) {
      * server skips the ring-buffer replay (the client already holds the scrollback).
      */
     suspend fun resumeSession(id: UUID, skipReplay: Boolean = false) {
-        val response = sendAndWaitForResponse(ClientMessage.SessionResume(id, skipReplay))
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionResume(id, skipReplay),
+            expected = setOf("session_resumed"),
+        )
         when (response) {
             is ServerMessage.SessionResumed -> recordAttachment(response.sessionId)
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -230,7 +251,10 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /** Detaches from the current session without terminating it. */
     suspend fun detach() {
-        val response = sendAndWaitForResponse(ClientMessage.SessionDetach)
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionDetach,
+            expected = setOf("session_detached"),
+        )
         when (response) {
             is ServerMessage.SessionDetached -> sessionId = null
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -256,26 +280,32 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /**
      * Installs a response subscription, sends [message], and waits up to
-     * [RESPONSE_TIMEOUT_MS] for a matching reply. The subscriber is installed
-     * **before** the send so a response that arrives during/just after the send is
-     * captured by [ResumeGuard.pendingValue] rather than lost.
+     * [RESPONSE_TIMEOUT_MS] for a reply whose type is in [expected] (or `error`).
+     * The subscriber is installed **before** the send so a response that arrives
+     * during/just after the send is captured by [ResumeGuard.pendingValue] rather
+     * than lost.
+     *
+     * [expected] is deliberately **required**, with no permissive default: the wire
+     * protocol carries no request ids, so a waiter matching every response type
+     * grabs whichever reply lands first — including one meant for a concurrent
+     * request. That produced two shipped bugs. The cross-device "No Sessions
+     * Available": `listAllSessions` captured a parallel `fetchSessions`'
+     * `session_list_result`, fell into its `else` branch and returned empty. And the
+     * blank pane on relaunch: the launch handshake's `auth_success` /
+     * `session_list_result` cross-delivered into a session op (create/attach/resume)
+     * that was in flight at the same moment, so the op resolved against a reply that
+     * was never its own. Every call site therefore names its own reply type, and a
+     * new one cannot silently inherit the hazard.
      */
     private suspend fun sendAndWaitForResponse(
         message: ClientMessage,
-        expected: Set<String> = RESPONSE_TYPES,
+        expected: Set<String>,
     ): ServerMessage {
         val guard = ResumeGuard()
 
         // 1) Install subscription BEFORE sending. The subscriber resumes the
         //    deferred if we're waiting, or stores the value for the post-send check.
-        //    Match only [expected] types (always incl. "error"): the wire protocol
-        //    carries no request ids, so a waiter that accepted EVERY response type
-        //    could grab a reply meant for a concurrent request. That's the
-        //    cross-device "No Sessions Available" bug — `listAllSessions` (waiting
-        //    for `session_list_all_result`) captured the `session_list_result` from
-        //    a periodic `fetchSessions` running in parallel, hit the `else` branch,
-        //    and returned an empty list. Scoping each waiter to its own reply type
-        //    keeps concurrent list requests from stealing each other's responses.
+        //    "error" is always accepted: the server answers any request with it.
         val matchTypes = expected + "error"
         val subscriptionId = connection.addServerMessageSubscriber { serverMessage ->
             if (serverMessage.typeString in matchTypes) {
@@ -299,20 +329,6 @@ class SessionController(private val connection: ConnectionSurface) {
 
     companion object {
         const val RESPONSE_TIMEOUT_MS = 10_000L
-
-        /**
-         * Response message types awaited by command requests. Mirrors the Swift
-         * `responseTypes` set exactly — note that `resize_ack`,
-         * `session_terminated`, and `session_renamed` are deliberately NOT awaited
-         * here (resize is fire-and-forget acked separately; terminate/rename are
-         * server-pushed broadcasts handled via subscribers, not request replies).
-         */
-        private val RESPONSE_TYPES: Set<String> = setOf(
-            "auth_success", "auth_failure",
-            "session_created", "session_attached", "session_resumed", "session_detached",
-            "session_list_result", "session_list_all_result",
-            "error",
-        )
     }
 }
 

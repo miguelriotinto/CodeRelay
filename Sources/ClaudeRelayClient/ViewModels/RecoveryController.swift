@@ -92,6 +92,10 @@ final class RecoveryController {
     /// `triggerUserRecovery`.
     func scheduleAutoRecovery() {
         guard !coordinator.isTornDown else { return }
+        guard !coordinator.isPerformingHandshake else {
+            recoveryLog.debug("scheduleAutoRecovery: handshake in flight, ignoring")
+            return
+        }
         guard !isRecoveryDispatched else {
             recoveryLog.debug("scheduleAutoRecovery: already dispatched, ignoring")
             return
@@ -130,6 +134,15 @@ final class RecoveryController {
     /// compared to the user-visible cost of a missed reconnect.
     func triggerUserRecovery() {
         guard !coordinator.isTornDown else { return }
+        // A handshake already IS "connect, authenticate, get the session list" —
+        // the entirety of what recovery would do. Letting recovery in here is
+        // precisely the cold-launch bug: `scenePhase → .active` fires while the
+        // launch handshake is mid-flight, `forceReconnect()` swaps the socket,
+        // and the in-flight `session_list` dies with it.
+        guard !coordinator.isPerformingHandshake else {
+            recoveryLog.debug("triggerUserRecovery: handshake in flight, ignoring")
+            return
+        }
         guard !isRecoveryDispatched else {
             recoveryLog.debug("triggerUserRecovery: already dispatched, ignoring")
             return
@@ -164,6 +177,10 @@ final class RecoveryController {
     func handleForegroundTransition(userInitiated: Bool) async {
         defer { isRecoveryDispatched = false }
         guard !coordinator.isTornDown else { return }
+        guard !coordinator.isPerformingHandshake else {
+            recoveryLog.debug("handleForegroundTransition: handshake in flight, skipping")
+            return
+        }
         guard !coordinator.isRecovering else {
             recoveryLog.debug("handleForegroundTransition: already recovering, skipping")
             return
@@ -173,21 +190,26 @@ final class RecoveryController {
         // `.active` right after connect()) is alive by construction — its first
         // ping/pong hasn't completed yet, so `isAlive()` would return false and
         // trigger a needless `forceReconnect()` that TEARS DOWN the launch
-        // `fetchSessions` mid-flight, leaving the pane empty. Trust a recently
-        // connected socket and just fetch. (Proven from server logs: two auths
-        // ~3.5s apart at launch with a disconnect between = this reconnect.)
+        // handshake mid-flight, leaving the pane empty. Trust a recently
+        // connected socket and hand straight to the handshake. (Proven from
+        // server logs: two auths ~3.5s apart at launch with a disconnect
+        // between = this reconnect.)
         if connection.state == .connected,
            let connectedAt = connection.lastConnectedAt,
            Date().timeIntervalSince(connectedAt) < Self.freshConnectionWindow {
-            recoveryLog.info("handleForegroundTransition: connection just established, fetching sessions")
-            await coordinator.fetchSessions(force: true)
+            recoveryLog.info("handleForegroundTransition: connection just established, handshaking")
+            await coordinator.performHandshake(reason: .wake)
             return
         }
 
+        // Ping first, rather than letting the handshake discover the problem:
+        // after macOS sleep the socket is dead while `state` still reads
+        // `.connected`, and the ping detects that in 5 s where the handshake's
+        // auth would sit for its full 10 s timeout before retrying.
         let alive = await connection.isAlive()
         if alive {
-            recoveryLog.info("handleForegroundTransition: connection alive, fetching sessions")
-            await coordinator.fetchSessions()
+            recoveryLog.info("handleForegroundTransition: connection alive, handshaking")
+            await coordinator.performHandshake(reason: .wake)
             return
         }
 
@@ -318,7 +340,10 @@ final class RecoveryController {
         recoveryLog.info("restoreSession success (gen=\(generation))")
         recordAutoRecoveryOutcome(success: true, userInitiated: userInitiated)
         guard !coordinator.isTornDown, generation == recoveryGeneration else { return }
-        await coordinator.fetchSessions()
+        // Same contract as every other entry: the pane is repopulated from the
+        // server's token-scoped list, and a session another device took while we
+        // were disconnected is announced here (we missed its live push).
+        await coordinator.performHandshake(reason: .wake)
     }
 
     /// Cancels any in-flight recovery and clears recovery UI state. Bumps

@@ -112,11 +112,13 @@ struct WorkspaceView: View {
             if let sessionId = pendingAttachSessionId {
                 await coordinator.attachRemoteSession(id: sessionId)
             }
-            // force: this is the authoritative "populate the pane on launch"
-            // fetch. Never let it be swallowed by the debounce behind a racing
-            // recovery/foreground fetch — that left the pane empty on relaunch
-            // until the user manually attached.
-            await coordinator.fetchSessions(force: true)
+            // The launch flow, unconditionally: authenticate, ask the server
+            // which sessions this client owns, render them in the sidebar. It is
+            // single-flight, so the `scenePhase → .active` trigger firing at the
+            // same instant joins this pass instead of racing it — and it retries
+            // rather than leaving the pane silently empty. `.launch` keeps quiet
+            // about sessions another client took while this app was closed.
+            await coordinator.performHandshake(reason: .launch)
             await syncPush()
             if coordinator.activeSessionId == nil {
                 if sizeClass == .compact {

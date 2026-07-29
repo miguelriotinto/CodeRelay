@@ -127,6 +127,12 @@ class RecoveryController(
      *  reconnect it out from under the launch fetch. Defaults to false so
      *  existing constructions/tests behave exactly as before. */
     private val isFreshlyConnected: () -> Boolean = { false },
+    /** True while [SessionHandshake] owns the connection. Recovery refuses to run
+     *  then: the handshake already IS "connect, authenticate, get the session
+     *  list", so letting recovery in would swap the socket out from under the
+     *  in-flight `session_list` — the cold-launch empty-pane root cause. Defaults
+     *  to false so existing constructions/tests behave exactly as before. */
+    private val isHandshakeInFlight: () -> Boolean = { false },
 ) {
     private companion object {
         /** Backoff delays in seconds (RecoveryController.swift:176). */
@@ -238,6 +244,7 @@ class RecoveryController(
      * the last recovery ended (RecoveryController.swift:84-104).
      */
     fun scheduleAutoRecovery() {
+        if (isHandshakeInFlight()) return
         if (isRecoveryDispatched) return
         if (_autoRecoverySuspended.value) return
         val endedAt = lastRecoveryEndedAt
@@ -253,6 +260,7 @@ class RecoveryController(
      * (RecoveryController.swift:118-134).
      */
     fun triggerUserRecovery() {
+        if (isHandshakeInFlight()) return
         if (isRecoveryDispatched) return
         val cancelledAt = lastCancelledAt
         if (cancelledAt != null && nowMs() - cancelledAt < CANCEL_DEBOUNCE_MS) return
@@ -285,6 +293,10 @@ class RecoveryController(
      */
     private suspend fun handleForegroundTransition(userInitiated: Boolean) {
         try {
+            // Re-checked here, not just at the entry points: a trigger that passed
+            // the gate before a handshake armed it runs its body one dispatch
+            // later, by which time the handshake may own the connection.
+            if (isHandshakeInFlight()) return
             if (_isRecovering.value) return // already recovering (RecoveryController.swift:146)
 
             // isAlive short-circuit (RecoveryController.swift:151-156). isRecovering

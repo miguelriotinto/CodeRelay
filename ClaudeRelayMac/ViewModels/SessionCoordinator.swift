@@ -47,14 +47,17 @@ final class SessionCoordinator: SharedSessionCoordinator {
     func start() async {
         do {
             try await connection.connect(config: config, token: token)
-            registerRecoveryObservers()
-            _ = try await ensureAuthenticated()
-            // force: authoritative launch fetch — never debounced behind a
-            // racing recovery/foreground fetch (see WorkspaceView).
-            await fetchSessions(force: true)
         } catch {
             presentError(error.localizedDescription)
+            // Fall through to the handshake anyway: it reconnects on its own, so
+            // a failed first dial becomes a retry rather than a dead workspace.
         }
+        registerRecoveryObservers()
+        // Authenticate + fetch the sessions this client owns, in one
+        // single-flight retrying unit. Also the only auth call on this path —
+        // the handshake owns it, so a wake trigger firing mid-launch joins this
+        // pass instead of reconnecting underneath it.
+        await performHandshake(reason: .launch)
     }
 
     override func didAuthenticate() {

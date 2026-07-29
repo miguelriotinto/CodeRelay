@@ -29,6 +29,10 @@ private class FakeConnection(
     var autoRespond: ((ClientMessage) -> ServerMessage?)? = null,
 ) : ConnectionSurface {
     override var generation: Long = 7L
+
+    /** Whether a socket is up. Mutable so a test can model the receive-loop
+     *  failure that drops the socket WITHOUT bumping [generation]. */
+    override var isConnected: Boolean = true
     var sentMessages = mutableListOf<ClientMessage>()
     private val subscribers = LinkedHashMap<UUID, (ServerMessage) -> Unit>()
 
@@ -133,6 +137,29 @@ class SessionControllerTest {
 
         assertEquals(id, result)
         assertEquals(id, controller.sessionId)
+    }
+
+    /**
+     * A receive-loop failure nils the socket but does NOT bump the generation, so a
+     * generation-only `isAuthValid` reported "authenticated" over a socket that was
+     * already gone. The RPC then threw `notConnected` — which `withAuth` does not
+     * retry — a silent dead end that showed up as a blank session pane. Auth
+     * validity must require a live socket so the handshake reconnects first.
+     */
+    @Test
+    fun `auth validity requires a live socket, not just a matching generation`() = runTest {
+        val conn = FakeConnection(autoRespond = { ServerMessage.AuthSuccess(protocolVersion = 1) })
+        val controller = SessionController(conn)
+
+        assertFalse(controller.isAuthValid, "never authenticated → invalid")
+
+        controller.authenticate("tok")
+        assertTrue(controller.isAuthValid, "authenticated on the current, live connection")
+
+        // The socket died without a generation bump (receive-loop failure).
+        conn.isConnected = false
+        assertEquals(conn.generation, controller.authenticatedGeneration, "generation still matches")
+        assertFalse(controller.isAuthValid, "no live socket → invalid regardless of generation")
     }
 
     @Test
@@ -251,6 +278,34 @@ class SessionControllerTest {
         request.join()
 
         assertEquals(listOf(wanted), result)
+    }
+
+    @Test
+    fun `a session op ignores the handshake replies of a concurrent pass`() = runTest {
+        // Regression: the blank-pane-on-relaunch sibling of the "No Sessions
+        // Available" bug. A session op (here create) is in flight when the launch
+        // handshake runs its own auth_request + session_list. Both of the
+        // handshake's replies used to be in the op's accepted set, so whichever
+        // landed first resolved the op against a response that was never its own —
+        // the op then threw `unexpected`, or worse, silently mis-resolved.
+        val id = UUID.randomUUID()
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        var result: UUID? = null
+        val request = launch { result = controller.createSession("mine") }
+        yield()
+        runCurrent()
+
+        conn.deliver(ServerMessage.AuthSuccess(protocolVersion = 1))
+        conn.deliver(ServerMessage.SessionList(emptyList()))
+        runCurrent()
+        assertEquals(null, result) { "another request's replies must not resolve createSession" }
+
+        conn.deliver(ServerMessage.SessionCreated(id, cols = 80u, rows = 24u))
+        request.join()
+
+        assertEquals(id, result)
     }
 
     @Test

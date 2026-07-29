@@ -232,6 +232,14 @@ extension RelayMessageHandler {
             context: context,
             work: { await mgr.listSessionsForToken(tokenId: tokenId) },
             onSuccess: { handler, ctx, sessions in
+                // Logged because this is THE answer to "which sessions does this
+                // client own" — the question behind every empty-pane report. With
+                // no log line, diagnosing one meant guessing from the client side;
+                // five fixes shipped that way. tokenId is truncated: it is a
+                // credential identifier, and 8 chars is enough to correlate with
+                // `claude-relay token list`.
+                RelayLogger.log(category: "session",
+                                "session_list token=\(tokenId.prefix(8)) → \(sessions.count) session(s)")
                 handler.sendServerMessage(.sessionList(sessions: sessions), context: ctx)
             },
             onFailure: { _, _, _ in /* listSessionsForToken doesn't throw */ }

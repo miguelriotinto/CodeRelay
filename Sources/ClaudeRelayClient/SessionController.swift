@@ -62,10 +62,21 @@ public final class SessionController: ObservableObject {
 
     // MARK: - Authentication
 
-    /// Whether the controller is authenticated on the **current** connection.
-    /// Returns false if the WebSocket has been replaced since auth was established.
+    /// Whether the controller is authenticated on the **current, live**
+    /// connection. False if the WebSocket has been replaced since auth was
+    /// established, or if there is no live socket at all.
+    ///
+    /// The `state == .connected` term matters: `RelayConnection` bumps its
+    /// generation in `markConnectionDead()` but NOT in `handleReceiveFailure()`,
+    /// which merely nils the task and flips `state` to `.disconnected`. Without
+    /// the state check, auth stayed "valid" over a socket that no longer exists,
+    /// so `ensureAuthenticated()` handed back a dead controller and the RPC threw
+    /// `ConnectionError.notConnected` — an error `withAuth` does not retry.
+    /// Requiring a live socket makes the handshake reconnect instead.
     public var isAuthValid: Bool {
-        isAuthenticated && authenticatedGeneration == connection.generation
+        isAuthenticated
+            && authenticatedGeneration == connection.generation
+            && connection.state == .connected
     }
 
     /// Resets authentication state so the next operation will re-authenticate.
@@ -237,17 +248,6 @@ public final class SessionController: ObservableObject {
 
     // MARK: - Internal Helpers
 
-    /// Full set of command-reply types. Used only as a defensive fallback for a
-    /// caller that doesn't pass an explicit `expected:` set — every real caller
-    /// now scopes its own reply type (see the cross-delivery note below), so a
-    /// waiter never matches an unrelated reply like a concurrent `auth_success`.
-    private static let responseTypes: Set<String> = [
-        "auth_success", "auth_failure",
-        "session_created", "session_attached", "session_resumed", "session_detached",
-        "session_list_result", "session_list_all_result",
-        "error"
-    ]
-
     /// Installs a response subscription synchronously on MainActor, then sends.
     /// The subscriber resumes the continuation if available, or stores the
     /// value for the synchronous check after send.
@@ -258,21 +258,26 @@ public final class SessionController: ObservableObject {
     /// coordinator is also subscribed, both still receive every message, and
     /// two overlapping `withAuth { ... }` retry flows no longer risk
     /// restoring a stale handler in defer order.
+    ///
+    /// `expected` is deliberately required, with no permissive default: the wire
+    /// protocol has no request ids, so a waiter matching EVERY response type
+    /// captures whichever reply lands first — including one meant for a
+    /// concurrent request. Two shipped bugs came from exactly that. The
+    /// cross-device "No Sessions Available": `listAllSessions` (awaiting
+    /// `session_list_all_result`) grabbed the `session_list_result` from a
+    /// parallel `fetchSessions`, failed its type check and returned empty. And
+    /// the blank pane on relaunch: the launch handshake's `auth_success` /
+    /// `session_list_result` cross-delivered into a session op
+    /// (create/attach/resume) that happened to be in flight. Every call site
+    /// names its own reply type, so a new one cannot inherit the hazard.
     private func sendAndWaitForResponse(
         _ message: ClientMessage,
-        expected: Set<String>? = nil
+        expected: Set<String>
     ) async throws -> ServerMessage {
         let guard_ = ResumeGuard()
 
-        // Match only the caller's expected reply type(s), always including
-        // "error". The wire protocol has no request ids, so a waiter matching
-        // EVERY response type can capture a reply meant for a concurrent
-        // request — e.g. `listAllSessions` (awaiting `session_list_all_result`)
-        // grabbing the `session_list_result` from a parallel `fetchSessions`,
-        // then failing the type check and returning empty. Scoping each waiter
-        // to its own reply type prevents that cross-delivery. Defaults to the
-        // full set for callers that don't specify.
-        let matchTypes = expected.map { $0.union(["error"]) } ?? Self.responseTypes
+        // "error" is always accepted — the server answers any request with it.
+        let matchTypes = expected.union(["error"])
 
         // 1) Install subscription SYNCHRONOUSLY on MainActor — guaranteed in
         //    place before any suspension point. The subscriber either

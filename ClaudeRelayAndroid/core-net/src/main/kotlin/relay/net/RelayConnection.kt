@@ -31,6 +31,18 @@ import java.util.concurrent.ConcurrentHashMap
  */
 interface ConnectionSurface {
     val generation: Long
+
+    /**
+     * Whether a socket is currently up. Distinct from [generation]: a receive-loop
+     * failure drops the socket WITHOUT bumping the generation, so generation
+     * equality alone can report "authenticated" over a socket that no longer
+     * exists — the RPC then throws `notConnected`, which `withAuth` does not
+     * retry. See [SessionController.isAuthValid].
+     *
+     * Defaults to true so test doubles that don't model transport state (and the
+     * pre-existing fakes) behave exactly as they did before this was introduced.
+     */
+    val isConnected: Boolean get() = true
     fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID
     fun removeSubscriber(id: UUID)
     suspend fun send(message: ClientMessage)
@@ -89,6 +101,9 @@ class RelayConnection(
     @Volatile
     override var generation: Long = 0L
         private set
+
+    override val isConnected: Boolean
+        get() = state == ConnectionState.CONNECTED
 
     // MARK: - Callbacks
 
