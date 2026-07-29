@@ -1,8 +1,12 @@
 package relay.session
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -232,6 +236,33 @@ class SessionHandshakeTest {
 
         assertFalse(h.coord.isPerformingHandshake.value, "teardown must not leave the recovery gate armed")
         assertFalse(pass.await(), "a caller waiting on the abandoned pass must be released, not hang")
+    }
+
+    /**
+     * The Kotlin-only hazard in the single-flight slot: `launch` on an
+     * already-cancelled scope never runs the body, so a `finally` placed *inside*
+     * the body never fires. That left the deferred incomplete — `perform()` and
+     * every joiner hung forever — and the recovery gate armed, permanently
+     * blocking recovery on a coordinator that was only trying to shut down. The
+     * release therefore hangs off the job's completion, which fires even for a job
+     * that is born cancelled.
+     */
+    @Test
+    fun `a pass on a cancelled scope fails fast instead of hanging with the gate armed`() = runTest {
+        val dead = CoroutineScope(coroutineContext + Job())
+        val h = harness(dead)
+        dead.cancel()
+
+        val ok = withTimeoutOrNull(5_000) { h.coord.performHandshake(SessionHandshake.Reason.LAUNCH) }
+
+        assertEquals(false, ok, "a pass that can never run must report failure, not hang")
+        assertFalse(h.coord.isPerformingHandshake.value, "the gate must not stay armed")
+        // And a later caller must not be stuck behind the abandoned slot either.
+        assertEquals(
+            false,
+            withTimeoutOrNull(5_000) { h.coord.performHandshake(SessionHandshake.Reason.WAKE) },
+            "the slot must have been released, so a new caller starts its own pass",
+        )
     }
 
     // MARK: - No silent failure
@@ -468,6 +499,55 @@ class SessionHandshakeTest {
         assertEquals(
             setOf(ARYA, BRAN), h.coord.activeSessions.value.map { it.id }.toSet(),
             "coming back must re-ask the server what we own, not just repaint the terminal",
+        )
+    }
+
+    /**
+     * The foreground repaint checks the handshake/recovery gates and then suspends
+     * on a liveness PING ROUND-TRIP — so by the time it wakes, the checks are as
+     * stale as the network was slow, and the rest of the ON_RESUME burst has had
+     * ample time to start a handshake. Re-reading the gates after the probe is what
+     * keeps the repaint from issuing a resume against a socket the handshake owns
+     * (and may be about to replace on a retry).
+     */
+    @Test
+    fun `a foreground repaint stands down when a handshake starts during its probe`() = runTest {
+        val h = harness(this)
+        h.surface.sessionsOnServer = listOf(session(ARYA, "Arya"))
+        h.coord.performHandshake(SessionHandshake.Reason.LAUNCH)
+        advanceUntilIdle()
+        h.coord.switchToSession(ARYA)
+        advanceUntilIdle()
+
+        // Park the repaint inside its liveness probe.
+        val probeGate = CompletableDeferred<Unit>()
+        h.conn.isAliveGate = probeGate
+        h.log.entries.clear()
+        h.coord.restoreActiveOnForeground()
+        advanceUntilIdle()
+
+        // The rest of the burst lands: a handshake takes the connection and parks in
+        // session_list, so it is demonstrably still in flight when the probe returns.
+        val listGate = CompletableDeferred<Unit>()
+        h.surface.sendGate = { message ->
+            if (message is relay.protocol.ClientMessage.SessionList) listGate.await()
+        }
+        val pass = async { h.coord.performHandshake(SessionHandshake.Reason.WAKE) }
+        advanceUntilIdle()
+        assertTrue(h.coord.isPerformingHandshake.value, "the handshake should own the connection now")
+
+        probeGate.complete(Unit)
+        advanceUntilIdle()
+        listGate.complete(Unit)
+        assertTrue(pass.await(), "the handshake itself must still succeed")
+        advanceUntilIdle()
+
+        // Asserted after everything unwinds: a repaint that merely QUEUED behind the
+        // handshake's RPC would still show up here, which is the point — standing
+        // down means never sending it, not sending it late.
+        assertFalse(
+            "rpc:session_resume" in h.log,
+            "the repaint must abandon its resume, not run it once the handshake releases the wire",
         )
     }
 }

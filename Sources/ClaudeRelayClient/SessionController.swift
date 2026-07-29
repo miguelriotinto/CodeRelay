@@ -1,7 +1,36 @@
 import Foundation
 import ClaudeRelayKit
 
-/// Orchestrates authentication and session lifecycle on top of a `RelayConnection`.
+/// The connection members `SessionController` actually uses, factored out so the
+/// controller's request/response correlation can be tested without a socket.
+/// `RelayConnection` satisfies it as-is; the tests substitute a recording fake
+/// that answers RPCs synchronously.
+///
+/// Mirrors Kotlin's `relay.net.ConnectionSurface` member for member, so the two
+/// controllers stay portable ports of each other rather than drifting.
+@MainActor
+public protocol ConnectionSurface: AnyObject {
+    /// Bumped every time the socket is replaced. Auth and attachment are
+    /// per-socket server-side state, so the stamps are what detect staleness.
+    var generation: UInt64 { get }
+
+    /// Cheap, non-suspending "is there a socket right now" read, with no ping
+    /// round-trip. A receive-loop failure flips this false WITHOUT bumping
+    /// `generation`, so it catches the silently-dead socket stamps cannot.
+    var isConnected: Bool { get }
+
+    func send(_ message: ClientMessage) async throws
+
+    @discardableResult
+    func addServerMessageSubscriber(_ handler: @escaping (ServerMessage) -> Void) -> UUID
+    func removeSubscriber(_ id: UUID)
+}
+
+extension RelayConnection: ConnectionSurface {
+    public var isConnected: Bool { state == .connected }
+}
+
+/// Orchestrates authentication and session lifecycle on top of a `ConnectionSurface`.
 @MainActor
 public final class SessionController: ObservableObject {
 
@@ -52,11 +81,17 @@ public final class SessionController: ObservableObject {
 
     // MARK: - Private
 
-    private let connection: RelayConnection
+    private let connection: any ConnectionSurface
+
+    /// Tail of the RPC chain — the most recently issued request-response RPC.
+    /// Each new RPC awaits this one before touching the wire, which is how
+    /// "at most one outstanding RPC per connection" is enforced. See
+    /// `sendAndWaitForResponse`.
+    private var previousRPC: Task<ServerMessage, Error>?
 
     // MARK: - Init
 
-    public init(connection: RelayConnection) {
+    public init(connection: any ConnectionSurface) {
         self.connection = connection
     }
 
@@ -66,17 +101,17 @@ public final class SessionController: ObservableObject {
     /// connection. False if the WebSocket has been replaced since auth was
     /// established, or if there is no live socket at all.
     ///
-    /// The `state == .connected` term matters: `RelayConnection` bumps its
+    /// The `isConnected` term matters: `RelayConnection` bumps its
     /// generation in `markConnectionDead()` but NOT in `handleReceiveFailure()`,
     /// which merely nils the task and flips `state` to `.disconnected`. Without
-    /// the state check, auth stayed "valid" over a socket that no longer exists,
-    /// so `ensureAuthenticated()` handed back a dead controller and the RPC threw
-    /// `ConnectionError.notConnected` — an error `withAuth` does not retry.
-    /// Requiring a live socket makes the handshake reconnect instead.
+    /// the liveness check, auth stayed "valid" over a socket that no longer
+    /// exists, so `ensureAuthenticated()` handed back a dead controller and the
+    /// RPC threw `ConnectionError.notConnected` — an error `withAuth` does not
+    /// retry. Requiring a live socket makes the handshake reconnect instead.
     public var isAuthValid: Bool {
         isAuthenticated
             && authenticatedGeneration == connection.generation
-            && connection.state == .connected
+            && connection.isConnected
     }
 
     /// Resets authentication state so the next operation will re-authenticate.
@@ -248,6 +283,59 @@ public final class SessionController: ObservableObject {
 
     // MARK: - Internal Helpers
 
+    /// Serializes request-response RPCs: **at most one may be outstanding on a
+    /// connection at a time.**
+    ///
+    /// This is a protocol constraint, not an optimization. Replies carry no
+    /// request id, so the only thing a waiter can match on is the response TYPE
+    /// — and `error` is a legal reply to *every* request. Two overlapping RPCs
+    /// therefore always share at least one possible reply type, and whichever
+    /// reply lands first resolves BOTH waiters:
+    ///
+    /// - a `session_list` from a pane refresh and one from a handshake: both
+    ///   resolve on the first `session_list_result`, so the later request (the
+    ///   one issued *after* a create) renders a pre-create list and the new
+    ///   session vanishes from the sidebar;
+    /// - an `error` for a failing `session_create` also completes a concurrent
+    ///   `session_list` waiter, so the handshake concludes ITS list failed,
+    ///   drops the socket and retries — tearing the transport out from under
+    ///   the create.
+    ///
+    /// Scoping each waiter to its own reply type (`expected`, below) shrinks the
+    /// window but cannot close it, because of `error`. Serializing does close it.
+    ///
+    /// There is no async mutex on `@MainActor`, so the queue is a chain: each
+    /// RPC awaits its predecessor's `result` — deliberately `result`, not
+    /// `value`, so a predecessor that throws or times out RELEASES the queue
+    /// instead of poisoning everything behind it. Worst-case wait for a queued
+    /// RPC is one response timeout; that is strictly better than the
+    /// cross-delivery it replaces, which corrupted state silently.
+    ///
+    /// **Constraint for future code: never issue an RPC from inside another
+    /// RPC's await window** — the chain is not reentrant and that self-deadlocks.
+    /// Today's paths are all sequential: `withAuth` completes
+    /// `ensureAuthenticated()` (one RPC) before running its body (the next), and
+    /// inbound push handlers dispatch onto their own tasks rather than calling
+    /// back in.
+    private func sendAndWaitForResponse(
+        _ message: ClientMessage,
+        expected: Set<String>
+    ) async throws -> ServerMessage {
+        let predecessor = previousRPC
+        let rpc = Task { @MainActor [self] in
+            _ = await predecessor?.result
+            return try await awaitResponse(message, expected: expected)
+        }
+        previousRPC = rpc
+        defer {
+            // Only the tail drops itself, so a queued successor still has
+            // something to wait on. Clearing it keeps a finished chain from
+            // retaining `self` (and the messages) indefinitely.
+            if previousRPC == rpc { previousRPC = nil }
+        }
+        return try await rpc.value
+    }
+
     /// Installs a response subscription synchronously on MainActor, then sends.
     /// The subscriber resumes the continuation if available, or stores the
     /// value for the synchronous check after send.
@@ -259,18 +347,17 @@ public final class SessionController: ObservableObject {
     /// two overlapping `withAuth { ... }` retry flows no longer risk
     /// restoring a stale handler in defer order.
     ///
-    /// `expected` is deliberately required, with no permissive default: the wire
-    /// protocol has no request ids, so a waiter matching EVERY response type
-    /// captures whichever reply lands first — including one meant for a
-    /// concurrent request. Two shipped bugs came from exactly that. The
-    /// cross-device "No Sessions Available": `listAllSessions` (awaiting
+    /// `expected` is deliberately required, with no permissive default. It is
+    /// the second half of the correlation story: the chain guarantees only one
+    /// RPC is outstanding, and the type scope guarantees that even a stray
+    /// *pushed* message (or a late reply from an RPC that already timed out)
+    /// can't resolve this one. A waiter matching every response type produced
+    /// the cross-device "No Sessions Available" bug: `listAllSessions` (awaiting
     /// `session_list_all_result`) grabbed the `session_list_result` from a
-    /// parallel `fetchSessions`, failed its type check and returned empty. And
-    /// the blank pane on relaunch: the launch handshake's `auth_success` /
-    /// `session_list_result` cross-delivered into a session op
-    /// (create/attach/resume) that happened to be in flight. Every call site
-    /// names its own reply type, so a new one cannot inherit the hazard.
-    private func sendAndWaitForResponse(
+    /// parallel `fetchSessions`, failed its type check and returned empty.
+    /// Every call site names its own reply type, so a new one cannot silently
+    /// inherit the hazard.
+    private func awaitResponse(
         _ message: ClientMessage,
         expected: Set<String>
     ) async throws -> ServerMessage {

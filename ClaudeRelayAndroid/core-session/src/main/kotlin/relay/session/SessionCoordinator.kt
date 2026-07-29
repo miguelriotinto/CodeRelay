@@ -1069,11 +1069,7 @@ class SessionCoordinator(
      * sidebar (see [switchToSession]).
      */
     fun restoreActiveOnForeground() {
-        // A handshake already owns the connection and is re-authenticating +
-        // re-listing; resuming underneath it would race the socket it may replace.
-        if (_isPerformingHandshake.value) return
-        if (recoveryController.isRecovering.value) return
-        if (sessionOpsInFlight > 0) return
+        if (connectionIsClaimed()) return
         val activeId = _activeSessionId.value
         if (activeId == null) {
             // No active session to repaint, but the transport may still have died
@@ -1084,9 +1080,17 @@ class SessionCoordinator(
             return
         }
         scope.launch {
+            val alive = connection.isAlive()
+            // The probe is a ping ROUND-TRIP, so this coroutine was suspended for
+            // as long as the network took — ample time for the ON_RESUME burst's
+            // other triggers to land and start a handshake or a recovery pass. The
+            // pre-launch check above is therefore stale by now and must be redone:
+            // resuming under a handshake races the socket the handshake may replace,
+            // which is the exact interleaving this whole change exists to stop.
+            if (connectionIsClaimed()) return@launch
             // A dead transport can't be repainted by a bare resume — hand off to
             // the full recovery state machine (reconnect → reauth → resume).
-            if (!connection.isAlive()) {
+            if (!alive) {
                 recoveryController.triggerUserRecovery()
                 return@launch
             }
@@ -1122,6 +1126,21 @@ class SessionCoordinator(
             if (resumed) performHandshake(SessionHandshake.Reason.WAKE)
         }
     }
+
+    /**
+     * Whether another flow already owns the connection: a handshake (re-authing and
+     * re-listing, possibly replacing the socket), a recovery pass (same), or a
+     * session op (already establishing a fresh attachment). Each of those is doing
+     * a superset of what a foreground repaint would do, so the repaint stands down
+     * rather than racing them over one socket.
+     *
+     * Must be re-read after every suspension point, not just checked on entry —
+     * the ON_RESUME burst fires several triggers within milliseconds of each other.
+     */
+    private fun connectionIsClaimed(): Boolean =
+        _isPerformingHandshake.value ||
+            recoveryController.isRecovering.value ||
+            sessionOpsInFlight > 0
 
     /** Explicit user-initiated recovery (QR rescan, manual retry). */
     fun triggerUserRecovery() {

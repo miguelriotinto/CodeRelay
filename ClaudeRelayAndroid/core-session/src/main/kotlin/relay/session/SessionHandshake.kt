@@ -108,22 +108,36 @@ class SessionHandshake internal constructor(
         // trigger that lands in between is still gated out (the launch race).
         inFlight = deferred
         coordinator.setHandshakeInFlight(true)
-        job = scope.launch {
-            var ok = false
-            try {
-                ok = run(reason)
-            } finally {
-                // Runs on success, failure AND cancellation, so the gate can
-                // never strand — a stuck gate would block recovery forever —
-                // and a joiner can never hang on an abandoned pass.
-                if (inFlight === deferred) {
-                    inFlight = null
-                    coordinator.setHandshakeInFlight(false)
-                }
-                deferred.complete(ok)
-            }
-        }
+        val pass = scope.launch { deferred.complete(run(reason)) }
+        job = pass
+        // Release from the JOB's completion, not from a `finally` inside the body.
+        // A coroutine launched on an already-cancelled scope never runs its body at
+        // all, so a `finally` there never fires: the deferred would stay
+        // incomplete (every joiner, including this `await()`, hangs forever) and
+        // the gate would stay armed, permanently blocking recovery. `launch` on a
+        // cancelled scope still returns a job that completes immediately, so
+        // [invokeOnCompletion] covers that case as well as normal completion,
+        // failure and cancellation.
+        //
+        // Confinement holds: the handler runs on whatever thread completes the job
+        // — the coordinator's own dispatcher for a real pass, and the caller's (the
+        // same dispatcher) when the job is born cancelled and fires inline.
+        pass.invokeOnCompletion { release(deferred) }
         return deferred.await()
+    }
+
+    /**
+     * Retires [deferred]'s pass: clears the single-flight slot and the recovery
+     * gate, and releases any joiner. Idempotent, and safe when a newer pass has
+     * already taken the slot (then only the stale deferred is completed).
+     */
+    private fun release(deferred: CompletableDeferred<Boolean>) {
+        if (inFlight === deferred) {
+            inFlight = null
+            coordinator.setHandshakeInFlight(false)
+        }
+        // No-op when the body already completed it with the real outcome.
+        deferred.complete(false)
     }
 
     /**

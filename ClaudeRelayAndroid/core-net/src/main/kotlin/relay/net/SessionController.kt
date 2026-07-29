@@ -1,6 +1,8 @@
 package relay.net
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.protocol.ClientMessage
 import relay.protocol.ServerMessage
@@ -279,25 +281,61 @@ class SessionController(private val connection: ConnectionSurface) {
         )
 
     /**
+     * Serializes request-response RPCs: **at most one may be outstanding on a
+     * connection at a time.**
+     *
+     * This is a protocol constraint, not an optimization. Replies carry no request
+     * id, so the only thing a waiter can match on is the response TYPE — and
+     * `error` is a legal reply to *every* request. Two overlapping RPCs therefore
+     * always share at least one possible reply type, and whichever reply lands
+     * first resolves BOTH waiters:
+     *
+     *  - a `session_list` from a pane refresh and one from a handshake: both
+     *    resolve on the first `session_list_result`, so the later request (the one
+     *    issued *after* a create) renders a pre-create list and the new session
+     *    vanishes from the sidebar;
+     *  - an `error` for a failing `session_create` also completes a concurrent
+     *    `session_list` waiter, so the handshake concludes ITS list failed, drops
+     *    the socket and retries — tearing down the transport under the create.
+     *
+     * Scoping each waiter to its own reply type (see [expected] below) shrinks the
+     * window but cannot close it, because of `error`. Serializing does close it.
+     *
+     * Cost: a queued RPC waits for the one ahead of it, worst case
+     * [RESPONSE_TIMEOUT_MS]. That is strictly better than the cross-delivery it
+     * replaces, which corrupted state silently.
+     *
+     * **Constraint for future code: never issue an RPC from inside another RPC's
+     * await window** — this lock is not reentrant and that would self-deadlock.
+     * Today's paths are all sequential: `withAuth` completes `ensureAuthenticated`
+     * (one RPC) before running its body (the next RPC), and inbound-push handlers
+     * dispatch onto their own coroutines rather than calling back in.
+     */
+    private val rpcLock = Mutex()
+
+    /**
      * Installs a response subscription, sends [message], and waits up to
      * [RESPONSE_TIMEOUT_MS] for a reply whose type is in [expected] (or `error`).
      * The subscriber is installed **before** the send so a response that arrives
      * during/just after the send is captured by [ResumeGuard.pendingValue] rather
      * than lost.
      *
-     * [expected] is deliberately **required**, with no permissive default: the wire
-     * protocol carries no request ids, so a waiter matching every response type
-     * grabs whichever reply lands first — including one meant for a concurrent
-     * request. That produced two shipped bugs. The cross-device "No Sessions
-     * Available": `listAllSessions` captured a parallel `fetchSessions`'
-     * `session_list_result`, fell into its `else` branch and returned empty. And the
-     * blank pane on relaunch: the launch handshake's `auth_success` /
-     * `session_list_result` cross-delivered into a session op (create/attach/resume)
-     * that was in flight at the same moment, so the op resolved against a reply that
-     * was never its own. Every call site therefore names its own reply type, and a
-     * new one cannot silently inherit the hazard.
+     * [expected] is deliberately **required**, with no permissive default. It is
+     * the second half of the correlation story: [rpcLock] guarantees only one RPC
+     * is outstanding, and the type scope guarantees that even a stray *pushed*
+     * message (or a late reply from an RPC that already timed out) can't resolve
+     * this one. A waiter matching every response type produced the cross-device
+     * "No Sessions Available" bug — `listAllSessions` captured a parallel
+     * `fetchSessions`' `session_list_result`, fell into its `else` branch and
+     * returned empty. Every call site names its own reply type, so a new one
+     * cannot silently inherit the hazard.
      */
     private suspend fun sendAndWaitForResponse(
+        message: ClientMessage,
+        expected: Set<String>,
+    ): ServerMessage = rpcLock.withLock { awaitResponse(message, expected) }
+
+    private suspend fun awaitResponse(
         message: ClientMessage,
         expected: Set<String>,
     ): ServerMessage {

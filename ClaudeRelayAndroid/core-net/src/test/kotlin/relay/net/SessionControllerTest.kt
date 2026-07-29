@@ -308,6 +308,92 @@ class SessionControllerTest {
         assertEquals(id, result)
     }
 
+    /**
+     * Type-scoping shrinks the cross-delivery window but cannot close it, because
+     * `error` is a legal reply to EVERY request: two overlapping RPCs always share
+     * at least one possible reply type. The controller therefore serializes — at
+     * most one request-response RPC outstanding per connection.
+     *
+     * Proven structurally rather than by outcome: while the first RPC is parked, the
+     * second must not even have SENT, so there is no second subscriber for a reply
+     * to land in. That is what makes the property hold for `error` too, which no
+     * amount of type-scoping can.
+     */
+    @Test
+    fun `a second RPC does not start until the first has answered`() = runTest {
+        val id = UUID.randomUUID()
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        var listed: List<SessionInfo>? = null
+        var created: UUID? = null
+        val first = launch { listed = controller.listSessions() }
+        yield()
+        runCurrent()
+        assertEquals(1, conn.sentMessages.size) { "the first RPC should have sent and parked" }
+
+        val second = launch { created = controller.createSession("queued") }
+        yield()
+        runCurrent()
+        assertEquals(
+            1, conn.sentMessages.size,
+            "the second RPC must wait for the first: no overlapping request on the wire",
+        )
+
+        // A reply for the QUEUED request arrives while the first is still outstanding.
+        // With one waiter installed it cannot be mis-consumed — and, crucially, an
+        // `error` here would not resolve the parked list either.
+        conn.deliver(ServerMessage.SessionCreated(id, cols = 80u, rows = 24u))
+        runCurrent()
+        assertEquals(null, listed) { "session_created must not resolve a parked session_list" }
+        assertEquals(null, created) { "the queued RPC hasn't been sent, so it cannot resolve" }
+
+        conn.deliver(ServerMessage.SessionList(emptyList()))
+        first.join()
+        assertEquals(emptyList<SessionInfo>(), listed)
+
+        // The lock released: the queued RPC now sends and takes its own reply.
+        runCurrent()
+        assertEquals(2, conn.sentMessages.size) { "the queued RPC sends once the first completes" }
+        conn.deliver(ServerMessage.SessionCreated(id, cols = 80u, rows = 24u))
+        second.join()
+        assertEquals(id, created)
+    }
+
+    /**
+     * The queue must not be able to strand: a first RPC that never gets an answer
+     * releases the lock when its timeout fires, and the one behind it then runs.
+     * (Worst-case wait for a queued RPC is [SessionController.RESPONSE_TIMEOUT_MS] —
+     * bounded, unlike the silent state corruption serializing replaces.)
+     */
+    @Test
+    fun `a timed-out RPC releases the queue`() = runTest {
+        val id = UUID.randomUUID()
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        var listError: Throwable? = null
+        var created: UUID? = null
+        val first = launch { listError = runCatching { controller.listSessions() }.exceptionOrNull() }
+        yield()
+        runCurrent()
+        val second = launch { created = controller.createSession("behind a timeout") }
+        yield()
+        runCurrent()
+        assertEquals(1, conn.sentMessages.size)
+
+        advanceTimeBy(SessionController.RESPONSE_TIMEOUT_MS + 1)
+        first.join()
+        runCurrent()
+
+        assertEquals("The operation timed out.", (listError as SessionException).message)
+        assertEquals(2, conn.sentMessages.size) { "the queued RPC must run after the timeout releases the lock" }
+
+        conn.deliver(ServerMessage.SessionCreated(id, cols = 80u, rows = 24u))
+        second.join()
+        assertEquals(id, created)
+    }
+
     @Test
     fun `no response hits the timeout path with the expected message`() = runTest {
         // Virtual time: never deliver a response, advance past the 10 s timeout.

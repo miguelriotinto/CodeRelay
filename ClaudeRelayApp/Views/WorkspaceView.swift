@@ -109,9 +109,6 @@ struct WorkspaceView: View {
         }
         .task {
             coordinator.startNetworkRecovery()
-            if let sessionId = pendingAttachSessionId {
-                await coordinator.attachRemoteSession(id: sessionId)
-            }
             // The launch flow, unconditionally: authenticate, ask the server
             // which sessions this client owns, render them in the sidebar. It is
             // single-flight, so the `scenePhase → .active` trigger firing at the
@@ -119,6 +116,17 @@ struct WorkspaceView: View {
             // rather than leaving the pane silently empty. `.launch` keeps quiet
             // about sessions another client took while this app was closed.
             await coordinator.performHandshake(reason: .launch)
+            // A deep-linked attach runs AFTER the handshake, never before it.
+            // `attachRemoteSession` is not covered by the handshake gate, so an
+            // attach issued first races the recovery pass `startNetworkRecovery()`
+            // just armed and the `scenePhase → .active` handshake — either can
+            // replace the socket mid-attach. Going second means the attach runs
+            // over a socket the handshake has already proven live and
+            // authenticated, and its own `fetchSessions(force:)` re-renders the
+            // pane with the newly-owned session on top of the handshake's list.
+            if let sessionId = pendingAttachSessionId {
+                await coordinator.attachRemoteSession(id: sessionId)
+            }
             await syncPush()
             if coordinator.activeSessionId == nil {
                 if sizeClass == .compact {
