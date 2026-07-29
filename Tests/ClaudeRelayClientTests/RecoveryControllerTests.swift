@@ -87,6 +87,46 @@ final class RecoveryControllerTests: XCTestCase {
         )
     }
 
+    /// Regression (the "empty pane on relaunch" bug): on cold launch `scenePhase`
+    /// flips to `.active` right after connect(), firing the foreground
+    /// transition. A JUST-established socket must be trusted as alive — the
+    /// transition must NOT `forceReconnect` (which tore down the launch
+    /// `fetchSessions` mid-flight, leaving the pane empty). It should take the
+    /// fresh-connection fast path (fetch, no recovery), so `isRecovering` never
+    /// flips true.
+    func testForegroundOnFreshConnectionDoesNotReconnect() async {
+        let (coordinator, controller) = makeCoordinatorAndController()
+        // Mimic a socket opened moments ago (launch): connected + recent stamp.
+        coordinator.connection._testOnly_setState(.connected)
+        coordinator.connection._testOnly_setLastConnectedAt(Date())
+
+        await controller.handleForegroundTransition(userInitiated: true)
+
+        XCTAssertFalse(
+            coordinator.isRecovering,
+            "a freshly-connected socket must take the fetch fast path, not reconnect"
+        )
+    }
+
+    /// Complement: a socket whose `lastConnectedAt` is old (e.g. stale after
+    /// macOS sleep) must NOT take the fresh-connection fast path — it goes
+    /// through the real ping/reconnect path. (Guards against reintroducing the
+    /// removed blind `.connected` fast-path.)
+    func testForegroundOnStaleConnectedSocketStillRecovers() async {
+        let (coordinator, controller) = makeCoordinatorAndController()
+        coordinator.connection._testOnly_setState(.connected)
+        // Connected 60s ago — outside the fresh window; the ping will fail (no
+        // real socket) and recovery engages.
+        coordinator.connection._testOnly_setLastConnectedAt(Date().addingTimeInterval(-60))
+
+        await controller.handleForegroundTransition(userInitiated: true)
+
+        XCTAssertTrue(
+            coordinator.recoveryFailed || coordinator.connectionTimedOut,
+            "a stale connected socket must go through ping+reconnect, not the fresh fast path"
+        )
+    }
+
     // MARK: - cancel
 
     func testCancelBumpsGenerationAndSuspends() {

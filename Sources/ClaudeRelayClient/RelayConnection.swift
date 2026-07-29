@@ -134,6 +134,11 @@ public final class RelayConnection: ObservableObject {
     /// Used by SessionController to detect stale auth state after reconnection, and by the
     /// receive loop / quality monitor to ignore callbacks from superseded connections.
     public private(set) var generation: UInt64 = 0
+    /// Wall-clock time the current WebSocket reached `.connected`. Lets callers
+    /// treat a just-established socket as alive without a ping round-trip — the
+    /// foreground/launch recovery path must NOT tear down a socket that was
+    /// opened moments ago just because its first pong hasn't returned yet.
+    public private(set) var lastConnectedAt: Date?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var keepaliveTask: Task<Void, Never>?
@@ -192,6 +197,7 @@ public final class RelayConnection: ObservableObject {
         task.resume()
 
         state = .connected
+        lastConnectedAt = Date()
         receiveLoop(generation: gen)
         startQualityMonitor(generation: gen)
     }
@@ -545,4 +551,7 @@ public final class RelayConnection: ObservableObject {
     /// Force the published `state` for tests that need to mimic stale
     /// "connected" state after macOS sleep without an actual socket.
     public func _testOnly_setState(_ newState: ConnectionState) { state = newState }
+    /// Force `lastConnectedAt` for tests: a recent value mimics a just-opened
+    /// socket (launch); an old/nil value mimics a stale post-sleep socket.
+    public func _testOnly_setLastConnectedAt(_ date: Date?) { lastConnectedAt = date }
 }

@@ -70,6 +70,13 @@ class RelayConnection(
     var state: ConnectionState = ConnectionState.DISCONNECTED
         private set
 
+    /** `System.currentTimeMillis()` when the socket last reached CONNECTED, or
+     *  null. Lets the recovery path trust a just-opened socket as alive without
+     *  a ping (see RecoveryController.isFreshlyConnected). */
+    @Volatile
+    var lastConnectedAtMs: Long? = null
+        private set
+
     @Volatile
     var connectionQuality: ConnectionQuality = ConnectionQuality.DISCONNECTED
         private set
@@ -191,6 +198,7 @@ class RelayConnection(
         webSocket = socket
 
         state = ConnectionState.CONNECTED
+        lastConnectedAtMs = System.currentTimeMillis()
         startQualityMonitor(gen)
     }
 
