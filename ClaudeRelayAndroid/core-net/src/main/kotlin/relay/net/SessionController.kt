@@ -1,6 +1,8 @@
 package relay.net
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.protocol.ClientMessage
 import relay.protocol.ServerMessage
@@ -25,6 +27,16 @@ class SessionException(
     message: String,
     /** True when the failure indicates the server saw us as not authenticated. */
     val isNotAuthenticated: Boolean = false,
+    /**
+     * True for the refusal raised on a DESYNCHRONIZED socket (see
+     * [SessionController.isDesynchronized]). A typed flag rather than another
+     * message match, because the caller's classification is load-bearing: this is
+     * a TRANSPORT condition, and treating it as app-level would evict the active
+     * terminal and clear the user's session over what is really just a socket that
+     * needs replacing. Swift distinguishes it by enum case
+     * (`SessionError.connectionDesynchronized`); this is the port of that.
+     */
+    val isDesynchronized: Boolean = false,
 ) : Exception(message)
 
 /**
@@ -33,7 +45,7 @@ class SessionException(
  *
  * The critical correctness property is replicated exactly: every request
  * installs its response subscriber **before** sending, so a response that beats
- * the await is still captured (via [ResumeGuard.pendingValue]). The guard
+ * the await is still captured (the guard's deferred holds it). The guard
  * guarantees the awaiting coroutine is resumed exactly once even when the
  * response, the timeout, and a duplicate response all race.
  *
@@ -84,10 +96,61 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /**
      * Whether the controller is authenticated on the **current** connection.
-     * False once the socket has been replaced since auth was established.
+     * False once the socket has been replaced since auth was established, and
+     * false when there is no live socket at all.
+     *
+     * The liveness term is load-bearing, not belt-and-braces: a receive-loop
+     * failure nils the socket WITHOUT bumping [ConnectionSurface.generation], so
+     * generation equality alone reported "authenticated" over a socket that had
+     * already gone. Callers then skipped re-auth, sent the RPC, and got
+     * `notConnected` — an error `withAuth` does not retry, i.e. a silent dead end
+     * (a blank session pane). Reporting invalid instead makes the handshake
+     * reconnect first.
      */
     val isAuthValid: Boolean
-        get() = isAuthenticated && authenticatedGeneration == connection.generation
+        get() = isAuthenticated &&
+            authenticatedGeneration == connection.generation &&
+            connection.isConnected &&
+            // A desynchronized socket can't carry an RPC, so auth over it is of no
+            // use to a caller — report invalid and let the handshake replace it.
+            !isDesynchronized
+
+    /**
+     * The generation of a socket left DESYNCHRONIZED by an RPC that timed out,
+     * i.e. one with a request outstanding that nobody is waiting for any more.
+     *
+     * [rpcLock] guarantees one request in flight at a time, but a timeout retires
+     * the waiter while leaving the *request* outstanding server-side. Its late
+     * reply then lands on whichever waiter is installed when it arrives — and
+     * with no request ids, that waiter cannot reject it. Two consecutive
+     * `session_list`s is the worst case and the original bug verbatim: the launch
+     * list times out, a post-create list follows, and the late pre-create reply
+     * resolves it, so the new session is missing from the sidebar.
+     *
+     * So a timeout poisons the socket rather than just failing one call: every
+     * later RPC on it fails until it is replaced. Keying on the generation makes
+     * that self-expiring — any reconnect bumps it, and a fresh socket cannot
+     * carry the old one's in-flight reply. `SessionHandshake` recovers with no
+     * special case: its catch-all already does `resetAuth()` + `disconnect()`
+     * and retries, which is exactly the required response.
+     */
+    private var desyncedGeneration: Long? = null
+
+    /**
+     * Whether the CURRENT socket is desynchronized — i.e. no RPC can run on it and
+     * only replacing it will help.
+     *
+     * Public because the recovery layer has to know. Its "is the connection usable"
+     * probe is a ping/pong, and pongs are routed inside the connection rather than
+     * through this controller's RPC path, so a desynchronized socket pongs
+     * perfectly while refusing every request. Recovery would then see a healthy
+     * transport, decline to reconnect, and re-enter the same doomed restore on
+     * every trigger — the socket is only ever cured by a reconnect, so something
+     * has to ask for one. That is the same shape as the bug the liveness term in
+     * [isAuthValid] fixed: "the transport is up" is not "the transport is usable".
+     */
+    val isDesynchronized: Boolean
+        get() = desyncedGeneration == connection.generation
 
     /**
      * Whether [sessionId]'s server-side attachment was established on the
@@ -113,6 +176,7 @@ class SessionController(private val connection: ConnectionSurface) {
     suspend fun authenticate(token: String) {
         val response = sendAndWaitForResponse(
             ClientMessage.AuthRequest(token = token, protocolVersion = ProtocolVersions.CURRENT),
+            expected = setOf("auth_success", "auth_failure"),
         )
         when (response) {
             is ServerMessage.AuthSuccess -> {
@@ -160,7 +224,10 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /** Creates a new terminal session on the server. Returns the session UUID. */
     suspend fun createSession(name: String? = null, cols: UShort? = null, rows: UShort? = null): UUID {
-        val response = sendAndWaitForResponse(ClientMessage.SessionCreate(name, cols, rows))
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionCreate(name, cols, rows),
+            expected = setOf("session_created"),
+        )
         return when (response) {
             is ServerMessage.SessionCreated -> response.sessionId.also { recordAttachment(it) }
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -173,7 +240,10 @@ class SessionController(private val connection: ConnectionSurface) {
      * Unlike resume, this does not require the session to be detached first.
      */
     suspend fun attachSession(id: UUID) {
-        val response = sendAndWaitForResponse(ClientMessage.SessionAttach(id))
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionAttach(id),
+            expected = setOf("session_attached"),
+        )
         when (response) {
             is ServerMessage.SessionAttached -> recordAttachment(response.sessionId)
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -186,7 +256,10 @@ class SessionController(private val connection: ConnectionSurface) {
      * server skips the ring-buffer replay (the client already holds the scrollback).
      */
     suspend fun resumeSession(id: UUID, skipReplay: Boolean = false) {
-        val response = sendAndWaitForResponse(ClientMessage.SessionResume(id, skipReplay))
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionResume(id, skipReplay),
+            expected = setOf("session_resumed"),
+        )
         when (response) {
             is ServerMessage.SessionResumed -> recordAttachment(response.sessionId)
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -230,7 +303,10 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /** Detaches from the current session without terminating it. */
     suspend fun detach() {
-        val response = sendAndWaitForResponse(ClientMessage.SessionDetach)
+        val response = sendAndWaitForResponse(
+            ClientMessage.SessionDetach,
+            expected = setOf("session_detached"),
+        )
         when (response) {
             is ServerMessage.SessionDetached -> sessionId = null
             is ServerMessage.Error -> throw unexpected(response.message)
@@ -255,85 +331,170 @@ class SessionController(private val connection: ConnectionSurface) {
         )
 
     /**
+     * Serializes request-response RPCs: **at most one may be outstanding on a
+     * connection at a time.**
+     *
+     * This is a protocol constraint, not an optimization. Replies carry no request
+     * id, so the only thing a waiter can match on is the response TYPE — and
+     * `error` is a legal reply to *every* request. Two overlapping RPCs therefore
+     * always share at least one possible reply type, and whichever reply lands
+     * first resolves BOTH waiters:
+     *
+     *  - a `session_list` from a pane refresh and one from a handshake: both
+     *    resolve on the first `session_list_result`, so the later request (the one
+     *    issued *after* a create) renders a pre-create list and the new session
+     *    vanishes from the sidebar;
+     *  - an `error` for a failing `session_create` also completes a concurrent
+     *    `session_list` waiter, so the handshake concludes ITS list failed, drops
+     *    the socket and retries — tearing down the transport under the create.
+     *
+     * Scoping each waiter to its own reply type (see [expected] below) shrinks the
+     * window but cannot close it, because of `error`. Serializing does close it.
+     *
+     * Cost: a queued RPC waits for the one ahead of it, worst case
+     * [RESPONSE_TIMEOUT_MS]. That is strictly better than the cross-delivery it
+     * replaces, which corrupted state silently.
+     *
+     * **Constraint for future code: never issue an RPC from inside another RPC's
+     * await window** — this lock is not reentrant and that would self-deadlock.
+     * Today's paths are all sequential: `withAuth` completes `ensureAuthenticated`
+     * (one RPC) before running its body (the next RPC), and inbound-push handlers
+     * dispatch onto their own coroutines rather than calling back in.
+     */
+    private val rpcLock = Mutex()
+
+    /**
      * Installs a response subscription, sends [message], and waits up to
-     * [RESPONSE_TIMEOUT_MS] for a matching reply. The subscriber is installed
-     * **before** the send so a response that arrives during/just after the send is
-     * captured by [ResumeGuard.pendingValue] rather than lost.
+     * [RESPONSE_TIMEOUT_MS] for a reply whose type is in [expected] (or `error`).
+     * The subscriber is installed **before** the send so a response that arrives
+     * during/just after the send is held by the [ResumeGuard]'s deferred rather
+     * than lost.
+     *
+     * [expected] is deliberately **required**, with no permissive default. It is
+     * the second half of the correlation story: [rpcLock] guarantees only one RPC
+     * is outstanding, and the type scope guarantees that even a stray *pushed*
+     * message (or a late reply from an RPC that already timed out) can't resolve
+     * this one. A waiter matching every response type produced the cross-device
+     * "No Sessions Available" bug — `listAllSessions` captured a parallel
+     * `fetchSessions`' `session_list_result`, fell into its `else` branch and
+     * returned empty. Every call site names its own reply type, so a new one
+     * cannot silently inherit the hazard.
      */
     private suspend fun sendAndWaitForResponse(
         message: ClientMessage,
-        expected: Set<String> = RESPONSE_TYPES,
+        expected: Set<String>,
+    ): ServerMessage = rpcLock.withLock { awaitResponse(message, expected) }
+
+    private suspend fun awaitResponse(
+        message: ClientMessage,
+        expected: Set<String>,
     ): ServerMessage {
+        // A previous RPC on this socket timed out, so it still owes a reply that
+        // this waiter would happily accept. Refuse until the socket is replaced.
+        if (isDesynchronized) {
+            throw SessionException(DESYNC_MESSAGE, isDesynchronized = true)
+        }
+
         val guard = ResumeGuard()
 
         // 1) Install subscription BEFORE sending. The subscriber resumes the
         //    deferred if we're waiting, or stores the value for the post-send check.
-        //    Match only [expected] types (always incl. "error"): the wire protocol
-        //    carries no request ids, so a waiter that accepted EVERY response type
-        //    could grab a reply meant for a concurrent request. That's the
-        //    cross-device "No Sessions Available" bug — `listAllSessions` (waiting
-        //    for `session_list_all_result`) captured the `session_list_result` from
-        //    a periodic `fetchSessions` running in parallel, hit the `else` branch,
-        //    and returned an empty list. Scoping each waiter to its own reply type
-        //    keeps concurrent list requests from stealing each other's responses.
+        //    "error" is always accepted: the server answers any request with it.
         val matchTypes = expected + "error"
         val subscriptionId = connection.addServerMessageSubscriber { serverMessage ->
             if (serverMessage.typeString in matchTypes) {
                 guard.deliver(serverMessage)
             }
         }
+        // The generation the request actually went out on, and whether it went out
+        // at all. Both are needed by the poison decision in `finally`.
+        var sentGeneration: Long? = null
         try {
             // 2) Send.
             connection.send(message)
+            // Read AFTER the send: a send that threw leaves nothing outstanding, so
+            // it must not poison anything.
+            sentGeneration = connection.generation
 
-            // 3) If the response already arrived during send, return it.
-            guard.pendingValue?.let { return it }
+            // 3) If the response already arrived during send, return it. `await()`
+            //    on a completed deferred returns without suspending, so this is a
+            //    fast path rather than a correctness requirement — but it keeps a
+            //    reply that beat the await out of `withTimeoutOrNull`, which would
+            //    throw on an already-cancelled caller instead of handing the value
+            //    over.
+            if (guard.isDelivered) return guard.await()
 
-            // 4) Otherwise wait with a timeout. A null result means the timer won.
+            // 4) Otherwise wait with a timeout.
             return withTimeoutOrNull(RESPONSE_TIMEOUT_MS) { guard.await() }
                 ?: throw SessionException("The operation timed out.")
         } finally {
             connection.removeSubscriber(subscriptionId)
+            // Sent but never answered ⇒ the request is STILL OUTSTANDING
+            // server-side while nobody waits for it, so its late reply could
+            // resolve some future waiter. Poison the socket it went out on.
+            //
+            // Deliberately in `finally` rather than on the timeout branch alone:
+            // cancellation gets here too. A coroutine cancelled after the send
+            // (scope torn down, recovery superseding a pass) abandons an
+            // outstanding request just as surely as a timeout does, and handling
+            // only the timeout left exactly the original corruption open — the
+            // next same-type RPC would consume the abandoned request's reply.
+            //
+            // The generation is the one captured at send time, NOT the current
+            // one: if a reconnect intervened, the request died with the old
+            // socket and the fresh one can never receive its reply. Poisoning the
+            // fresh socket would refuse every RPC on a healthy connection until
+            // another reconnect — and if none came, permanently.
+            //
+            // "Answered" is read from the guard's atomic completion state rather
+            // than any field published alongside it: `deliver` runs on the
+            // connection's dispatcher and this runs on the caller's, so a mirrored
+            // flag can still be unpublished here for an RPC that already succeeded
+            // — which would poison a healthy socket on the happy path.
+            if (sentGeneration != null && !guard.isDelivered) {
+                desyncedGeneration = sentGeneration
+            }
         }
     }
 
     companion object {
         const val RESPONSE_TIMEOUT_MS = 10_000L
 
-        /**
-         * Response message types awaited by command requests. Mirrors the Swift
-         * `responseTypes` set exactly — note that `resize_ack`,
-         * `session_terminated`, and `session_renamed` are deliberately NOT awaited
-         * here (resize is fire-and-forget acked separately; terminate/rename are
-         * server-pushed broadcasts handled via subscribers, not request replies).
-         */
-        private val RESPONSE_TYPES: Set<String> = setOf(
-            "auth_success", "auth_failure",
-            "session_created", "session_attached", "session_resumed", "session_detached",
-            "session_list_result", "session_list_all_result",
-            "error",
-        )
+        /** User-facing text for the desynchronized-socket refusal. */
+        const val DESYNC_MESSAGE = "The connection to the server needs to be re-established."
     }
 }
 
 /**
- * Ensures a waiter is resumed exactly once. Ports the Swift `ResumeGuard`. A
- * response that arrives before [await] is parked in [pendingValue]; the first
- * [deliver] wins, all later deliveries (including a duplicate response) are no-ops.
+ * Ensures a waiter is resumed exactly once. Ports the Swift `ResumeGuard`. The
+ * first [deliver] wins; all later deliveries (including a duplicate response) are
+ * no-ops. A response that arrives before [await] is not lost — the deferred holds
+ * it, so a later [await] returns without suspending.
+ *
+ * The deferred is the **single** source of truth, deliberately: [deliver] runs on
+ * the connection's confinement dispatcher while the awaiter runs on the caller's,
+ * so any state mirrored *alongside* the deferred is published on one thread and
+ * read on another. An earlier version kept a `pendingValue` field assigned after
+ * `complete()`, and `complete()` can resume the awaiter on the other thread before
+ * that assignment lands — so the awaiter could reach its own `finally` and read
+ * "no response" for an RPC that had in fact just been answered, poisoning a
+ * perfectly healthy socket. Keep every question about this guard answerable from
+ * [CompletableDeferred]'s own atomic state.
  */
 private class ResumeGuard {
     private val deferred = CompletableDeferred<ServerMessage>()
 
-    /** Set when a matching response arrives before the awaiter is suspended. */
-    @Volatile
-    var pendingValue: ServerMessage? = null
-        private set
+    /**
+     * Whether a response has been delivered — true from the instant of delivery,
+     * atomically, because it *is* the deferred's completion state rather than a
+     * copy of it.
+     */
+    val isDelivered: Boolean
+        get() = deferred.isCompleted
 
+    /** complete() returns false if already completed → "resume exactly once". */
     fun deliver(value: ServerMessage) {
-        // complete() returns false if already completed → "resume exactly once".
-        if (deferred.complete(value)) {
-            pendingValue = value
-        }
+        deferred.complete(value)
     }
 
     suspend fun await(): ServerMessage = deferred.await()

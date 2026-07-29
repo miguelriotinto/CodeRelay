@@ -68,11 +68,14 @@ struct SessionSidebarView: View {
                 )
             }
         }
+        // Pull-to-refresh runs the full handshake, not a bare list fetch, so it
+        // doubles as the user's retry affordance if the launch handshake failed
+        // (it will reconnect and re-authenticate as needed).
         .refreshable {
-            await coordinator.fetchSessions()
+            await coordinator.performHandshake(reason: .wake)
         }
         .overlay {
-            if coordinator.isLoading && coordinator.sessions.isEmpty {
+            if (coordinator.isLoading || coordinator.isPerformingHandshake) && coordinator.sessions.isEmpty {
                 ProgressView("Loading...")
             }
         }

@@ -71,6 +71,7 @@ import relay.feature.workspace.ui.SessionTabs
 import relay.feature.workspace.ui.TerminalHost
 import relay.feature.workspace.ui.WorkspaceLogic
 import relay.session.RecoveryPhase
+import relay.session.SessionHandshake
 import relay.terminal.KeyboardAccessory
 import java.util.UUID
 
@@ -165,6 +166,10 @@ fun WorkspaceScreen(
     val agentSessions by coordinator.agentSessions.collectAsStateWithLifecycle()
     val awaitingInput by coordinator.sessionsAwaitingInput.collectAsStateWithLifecycle()
     val isLoading by coordinator.isLoading.collectAsStateWithLifecycle()
+    // The launch/wake handshake owns its own auth + list RPC, so it does NOT go
+    // through `isLoading`. Folded into the refresh indicator below so the sidebar
+    // shows a spinner while it runs instead of a bare "no sessions" empty state.
+    val isHandshaking by coordinator.isPerformingHandshake.collectAsStateWithLifecycle()
 
     val isRecovering by coordinator.isRecovering.collectAsStateWithLifecycle()
     val recoveryPhase by coordinator.recoveryPhase.collectAsStateWithLifecycle()
@@ -229,8 +234,13 @@ fun WorkspaceScreen(
                     title = { if (it == "~") "Other" else it.substringAfterLast('/') },
                 )
             },
-            isRefreshing = isLoading,
-            onRefresh = { scope.launch { coordinator.fetchSessions() } },
+            isRefreshing = isLoading || isHandshaking,
+            // Pull-to-refresh is an entry into a live workspace like any other, so
+            // it runs the WHOLE contract — reconnect if needed, authenticate, then
+            // ask for the sessions we own — rather than a bare list fetch that
+            // silently no-ops on a socket that died in the background. WAKE, so a
+            // session taken elsewhere meanwhile is reported.
+            onRefresh = { scope.launch { coordinator.performHandshake(SessionHandshake.Reason.WAKE) } },
             onNewSession = { scope.launch { coordinator.createNewSession() } },
             onAttach = onAttach,
             onSelect = { id ->

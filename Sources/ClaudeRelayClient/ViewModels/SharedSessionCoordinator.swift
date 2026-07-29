@@ -86,6 +86,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     }
 
     @Published public var isRecovering = false
+    /// True while the connect → authenticate → list-owned-sessions handshake is
+    /// running. Owned by `SessionHandshake`; read by `RecoveryController`, which
+    /// refuses to reconnect while it is set (recovery replacing the socket
+    /// mid-handshake is what left the pane empty on relaunch). Views may bind to
+    /// it to show a "loading sessions" affordance.
+    @Published public internal(set) var isPerformingHandshake = false
     @Published public var recoveryPhase: RecoveryPhase = .reconnecting
     @Published public internal(set) var recoveryFailed = false
     @Published public var errorMessage: String?
@@ -172,6 +178,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// required fields are populated.
     private(set) var recoveryController: RecoveryController!
 
+    /// Owns the connect → authenticate → list-owned-sessions sequence that
+    /// populates the pane. Single-flight and retrying; see `SessionHandshake`.
+    private(set) var handshake: SessionHandshake!
+
     // MARK: - Subclass Hooks
 
     open class var keyPrefix: String { "com.clauderelay" }
@@ -231,6 +241,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         // the controller's `unowned` ref is safe for the lifetime of the
         // coordinator (the controller is stored here).
         self.recoveryController = RecoveryController(coordinator: self, connection: connection)
+        self.handshake = SessionHandshake(coordinator: self, connection: connection)
 
         // Views observe this parent via @ObservedObject / @StateObject. The
         // activity cluster is a nested ObservableObject, so re-emit its
@@ -291,6 +302,22 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// rescan, etc. Delegates to `RecoveryController`.
     public func triggerUserRecovery() {
         recoveryController.triggerUserRecovery()
+    }
+
+    /// **The** way the session pane is populated: open the socket →
+    /// authenticate → ask the server which sessions this client owns → render
+    /// them. Single-flight, retrying, and never silently swallowed. Call it
+    /// unconditionally on every entry into the workspace — cold launch,
+    /// foreground, wake, network restore.
+    ///
+    /// - Parameter reason: `.launch` stays silent about sessions another client
+    ///   took while this app was closed; `.wake` announces them (the live
+    ///   `session_stolen` push was missed while the socket was down).
+    /// - Returns: true once the pane reflects the server's list. Owning zero
+    ///   sessions is a success, not a failure.
+    @discardableResult
+    public func performHandshake(reason: SessionHandshake.Reason) async -> Bool {
+        await handshake.perform(reason: reason)
     }
 
     // MARK: - Names
@@ -433,7 +460,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 let tokenScoped = try await self.withAuth { try await $0.listSessions() }
                 self.reconcile(tokenScoped: tokenScoped)
             } catch {
-                // Non-critical refresh.
+                // A refresh, not the authoritative population of the pane —
+                // that is `performHandshake`, which retries and surfaces
+                // failures. Log so this is never invisible again: silently
+                // dropping the error here is what made the empty-pane bug
+                // undiagnosable for five rounds of fixes.
+                recoveryLog.error("fetchSessions failed: \(error.localizedDescription, privacy: .public)")
             }
         }
         inFlightSessionsFetch = task
@@ -737,7 +769,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             switch sessionErr {
             case .unexpectedResponse, .authenticationFailed, .versionIncompatible:
                 return true
-            case .timeout:
+            // Both are transport conditions, not the server rejecting the
+            // request: `connectionDesynchronized` means an earlier RPC timed out
+            // and the socket must be replaced before another can run.
+            case .timeout, .connectionDesynchronized:
                 return false
             }
         }
@@ -956,6 +991,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     open func tearDown() {
         isTornDown = true
         recoveryController.invalidate()
+        handshake.invalidate()
         stopNetworkRecovery()
         recoveryTask?.cancel()
         recoveryTask = nil

@@ -40,6 +40,14 @@ interface CoordinatorConnection {
     suspend fun isAlive(): Boolean
     suspend fun send(message: ClientMessage)
 
+    /** Cheap, non-suspending "is there a socket right now" read — the state the
+     *  transport itself reports, with no ping round-trip. [SessionHandshake] uses
+     *  it to decide whether it must reconnect before authenticating; a receive-loop
+     *  failure flips this to false WITHOUT bumping the connection generation, so
+     *  it catches the silently-dead socket that generation stamps cannot. Default
+     *  true keeps test fakes on the "socket present" path. */
+    val isConnected: Boolean get() = true
+
     /** True when the socket is CONNECTED and was (re)connected within
      *  [freshWindowMs] — trusted as alive without a ping so a launch/foreground
      *  transition can't reconnect it out from under the launch fetch. Default
@@ -73,6 +81,8 @@ class RelayConnectionGateway(private val connection: RelayConnection) : Coordina
     override fun isFreshlyConnected(freshWindowMs: Long): Boolean =
         connection.state == RelayConnection.ConnectionState.CONNECTED &&
             connection.lastConnectedAtMs?.let { System.currentTimeMillis() - it < freshWindowMs } == true
+    override val isConnected: Boolean
+        get() = connection.state == RelayConnection.ConnectionState.CONNECTED
 }
 
 /**
@@ -171,6 +181,13 @@ class SessionCoordinator(
     val recoveryController: RecoveryController
 
     /**
+     * The connect → authenticate → list-owned-sessions sequence. THE only way the
+     * pane is populated, on every entry (launch, foreground, wake, network
+     * restored). See [SessionHandshake] for why it is a single type.
+     */
+    val handshake: SessionHandshake
+
+    /**
      * LRU-8 cache of per-session terminal buffering view-models. Kept alive
      * across switches so scrollback survives tab-like navigation (Swift limit 8).
      */
@@ -223,6 +240,24 @@ class SessionCoordinator(
     private val _isLoading = MutableStateFlow(false)
     /** True while a [fetchSessions] pass is in flight (Swift `isLoading`, :312-313). */
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _isPerformingHandshake = MutableStateFlow(false)
+    /**
+     * True while a [SessionHandshake] pass owns the connection. Two consumers:
+     * the sidebar (so a launch shows a spinner instead of "No sessions") and
+     * [RecoveryController], which refuses to reconnect while it is set — the
+     * handshake already IS "connect, authenticate, get the session list", so
+     * letting recovery in would swap the socket out from under it.
+     */
+    val isPerformingHandshake: StateFlow<Boolean> = _isPerformingHandshake.asStateFlow()
+
+    /**
+     * Set by [tearDown]. The handshake checks it at every step so a pass in flight
+     * when the session is disposed stops touching state instead of resurrecting a
+     * dead pane.
+     */
+    internal var isTornDown: Boolean = false
+        private set
 
     // MARK: - Recovery state (delegated to RecoveryController)
 
@@ -302,7 +337,16 @@ class SessionCoordinator(
         recoveryController = RecoveryController(
             scope = scope,
             // isAlive wraps a 5 s pong wait inside RelayConnection.isAlive().
-            isAlive = { connection.isAlive() },
+            //
+            // A DESYNCHRONIZED socket counts as not-alive even though it pongs
+            // perfectly: pongs are routed inside RelayConnection, so they never
+            // touch the RPC path the desync marker blocks. Without this term the
+            // alive branch would run `restoreSession` on a socket that refuses
+            // every request, fail it as transport-level, and — because nothing on
+            // that path replaces the socket — repeat that on every subsequent
+            // trigger. Reporting not-alive routes it to the reconnect path, whose
+            // generation bump is the only thing that clears the desync.
+            isAlive = { !sessionController.isDesynchronized && connection.isAlive() },
             needsRestore = { needsSessionRestore() },
             reconnect = { connection.forceReconnect() },
             // Reset auth only when it is actually stale for the current
@@ -317,7 +361,14 @@ class SessionCoordinator(
                 authCoordinator.ensureAuthenticated()
             },
             resumeActive = { resumeActiveForRecovery() },
-            fetchSessions = { fetchSessions() },
+            // Every "refresh the pane" point inside the controller (the fresh /
+            // alive short-circuits and the tail of restoreSession) runs the FULL
+            // handshake, not a bare list fetch: each of those is an entry into a
+            // live workspace, and the contract is the same everywhere —
+            // connect, authenticate, get the session list. WAKE, so a session
+            // another device took while we were away is announced (we missed its
+            // live `session_stolen` push).
+            fetchSessions = { performHandshake(SessionHandshake.Reason.WAKE) },
             suppressSends = { on -> sendsSuppressed = on },
             isApplicationLevelError = { isApplicationLevelError(it) },
             onAppLevelRestoreFailure = { handleAppLevelRestoreFailure() },
@@ -326,7 +377,10 @@ class SessionCoordinator(
             // a launch/foreground transition never reconnects it out from under
             // the launch fetch (the "empty pane on relaunch" bug).
             isFreshlyConnected = { connection.isFreshlyConnected(FRESH_CONNECTION_WINDOW_MS) },
+            isHandshakeInFlight = { _isPerformingHandshake.value },
         )
+
+        handshake = SessionHandshake(coordinator = this, scope = scope)
 
         // Server-message fan-in. RelayConnection routes pongs internally; every
         // other ServerMessage arrives here and is dispatched by type.
@@ -369,17 +423,49 @@ class SessionCoordinator(
     // MARK: - Connect
 
     /**
-     * Connects, authenticates, and loads the initial session list (Swift's
-     * connect path is split across the platform host + `fetchSessions`). Stores
-     * config/token on the connection for later `forceReconnect`.
+     * The launch flow: open the socket, then hand to [SessionHandshake] which
+     * authenticates and loads the sessions this client owns. Stores config/token
+     * on the connection for later `forceReconnect`.
+     *
+     * The dial and the handshake are separate on purpose. A failed dial is NOT
+     * fatal here — the handshake reconnects on its own, so a server that is a
+     * moment late becomes a retry rather than a dead workspace.
+     *
+     * Throws only when the handshake exhausted its retries AND we never
+     * authenticated: that is a bad token / incompatible server, and the caller
+     * (`ConnectionViewModel`) should keep the user on the server list with the
+     * error rather than open an unusable workspace. A handshake that authenticated
+     * but couldn't load the list returns normally — the workspace opens with the
+     * error surfaced and pull-to-refresh as the retry.
      */
     suspend fun connect() {
-        connection.connect(config, token)
+        runCatching { connection.connect(config, token) }
         lastHealthyAtMs = nowMs()
-        authCoordinator.ensureAuthenticated()
-        // force: authoritative launch fetch — never debounced behind a racing
-        // recovery/foreground fetch, which left the pane empty on relaunch.
-        fetchSessions(force = true)
+        val ok = performHandshake(SessionHandshake.Reason.LAUNCH)
+        if (!ok && !sessionController.isAuthenticated) {
+            throw IllegalStateException(_errorMessage.value ?: "Couldn't reach the server.")
+        }
+    }
+
+    /**
+     * Runs (or joins) the connect → authenticate → list-owned-sessions handshake.
+     * Every entry into a live workspace goes through here: launch, foreground,
+     * wake, network restored, pull-to-refresh.
+     */
+    suspend fun performHandshake(reason: SessionHandshake.Reason): Boolean =
+        handshake.perform(reason)
+
+    /** Arms/clears the recovery gate. Called only by [SessionHandshake]. */
+    internal fun setHandshakeInFlight(inFlight: Boolean) {
+        _isPerformingHandshake.value = inFlight
+    }
+
+    /**
+     * Surfaces a handshake that could not complete. Deliberately does NOT set the
+     * terminal recovery flags — the workspace stays up so the user can retry.
+     */
+    internal fun presentHandshakeFailure(error: Throwable) {
+        presentError("Couldn't load your sessions from the server. ${friendlyAttachErrorMessage(error)}")
     }
 
     /**
@@ -535,6 +621,19 @@ class SessionCoordinator(
         // failure never blanks the pane.
         val list = runCatching { authCoordinator.withAuth { sessionController.listSessions() } }
             .getOrElse { return }
+        applyServerSessions(list)
+    }
+
+    /**
+     * Renders the server's authoritative token-scoped session list into the pane
+     * and prunes local per-id state down to it.
+     *
+     * Split out of [doFetchSessions] so [SessionHandshake] can reuse the exact
+     * same rendering step: the handshake owns its own auth + RPC (it must, to
+     * order them and to see the failure rather than swallowing it), but the pane
+     * must end up in an identical state whichever path fetched the list.
+     */
+    internal fun applyServerSessions(list: List<SessionInfo>) {
         _sessions.value = list
         recomputeActiveSessions()
 
@@ -979,8 +1078,7 @@ class SessionCoordinator(
      * sidebar (see [switchToSession]).
      */
     fun restoreActiveOnForeground() {
-        if (recoveryController.isRecovering.value) return
-        if (sessionOpsInFlight > 0) return
+        if (connectionIsClaimed()) return
         val activeId = _activeSessionId.value
         if (activeId == null) {
             // No active session to repaint, but the transport may still have died
@@ -991,9 +1089,17 @@ class SessionCoordinator(
             return
         }
         scope.launch {
+            val alive = connection.isAlive()
+            // The probe is a ping ROUND-TRIP, so this coroutine was suspended for
+            // as long as the network took — ample time for the ON_RESUME burst's
+            // other triggers to land and start a handshake or a recovery pass. The
+            // pre-launch check above is therefore stale by now and must be redone:
+            // resuming under a handshake races the socket the handshake may replace,
+            // which is the exact interleaving this whole change exists to stop.
+            if (connectionIsClaimed()) return@launch
             // A dead transport can't be repainted by a bare resume — hand off to
             // the full recovery state machine (reconnect → reauth → resume).
-            if (!connection.isAlive()) {
+            if (!alive) {
                 recoveryController.triggerUserRecovery()
                 return@launch
             }
@@ -1002,6 +1108,7 @@ class SessionCoordinator(
             // concurrent recovery trigger reads a consistent attachment state (the
             // same protection the create/switch/attach ops use).
             sessionOpsInFlight += 1
+            var resumed = false
             try {
                 authCoordinator.withAuth {
                     sessionController.resumeSession(activeId, skipReplay = false)
@@ -1009,6 +1116,7 @@ class SessionCoordinator(
                 // Re-wire AFTER the resume (recovery semantics), so the replayed
                 // scrollback routes to the active VM's live output handler.
                 wireTerminalOutput(activeId)
+                resumed = true
             } catch (e: Throwable) {
                 // A live-socket resume that still fails is most likely a transient
                 // attachment race; fall back to the full recovery path rather than
@@ -1019,8 +1127,29 @@ class SessionCoordinator(
             } finally {
                 sessionOpsInFlight -= 1
             }
+            // Coming back always re-asks the server what we own — the terminal was
+            // repainted above, but the sidebar was NOT refreshed on this path, so a
+            // session another device took while we were away stayed on screen (and
+            // its `session_stolen` push was missed with the socket down). Run
+            // AFTER the op counter is released so the handshake sees settled state.
+            if (resumed) performHandshake(SessionHandshake.Reason.WAKE)
         }
     }
+
+    /**
+     * Whether another flow already owns the connection: a handshake (re-authing and
+     * re-listing, possibly replacing the socket), a recovery pass (same), or a
+     * session op (already establishing a fresh attachment). Each of those is doing
+     * a superset of what a foreground repaint would do, so the repaint stands down
+     * rather than racing them over one socket.
+     *
+     * Must be re-read after every suspension point, not just checked on entry —
+     * the ON_RESUME burst fires several triggers within milliseconds of each other.
+     */
+    private fun connectionIsClaimed(): Boolean =
+        _isPerformingHandshake.value ||
+            recoveryController.isRecovering.value ||
+            sessionOpsInFlight > 0
 
     /** Explicit user-initiated recovery (QR rescan, manual retry). */
     fun triggerUserRecovery() {
@@ -1121,6 +1250,12 @@ class SessionCoordinator(
      */
     internal fun isApplicationLevelError(error: Throwable): Boolean {
         if (error is SessionException) {
+            // A desynchronized socket is a TRANSPORT condition: the request is fine,
+            // the pipe is unusable until it is replaced. Classifying it app-level
+            // would evict the active terminal and clear the user's session over a
+            // reconnect-able socket. Checked via the typed flag, not the message,
+            // because that misclassification is silent and destructive.
+            if (error.isDesynchronized) return false
             // "not authenticated" maps to a transient/transport-adjacent state in
             // Swift's .timeout branch — treat the rest of the unexpected-response
             // family as app-level. A timeout message is transport-level.
@@ -1162,6 +1297,10 @@ class SessionCoordinator(
      * subscriber, clears the terminal cache, and disconnects the transport.
      */
     suspend fun tearDown() {
+        // Set FIRST so a handshake still unwinding sees it at its next checkpoint
+        // and stops before touching a coordinator that is going away.
+        isTornDown = true
+        handshake.invalidate()
         recoveryController.cancel()
         authCoordinator.cancelInFlight()
         subscriberId?.let { connection.removeSubscriber(it) }

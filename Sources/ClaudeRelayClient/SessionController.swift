@@ -1,7 +1,36 @@
 import Foundation
 import ClaudeRelayKit
 
-/// Orchestrates authentication and session lifecycle on top of a `RelayConnection`.
+/// The connection members `SessionController` actually uses, factored out so the
+/// controller's request/response correlation can be tested without a socket.
+/// `RelayConnection` satisfies it as-is; the tests substitute a recording fake
+/// that answers RPCs synchronously.
+///
+/// Mirrors Kotlin's `relay.net.ConnectionSurface` member for member, so the two
+/// controllers stay portable ports of each other rather than drifting.
+@MainActor
+public protocol ConnectionSurface: AnyObject {
+    /// Bumped every time the socket is replaced. Auth and attachment are
+    /// per-socket server-side state, so the stamps are what detect staleness.
+    var generation: UInt64 { get }
+
+    /// Cheap, non-suspending "is there a socket right now" read, with no ping
+    /// round-trip. A receive-loop failure flips this false WITHOUT bumping
+    /// `generation`, so it catches the silently-dead socket stamps cannot.
+    var isConnected: Bool { get }
+
+    func send(_ message: ClientMessage) async throws
+
+    @discardableResult
+    func addServerMessageSubscriber(_ handler: @escaping (ServerMessage) -> Void) -> UUID
+    func removeSubscriber(_ id: UUID)
+}
+
+extension RelayConnection: ConnectionSurface {
+    public var isConnected: Bool { state == .connected }
+}
+
+/// Orchestrates authentication and session lifecycle on top of a `ConnectionSurface`.
 @MainActor
 public final class SessionController: ObservableObject {
 
@@ -13,6 +42,11 @@ public final class SessionController: ObservableObject {
         case unexpectedResponse(String)
         case timeout
 
+        /// This socket has an unaccounted-for request on it (an RPC timed out),
+        /// so no further reply on it can be trusted to belong to its sender.
+        /// Retriable only by replacing the socket.
+        case connectionDesynchronized
+
         public var errorDescription: String? {
             switch self {
             case .authenticationFailed(let reason):
@@ -23,6 +57,8 @@ public final class SessionController: ObservableObject {
                 return "Unexpected server response: \(detail)"
             case .timeout:
                 return "The operation timed out."
+            case .connectionDesynchronized:
+                return "The connection to the server needs to be re-established."
             }
         }
 
@@ -52,20 +88,80 @@ public final class SessionController: ObservableObject {
 
     // MARK: - Private
 
-    private let connection: RelayConnection
+    private let connection: any ConnectionSurface
+
+    /// Tail of the RPC chain — the most recently issued request-response RPC.
+    /// Each new RPC awaits this one before touching the wire, which is how
+    /// "at most one outstanding RPC per connection" is enforced. See
+    /// `sendAndWaitForResponse`.
+    private var previousRPC: Task<ServerMessage, Error>?
+
+    /// The `connection.generation` of a socket left DESYNCHRONIZED by an RPC
+    /// that timed out, i.e. one with a request outstanding that nobody is
+    /// waiting for any more.
+    ///
+    /// Serializing RPCs guarantees one request in flight at a time, but a
+    /// timeout retires the waiter while leaving the *request* outstanding
+    /// server-side. Its late reply then lands on whichever waiter is installed
+    /// when it arrives — and because there are no request ids, that waiter has
+    /// no way to reject it. Two consecutive `session_list`s is the worst case
+    /// and the original bug verbatim: the launch list times out, a post-create
+    /// list follows, and the late pre-create reply resolves it, so the new
+    /// session is missing from the sidebar.
+    ///
+    /// So a timeout poisons the socket rather than just failing one call: every
+    /// later RPC on it throws `connectionDesynchronized` until it is replaced.
+    /// Keying on the generation makes that self-expiring — any reconnect
+    /// (`connect()` or `markConnectionDead()`) bumps it, and a fresh socket
+    /// cannot carry the old one's in-flight reply. `SessionHandshake` recovers
+    /// without a special case: its catch-all already does `resetAuth()` +
+    /// `disconnect()` and retries, which is exactly the required response.
+    private var desyncedGeneration: UInt64?
+
+    /// Whether the CURRENT socket is desynchronized — no RPC can run on it and
+    /// only replacing it will help. Private, unlike the Kotlin port's public
+    /// equivalent: there, the recovery layer has to consult it because its
+    /// alive-restore path would otherwise loop on an unusable socket. Swift has
+    /// no such path — `restoreSession` is only ever reached after a successful
+    /// `forceReconnect()`, whose generation bump has already cleared this — and
+    /// the handshake's catch-all cures it by disconnecting and retrying.
+    private var isDesynchronized: Bool {
+        desyncedGeneration == connection.generation
+    }
+
+    /// How long a single RPC waits for its reply. The Kotlin port's
+    /// `RESPONSE_TIMEOUT_MS`. Injectable only so tests can exercise the timeout
+    /// path without a 10-second wall-clock wait — production always takes the
+    /// default.
+    private let responseTimeout: Duration
 
     // MARK: - Init
 
-    public init(connection: RelayConnection) {
+    public init(connection: any ConnectionSurface, responseTimeout: Duration = .seconds(10)) {
         self.connection = connection
+        self.responseTimeout = responseTimeout
     }
 
     // MARK: - Authentication
 
-    /// Whether the controller is authenticated on the **current** connection.
-    /// Returns false if the WebSocket has been replaced since auth was established.
+    /// Whether the controller is authenticated on the **current, live**
+    /// connection. False if the WebSocket has been replaced since auth was
+    /// established, or if there is no live socket at all.
+    ///
+    /// The `isConnected` term matters: `RelayConnection` bumps its
+    /// generation in `markConnectionDead()` but NOT in `handleReceiveFailure()`,
+    /// which merely nils the task and flips `state` to `.disconnected`. Without
+    /// the liveness check, auth stayed "valid" over a socket that no longer
+    /// exists, so `ensureAuthenticated()` handed back a dead controller and the
+    /// RPC threw `ConnectionError.notConnected` — an error `withAuth` does not
+    /// retry. Requiring a live socket makes the handshake reconnect instead.
     public var isAuthValid: Bool {
-        isAuthenticated && authenticatedGeneration == connection.generation
+        isAuthenticated
+            && authenticatedGeneration == connection.generation
+            && connection.isConnected
+            // A desynchronized socket can't carry an RPC, so auth over it is of
+            // no use to a caller — report invalid and let the handshake replace it.
+            && !isDesynchronized
     }
 
     /// Resets authentication state so the next operation will re-authenticate.
@@ -237,16 +333,58 @@ public final class SessionController: ObservableObject {
 
     // MARK: - Internal Helpers
 
-    /// Full set of command-reply types. Used only as a defensive fallback for a
-    /// caller that doesn't pass an explicit `expected:` set — every real caller
-    /// now scopes its own reply type (see the cross-delivery note below), so a
-    /// waiter never matches an unrelated reply like a concurrent `auth_success`.
-    private static let responseTypes: Set<String> = [
-        "auth_success", "auth_failure",
-        "session_created", "session_attached", "session_resumed", "session_detached",
-        "session_list_result", "session_list_all_result",
-        "error"
-    ]
+    /// Serializes request-response RPCs: **at most one may be outstanding on a
+    /// connection at a time.**
+    ///
+    /// This is a protocol constraint, not an optimization. Replies carry no
+    /// request id, so the only thing a waiter can match on is the response TYPE
+    /// — and `error` is a legal reply to *every* request. Two overlapping RPCs
+    /// therefore always share at least one possible reply type, and whichever
+    /// reply lands first resolves BOTH waiters:
+    ///
+    /// - a `session_list` from a pane refresh and one from a handshake: both
+    ///   resolve on the first `session_list_result`, so the later request (the
+    ///   one issued *after* a create) renders a pre-create list and the new
+    ///   session vanishes from the sidebar;
+    /// - an `error` for a failing `session_create` also completes a concurrent
+    ///   `session_list` waiter, so the handshake concludes ITS list failed,
+    ///   drops the socket and retries — tearing the transport out from under
+    ///   the create.
+    ///
+    /// Scoping each waiter to its own reply type (`expected`, below) shrinks the
+    /// window but cannot close it, because of `error`. Serializing does close it.
+    ///
+    /// There is no async mutex on `@MainActor`, so the queue is a chain: each
+    /// RPC awaits its predecessor's `result` — deliberately `result`, not
+    /// `value`, so a predecessor that throws or times out RELEASES the queue
+    /// instead of poisoning everything behind it. Worst-case wait for a queued
+    /// RPC is one response timeout; that is strictly better than the
+    /// cross-delivery it replaces, which corrupted state silently.
+    ///
+    /// **Constraint for future code: never issue an RPC from inside another
+    /// RPC's await window** — the chain is not reentrant and that self-deadlocks.
+    /// Today's paths are all sequential: `withAuth` completes
+    /// `ensureAuthenticated()` (one RPC) before running its body (the next), and
+    /// inbound push handlers dispatch onto their own tasks rather than calling
+    /// back in.
+    private func sendAndWaitForResponse(
+        _ message: ClientMessage,
+        expected: Set<String>
+    ) async throws -> ServerMessage {
+        let predecessor = previousRPC
+        let rpc = Task { @MainActor [self] in
+            _ = await predecessor?.result
+            return try await awaitResponse(message, expected: expected)
+        }
+        previousRPC = rpc
+        defer {
+            // Only the tail drops itself, so a queued successor still has
+            // something to wait on. Clearing it keeps a finished chain from
+            // retaining `self` (and the messages) indefinitely.
+            if previousRPC == rpc { previousRPC = nil }
+        }
+        return try await rpc.value
+    }
 
     /// Installs a response subscription synchronously on MainActor, then sends.
     /// The subscriber resumes the continuation if available, or stores the
@@ -258,21 +396,31 @@ public final class SessionController: ObservableObject {
     /// coordinator is also subscribed, both still receive every message, and
     /// two overlapping `withAuth { ... }` retry flows no longer risk
     /// restoring a stale handler in defer order.
-    private func sendAndWaitForResponse(
+    ///
+    /// `expected` is deliberately required, with no permissive default. It is
+    /// the second half of the correlation story: the chain guarantees only one
+    /// RPC is outstanding, and the type scope guarantees that even a stray
+    /// *pushed* message (or a late reply from an RPC that already timed out)
+    /// can't resolve this one. A waiter matching every response type produced
+    /// the cross-device "No Sessions Available" bug: `listAllSessions` (awaiting
+    /// `session_list_all_result`) grabbed the `session_list_result` from a
+    /// parallel `fetchSessions`, failed its type check and returned empty.
+    /// Every call site names its own reply type, so a new one cannot silently
+    /// inherit the hazard.
+    private func awaitResponse(
         _ message: ClientMessage,
-        expected: Set<String>? = nil
+        expected: Set<String>
     ) async throws -> ServerMessage {
+        // A previous RPC on this socket timed out, so it still owes a reply that
+        // this waiter would happily accept. Refuse until the socket is replaced.
+        guard !isDesynchronized else {
+            throw SessionError.connectionDesynchronized
+        }
+
         let guard_ = ResumeGuard()
 
-        // Match only the caller's expected reply type(s), always including
-        // "error". The wire protocol has no request ids, so a waiter matching
-        // EVERY response type can capture a reply meant for a concurrent
-        // request — e.g. `listAllSessions` (awaiting `session_list_all_result`)
-        // grabbing the `session_list_result` from a parallel `fetchSessions`,
-        // then failing the type check and returning empty. Scoping each waiter
-        // to its own reply type prevents that cross-delivery. Defaults to the
-        // full set for callers that don't specify.
-        let matchTypes = expected.map { $0.union(["error"]) } ?? Self.responseTypes
+        // "error" is always accepted — the server answers any request with it.
+        let matchTypes = expected.union(["error"])
 
         // 1) Install subscription SYNCHRONOUSLY on MainActor — guaranteed in
         //    place before any suspension point. The subscriber either
@@ -291,6 +439,16 @@ public final class SessionController: ObservableObject {
         // 2) Send the message.
         try await connection.send(message)
 
+        // The generation the request actually went out on. The timeout below must
+        // poison THIS socket, not whichever one is current when the timer fires:
+        // if a reconnect intervenes, the request died with the old socket and the
+        // fresh one can never receive its reply. Poisoning the fresh socket would
+        // refuse every RPC on a perfectly good connection until yet another
+        // reconnect — and if none is forthcoming, permanently. Read after the send
+        // rather than before, so a send that threw (no request outstanding) never
+        // reaches it.
+        let sentGeneration = connection.generation
+
         // 3) If the response already arrived during send, return it.
         if let value = guard_.pendingValue {
             return value
@@ -306,8 +464,34 @@ public final class SessionController: ObservableObject {
                 return
             }
 
-            guard_.timeoutTask = Task { @MainActor [guard_] in
-                try? await Task.sleep(for: .seconds(10))
+            let timeout = responseTimeout
+            guard_.timeoutTask = Task { @MainActor [weak self, guard_] in
+                // `try await`, NOT `try?`: `ResumeGuard.resume` cancels this task
+                // when the reply lands, and a cancelled `Task.sleep` throws
+                // immediately. Swallowing that would run the rest of this body on
+                // every SUCCESSFUL RPC — which used to be harmless (a second
+                // `resume` is a no-op) but now marks the socket desynchronized,
+                // failing every subsequent request on a healthy connection.
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return   // cancelled: the reply arrived, nothing is outstanding
+                }
+                // The request stays outstanding server-side even though nobody
+                // waits for it any more — mark the socket unusable BEFORE
+                // resuming, so the caller's error handling (which may issue
+                // another RPC immediately) already sees it.
+                //
+                // This also covers CANCELLATION, by a route the Kotlin port can't
+                // use. This task is unstructured, so a cancelled caller does not
+                // cancel it: it still fires and still poisons the socket the
+                // abandoned request went out on. (The caller stays parked until
+                // then — `withCheckedThrowingContinuation` has no cancellation
+                // handler — which is slow but safe.) Kotlin's `withTimeoutOrNull`
+                // lets a `CancellationException` escape instead, so it poisons in
+                // a `finally` covering both paths. Same invariant, different
+                // mechanics; don't "align" one to the other without re-checking.
+                if let self { desyncedGeneration = sentGeneration }
                 guard_.resume(throwing: SessionError.timeout)
             }
         }

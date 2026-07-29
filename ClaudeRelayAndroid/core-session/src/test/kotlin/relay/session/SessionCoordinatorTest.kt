@@ -38,188 +38,6 @@ import java.util.concurrent.ConcurrentHashMap
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionCoordinatorTest {
 
-    // ---- Shared ordered call-log -------------------------------------------
-
-    private class CallLog {
-        val entries = ArrayList<String>()
-        fun add(entry: String) = entries.add(entry)
-        /** True when [a] occurs before [b] in the log (both must be present). */
-        fun precedes(a: String, b: String): Boolean {
-            val ia = entries.indexOf(a)
-            val ib = entries.indexOf(b)
-            return ia >= 0 && ib >= 0 && ia < ib
-        }
-        operator fun contains(entry: String) = entries.contains(entry)
-    }
-
-    // ---- Fake ConnectionSurface backing the REAL SessionController ---------
-    //
-    // On send it records the RPC and immediately delivers a canned response so
-    // the real SessionController.sendAndWaitForResponse resolves without a socket.
-
-    private class FakeConnectionSurface(private val log: CallLog) : ConnectionSurface {
-        override var generation: Long = 1L
-        private val subscribers = ConcurrentHashMap<UUID, (ServerMessage) -> Unit>()
-
-        /** Override to fail a specific op (e.g. attach) — return the error to throw via response. */
-        var responder: (ClientMessage) -> ServerMessage? = { defaultResponse(it) }
-
-        /**
-         * Awaited between logging an RPC and delivering its response — lets a
-         * test park a session op mid-flight (e.g. between detach and the create
-         * response) to probe the coordinator's transient state.
-         */
-        var sendGate: (suspend (ClientMessage) -> Unit)? = null
-
-        override fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID {
-            val id = UUID.randomUUID()
-            subscribers[id] = handler
-            return id
-        }
-
-        override fun removeSubscriber(id: UUID) { subscribers.remove(id) }
-
-        /** Captured cols/rows from the most recent SessionCreate RPC (null if never sent or omitted). */
-        var lastCreateCols: UShort? = null
-        var lastCreateRows: UShort? = null
-
-        override suspend fun send(message: ClientMessage) {
-            log.add("rpc:${message.typeString}")
-            if (message is ClientMessage.SessionCreate) {
-                lastCreateCols = message.cols
-                lastCreateRows = message.rows
-            }
-            sendGate?.invoke(message)
-            responder(message)?.let { response ->
-                for (h in subscribers.values) h(response)
-            }
-        }
-
-        private fun defaultResponse(message: ClientMessage): ServerMessage? = when (message) {
-            is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(protocolVersion = 1, tokenId = myTokenId)
-            is ClientMessage.SessionCreate -> ServerMessage.SessionCreated(NEW_SESSION_ID, 80u, 24u)
-            is ClientMessage.SessionAttach -> ServerMessage.SessionAttached(message.sessionId, "running")
-            is ClientMessage.SessionResume -> ServerMessage.SessionResumed(message.sessionId)
-            is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
-            is ClientMessage.SessionList ->
-                if (failSessionList) ServerMessage.Error(code = 500, message = "session_list unavailable")
-                else ServerMessage.SessionList(sessionsOnServer)
-            // SessionListAll defaults to the token-scoped list, but tests can stage a
-            // SUPERSET (sessions on OTHER tokens) by setting [allSessionsOnServer] to
-            // exercise the prune-against-all-sessions behavior.
-            is ClientMessage.SessionListAll ->
-                if (failAllSessions) {
-                    ServerMessage.Error(code = 500, message = "session_list_all unavailable")
-                } else {
-                    ServerMessage.SessionListAll(allSessionsOnServer ?: sessionsOnServer)
-                }
-            else -> null // rename/terminate/ping are fire-and-forget here
-        }
-
-        /** Sessions the server reports for SessionList (token-scoped). Mutable so tests can stage prune scenarios. */
-        var sessionsOnServer: List<SessionInfo> = emptyList()
-
-        /**
-         * Sessions the server reports for SessionListAll (all tokens). `null` ⇒ mirror
-         * [sessionsOnServer]; set to a superset to model sessions owned under another
-         * token, which must survive the prune.
-         */
-        var allSessionsOnServer: List<SessionInfo>? = null
-
-        /** When true, SessionListAll responds with an Error so listAllSessions throws. */
-        var failAllSessions: Boolean = false
-
-        /** When true, SessionList responds with an Error so listSessions throws. */
-        var failSessionList: Boolean = false
-
-        /**
-         * The token id the server reports in auth_success. Defaults to "tok" to
-         * match the [session] helper's tokenId, so a session in the all-sessions
-         * list is classified as owned by THIS token unless a test overrides it.
-         * Set null to model an older server that doesn't send a token id.
-         */
-        var myTokenId: String? = "tok"
-
-        companion object {
-            val NEW_SESSION_ID: UUID = UUID.fromString("00000000-0000-0000-0000-0000000000aa")
-        }
-    }
-
-    // ---- Fake CoordinatorConnection (wiring + control sends) ---------------
-
-    private class FakeCoordinatorConnection(private val log: CallLog) : CoordinatorConnection {
-        var alive: Boolean = true
-        var lastWiredHandler: ((ByteArray) -> Unit)? = null
-        /** When set, forceReconnect awaits it (lets a test park the recovery pass). */
-        var forceReconnectGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
-        /**
-         * When set, isAlive awaits it — parks a recovery pass inside the probe,
-         * BEFORE it commits (isRecovering is still false there), so a test can
-         * race a user op into that window.
-         */
-        var isAliveGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
-        /**
-         * Invoked on forceReconnect — lets a test mirror the real transport, where
-         * reconnecting bumps the (shared) connection generation that the
-         * SessionController's auth/attachment stamps are compared against.
-         */
-        var onForceReconnect: (() -> Unit)? = null
-        private val subscribers = ConcurrentHashMap<UUID, (ServerMessage) -> Unit>()
-
-        override var onTerminalOutput: ((ByteArray) -> Unit)? = null
-            set(value) {
-                field = value
-                lastWiredHandler = value
-                log.add("wire")
-            }
-        override var onSendFailed: (() -> Unit)? = null
-        override var onHealthyPing: (() -> Unit)? = null
-
-        override suspend fun connect(config: ConnectionConfig, token: String) { log.add("connect") }
-        override suspend fun forceReconnect() {
-            log.add("forceReconnect")
-            onForceReconnect?.invoke()
-            forceReconnectGate?.await()
-        }
-        override suspend fun disconnect() { log.add("disconnect") }
-        override suspend fun isAlive(): Boolean {
-            isAliveGate?.await()
-            return alive
-        }
-        override suspend fun send(message: ClientMessage) { log.add("send:${message.typeString}") }
-        override fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID {
-            val id = UUID.randomUUID()
-            subscribers[id] = handler
-            return id
-        }
-        override fun removeSubscriber(id: UUID) { subscribers.remove(id) }
-
-        /** Push a server message through the coordinator's installed fan-in. */
-        fun deliver(message: ServerMessage) { subscribers.values.forEach { it(message) } }
-    }
-
-    // ---- In-memory OwnershipStore ------------------------------------------
-
-    private class FakeOwnershipStore(
-        private val log: CallLog? = null,
-        seedNames: Map<UUID, String> = emptyMap(),
-        seedAgents: Map<UUID, String> = emptyMap(),
-    ) : OwnershipStore {
-        private val namesMap = seedNames.toMutableMap()
-        private val agentsMap = seedAgents.toMutableMap()
-
-        override val names: Map<UUID, String> get() = namesMap.toMap()
-        override val agents: Map<UUID, String> get() = agentsMap.toMap()
-
-        override fun setName(id: UUID, name: String?) {
-            if (name == null) namesMap.remove(id) else namesMap[id] = name
-        }
-        override fun setAgent(id: UUID, agentId: String?) {
-            if (agentId == null) agentsMap.remove(id) else agentsMap[id] = agentId
-            log?.add("setAgent")
-        }
-    }
-
     // ---- Harness -----------------------------------------------------------
 
     private val config = ConnectionConfig(name = "test", host = "127.0.0.1")
@@ -825,20 +643,23 @@ class SessionCoordinatorTest {
         assertFalse(coord.needsSessionRestore(), "fresh attachment needs no restore")
 
         // 2) Phone sleeps; the socket dies. Auto-recovery reconnects (generation
-        // bump) and reauths fine, but the resume RPC gets no response — the 10 s
-        // timeout makes it a TRANSPORT-shaped failure, so the active id survives
-        // (only app-level failures clear it).
+        // bump) and reauths fine, but the resume RPC fails on the WIRE: its send
+        // throws, the way a write to a half-dead socket does. That is a
+        // TRANSPORT-shaped failure, so the active id survives (only app-level
+        // failures clear it).
+        //
+        // Deliberately a failed send rather than an unanswered request: an
+        // unanswered request would hit the response timeout, and a timeout leaves
+        // the socket DESYNCHRONIZED (it still owes a reply nobody is waiting for),
+        // which mandates a reconnect before any further RPC. This test is about the
+        // opposite case — the orphaned attachment on a socket that is still
+        // correlated and therefore still usable in place.
         conn.alive = false
-        surface.responder = { msg ->
-            when (msg) {
-                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
-                is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
-                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
-                else -> null // SessionResume never answered → timeout
-            }
+        surface.sendGate = { msg ->
+            if (msg is ClientMessage.SessionResume) error("socket write failed")
         }
         conn.onSendFailed?.invoke()
-        advanceUntilIdle() // virtual time runs through the 10 s resume timeout
+        advanceUntilIdle()
 
         // The trap state: transport healthy again, attachment orphaned.
         conn.alive = true
@@ -847,8 +668,9 @@ class SessionCoordinatorTest {
         assertFalse(coord.sessionAttachFailed.value)
         assertTrue(coord.needsSessionRestore(), "stale attachment detected on the live socket")
 
-        // 3) Wake: the server answers again. The next foreground trigger must
+        // 3) Wake: the wire works again. The next foreground trigger must
         // RESTORE — not reconnect, not blind-reauth, not bare-fetch.
+        surface.sendGate = null
         surface.responder = { msg ->
             when (msg) {
                 is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
@@ -870,6 +692,87 @@ class SessionCoordinatorTest {
         )
         assertTrue("rpc:session_resume" in log, "the orphaned session was resumed on the live socket")
         assertFalse(coord.needsSessionRestore(), "attachment is current again after the restore")
+        assertEquals(target, coord.activeSessionId.value)
+        assertFalse(coord.isRecovering.value)
+    }
+
+    // -------------------------------------------------------------------------
+    // The OTHER half of that trap: when the orphaning failure was a TIMEOUT, the
+    // socket is left desynchronized (it still owes a reply nobody awaits) and no
+    // RPC may run on it until it is replaced. The alive-restore path above must
+    // therefore NOT be taken — and, critically, the pass must not simply give up:
+    // the desync is only ever cured by a reconnect, and the ping/pong probe that
+    // decides whether to reconnect cannot see it (pongs bypass the RPC path). A
+    // socket that pongs while refusing every request would otherwise re-enter the
+    // same doomed restore on every trigger — a permanent blank/dead terminal,
+    // which is the exact failure class this whole change set exists to remove.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `wake after a timed-out restore reconnects instead of retrying the desynchronized socket`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val controller = SessionController(surface)
+        val coord = SessionCoordinator(this, conn, controller, "tok", store, config)
+
+        conn.onForceReconnect = { surface.generation += 1 }
+
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertFalse(coord.needsSessionRestore(), "fresh attachment needs no restore")
+
+        // The socket dies; recovery reconnects and reauths, then the resume gets no
+        // answer at all and hits the response timeout.
+        conn.alive = false
+        surface.responder = { msg ->
+            when (msg) {
+                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
+                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
+                else -> null // SessionResume never answered → timeout → desync
+            }
+        }
+        conn.onSendFailed?.invoke()
+        advanceUntilIdle() // virtual time runs through the 10 s resume timeout
+
+        // A timeout is transport-shaped, so the session is kept, not discarded...
+        assertEquals(target, coord.activeSessionId.value, "a timeout must not discard the session")
+        assertFalse(
+            coord.sessionAttachFailed.value,
+            "a desynchronized socket is a transport condition — misclassifying it app-level " +
+                "would evict the terminal and clear the user's session",
+        )
+        // ...and it left the socket unusable even though the transport is fine.
+        conn.alive = true
+        assertTrue(controller.isDesynchronized, "the timed-out request poisoned the socket")
+        assertTrue(coord.needsSessionRestore(), "the attachment is still orphaned")
+
+        // Wake. The server is answering again, but the socket is still the poisoned
+        // one, so the pass must REPLACE it rather than restore over it.
+        surface.responder = { msg ->
+            when (msg) {
+                is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(1)
+                is ClientMessage.SessionResume -> ServerMessage.SessionResumed(msg.sessionId)
+                is ClientMessage.SessionDetach -> ServerMessage.SessionDetached
+                is ClientMessage.SessionList -> ServerMessage.SessionList(surface.sessionsOnServer)
+                is ClientMessage.SessionListAll -> ServerMessage.SessionListAll(surface.sessionsOnServer)
+                else -> null
+            }
+        }
+        log.entries.clear()
+        coord.handleForegroundTransition()
+        advanceUntilIdle()
+
+        assertTrue(
+            "forceReconnect" in log,
+            "a desynchronized socket must be replaced — no RPC on it can succeed",
+        )
+        assertFalse(controller.isDesynchronized, "the new generation lifted the poison")
+        assertTrue("rpc:session_resume" in log, "and the session was restored on the fresh socket")
+        assertFalse(coord.needsSessionRestore(), "attachment is current again")
         assertEquals(target, coord.activeSessionId.value)
         assertFalse(coord.isRecovering.value)
     }

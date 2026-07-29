@@ -62,6 +62,10 @@ class ConnectionViewModel : ViewModel() {
                 token = token,
                 settings = settings,
             )
+            // Throws only when the launch handshake never authenticated (bad token
+            // / incompatible server) — the user stays on the server list with the
+            // message. A handshake that authenticated but couldn't load the list
+            // returns normally: the workspace opens and pull-to-refresh retries.
             session.coordinator.connect()
             _activeSession.value = session
             settings.setLastConnectedServerId(config.id.toString())
