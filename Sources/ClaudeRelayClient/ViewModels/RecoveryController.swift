@@ -39,6 +39,10 @@ final class RecoveryController {
     /// Consecutive auto-triggered recovery failures. Reset on success or on
     /// any user-initiated recovery (foreground, network restored, explicit).
     private var consecutiveAutoRecoveryFailures = 0
+    /// A socket connected within this many seconds is trusted as alive without a
+    /// ping round-trip, so the foreground/launch transition won't reconnect it
+    /// out from under the launch `fetchSessions`.
+    static let freshConnectionWindow: TimeInterval = 6
     /// Minimum delay between `onSendFailed`-triggered recoveries, in seconds.
     private let autoRecoveryCooldown: TimeInterval = 3
     /// After this many back-to-back auto-recovery failures we stop responding
@@ -162,6 +166,21 @@ final class RecoveryController {
         guard !coordinator.isTornDown else { return }
         guard !coordinator.isRecovering else {
             recoveryLog.debug("handleForegroundTransition: already recovering, skipping")
+            return
+        }
+
+        // A just-established socket (e.g. on cold launch, `scenePhase` flips to
+        // `.active` right after connect()) is alive by construction — its first
+        // ping/pong hasn't completed yet, so `isAlive()` would return false and
+        // trigger a needless `forceReconnect()` that TEARS DOWN the launch
+        // `fetchSessions` mid-flight, leaving the pane empty. Trust a recently
+        // connected socket and just fetch. (Proven from server logs: two auths
+        // ~3.5s apart at launch with a disconnect between = this reconnect.)
+        if connection.state == .connected,
+           let connectedAt = connection.lastConnectedAt,
+           Date().timeIntervalSince(connectedAt) < Self.freshConnectionWindow {
+            recoveryLog.info("handleForegroundTransition: connection just established, fetching sessions")
+            await coordinator.fetchSessions(force: true)
             return
         }
 

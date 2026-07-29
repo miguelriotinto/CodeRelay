@@ -122,6 +122,11 @@ class RecoveryController(
     private val onAppLevelRestoreFailure: () -> Unit = {},
     private val sleepMs: suspend (Long) -> Unit = { delay(it) },
     private val nowMs: () -> Long = { System.currentTimeMillis() },
+    /** True when the socket was (re)connected within the fresh-connection window
+     *  — trusted as alive without a ping so a launch/foreground transition can't
+     *  reconnect it out from under the launch fetch. Defaults to false so
+     *  existing constructions/tests behave exactly as before. */
+    private val isFreshlyConnected: () -> Boolean = { false },
 ) {
     private companion object {
         /** Backoff delays in seconds (RecoveryController.swift:176). */
@@ -294,6 +299,15 @@ class RecoveryController(
             // Only short-circuit when the transport is alive AND the active
             // session's attachment is current; alive-but-stale falls through to
             // a restore-only pass below.
+            // A just-established socket (cold launch: ON_RESUME fires right after
+            // connect()) is alive by construction — its first ping/pong hasn't
+            // completed, so isAlive() would return false and trigger a needless
+            // reconnect that tears down the launch fetch. Trust it and fetch.
+            if (isFreshlyConnected() && !needsRestore()) {
+                fetchSessions()
+                return
+            }
+
             val alive = isAlive()
             if (alive && !needsRestore()) {
                 fetchSessions()

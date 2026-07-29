@@ -40,6 +40,12 @@ interface CoordinatorConnection {
     suspend fun isAlive(): Boolean
     suspend fun send(message: ClientMessage)
 
+    /** True when the socket is CONNECTED and was (re)connected within
+     *  [freshWindowMs] — trusted as alive without a ping so a launch/foreground
+     *  transition can't reconnect it out from under the launch fetch. Default
+     *  false keeps test fakes on the old (ping-only) path. */
+    fun isFreshlyConnected(freshWindowMs: Long): Boolean = false
+
     fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID
     fun removeSubscriber(id: UUID)
 }
@@ -64,6 +70,9 @@ class RelayConnectionGateway(private val connection: RelayConnection) : Coordina
     override fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID =
         connection.addServerMessageSubscriber(handler)
     override fun removeSubscriber(id: UUID) = connection.removeSubscriber(id)
+    override fun isFreshlyConnected(freshWindowMs: Long): Boolean =
+        connection.state == RelayConnection.ConnectionState.CONNECTED &&
+            connection.lastConnectedAtMs?.let { System.currentTimeMillis() - it < freshWindowMs } == true
 }
 
 /**
@@ -313,6 +322,10 @@ class SessionCoordinator(
             isApplicationLevelError = { isApplicationLevelError(it) },
             onAppLevelRestoreFailure = { handleAppLevelRestoreFailure() },
             nowMs = nowMs,
+            // A socket connected within the fresh window is trusted as alive so
+            // a launch/foreground transition never reconnects it out from under
+            // the launch fetch (the "empty pane on relaunch" bug).
+            isFreshlyConnected = { connection.isFreshlyConnected(FRESH_CONNECTION_WINDOW_MS) },
         )
 
         // Server-message fan-in. RelayConnection routes pongs internally; every
@@ -1163,6 +1176,10 @@ class SessionCoordinator(
     companion object {
         /** fetchSessions debounce window, ms (Swift `0.5` s, :309). */
         private const val FETCH_DEBOUNCE_MS = 500L
+
+        /** A socket connected within this window is trusted as alive without a
+         *  ping (Swift `RecoveryController.freshConnectionWindow` = 6 s). */
+        private const val FRESH_CONNECTION_WINDOW_MS = 6_000L
 
         /**
          * How stale the last health evidence must be before a keystroke triggers
