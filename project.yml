@@ -46,7 +46,7 @@ targets:
         SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
         SUPPORTS_MACCATALYST: NO
         MARKETING_VERSION: "1.4.1"
-        CURRENT_PROJECT_VERSION: "172"
+        CURRENT_PROJECT_VERSION: "173"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: ClaudeRelayApp/ClaudeRelayApp.entitlements
     info:
