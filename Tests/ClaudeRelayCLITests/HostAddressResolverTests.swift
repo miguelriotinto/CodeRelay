@@ -42,13 +42,13 @@ final class HostAddressResolverTests: XCTestCase {
     }
 
     func testCGNATRangeIsClassifiedFromIPv4() {
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "100.101.102.103"), .cgnat)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "100.64.0.1"), .cgnat)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "100.127.255.254"), .cgnat)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "100.101.102.103"), .cgnat)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "100.64.0.1"), .cgnat)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "100.127.255.254"), .cgnat)
         // 100.128.x is outside 100.64/10 and is a normal address.
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "100.128.0.1"), .publicHostname)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "192.168.1.42"), .lan)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "127.0.0.1"), .loopback)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "100.128.0.1"), .publicHostname)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "192.168.1.42"), .lan)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "127.0.0.1"), .loopback)
     }
 
     func testPublicHostnameRequiresTLS() {
@@ -62,34 +62,34 @@ final class HostAddressResolverTests: XCTestCase {
     }
 
     func testPublicHostnameClassification() {
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "relay.example.com"), .publicHostname)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "8.8.8.8"), .publicHostname)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "1.2.3.4"), .publicHostname)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "relay.example.com"), .publicHostname)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "8.8.8.8"), .publicHostname)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "1.2.3.4"), .publicHostname)
     }
 
     func testIPv6Classification() {
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "2001:db8::1"), .ipv6)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "::1"), .ipv6)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "fe80::1"), .ipv6)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "2001:db8::1"), .ipv6)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "::1"), .ipv6)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "fe80::1"), .ipv6)
     }
 
     func testBonjourClassification() {
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "silverwing.local"), .bonjour)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "mymac.local"), .bonjour)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "silverwing.local"), .bonjour)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "mymac.local"), .bonjour)
     }
 
     func testLocalhostClassification() {
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "localhost"), .loopback)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "localhost"), .loopback)
     }
 
     func testRFC1918Classification() {
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "10.0.0.1"), .lan)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "172.16.0.1"), .lan)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "172.31.255.254"), .lan)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "192.168.0.1"), .lan)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "10.0.0.1"), .lan)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "172.16.0.1"), .lan)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "172.31.255.254"), .lan)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "192.168.0.1"), .lan)
         // 172.15 and 172.32 are outside the RFC1918 range.
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "172.15.0.1"), .publicHostname)
-        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "172.32.0.1"), .publicHostname)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "172.15.0.1"), .publicHostname)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "172.32.0.1"), .publicHostname)
     }
 
     func testTLSRequiringKindsNeverOutrankPlaintextSafe() {
@@ -119,5 +119,18 @@ final class HostAddressResolverTests: XCTestCase {
             HostCandidate(host: "100.101.102.103", kind: .cgnat)
         ]
         XCTAssertEqual(HostAddressResolver.choose(from: noBonjour)?.kind, .lan)
+    }
+
+    /// Link-local is not RFC1918, but `NSAllowsLocalNetworking` covers it, so it
+    /// must classify as plaintext-safe rather than being pushed to TLS.
+    func testLinkLocalIsPlaintextSafe() {
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "169.254.1.1"), .lan)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "169.254.255.254"), .lan)
+        XCTAssertFalse(
+            HostAddressResolver.requiresTLS(HostCandidate(host: "169.254.1.1", kind: .lan)))
+
+        // Neighbouring /16s are not link-local and stay TLS-requiring.
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "169.253.1.1"), .publicHostname)
+        XCTAssertEqual(HostAddressProbe.kind(forHost: "169.255.1.1"), .publicHostname)
     }
 }

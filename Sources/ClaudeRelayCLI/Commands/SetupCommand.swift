@@ -86,7 +86,7 @@ struct SetupCommand: AsyncParsableCommand {
         let candidate: HostCandidate
         if let host {
             // Classify the explicitly-passed host so TLS guard applies.
-            let kind = HostAddressProbe.kind(forIPv4: host)
+            let kind = HostAddressProbe.kind(forHost: host)
             candidate = HostCandidate(host: host, kind: kind)
         } else {
             guard let chosen = HostAddressResolver.choose(from: HostAddressProbe.candidates()) else {
@@ -96,23 +96,19 @@ struct SetupCommand: AsyncParsableCommand {
             candidate = chosen
         }
 
-        // 3. Mint a pairing code.
-        let response: PairCreateResponse = try await client.post(
-            "/pair/create", body: PairCreateRequest(label: label))
-
-        // 4. Validate the host by round-tripping through the shared parser.
-        // Do this AFTER minting so we have the real port/TLS config, but BEFORE
-        // printing the QR. An invalid host still burns the code, but the code is
-        // single-use and unguessable, so the trade-off favors correctness.
-        let testURL = PairingURL(host: candidate.host, port: response.wsPort,
-                                 useTLS: response.tls, code: response.code)
-        guard !testURL.urlString.isEmpty,
-              PairingURL(string: testURL.urlString) != nil else {
+        // Validate the host against the same rule the parser applies, still
+        // before minting: a typo must not burn a code, because burning enough of
+        // them evicts codes that are legitimately pending.
+        guard PairingURL.isValidHost(candidate.host) else {
             print("The host '\(candidate.host)' produces an invalid pairing URL. Pass a valid hostname or IP address.")
             throw ExitCode.failure
         }
 
-        // 5. Check the TLS guard. MUST use response.tls (the running server's
+        // 3. Mint a pairing code.
+        let response: PairCreateResponse = try await client.post(
+            "/pair/create", body: PairCreateRequest(label: label))
+
+        // 4. Check the TLS guard. MUST use response.tls (the running server's
         // launch-time config), not on-disk config — disk may have been edited
         // without a server restart, so wsPort/tls can differ from the running
         // state. A refused setup strands a live code for up to 5 min, but the
@@ -128,7 +124,8 @@ struct SetupCommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        let url = testURL
+        let url = PairingURL(host: candidate.host, port: response.wsPort,
+                             useTLS: response.tls, code: response.code)
 
         if globals.json {
             let formatter = ISO8601DateFormatter()

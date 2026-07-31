@@ -7,16 +7,18 @@ enum HostCandidateKind: Equatable {
     /// Survives DHCP lease changes, and `.local` is inside the apps'
     /// `NSAllowsLocalNetworking` ATS allowlist.
     case bonjour
-    /// RFC1918 literal from `ipconfig getifaddr en0`. Always resolves, but goes
-    /// stale when the lease changes.
+    /// RFC1918 or link-local literal from `ipconfig getifaddr en0`. Always
+    /// resolves, but goes stale when the lease changes. Inside the apps'
+    /// `NSAllowsLocalNetworking` ATS allowlist, so plaintext `ws://` works.
     case lan
     /// `127.0.0.1` — only useful for a Mac pairing to itself.
     case loopback
     /// Tailscale CGNAT (`100.64/10`). ATS has no CIDR allowlist, so plaintext
     /// `ws://` to it is blocked by Apple at the platform layer; it needs `wss://`.
     case cgnat
-    /// Public hostname (anything that is not `.local`, loopback, or RFC1918).
-    /// Requires TLS because ATS blocks plaintext to non-local hostnames.
+    /// Public hostname or public IPv4 — anything outside `.local`, loopback,
+    /// RFC1918 and link-local. Requires TLS because ATS blocks plaintext to
+    /// hosts outside the `NSAllowsLocalNetworking` allowlist.
     case publicHostname
     /// IPv6 address (literal or ULA). Requires TLS because ATS blocks plaintext
     /// to IPv6 addresses outside the local allowlist.
@@ -86,7 +88,7 @@ struct HostAddressProbe {
 
         for interface in ["en0", "en1"] {
             if let ip = shellOutput(["/usr/sbin/ipconfig", "getifaddr", interface]), !ip.isEmpty {
-                out.append(HostCandidate(host: ip, kind: kind(forIPv4: ip)))
+                out.append(HostCandidate(host: ip, kind: kind(forHost: ip)))
             }
         }
 
@@ -97,7 +99,7 @@ struct HostAddressProbe {
     /// Classifies a host address string. IPv4 octets classify based on prefix;
     /// IPv6 literals return `.ipv6`; `.local` Bonjour names return `.bonjour`;
     /// everything else is `.publicHostname`.
-    static func kind(forIPv4 ip: String) -> HostCandidateKind {
+    static func kind(forHost ip: String) -> HostCandidateKind {
         // IPv6 literal detection: contains colon.
         if ip.contains(":") {
             return .ipv6
@@ -119,6 +121,10 @@ struct HostAddressProbe {
             if parts[0] == 10 { return .lan }
             if parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31 { return .lan }
             if parts[0] == 192 && parts[1] == 168 { return .lan }
+            // Link-local (169.254/16). Not RFC1918, but the apps'
+            // NSAllowsLocalNetworking covers it, so it is plaintext-safe and
+            // belongs in the same reachability bucket as a LAN literal.
+            if parts[0] == 169 && parts[1] == 254 { return .lan }
             // Public IPv4.
             return .publicHostname
         }

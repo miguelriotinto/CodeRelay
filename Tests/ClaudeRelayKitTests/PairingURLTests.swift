@@ -66,4 +66,44 @@ final class PairingURLTests: XCTestCase {
         XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a%20b&port=9200&tls=0&code=K7QP2M4X"))
         XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a%2Fb&port=9200&tls=0&code=K7QP2M4X"))
     }
+
+    // MARK: - isValidHost
+
+    func testIsValidHostAcceptsRealHosts() {
+        XCTAssertTrue(PairingURL.isValidHost("silverwing.local"))
+        XCTAssertTrue(PairingURL.isValidHost("192.168.1.42"))
+        XCTAssertTrue(PairingURL.isValidHost("relay.example.com"))
+        XCTAssertTrue(PairingURL.isValidHost("127.0.0.1"))
+    }
+
+    func testIsValidHostRejectsEmptyAndIllegalCharacters() {
+        XCTAssertFalse(PairingURL.isValidHost(""))
+        XCTAssertFalse(PairingURL.isValidHost("   "))
+        XCTAssertFalse(PairingURL.isValidHost("a b"))
+        XCTAssertFalse(PairingURL.isValidHost("a/b"))
+        XCTAssertFalse(PairingURL.isValidHost("a?b"))
+        XCTAssertFalse(PairingURL.isValidHost("a#b"))
+        XCTAssertFalse(PairingURL.isValidHost("user@host"))
+    }
+
+    /// `isValidHost` is the predicate `init?(url:)` uses, so the producer that
+    /// calls it pre-mint and the parser that rejects hostile QR input cannot
+    /// disagree about what a valid host is.
+    func testIsValidHostAgreesWithParser() {
+        for host in ["a b", "a/b", "a?b", "a#b", "user@host", "", " "] {
+            let encoded = host.addingPercentEncoding(
+                withAllowedCharacters: .alphanumerics) ?? host
+            let parsed = PairingURL(
+                string: "clauderelay://pair?host=\(encoded)&port=9200&tls=0&code=K7QP2M4X")
+            XCTAssertFalse(PairingURL.isValidHost(host), "isValidHost accepted \(host.debugDescription)")
+            XCTAssertNil(parsed, "parser accepted \(host.debugDescription)")
+        }
+
+        for host in ["silverwing.local", "192.168.1.42", "relay.example.com"] {
+            let parsed = PairingURL(
+                string: "clauderelay://pair?host=\(host)&port=9200&tls=0&code=K7QP2M4X")
+            XCTAssertTrue(PairingURL.isValidHost(host), "isValidHost rejected \(host)")
+            XCTAssertNotNil(parsed, "parser rejected \(host)")
+        }
+    }
 }

@@ -46,6 +46,25 @@ public struct PairingURL: Equatable, Sendable {
         self.init(url: url)
     }
 
+    /// Whether `host` can form a usable `ws://host:port` URL.
+    ///
+    /// Hoisted out of `init?(url:)` so a producer can validate an
+    /// operator-supplied host *before* it has a port, a TLS flag, or a minted
+    /// code to build a full URL with. Both the producer and the parser ask this
+    /// one function, so "what is a valid pairing host" has a single answer.
+    public static func isValidHost(_ host: String) -> Bool {
+        let trimmed = host.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return false }
+        // Reject RFC 3986-illegal host characters before handing the string to
+        // URL(string:), which is lenient about some of them.
+        guard trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " /?#@")) == nil else {
+            return false
+        }
+        // The port here is a stand-in: host validity does not depend on it, and
+        // any in-range port exercises the same URL parse.
+        return URL(string: "ws://\(trimmed):1") != nil
+    }
+
     public init?(url: URL) {
         guard url.scheme?.lowercased() == Self.scheme,
               url.host?.lowercased() == Self.host,
@@ -67,9 +86,7 @@ public struct PairingURL: Equatable, Sendable {
 
         // Reject anything that cannot form a usable ws:// URL (spaces, slashes,
         // other RFC 3986-illegal host characters).
-        guard URL(string: "\(useTLS ? "wss" : "ws")://\(rawHost):\(port)") != nil,
-              rawHost.rangeOfCharacter(from: CharacterSet(charactersIn: " /?#@")) == nil
-        else { return nil }
+        guard Self.isValidHost(rawHost) else { return nil }
 
         self.host = rawHost
         self.port = port
