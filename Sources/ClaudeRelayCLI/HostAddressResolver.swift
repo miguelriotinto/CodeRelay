@@ -57,3 +57,48 @@ struct HostAddressResolver {
         }
     }
 }
+
+/// Reads the machine's actual addresses. Separate from `HostAddressResolver`
+/// so the selection policy stays pure and testable.
+struct HostAddressProbe {
+    static func candidates() -> [HostCandidate] {
+        var out: [HostCandidate] = []
+
+        if let name = shellOutput(["/usr/sbin/scutil", "--get", "LocalHostName"]),
+           !name.isEmpty {
+            out.append(HostCandidate(host: "\(name.lowercased()).local", kind: .bonjour))
+        }
+
+        for interface in ["en0", "en1"] {
+            if let ip = shellOutput(["/usr/sbin/ipconfig", "getifaddr", interface]), !ip.isEmpty {
+                out.append(HostCandidate(host: ip, kind: kind(forIPv4: ip)))
+            }
+        }
+
+        out.append(HostCandidate(host: "127.0.0.1", kind: .loopback))
+        return out
+    }
+
+    /// Tailscale hands out `100.64/10`; treat that range as CGNAT.
+    static func kind(forIPv4 ip: String) -> HostCandidateKind {
+        let parts = ip.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4 else { return .lan }
+        if parts[0] == 100 && parts[1] >= 64 && parts[1] <= 127 { return .cgnat }
+        if parts[0] == 127 { return .loopback }
+        return .lan
+    }
+
+    private static func shellOutput(_ arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: arguments[0])
+        process.arguments = Array(arguments.dropFirst())
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do { try process.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

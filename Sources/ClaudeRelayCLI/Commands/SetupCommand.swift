@@ -1,0 +1,186 @@
+import ArgumentParser
+import Foundation
+import ClaudeRelayKit
+
+/// Pure presentation for `claude-relay setup`, split out so the output is
+/// testable without booting a server or touching launchd.
+struct SetupPresenter {
+
+    static func render(
+        url: PairingURL,
+        formattedCode: String,
+        expiresAt: Date,
+        now: Date,
+        host: HostCandidate,
+        includeQR: Bool
+    ) -> String {
+        var out = ""
+
+        let reason: String
+        switch host.kind {
+        case .bonjour:  reason = "Bonjour — survives DHCP, ATS-safe"
+        case .lan:      reason = "LAN address — may change when the DHCP lease renews"
+        case .loopback: reason = "loopback — only reachable from this Mac"
+        case .cgnat:    reason = "Tailscale — requires TLS"
+        }
+        out += "✓ host: \(host.host)  (\(reason))\n\n"
+
+        if includeQR, let qr = TerminalQRRenderer().render(url.urlString) {
+            out += qr
+            out += "\n"
+        } else {
+            out += "  \(url.urlString)\n\n"
+        }
+
+        out += "  scan in CodeRelay, or enter code:  \(formattedCode)\n"
+
+        let remaining = expiresAt.timeIntervalSince(now)
+        if remaining <= 0 {
+            out += "  this code has expired — run `claude-relay setup` again\n"
+        } else {
+            let minutes = Int(remaining) / 60
+            let seconds = Int(remaining) % 60
+            out += String(format: "  expires in %d:%02d\n", minutes, seconds)
+        }
+
+        out += "\nOptional: claude-relay hook install    (authoritative Claude Code state)\n"
+        return out
+    }
+}
+
+struct SetupCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "setup",
+        abstract: "Start the service and show a pairing QR code"
+    )
+
+    @OptionGroup var globals: GlobalOptions
+
+    @Option(name: .long, help: "Override the host address put in the pairing code")
+    var host: String?
+
+    @Flag(name: .customLong("no-qr"), help: "Print the pairing URL and code without drawing a QR")
+    var noQR = false
+
+    @Option(name: .long, help: "Seconds the pairing code stays valid")
+    var ttl: Int?
+
+    @Option(name: .long, help: "Label for the token this pairing will mint")
+    var label: String?
+
+    func run() async throws {
+        let client = AdminClient(port: globals.port)
+
+        // 1. Ensure the service is up — via whichever manager owns it.
+        if await !client.isServiceRunning() {
+            try await startService()
+            // Give the server a moment to bind before minting.
+            try await Task.sleep(for: .seconds(1))
+            guard await client.isServiceRunning() else {
+                print("The service did not come up. Check: claude-relay logs show")
+                throw ExitCode.failure
+            }
+        }
+
+        // 2. Mint a pairing code.
+        let response: PairCreateResponse = try await client.post(
+            "/pair/create", body: PairCreateRequest(label: label))
+
+        // 3. Resolve the host that goes in the QR.
+        let candidate: HostCandidate
+        if let host {
+            candidate = HostCandidate(host: host, kind: .lan)
+        } else {
+            guard let chosen = HostAddressResolver.choose(from: HostAddressProbe.candidates()) else {
+                print("Could not determine a host address. Pass --host explicitly.")
+                throw ExitCode.failure
+            }
+            candidate = chosen
+        }
+
+        if HostAddressResolver.requiresTLS(candidate) && !response.tls {
+            print("""
+            The only reachable address (\(candidate.host)) needs TLS, but the server has none configured.
+            Apple's ATS blocks plaintext ws:// to this address, so a pairing code would not connect.
+            Configure TLS first:
+              claude-relay config set tlsCert <path> tlsKey <path>
+            """)
+            throw ExitCode.failure
+        }
+
+        let url = PairingURL(host: candidate.host, port: response.wsPort,
+                             useTLS: response.tls, code: response.code)
+
+        if globals.json {
+            print(OutputFormatter.formatJSON(SetupJSON(
+                code: response.code, formattedCode: response.formattedCode,
+                expiresAt: response.expiresAt, host: candidate.host,
+                port: response.wsPort, tls: response.tls, url: url.urlString)))
+            return
+        }
+
+        print(SetupPresenter.render(
+            url: url,
+            formattedCode: response.formattedCode,
+            expiresAt: response.expiresAt,
+            now: Date(),
+            host: candidate,
+            includeQR: !noQR
+        ))
+    }
+
+    /// Starts the service using whichever manager owns it, so `setup` never
+    /// installs a second competing launchd agent.
+    private func startService() async throws {
+        let detector = ServiceManagerDetector.detect()
+        switch detector.owner {
+        case .homebrew:
+            print("Starting via Homebrew services…")
+            try runShell(["/bin/sh", "-c", "brew services start clauderelay"])
+        case .launchAgent:
+            print("Starting the launchd agent…")
+            var start = StartCommand()
+            start.globals = globals
+            try await start.run()
+        case .both:
+            print(detector.nudge(for: .start) ?? "Two service managers are installed.")
+            throw ExitCode.failure
+        case .none:
+            print("Installing the launchd agent…")
+            var load = LoadCommand()
+            load.globals = globals
+            try await load.run()
+        }
+    }
+}
+
+private struct PairCreateRequest: Encodable {
+    let label: String?
+}
+
+struct PairCreateResponse: Decodable {
+    let code: String
+    let formattedCode: String
+    let expiresAt: Date
+    let wsPort: UInt16
+    let tls: Bool
+}
+
+private struct SetupJSON: Encodable {
+    let code: String
+    let formattedCode: String
+    let expiresAt: Date
+    let host: String
+    let port: UInt16
+    let tls: Bool
+    let url: String
+}
+
+/// Runs a shell command synchronously.
+private func runShell(_ arguments: [String]) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: arguments[0])
+    process.arguments = Array(arguments.dropFirst())
+    try process.run()
+    process.waitUntilExit()
+}

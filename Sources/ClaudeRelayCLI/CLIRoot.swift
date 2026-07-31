@@ -8,6 +8,7 @@ struct ClaudeRelay: AsyncParsableCommand {
         abstract: "Manage the ClaudeRelay service",
         version: ClaudeRelayKit.version,
         subcommands: [
+            SetupCommand.self,
             LoadCommand.self,
             UnloadCommand.self,
             StartCommand.self,

@@ -40,4 +40,14 @@ final class HostAddressResolverTests: XCTestCase {
         XCTAssertFalse(HostAddressResolver.requiresTLS(lan))
         XCTAssertFalse(HostAddressResolver.requiresTLS(loopback))
     }
+
+    func testCGNATRangeIsClassifiedFromIPv4() {
+        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "100.101.102.103"), .cgnat)
+        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "100.64.0.1"), .cgnat)
+        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "100.127.255.254"), .cgnat)
+        // 100.128.x is outside 100.64/10 and is a normal address.
+        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "100.128.0.1"), .lan)
+        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "192.168.1.42"), .lan)
+        XCTAssertEqual(HostAddressProbe.kind(forIPv4: "127.0.0.1"), .loopback)
+    }
 }
