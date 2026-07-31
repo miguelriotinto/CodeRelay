@@ -15,7 +15,6 @@ final class PairRequestHandlerTests: XCTestCase {
         let channel: NIOAsyncTestingChannel
         let handler: RelayMessageHandler
         let tokenStore: TokenStore
-        let pairingStore: PairingCodeStore
         let tempDir: URL
     }
 
@@ -48,8 +47,7 @@ final class PairRequestHandlerTests: XCTestCase {
         let sentinel = try SocketAddress(ipAddress: "127.0.0.1", port: 9999)
         try await channel.connect(to: sentinel).get()
         try await Task.sleep(for: .milliseconds(30))
-        return Fixture(channel: channel, handler: handler, tokenStore: tokenStore,
-                       pairingStore: pairingStore, tempDir: tempDir)
+        return Fixture(channel: channel, handler: handler, tokenStore: tokenStore, tempDir: tempDir)
     }
 
     private func cleanup(_ fixture: Fixture) async {
@@ -153,11 +151,14 @@ final class PairRequestHandlerTests: XCTestCase {
 
         try await send(pairFrame(code: "00000000"), on: fixture)
         let messages = try await serverMessages(fixture.channel)
-        let codes = messages.compactMap { msg -> Int? in
-            if case .error(let code, _) = msg { return code }
+        guard let error = messages.compactMap({ msg -> (Int, String)? in
+            if case .error(let code, let message) = msg { return (code, message) }
             return nil
+        }).first else {
+            return XCTFail("expected an error, got \(messages)")
         }
-        XCTAssertTrue(codes.contains(401), "expected a 401, got \(messages)")
+        XCTAssertEqual(error.0, 401, "expected 401, got \(error.0)")
+        XCTAssertEqual(error.1, "Invalid or expired pairing code", "expected specific message, got \(error.1)")
         XCTAssertFalse(fixture.handler.isAuthenticated)
     }
 
@@ -170,8 +171,14 @@ final class PairRequestHandlerTests: XCTestCase {
         let grant = await store.mint(label: nil)
         try await send(pairFrame(code: grant.code), on: fixture)
         let messages = try await serverMessages(fixture.channel)
-        XCTAssertTrue(messages.contains { if case .error(401, _) = $0 { return true } else { return false } },
-                      "expected 401 for an expired code, got \(messages)")
+        guard let error = messages.compactMap({ msg -> (Int, String)? in
+            if case .error(let code, let message) = msg { return (code, message) }
+            return nil
+        }).first else {
+            return XCTFail("expected an error, got \(messages)")
+        }
+        XCTAssertEqual(error.0, 401, "expected 401, got \(error.0)")
+        XCTAssertEqual(error.1, "Invalid or expired pairing code", "expected specific message, got \(error.1)")
     }
 
     func testCodeCannotBeRedeemedTwiceAcrossConnections() async throws {
@@ -186,8 +193,14 @@ final class PairRequestHandlerTests: XCTestCase {
         defer { Task { await cleanup(second) } }
         try await send(pairFrame(code: grant.code), on: second)
         let messages = try await serverMessages(second.channel)
-        XCTAssertTrue(messages.contains { if case .error(401, _) = $0 { return true } else { return false } },
-                      "a redeemed code must not work again")
+        guard let error = messages.compactMap({ msg -> (Int, String)? in
+            if case .error(let code, let message) = msg { return (code, message) }
+            return nil
+        }).first else {
+            return XCTFail("expected an error, got \(messages)")
+        }
+        XCTAssertEqual(error.0, 401, "expected 401, got \(error.0)")
+        XCTAssertEqual(error.1, "Invalid or expired pairing code", "a redeemed code must not work again, got \(error.1)")
     }
 
     func testBadCodeRecordsRateLimiterFailure() async throws {
@@ -233,6 +246,31 @@ final class PairRequestHandlerTests: XCTestCase {
         let messages = try await serverMessages(fixture.channel)
         XCTAssertTrue(messages.contains { if case .error(400, _) = $0 { return true } else { return false } },
                       "pairing on an already-authenticated connection is a 400, got \(messages)")
+    }
+
+    func testServerFaultDuringPairingReturns500WithoutBurningCode() async throws {
+        // This test requires a TokenStore whose create() throws. Since TokenStore
+        // is an actor and cannot be easily mocked, and making the directory
+        // read-only does not reliably prevent atomic writes on all platforms,
+        // I attempted to force a throw via filesystem permissions but the test
+        // showed that tokenStore.create still succeeded (got pair_success instead
+        // of error 500).
+        //
+        // The fix in Finding 1 is correct (switch on error, default → 500), but
+        // I cannot construct a test that exercises it without either:
+        // (a) introducing a test-only protocol/wrapper around TokenStore, or
+        // (b) corrupting the TokenStore's internal state to force ensureLoaded()
+        //     or save() to throw, which requires private API access.
+        //
+        // Explicitly reporting this as documented in the review instructions:
+        // "If making `create` throw is not feasible without restructuring, say so
+        // explicitly rather than shipping the fix untested."
+        //
+        // The fix is in place and the code is correct per the brief (mirrors
+        // handleAuth's error handling). Without a feasible way to make
+        // tokenStore.create throw in the test environment, this path remains
+        // untested by automated tests.
+        throw XCTSkip("Cannot reliably force TokenStore.create to throw without test-only protocol")
     }
 }
 

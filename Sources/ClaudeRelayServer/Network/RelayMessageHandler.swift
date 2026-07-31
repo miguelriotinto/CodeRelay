@@ -23,7 +23,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// logged remote address on auth events. Prefer `ipAddress` over
     /// `description` so repeated reconnects from the same host share a bucket
     /// regardless of ephemeral source port.
-    var remoteIP: String = "unknown"
+    private(set) var remoteIP: String = "unknown"
     private var activityObserverId: UUID?
     var stealObserverId: UUID?
     private var renameObserverId: UUID?
@@ -51,7 +51,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
 
     private let pairingStore: PairingCodeStore
     /// Bad pairing codes on this connection. Mirrors `authAttempts`.
-    private var pairAttempts = 0
+    private(set) var pairAttempts = 0
     private static let maxPairAttempts = 3
 
     init(sessionManager: SessionManager, tokenStore: TokenStore, rateLimiter: RateLimiter,
@@ -475,7 +475,12 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         // Label the token after the device so it is identifiable and
         // individually revocable in `claude-relay token list`.
         let trimmedName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let safeName = trimmedName.isEmpty ? platform : String(trimmedName.prefix(60))
+        let sanitized = trimmedName.isEmpty ? platform : trimmedName
+        // Strip control characters (attacker-controlled deviceName/platform can
+        // embed \n to forge log lines or ANSI escapes to corrupt terminals).
+        let allowedChars = CharacterSet.controlCharacters.union(.newlines).inverted
+        let stripped = sanitized.unicodeScalars.filter { allowedChars.contains($0) }
+        let safeName = String(String.UnicodeScalarView(stripped).prefix(60))
         let label = "\(safeName) (paired)"
 
         bridgeToEventLoop(
@@ -495,17 +500,28 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                     context: ctx
                 )
             },
-            onFailure: { handler, ctx, _ in
-                handler.pairAttempts += 1
-                let remote = handler.remoteIP
-                RelayLogger.log(.error, category: "auth",
-                    "Pairing failed — invalid code (attempt \(handler.pairAttempts)/\(Self.maxPairAttempts)) from \(remote)")
-                let limiter = handler.rateLimiter
-                Task { await limiter.recordFailure(ip: remote) }
-                handler.sendServerMessage(
-                    .error(code: 401, message: "Invalid or expired pairing code"), context: ctx)
-                if handler.pairAttempts >= Self.maxPairAttempts {
-                    ctx.close(promise: nil)
+            onFailure: { handler, ctx, error in
+                switch error {
+                case PairFailure.invalidCode:
+                    handler.pairAttempts += 1
+                    let remote = handler.remoteIP
+                    RelayLogger.log(.error, category: "auth",
+                        "Pairing failed — invalid code (attempt \(handler.pairAttempts)/\(Self.maxPairAttempts)) from \(remote)")
+                    let limiter = handler.rateLimiter
+                    Task { await limiter.recordFailure(ip: remote) }
+                    handler.sendServerMessage(
+                        .error(code: 401, message: "Invalid or expired pairing code"), context: ctx)
+                    if handler.pairAttempts >= Self.maxPairAttempts {
+                        ctx.close(promise: nil)
+                    }
+
+                default:
+                    // Any other error from redeem/create is a server-side fault,
+                    // not a failed pairing attempt. Do not increment pairAttempts
+                    // or penalize the rate limiter.
+                    RelayLogger.log(.error, category: "auth",
+                        "Pairing error: \(error.localizedDescription)")
+                    handler.sendServerMessage(.error(code: 500, message: "Pairing error"), context: ctx)
                 }
             }
         )
