@@ -83,7 +83,8 @@ let wsServer = WebSocketServer(
     group: group, config: config,
     sessionManager: sessionManager, tokenStore: tokenStore,
     rateLimiter: rateLimiter,
-    pushStore: pushStore
+    pushStore: pushStore,
+    pairingStore: pairingStore
 )
 let adminServer = AdminHTTPServer(
     group: group, port: config.adminPort,

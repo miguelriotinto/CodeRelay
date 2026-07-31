@@ -51,7 +51,8 @@ final class ReplayRepaintTests: XCTestCase {
 
         let server = WebSocketServer(
             group: group, config: config,
-            sessionManager: sessionManager, tokenStore: tokenStore
+            sessionManager: sessionManager, tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         try await server.start()
         defer { Task { try? await server.stop() } }

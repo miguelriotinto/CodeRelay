@@ -41,7 +41,8 @@ final class ClaudeRelayServerTests: XCTestCase {
             group: group,
             config: config,
             sessionManager: sessionManager,
-            tokenStore: tokenStore
+            tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
 
         // Start server (this will fail if TLS config is invalid)
@@ -69,7 +70,8 @@ final class ClaudeRelayServerTests: XCTestCase {
             group: group,
             config: config,
             sessionManager: sessionManager,
-            tokenStore: tokenStore
+            tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
 
         // Start server without TLS
@@ -94,7 +96,7 @@ final class ClaudeRelayServerTests: XCTestCase {
         let sessionManager = SessionManager(config: config, tokenStore: tokenStore)
         let wsServer = WebSocketServer(
             group: group, config: config,
-            sessionManager: sessionManager, tokenStore: tokenStore
+            sessionManager: sessionManager, tokenStore: tokenStore, pairingStore: PairingCodeStore()
         )
         try await wsServer.start()
         defer { Task { try? await wsServer.stop() } }
@@ -116,7 +118,7 @@ final class ClaudeRelayServerTests: XCTestCase {
         let sessionManager = SessionManager(config: config, tokenStore: tokenStore)
         let wsServer = WebSocketServer(
             group: group, config: config,
-            sessionManager: sessionManager, tokenStore: tokenStore
+            sessionManager: sessionManager, tokenStore: tokenStore, pairingStore: PairingCodeStore()
         )
         try await wsServer.start()
         defer { Task { try? await wsServer.stop() } }

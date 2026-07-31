@@ -23,7 +23,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// logged remote address on auth events. Prefer `ipAddress` over
     /// `description` so repeated reconnects from the same host share a bucket
     /// regardless of ephemeral source port.
-    private var remoteIP: String = "unknown"
+    var remoteIP: String = "unknown"
     private var activityObserverId: UUID?
     var stealObserverId: UUID?
     private var renameObserverId: UUID?
@@ -49,14 +49,21 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     private var pushMutations = 0
     private let maxPushMutations = 20
 
+    private let pairingStore: PairingCodeStore
+    /// Bad pairing codes on this connection. Mirrors `authAttempts`.
+    private var pairAttempts = 0
+    private static let maxPairAttempts = 3
+
     init(sessionManager: SessionManager, tokenStore: TokenStore, rateLimiter: RateLimiter,
          clipboardService: ClipboardService,
-         pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory)) {
+         pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory),
+         pairingStore: PairingCodeStore) {
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
         self.rateLimiter = rateLimiter
         self.clipboardService = clipboardService
         self.pushStore = pushStore
+        self.pairingStore = pairingStore
     }
 
     /// This handler is installed by the WebSocket upgrade after the channel
@@ -181,6 +188,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         switch message {
         case .authRequest(let token, let protocolVersion):
             handleAuth(token: token, clientProtocolVersion: protocolVersion, context: context)
+        case .pairRequest(let code, let deviceName, let platform):
+            handlePairRequest(code: code, deviceName: deviceName, platform: platform, context: context)
         case .ping:
             sendServerMessage(.pong, context: context)
         default:
@@ -433,6 +442,69 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                     RelayLogger.log(.error, category: "auth",
                         "Auth error: \(error.localizedDescription)")
                     handler.sendServerMessage(.error(code: 500, message: "Auth error"), context: ctx)
+                    ctx.close(promise: nil)
+                }
+            }
+        )
+    }
+
+    // MARK: - Pairing
+
+    private enum PairFailure: Error {
+        case invalidCode
+    }
+
+    private struct PairSuccessPayload: Sendable {
+        let token: String
+        let tokenId: String
+        let label: String
+    }
+
+    /// Redeem a one-time pairing code for a freshly minted per-device token.
+    ///
+    /// Runs **pre-auth**, so it is bounded by the same 10 s auth timer armed in
+    /// `handlerAdded`: the client must follow `pair_success` with an
+    /// `auth_request` inside that window. Pairing deliberately does NOT set
+    /// `isAuthenticated` — the client authenticates with the token it just
+    /// received, which keeps exactly one code path for becoming authenticated.
+    private func handlePairRequest(code: String, deviceName: String, platform: String,
+                                   context: ChannelHandlerContext) {
+        let pairingStore = self.pairingStore
+        let tokenStore = self.tokenStore
+
+        // Label the token after the device so it is identifiable and
+        // individually revocable in `claude-relay token list`.
+        let trimmedName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeName = trimmedName.isEmpty ? platform : String(trimmedName.prefix(60))
+        let label = "\(safeName) (paired)"
+
+        bridgeToEventLoop(
+            context: context,
+            work: {
+                guard await pairingStore.redeem(code) != nil else {
+                    throw PairFailure.invalidCode
+                }
+                let (plaintext, info) = try await tokenStore.create(label: label)
+                return PairSuccessPayload(token: plaintext, tokenId: info.id, label: label)
+            },
+            onSuccess: { handler, ctx, payload in
+                RelayLogger.log(category: "auth",
+                    "Pairing succeeded for \(payload.label) — minted token \(payload.tokenId)")
+                handler.sendServerMessage(
+                    .pairSuccess(token: payload.token, tokenId: payload.tokenId, label: payload.label),
+                    context: ctx
+                )
+            },
+            onFailure: { handler, ctx, _ in
+                handler.pairAttempts += 1
+                let remote = handler.remoteIP
+                RelayLogger.log(.error, category: "auth",
+                    "Pairing failed — invalid code (attempt \(handler.pairAttempts)/\(Self.maxPairAttempts)) from \(remote)")
+                let limiter = handler.rateLimiter
+                Task { await limiter.recordFailure(ip: remote) }
+                handler.sendServerMessage(
+                    .error(code: 401, message: "Invalid or expired pairing code"), context: ctx)
+                if handler.pairAttempts >= Self.maxPairAttempts {
                     ctx.close(promise: nil)
                 }
             }
