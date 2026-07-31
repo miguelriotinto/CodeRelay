@@ -102,6 +102,16 @@ redeem(code:)    -> PairingGrant?     // single-use: removed on success
   Minting past the cap evicts the oldest. Expired entries are swept on access
   (no timer needed).
 
+**One shared instance, and no defaulted parameter.** `RelayMessageHandler` and
+`WebSocketServer` take `pushStore:` with a default value
+(`= PushRegistrationStore(directory:)`), which is harmless there because that
+store is disk-backed so separate instances converge on the same file.
+`PairingCodeStore` is **in-memory**, so a defaulted parameter would give every
+WebSocket connection its own empty store and no code minted via the admin route
+would ever be redeemable. It must therefore be constructed once in `main.swift`
+and injected — with **no default** — into `AdminRoutes.handle`, `WebSocketServer`
+and `RelayMessageHandler`, so the compiler refuses any call site that forgets it.
+
 ### Minting path
 
 The CLI has no access to server state, so minting goes through the existing
@@ -157,10 +167,12 @@ Three properties make this fit the existing server rather than bolt onto it:
    comfortable. The timer is **not** reset by a successful pair — pair *and*
    auth must complete within the one window.
 2. **A bad code is a `rateLimiter.recordFailure(ip:)`,** identical to a bad
-   token, so brute force inherits the existing 5-attempts / 60 s rolling
-   lockout with zero new policy code. On crossing the threshold the connection
-   is closed with 429, mirroring `handleAuth`. 40 bits behind a 5-attempt
-   lockout in a 5-minute window is not a realistic target.
+   token, so brute force inherits the existing cross-connection lockout with
+   zero new policy code — **10 attempts / 60 s rolling**, as `main.swift`
+   constructs it (`RateLimiter(maxAttempts: 10, windowSeconds: 60)`; the type's
+   own default of 5 is not what ships). A per-connection cap mirrors
+   `maxAuthAttempts = 3`: three bad codes closes that socket. 40 bits behind a
+   10-attempt-per-minute lockout in a 5-minute window is not a realistic target.
 3. **`pair_request` is one new `case` in the existing
    `handleUnauthenticatedMessage` switch,** which already has a `default:` →
    401 "Not authenticated" branch. It is not a new pre-auth surface; it is one
@@ -454,8 +466,9 @@ a full green run.
 **Phase 1.** On a fresh Mac: `brew install` then `claude-relay setup` prints a
 QR. Scanning it in the iOS app adds the server, authenticates, and lists
 sessions with no typing. The same code cannot be redeemed twice. An expired code
-is refused with a clear message. Five wrong codes from one IP produce a 429
-lockout. `claude-relay token list` shows the paired device by name, and deleting
+is refused with a clear message. Three wrong codes close the socket, and ten from
+one IP inside a minute produce a 429 lockout.
+`claude-relay token list` shows the paired device by name, and deleting
 that token revokes exactly that device. With `--no-qr`, the printed code typed
 into "Enter code" produces the same result. `claude-relay hook install` is
 safely re-runnable and leaves unrelated hooks in `~/.claude/settings.json`
