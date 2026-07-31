@@ -47,7 +47,9 @@ Two phases, sequenced. Each gets its own implementation plan.
 
 - **Phase 1 — Pairing.** `claude-relay setup` renders a QR code; the phone
   scans it and is connected. Collapses steps 3–5 into one scan, and step 6
-  into one command.
+  into one command. Also makes the CLI **service-manager aware**, fixing a
+  pre-existing bug where `start`/`stop`/`restart`/`unload` fail outright on a
+  Homebrew-managed host.
 - **Phase 2 — Remote provisioning.** `claude-relay provision user@host`
   installs and starts the relay on another machine over SSH, optionally ending
   in a pairing QR for that remote host. This is the `--remote <host>` shape
@@ -203,28 +205,74 @@ Flow:
 3. `POST /pair/create`.
 4. Render the QR, the grouped code, and the expiry.
 
-### Service-manager detection (must not create a competing manager)
+### Service-manager awareness (a pre-existing live bug, fixed here)
 
-There are **two independent launchd managers** for this server, and `setup` must
-never introduce a second one:
+There are **two independent launchd managers** for this server:
 
-| Manager | Plist |
+| Manager | Plist / label |
 | --- | --- |
-| Homebrew services | `~/Library/LaunchAgents/homebrew.mxcl.clauderelay.plist` |
-| `claude-relay load` | `~/Library/LaunchAgents/com.claude.relay.plist` |
+| Homebrew services | `homebrew.mxcl.clauderelay` |
+| `claude-relay load` | `com.claude.relay` |
 
-On a Homebrew install (the documented path, and how this dev machine actually
-runs — `brew services list` shows `clauderelay started`), calling
-`claude-relay load` would install `com.claude.relay.plist` *alongside* the
-Homebrew plist. Both would try to bind `wsPort`: one server wins, the second
-fails to bind, and `claude-relay stop` would not stop the Homebrew-managed one.
-That is a confusing broken state, and it is easy to walk into.
+Every service command hardcodes `serviceLabel = "com.claude.relay"` and calls
+`launchctl` blindly, and `runLaunchctl` throws on a nonzero exit. On a Homebrew
+install — **the documented path**, and how this dev machine actually runs
+(`launchctl list` shows only `homebrew.mxcl.clauderelay`, pid 82071;
+`com.claude.relay` is absent) — that means:
 
-So step 1 resolves in this order:
+- `claude-relay start` / `stop` / `restart` / `unload` **fail today** with a raw
+  `launchctl failed: …` error, because they target a label that was never
+  loaded.
+- `status` / `health` work, because they talk to the admin HTTP API rather than
+  launchctl.
 
-1. If `homebrew.mxcl.clauderelay.plist` exists → `brew services start clauderelay`.
-2. Else if `com.claude.relay.plist` exists → `claude-relay start`.
-3. Else → `claude-relay load` (fresh from-source install; no manager yet).
+Meanwhile `CLAUDE.md` instructs "always use CLI, never run the server binary
+directly or pkill." The documentation points users at commands that are broken on
+the documented install path. This is a pre-existing bug, independent of pairing,
+and it is fixed as part of this work because `setup` cannot start a service
+correctly without solving it.
+
+#### `ServiceManagerDetector` (new, CLI)
+
+One shared read-only detector, used by every service command:
+
+```
+enum ServiceOwner {
+    case homebrew      // homebrew.mxcl.clauderelay.plist present
+    case launchAgent   // com.claude.relay.plist present
+    case both          // misconfigured: two managers for one port
+    case none          // not installed as a service
+}
+```
+
+Detection inputs, all read-only (no `launchctl` mutation to probe state):
+plist presence for each label, plus — to nudge about the *installer* — whether
+the running CLI binary sits under a Homebrew prefix (`/opt/homebrew`,
+`/usr/local`) or in a local `.build/`.
+
+#### Behaviour: nudge with the correct command, never silently do the wrong thing
+
+| Command | `.homebrew` | `.launchAgent` | `.both` | `.none` |
+| --- | --- | --- | --- | --- |
+| `load` | **refuse**, nudge `brew services start clauderelay` (`--force` overrides) | proceed (reinstall plist) | **refuse**, nudge cleanup | proceed |
+| `start` / `stop` / `restart` | nudge `brew services <verb> clauderelay`; do **not** call launchctl | proceed | nudge, naming both owners | nudge: not installed → `claude-relay setup` |
+| `unload` | nudge `brew services stop clauderelay`; explain `unload` only removes the CLI-installed agent | proceed | proceed on the CLI agent, warn Homebrew's remains | nothing to do |
+| `status` / `health` | works; **additionally reports the owning manager** | same | warn: two managers | — |
+| `setup` (step 1) | `brew services start clauderelay` | `claude-relay start` | refuse until resolved | `load` |
+
+Two deliberate choices:
+
+1. **Nudge, don't auto-delegate.** `claude-relay stop` on a Homebrew-managed host
+   prints the `brew services stop clauderelay` command rather than shelling out
+   to brew on the user's behalf. A command that documents itself as driving
+   launchctl silently invoking Homebrew is surprising, and the nudge teaches the
+   right tool for next time.
+2. **`load` refuses rather than warns.** Every other command's mistake is
+   recoverable, but `load` on a Homebrew-managed host *creates* the corrupt
+   two-manager state. `--force` remains for anyone who genuinely wants both.
+
+`--json` output includes the detected owner so scripts can branch on it, and all
+nudges respect `--quiet`.
 
 If the health check still fails after starting, `setup` reports the failure and
 points at `claude-relay logs show` rather than emitting a QR for a dead server.
@@ -368,7 +416,13 @@ function**, so it is testable without any SSH.
 | `RelayMessageHandler` | pre-auth `pair_request` mints a token; bad code → 401 + `recordFailure`; blocked IP → 429 + close; `pair_request` after auth → 400 |
 | `AdminRoutes` | `POST /pair/create` returns a code; rejects non-localhost |
 | `hook install` | idempotent re-run; preserves unrelated hooks; backup written; `--dry-run` writes nothing |
+| `ServiceManagerDetector` | each of `.homebrew` / `.launchAgent` / `.both` / `.none` from injected plist-presence + binary-path fixtures; installer hint for brew-prefix vs `.build/` |
+| Service-command nudges | `load` refuses under `.homebrew` and proceeds under `--force`; `start`/`stop`/`restart` emit the brew command and never invoke launchctl; `--json` carries the owner; `--quiet` suppresses nudges |
 | `provision` | `--dry-run` command-list snapshot (pure function, no SSH) |
+
+`ServiceManagerDetector` takes its filesystem probes and binary path as injected
+inputs so all four states are unit-testable without touching real
+`~/Library/LaunchAgents` or requiring Homebrew.
 
 **Known pre-existing failure:** `swift test` on this repo hangs deterministically
 at `GitRootResolver` case 313 and has not passed since 22 Jul; the app-build jobs
@@ -385,7 +439,9 @@ a full green run.
 
 **CLI:** `Commands/SetupCommand.swift` (new), `Commands/HookCommands.swift`
 (new), `Commands/ProvisionCommand.swift` (new, phase 2),
-`TerminalQRRenderer.swift` (new), `AdminClient.swift`, `CLIRoot.swift`.
+`TerminalQRRenderer.swift` (new), `ServiceManagerDetector.swift` (new),
+`Commands/ServiceCommands.swift` (nudges in `load`/`unload`/`start`/`stop`/
+`restart`/`status`), `AdminClient.swift`, `CLIRoot.swift`.
 
 **Client:** `PairingController.swift` (new), deep-link routing, `ServerListView`
 + scanner/code-entry views (iOS + macOS), Android mirror.
@@ -404,6 +460,14 @@ that token revokes exactly that device. With `--no-qr`, the printed code typed
 into "Enter code" produces the same result. `claude-relay hook install` is
 safely re-runnable and leaves unrelated hooks in `~/.claude/settings.json`
 intact.
+
+**Service-manager awareness.** On this Homebrew-managed machine,
+`claude-relay stop` currently fails with a raw `launchctl failed:` error; after
+this change it instead prints the `brew services stop clauderelay` command to
+use. `claude-relay load` refuses to create a second manager and explains why,
+unless `--force` is passed. `claude-relay status` names the owning manager. A
+from-source install with no service yet is unaffected — `load` proceeds exactly
+as today.
 
 **Phase 2.** `claude-relay provision user@host --pair` on a machine with only
 SSH access installs, starts and verifies the relay there, then prints a QR that
