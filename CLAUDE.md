@@ -262,6 +262,43 @@ Config stored in `~/.claude-relay/config.json`. Default ports: WS=9200, Admin=91
 
 App-side (not in `config.json`, stored via `@AppStorage`): `terminalScrollbackLines` (per-app, default 5000, max 25000). The server's `RingBuffer` still replays anything that falls off this edge on reattach. Continuous-listening settings persisted via `@AppStorage` are the on/off toggle and the wake word — `turnEndSilenceTimeout` is **not** user-tunable (defaults from `SpeechProcessingOptions`).
 
+## Device Pairing (F11, second half)
+
+This is the second, previously-deferred half of the F11 spec; the first half (Clipboard Bridging via OSC 52) shipped earlier and is documented above.
+
+`claude-relay setup` mints a **single-use pairing code** (8 chars Crockford
+Base32 = 40 bits, 5-minute TTL) via `POST /pair/create` on the localhost-only
+admin API, and renders it as a terminal QR encoding
+`clauderelay://pair?host=&port=&tls=&code=`.
+
+The device redeems it **pre-auth** over the WebSocket: `pair_request` →
+`pair_success{token,tokenId,label}` → then the normal `auth_request` with the
+minted token, all on one socket inside the existing 10 s auth timer. Pairing
+never sets `isAuthenticated`; the client authenticates with the token it just
+received, so there is exactly one path to an authenticated connection.
+
+- `PairingCodeStore` is **in-memory and injected with no default parameter** —
+  it is constructed once in `main.swift` and shared by the admin route (mint) and
+  every `RelayMessageHandler` (redeem). A defaulted parameter would give each
+  connection an empty store and no code would ever redeem.
+- A bad code is a `RateLimiter.recordFailure(ip:)`, identical to a bad token
+  (10 attempts / 60 s as `main.swift` configures it), plus a per-connection cap
+  of 3 mirroring `maxAuthAttempts`.
+- The minted token is labeled `"<device> (paired)"` so it is revocable per device.
+- `PairingURL` + `PairingCode` live in ClaudeRelayKit and are shared with all
+  three clients — validation of hostile QR input happens in one tested place.
+
+### Service manager awareness
+
+Two launchd managers can own the server: `homebrew.mxcl.clauderelay` (from
+`brew services`) and `com.claude.relay` (from `claude-relay load`). They must
+never both exist — both would bind `wsPort`. `ServiceManagerDetector` resolves
+the owner and every service command nudges with the correct command instead of
+driving the wrong label; `load` refuses to create a second manager unless
+`--force` is passed. Before this existed, `start`/`stop`/`restart`/`unload`
+failed outright on a Homebrew install while `status`/`health` worked, because
+only the latter two go through the admin HTTP API.
+
 ## Lint
 
 SwiftLint config in `.swiftlint.yml`. Line length warning at 140, error at 200. Identifier min length: 2 (warning).
