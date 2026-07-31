@@ -50,8 +50,8 @@ final class TerminalQRRendererTests: XCTestCase {
             XCTAssertTrue(matrix[3][offset], "top edge of finder pattern at col \(offset)")
             XCTAssertTrue(matrix[offset][3], "left edge of finder pattern at row \(offset)")
         }
-        XCTAssertFalse(matrix[5][5] == false && matrix[6][6] == false,
-                       "finder pattern centre should be dark")
+        XCTAssertTrue(matrix[5][5], "finder pattern centre [5][5] should be dark")
+        XCTAssertTrue(matrix[6][6], "finder pattern centre [6][6] should be dark")
     }
 
     func testRenderUsesHalfHeightRowsAndExplicitColours() throws {

@@ -284,7 +284,12 @@ received, so there is exactly one path to an authenticated connection.
 - A bad code is a `RateLimiter.recordFailure(ip:)`, identical to a bad token
   (10 attempts / 60 s as `main.swift` configures it), plus a per-connection cap
   of 3 mirroring `maxAuthAttempts`.
-- The minted token is labeled `"<device> (paired)"` so it is revocable per device.
+- The minted token is labeled `"<device> (paired)"` so it is revocable per device,
+  unless the operator passed `setup --label`, in which case that label is used
+  verbatim. Either way the label is sanitised identically on both paths
+  (`AdminRoutes.handlePairCreate` and `RelayMessageHandler.handlePairRequest`):
+  control characters and newlines stripped, capped at 60 scalars — a label reaches
+  `TokenStore` and the log, so a `\n` in it could forge log lines.
 - `PairingURL` + `PairingCode` live in ClaudeRelayKit and are shared with all
   three clients — validation of hostile QR input happens in one tested place.
 

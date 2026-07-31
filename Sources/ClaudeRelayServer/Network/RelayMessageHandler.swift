@@ -481,14 +481,18 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         let allowedChars = CharacterSet.controlCharacters.union(.newlines).inverted
         let stripped = sanitized.unicodeScalars.filter { allowedChars.contains($0) }
         let safeName = String(String.UnicodeScalarView(stripped).prefix(60))
-        let label = "\(safeName) (paired)"
 
         bridgeToEventLoop(
             context: context,
             work: {
-                guard await pairingStore.redeem(code) != nil else {
+                guard let grant = await pairingStore.redeem(code) else {
                     throw PairFailure.invalidCode
                 }
+                // Prefer the operator's label if present (already sanitized in
+                // AdminRoutes.handlePairCreate), otherwise use the device name.
+                let label = grant.label?.isEmpty == false
+                    ? grant.label!
+                    : "\(safeName) (paired)"
                 let (plaintext, info) = try await tokenStore.create(label: label)
                 return PairSuccessPayload(token: plaintext, tokenId: info.id, label: label)
             },
@@ -687,7 +691,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             }
             context.writeAndFlush(wrapOutboundOut(frame), promise: promise)
         } catch {
-            RelayLogger.log(.error, category: "connection", "JSON encode failed for \(message): \(error)")
+            RelayLogger.log(.error, category: "connection", "JSON encode failed for \(message.typeString): \(error)")
         }
     }
 

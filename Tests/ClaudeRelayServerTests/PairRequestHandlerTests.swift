@@ -246,6 +246,10 @@ final class PairRequestHandlerTests: XCTestCase {
         let messages = try await serverMessages(fixture.channel)
         XCTAssertTrue(messages.contains { if case .error(400, _) = $0 { return true } else { return false } },
                       "pairing on an already-authenticated connection is a 400, got \(messages)")
+
+        // The rejected request must not consume the code.
+        let stillValid = await store.redeem(grant.code)
+        XCTAssertNotNil(stillValid, "the code should still be redeemable after the 400 rejection")
     }
 
     func testServerFaultDuringPairingReturns500WithoutBurningCode() async throws {

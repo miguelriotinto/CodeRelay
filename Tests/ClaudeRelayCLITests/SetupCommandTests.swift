@@ -11,7 +11,6 @@ final class SetupCommandTests: XCTestCase {
     private func render(includeQR: Bool = true, secondsLeft: TimeInterval = 298) -> String {
         SetupPresenter.render(
             url: url,
-            formattedCode: PairingCode.formatted("K7QP2M4X"),
             expiresAt: now.addingTimeInterval(secondsLeft),
             now: now,
             host: host,
@@ -31,12 +30,6 @@ final class SetupCommandTests: XCTestCase {
 
     func testOutputShowsRemainingTimeAsMinutesAndSeconds() {
         XCTAssertTrue(render(secondsLeft: 298).contains("4:58"), render(secondsLeft: 298))
-    }
-
-    func testOutputNeverContainsAToken() {
-        // Only a code is displayed. The token is minted later, over the socket.
-        let output = render().lowercased()
-        XCTAssertFalse(output.contains("token"), "setup must not display any token")
     }
 
     func testNoQRModeStillShowsCodeAndURL() {

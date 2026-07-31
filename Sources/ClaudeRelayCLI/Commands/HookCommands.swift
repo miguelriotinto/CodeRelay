@@ -100,10 +100,18 @@ struct HookInstallCommand: AsyncParsableCommand {
         }
 
         var settings: [String: Any] = [:]
-        if let data = try? Data(contentsOf: settingsURL),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        if FileManager.default.fileExists(atPath: settingsURL.path) {
+            guard let data = try? Data(contentsOf: settingsURL),
+                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("""
+                    Error: \(settingsURL.path) exists but cannot be parsed.
+                    Fix or move the file before installing the hook.
+                    """)
+                throw ExitCode.failure
+            }
             settings = parsed
         }
+        // else: file does not exist — proceed with an empty dictionary
         let (merged, added) = HookSettingsMerger.merge(into: settings, hookPath: displayPath)
 
         if dryRun {

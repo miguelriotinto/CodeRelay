@@ -8,7 +8,6 @@ struct SetupPresenter {
 
     static func render(
         url: PairingURL,
-        formattedCode: String,
         expiresAt: Date,
         now: Date,
         host: HostCandidate,
@@ -32,6 +31,7 @@ struct SetupPresenter {
             out += "  \(url.urlString)\n\n"
         }
 
+        let formattedCode = PairingCode.formatted(url.code)
         out += "  scan in CodeRelay, or enter code:  \(formattedCode)\n"
 
         let remaining = expiresAt.timeIntervalSince(now)
@@ -62,9 +62,6 @@ struct SetupCommand: AsyncParsableCommand {
     @Flag(name: .customLong("no-qr"), help: "Print the pairing URL and code without drawing a QR")
     var noQR = false
 
-    @Option(name: .long, help: "Seconds the pairing code stays valid")
-    var ttl: Int?
-
     @Option(name: .long, help: "Label for the token this pairing will mint")
     var label: String?
 
@@ -82,14 +79,13 @@ struct SetupCommand: AsyncParsableCommand {
             }
         }
 
-        // 2. Mint a pairing code.
-        let response: PairCreateResponse = try await client.post(
-            "/pair/create", body: PairCreateRequest(label: label))
-
-        // 3. Resolve the host that goes in the QR.
+        // 2. Resolve the host that goes in the QR (before minting, so the common
+        // "no address found" failure exits without burning a code).
         let candidate: HostCandidate
         if let host {
-            candidate = HostCandidate(host: host, kind: .lan)
+            // Classify the explicitly-passed host so TLS guard applies.
+            let kind = HostAddressProbe.kind(forIPv4: host)
+            candidate = HostCandidate(host: host, kind: kind)
         } else {
             guard let chosen = HostAddressResolver.choose(from: HostAddressProbe.candidates()) else {
                 print("Could not determine a host address. Pass --host explicitly.")
@@ -98,6 +94,16 @@ struct SetupCommand: AsyncParsableCommand {
             candidate = chosen
         }
 
+        // 3. Mint a pairing code.
+        let response: PairCreateResponse = try await client.post(
+            "/pair/create", body: PairCreateRequest(label: label))
+
+        // 4. Check the TLS guard. MUST use response.tls (the running server's
+        // actual state), not on-disk config — the server may not have restarted
+        // yet, config.json may be half-written (tlsCert without tlsKey), or a
+        // read error could spuriously refuse a working setup. A refused setup
+        // strands a live code for up to 5 min, but the code is single-use and
+        // unguessable, so the trade-off favors correctness over slot pressure.
         if HostAddressResolver.requiresTLS(candidate) && !response.tls {
             print("""
             The only reachable address (\(candidate.host)) needs TLS, but the server has none configured.
@@ -111,6 +117,11 @@ struct SetupCommand: AsyncParsableCommand {
         let url = PairingURL(host: candidate.host, port: response.wsPort,
                              useTLS: response.tls, code: response.code)
 
+        if url.urlString.isEmpty {
+            print("The host '\(candidate.host)' produces an invalid pairing URL. Pass a valid hostname or IP address.")
+            throw ExitCode.failure
+        }
+
         if globals.json {
             let formatter = ISO8601DateFormatter()
             print(OutputFormatter.formatJSON(SetupJSON(
@@ -122,7 +133,6 @@ struct SetupCommand: AsyncParsableCommand {
 
         print(SetupPresenter.render(
             url: url,
-            formattedCode: response.formattedCode,
             expiresAt: response.expiresAt,
             now: Date(),
             host: candidate,

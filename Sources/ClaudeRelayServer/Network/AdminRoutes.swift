@@ -114,9 +114,17 @@ enum AdminRoutes {
 
         var label: String?
         if let body, let data = body.getData(at: body.readerIndex, length: body.readableBytes),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            label = (json["label"] as? String)?.trimmingCharacters(in: .whitespaces)
-            if label?.isEmpty == true { label = nil }
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let rawLabel = json["label"] as? String {
+            let trimmed = rawLabel.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty {
+                // Apply the same sanitization as deviceName in handlePairRequest:
+                // strip control characters and cap at 60 chars.
+                let allowedChars = CharacterSet.controlCharacters.union(.newlines).inverted
+                let stripped = trimmed.unicodeScalars.filter { allowedChars.contains($0) }
+                label = String(String.UnicodeScalarView(stripped).prefix(60))
+                if label?.isEmpty == true { label = nil }
+            }
         }
 
         let grant = await pairingStore.mint(label: label)
