@@ -84,13 +84,19 @@ final class ServiceManagerDetectorTests: XCTestCase {
         XCTAssertNil(detector(brew: false, agent: false).nudge(for: .load))
     }
 
-    func testBothManagersProduceAWarningForEveryVerb() {
+    func testBothManagersProduceAWarningForStartStopRestart() {
         let d = detector(brew: true, agent: true)
-        for verb in [ServiceVerb.start, .stop, .restart, .load, .unload] {
+        for verb in [ServiceVerb.start, .stop, .restart] {
             let nudge = d.nudge(for: verb)
             XCTAssertNotNil(nudge, "\(verb) should warn when two managers exist")
             XCTAssertTrue(nudge!.lowercased().contains("two"), nudge!)
         }
+    }
+
+    func testBothManagersAllowUnloadToProced() {
+        let d = detector(brew: true, agent: true)
+        // .unload is the remedy for the .both situation — it must not block itself.
+        XCTAssertNil(d.nudge(for: .unload), "unload must be able to remove the CLI-managed agent")
     }
 
     func testStartOnFreshMachineNudgesTowardSetup() {

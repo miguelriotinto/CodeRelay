@@ -1,6 +1,20 @@
 import ArgumentParser
 import Foundation
 
+enum HookSettingsError: Error, CustomStringConvertible {
+    case hooksIsNotDictionary(key: String)
+    case eventIsNotArray(event: String, key: String)
+
+    var description: String {
+        switch self {
+        case .hooksIsNotDictionary(let key):
+            return "\(key)[\"hooks\"] exists but is not a dictionary. Fix or move the file before installing the hook."
+        case .eventIsNotArray(let event, let key):
+            return "\(key)[\"hooks\"][\"\(event)\"] exists but is not an array. Fix or move the file before installing the hook."
+        }
+    }
+}
+
 /// Pure merge/removal of the CodeRelay state hook in a Claude Code settings
 /// dictionary. Kept separate from file I/O so idempotency and
 /// "don't clobber the user's own hooks" are unit-testable.
@@ -15,13 +29,27 @@ struct HookSettingsMerger {
     }
 
     static func merge(into settings: [String: Any], hookPath: String)
-        -> (settings: [String: Any], addedEvents: [String]) {
+        throws -> (settings: [String: Any], addedEvents: [String]) {
         var out = settings
+
+        // Refuse if hooks exists and is not a dictionary.
+        if let hooksRaw = out["hooks"], !(hooksRaw is [String: Any]) {
+            throw HookSettingsError.hooksIsNotDictionary(key: "settings.json")
+        }
+
         var hooks = out["hooks"] as? [String: Any] ?? [:]
         var added: [String] = []
 
         for event in events {
             let wanted = command(hookPath: hookPath, event: event)
+
+            // Refuse if this event exists and is not an array of dictionaries.
+            if let eventRaw = hooks[event] {
+                guard eventRaw is [[String: Any]] else {
+                    throw HookSettingsError.eventIsNotArray(event: event, key: "settings.json")
+                }
+            }
+
             var entries = hooks[event] as? [[String: Any]] ?? []
 
             let alreadyPresent = entries.contains { entry in
@@ -40,12 +68,25 @@ struct HookSettingsMerger {
     }
 
     static func remove(from settings: [String: Any], hookPath: String)
-        -> (settings: [String: Any], removedEvents: [String]) {
+        throws -> (settings: [String: Any], removedEvents: [String]) {
         var out = settings
+
+        // Refuse if hooks exists and is not a dictionary.
+        if let hooksRaw = out["hooks"], !(hooksRaw is [String: Any]) {
+            throw HookSettingsError.hooksIsNotDictionary(key: "settings.json")
+        }
+
         var hooks = out["hooks"] as? [String: Any] ?? [:]
         var removed: [String] = []
 
         for event in events {
+            // Refuse if this event exists and is not an array of dictionaries.
+            if let eventRaw = hooks[event] {
+                guard eventRaw is [[String: Any]] else {
+                    throw HookSettingsError.eventIsNotArray(event: event, key: "settings.json")
+                }
+            }
+
             guard var entries = hooks[event] as? [[String: Any]] else { continue }
             let before = entries.count
 
@@ -112,7 +153,15 @@ struct HookInstallCommand: AsyncParsableCommand {
             settings = parsed
         }
         // else: file does not exist — proceed with an empty dictionary
-        let (merged, added) = HookSettingsMerger.merge(into: settings, hookPath: displayPath)
+
+        let merged: [String: Any]
+        let added: [String]
+        do {
+            (merged, added) = try HookSettingsMerger.merge(into: settings, hookPath: displayPath)
+        } catch let error as HookSettingsError {
+            print("Error: \(error)")
+            throw ExitCode.failure
+        }
 
         if dryRun {
             print("Would copy:  \(source.path)\n         to: \(destination.path)")
@@ -185,13 +234,30 @@ struct HookUninstallCommand: AsyncParsableCommand {
         let settingsURL = home.appendingPathComponent(".claude/settings.json")
         let displayPath = "~/.claude-relay/hooks/claude-relay-state-hook.sh"
 
-        guard let data = try? Data(contentsOf: settingsURL),
-              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        // Distinguish missing file from corrupt file.
+        guard FileManager.default.fileExists(atPath: settingsURL.path) else {
             if !globals.quiet { print("No settings.json found — nothing to remove.") }
             return
         }
 
-        let (updated, removed) = HookSettingsMerger.remove(from: settings, hookPath: displayPath)
+        guard let data = try? Data(contentsOf: settingsURL),
+              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            print("""
+                Error: \(settingsURL.path) exists but cannot be parsed.
+                Fix or move the file before uninstalling the hook.
+                """)
+            throw ExitCode.failure
+        }
+
+        let updated: [String: Any]
+        let removed: [String]
+        do {
+            (updated, removed) = try HookSettingsMerger.remove(from: settings, hookPath: displayPath)
+        } catch let error as HookSettingsError {
+            print("Error: \(error)")
+            throw ExitCode.failure
+        }
+
         guard !removed.isEmpty else {
             if !globals.quiet { print("The hook was not registered — nothing to remove.") }
             return

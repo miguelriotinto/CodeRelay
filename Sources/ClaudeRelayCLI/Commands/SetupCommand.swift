@@ -17,10 +17,12 @@ struct SetupPresenter {
 
         let reason: String
         switch host.kind {
-        case .bonjour:  reason = "Bonjour — survives DHCP, ATS-safe"
-        case .lan:      reason = "LAN address — may change when the DHCP lease renews"
-        case .loopback: reason = "loopback — only reachable from this Mac"
-        case .cgnat:    reason = "Tailscale — requires TLS"
+        case .bonjour:        reason = "Bonjour — survives DHCP, ATS-safe"
+        case .lan:            reason = "LAN address — may change when the DHCP lease renews"
+        case .loopback:       reason = "loopback — only reachable from this Mac"
+        case .cgnat:          reason = "Tailscale — requires TLS"
+        case .publicHostname: reason = "public hostname — requires TLS"
+        case .ipv6:           reason = "IPv6 address — requires TLS"
         }
         out += "✓ host: \(host.host)  (\(reason))\n\n"
 
@@ -98,7 +100,19 @@ struct SetupCommand: AsyncParsableCommand {
         let response: PairCreateResponse = try await client.post(
             "/pair/create", body: PairCreateRequest(label: label))
 
-        // 4. Check the TLS guard. MUST use response.tls (the running server's
+        // 4. Validate the host by round-tripping through the shared parser.
+        // Do this AFTER minting so we have the real port/TLS config, but BEFORE
+        // printing the QR. An invalid host still burns the code, but the code is
+        // single-use and unguessable, so the trade-off favors correctness.
+        let testURL = PairingURL(host: candidate.host, port: response.wsPort,
+                                 useTLS: response.tls, code: response.code)
+        guard !testURL.urlString.isEmpty,
+              PairingURL(string: testURL.urlString) != nil else {
+            print("The host '\(candidate.host)' produces an invalid pairing URL. Pass a valid hostname or IP address.")
+            throw ExitCode.failure
+        }
+
+        // 5. Check the TLS guard. MUST use response.tls (the running server's
         // launch-time config), not on-disk config — disk may have been edited
         // without a server restart, so wsPort/tls can differ from the running
         // state. A refused setup strands a live code for up to 5 min, but the
@@ -114,13 +128,7 @@ struct SetupCommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        let url = PairingURL(host: candidate.host, port: response.wsPort,
-                             useTLS: response.tls, code: response.code)
-
-        if url.urlString.isEmpty {
-            print("The host '\(candidate.host)' produces an invalid pairing URL. Pass a valid hostname or IP address.")
-            throw ExitCode.failure
-        }
+        let url = testURL
 
         if globals.json {
             let formatter = ISO8601DateFormatter()
@@ -157,6 +165,17 @@ struct SetupCommand: AsyncParsableCommand {
             print(detector.nudge(for: .start) ?? "Two service managers are installed.")
             throw ExitCode.failure
         case .none:
+            // If the binary came from Homebrew but no service is installed yet,
+            // tell the operator to start the Homebrew service instead of
+            // installing a CLI-managed agent that will conflict later.
+            if detector.installedViaHomebrew {
+                print("""
+                    clauderelay was installed via Homebrew.
+                    Start the service with:
+                      brew services start clauderelay
+                    """)
+                throw ExitCode.failure
+            }
             print("Installing the launchd agent…")
             var load = LoadCommand()
             load.globals = globals

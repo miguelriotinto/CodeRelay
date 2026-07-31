@@ -27,6 +27,10 @@ class Clauderelay < Formula
     # the executable. Without this, the server fatal-errors on the first
     # agent-detection path (session create). See resource_bundle_accessor.swift.
     bin.install ".build/release/ClaudeRelay_ClaudeRelayServer.bundle"
+    # State hook script is located by `claude-relay hook install` via
+    # HookInstallCommand.locateBundledScript(), which checks pkgshare among
+    # other candidates.
+    pkgshare.install "Scripts/hooks/claude-relay-state-hook.sh"
   end
 
   service do

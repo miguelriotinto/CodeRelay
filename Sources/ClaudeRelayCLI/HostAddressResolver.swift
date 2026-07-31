@@ -15,6 +15,12 @@ enum HostCandidateKind: Equatable {
     /// Tailscale CGNAT (`100.64/10`). ATS has no CIDR allowlist, so plaintext
     /// `ws://` to it is blocked by Apple at the platform layer; it needs `wss://`.
     case cgnat
+    /// Public hostname (anything that is not `.local`, loopback, or RFC1918).
+    /// Requires TLS because ATS blocks plaintext to non-local hostnames.
+    case publicHostname
+    /// IPv6 address (literal or ULA). Requires TLS because ATS blocks plaintext
+    /// to IPv6 addresses outside the local allowlist.
+    case ipv6
 }
 
 struct HostCandidate: Equatable {
@@ -26,7 +32,12 @@ struct HostAddressResolver {
 
     /// True when the apps cannot reach this candidate over plaintext `ws://`.
     static func requiresTLS(_ candidate: HostCandidate) -> Bool {
-        candidate.kind == .cgnat
+        switch candidate.kind {
+        case .cgnat, .publicHostname, .ipv6:
+            return true
+        case .bonjour, .lan, .loopback:
+            return false
+        }
     }
 
     /// Picks the address that goes into the pairing QR.
@@ -48,12 +59,16 @@ struct HostAddressResolver {
 
     /// Lower is better. A `switch` rather than an ordered array so adding a
     /// `HostCandidateKind` fails to compile until its rank is decided here.
+    /// TLS-requiring kinds (.cgnat, .publicHostname, .ipv6) must never outrank
+    /// plaintext-safe ones to avoid forcing TLS when a local option exists.
     private static func rank(_ kind: HostCandidateKind) -> Int {
         switch kind {
-        case .bonjour:  return 0
-        case .lan:      return 1
-        case .loopback: return 2
-        case .cgnat:    return 3
+        case .bonjour:        return 0
+        case .lan:            return 1
+        case .loopback:       return 2
+        case .cgnat:          return 3
+        case .publicHostname: return 4
+        case .ipv6:           return 5
         }
     }
 }
@@ -79,13 +94,38 @@ struct HostAddressProbe {
         return out
     }
 
-    /// Tailscale hands out `100.64/10`; treat that range as CGNAT.
+    /// Classifies a host address string. IPv4 octets classify based on prefix;
+    /// IPv6 literals return `.ipv6`; `.local` Bonjour names return `.bonjour`;
+    /// everything else is `.publicHostname`.
     static func kind(forIPv4 ip: String) -> HostCandidateKind {
+        // IPv6 literal detection: contains colon.
+        if ip.contains(":") {
+            return .ipv6
+        }
+
+        // Bonjour .local hostname.
+        if ip.hasSuffix(".local") {
+            return .bonjour
+        }
+
+        // IPv4 literal classification.
         let parts = ip.split(separator: ".").compactMap { Int($0) }
-        guard parts.count == 4 else { return .lan }
-        if parts[0] == 100 && parts[1] >= 64 && parts[1] <= 127 { return .cgnat }
-        if parts[0] == 127 { return .loopback }
-        return .lan
+        if parts.count == 4 {
+            // Tailscale CGNAT: 100.64/10
+            if parts[0] == 100 && parts[1] >= 64 && parts[1] <= 127 { return .cgnat }
+            // Loopback: 127.0.0.0/8
+            if parts[0] == 127 { return .loopback }
+            // RFC1918: 10/8, 172.16/12, 192.168/16
+            if parts[0] == 10 { return .lan }
+            if parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31 { return .lan }
+            if parts[0] == 192 && parts[1] == 168 { return .lan }
+            // Public IPv4.
+            return .publicHostname
+        }
+
+        // Not an IPv4 literal — treat as hostname.
+        if ip == "localhost" { return .loopback }
+        return .publicHostname
     }
 
     private static func shellOutput(_ arguments: [String]) -> String? {

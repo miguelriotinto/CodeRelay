@@ -92,6 +92,13 @@ struct ServiceManagerDetector {
     func nudge(for verb: ServiceVerb) -> String? {
         switch owner {
         case .both:
+            // In the .both state, `unload` must be able to proceed — it is the
+            // remedy for the duplicate-manager situation, not a hazard. For
+            // start/stop/restart, we still warn because driving the wrong label
+            // is wrong.
+            if verb == .unload {
+                return nil  // Let it proceed to remove the CLI-installed manager.
+            }
             return """
             Two service managers are installed for clauderelay:
               • \(Self.homebrewPlistName) (Homebrew)
