@@ -4,6 +4,14 @@ import ClaudeRelayKit
 
 private let serviceLabel = "com.claude.relay"
 
+/// Prints the nudge and returns true when the caller should stop.
+/// `--quiet` suppresses the text but still blocks the wrong action.
+private func nudgeBlocks(_ verb: ServiceVerb, quiet: Bool) -> Bool {
+    guard let nudge = ServiceManagerDetector.detect().nudge(for: verb) else { return false }
+    if !quiet { print(nudge) }
+    return true
+}
+
 // MARK: - Load
 
 struct LoadCommand: AsyncParsableCommand {
@@ -14,7 +22,11 @@ struct LoadCommand: AsyncParsableCommand {
 
     @OptionGroup var globals: GlobalOptions
 
+    @Flag(name: .long, help: "Install the CLI-managed agent even if another manager owns the service")
+    var force = false
+
     func run() async throws {
+        if !force, nudgeBlocks(.load, quiet: globals.quiet) { throw ExitCode.failure }
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
         let relayDir = "\(homeDir)/.claude-relay"
         let launchAgentsDir = "\(homeDir)/Library/LaunchAgents"
@@ -156,6 +168,7 @@ struct UnloadCommand: AsyncParsableCommand {
     @OptionGroup var globals: GlobalOptions
 
     func run() async throws {
+        if nudgeBlocks(.unload, quiet: globals.quiet) { throw ExitCode.failure }
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
         let plistPath = "\(homeDir)/Library/LaunchAgents/\(serviceLabel).plist"
 
@@ -183,6 +196,7 @@ struct StartCommand: AsyncParsableCommand {
     @OptionGroup var globals: GlobalOptions
 
     func run() async throws {
+        if nudgeBlocks(.start, quiet: globals.quiet) { throw ExitCode.failure }
         try runLaunchctl(["start", serviceLabel])
         if !globals.quiet {
             print("Service started.")
@@ -201,6 +215,7 @@ struct StopCommand: AsyncParsableCommand {
     @OptionGroup var globals: GlobalOptions
 
     func run() async throws {
+        if nudgeBlocks(.stop, quiet: globals.quiet) { throw ExitCode.failure }
         try runLaunchctl(["stop", serviceLabel])
         if !globals.quiet {
             print("Service stopped.")
@@ -219,6 +234,7 @@ struct RestartCommand: AsyncParsableCommand {
     @OptionGroup var globals: GlobalOptions
 
     func run() async throws {
+        if nudgeBlocks(.restart, quiet: globals.quiet) { throw ExitCode.failure }
         try runLaunchctl(["stop", serviceLabel])
         try runLaunchctl(["start", serviceLabel])
         if !globals.quiet {
@@ -243,8 +259,22 @@ struct StatusCommand: AsyncParsableCommand {
         do {
             let response: StatusResponse = try await client.get("/status")
 
+            let owner = ServiceManagerDetector.detect().owner
             if globals.json {
-                print(OutputFormatter.formatJSON(response))
+                // Add manager field to JSON output
+                let managerString: String
+                switch owner {
+                case .homebrew:    managerString = "homebrew"
+                case .launchAgent: managerString = "launchAgent"
+                case .both:        managerString = "both"
+                case .none:        managerString = "none"
+                }
+                // Reconstruct JSON with manager field
+                let jsonData = try JSONEncoder().encode(response)
+                var dict = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] ?? [:]
+                dict["manager"] = managerString
+                let enhancedJSON = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
+                print(String(data: enhancedJSON, encoding: .utf8) ?? "{}")
             } else {
                 print(OutputFormatter.formatStatus(
                     running: response.running,
@@ -253,6 +283,14 @@ struct StatusCommand: AsyncParsableCommand {
                     uptime: response.uptime,
                     sessions: response.sessions
                 ))
+                if !globals.quiet {
+                    switch owner {
+                    case .homebrew:    print("  Managed by: Homebrew services")
+                    case .launchAgent: print("  Managed by: claude-relay (launchd agent)")
+                    case .both:        print("  Managed by: WARNING — two managers installed")
+                    case .none:        print("  Managed by: no launchd agent installed")
+                    }
+                }
             }
         } catch let error as AdminClientError where error == .serviceNotRunning {
             if globals.json {
