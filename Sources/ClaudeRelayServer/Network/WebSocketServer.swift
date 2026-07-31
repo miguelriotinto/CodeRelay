@@ -164,10 +164,7 @@ public final class WebSocketServer {
 
     /// Create SSL context if TLS is configured (both cert and key present).
     private func createSSLContextIfConfigured() throws -> NIOSSLContext? {
-        guard let certPath = config.tlsCert, !certPath.isEmpty,
-              let keyPath = config.tlsKey, !keyPath.isEmpty else {
-            return nil
-        }
+        guard config.tlsEnabled else { return nil }
         return try createSSLContext()
     }
 

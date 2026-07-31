@@ -99,6 +99,15 @@ public struct RelayConfig: Codable, Sendable {
         self.fcmProjectId = fcmProjectId
     }
 
+    // MARK: - Computed Properties
+
+    /// True when TLS is enabled (both cert and key paths are present and non-empty).
+    public var tlsEnabled: Bool {
+        guard let certPath = tlsCert, !certPath.isEmpty else { return false }
+        guard let keyPath = tlsKey, !keyPath.isEmpty else { return false }
+        return true
+    }
+
     // MARK: - Static Properties
 
     /// An instance populated with all default values.

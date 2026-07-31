@@ -10,7 +10,8 @@ final class PairCreateRouteTests: SessionManagerTestCase {
         _ method: HTTPMethod,
         _ uri: String,
         body: [String: Any]? = nil,
-        pairingStore: PairingCodeStore
+        pairingStore: PairingCodeStore,
+        config: RelayConfig = .default
     ) async -> (status: Int, json: [String: Any]?) {
         var buf: ByteBuffer?
         if let body, let data = try? JSONSerialization.data(withJSONObject: body) {
@@ -21,7 +22,8 @@ final class PairCreateRouteTests: SessionManagerTestCase {
         let response = await AdminRoutes.handle(
             method: method, uri: uri, body: buf,
             sessionManager: makeManager(), tokenStore: tokenStore,
-            pairingStore: pairingStore
+            pairingStore: pairingStore,
+            config: config
         )
         let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any]
         return (response.statusCode, json)
@@ -71,5 +73,34 @@ final class PairCreateRouteTests: SessionManagerTestCase {
         let store = PairingCodeStore()
         let (status, _) = await route(.GET, "/pair/create", pairingStore: store)
         XCTAssertEqual(status, 404)
+    }
+
+    func testPairCreateReportsTLSOnlyWhenBothCertAndKeyArePresent() async throws {
+        let store = PairingCodeStore()
+        // No TLS config.
+        let noTLS = RelayConfig()
+        let (_, jsonNoTLS) = await route(.POST, "/pair/create", pairingStore: store, config: noTLS)
+        XCTAssertEqual(jsonNoTLS?["tls"] as? Bool, false, "no cert/key → false")
+
+        // Cert set, key missing (the defect case).
+        var certOnly = RelayConfig()
+        certOnly.tlsCert = "/path/to/cert.pem"
+        let (_, jsonCertOnly) = await route(.POST, "/pair/create", pairingStore: store, config: certOnly)
+        XCTAssertEqual(jsonCertOnly?["tls"] as? Bool, false, "cert without key → false")
+
+        // Both set.
+        var both = RelayConfig()
+        both.tlsCert = "/path/to/cert.pem"
+        both.tlsKey = "/path/to/key.pem"
+        let (_, jsonBoth) = await route(.POST, "/pair/create", pairingStore: store, config: both)
+        XCTAssertEqual(jsonBoth?["tls"] as? Bool, true, "cert + key → true")
+    }
+
+    func testPairCreateReportsConfiguredWSPort() async throws {
+        let store = PairingCodeStore()
+        var cfg = RelayConfig()
+        cfg.wsPort = 12345
+        let (_, json) = await route(.POST, "/pair/create", pairingStore: store, config: cfg)
+        XCTAssertEqual(json?["wsPort"] as? Int, 12345, "wsPort comes from the injected config")
     }
 }

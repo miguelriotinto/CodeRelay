@@ -18,10 +18,19 @@ public enum PairingCode {
 
     public static let alphabet: [Character] = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
 
+    /// Set of valid characters for O(1) membership testing.
+    /// `alphabet` is kept as an array for code generation (indexing preserves order).
+    private static let alphabetSet: Set<Character> = Set(alphabet)
+
     /// Characters a user might type instead of the canonical symbol.
     private static let confusables: [Character: Character] = [
         "I": "1", "L": "1", "O": "0", "U": "V"
     ]
+
+    /// Maximum input length accepted by normalize(). Valid codes are 8 characters;
+    /// users may pass them with hyphens and whitespace. This generous cap blocks
+    /// pre-auth DoS (normalize is actor-serialized and reachable via pair_request).
+    private static let maxInputLength = 64
 
     /// Generates a fresh code using the system CSPRNG.
     ///
@@ -49,12 +58,13 @@ public enum PairingCode {
     /// Canonicalizes user input, or returns nil if it cannot be a valid code.
     /// Strips hyphens and whitespace, uppercases, and folds confusable letters.
     public static func normalize(_ input: String) -> String? {
+        guard input.count <= maxInputLength else { return nil }
         var out = ""
         out.reserveCapacity(length)
         for raw in input.uppercased() {
             if raw == "-" || raw.isWhitespace { continue }
             let ch = confusables[raw] ?? raw
-            guard alphabet.contains(ch) else { return nil }
+            guard alphabetSet.contains(ch) else { return nil }
             out.append(ch)
         }
         return out.count == length ? out : nil

@@ -90,6 +90,7 @@ let adminServer = AdminHTTPServer(
     group: group, port: config.adminPort,
     sessionManager: sessionManager, tokenStore: tokenStore,
     pairingStore: pairingStore,
+    config: config,
     rateLimiter: rateLimiter
 )
 

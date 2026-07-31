@@ -99,11 +99,11 @@ struct SetupCommand: AsyncParsableCommand {
             "/pair/create", body: PairCreateRequest(label: label))
 
         // 4. Check the TLS guard. MUST use response.tls (the running server's
-        // actual state), not on-disk config — the server may not have restarted
-        // yet, config.json may be half-written (tlsCert without tlsKey), or a
-        // read error could spuriously refuse a working setup. A refused setup
-        // strands a live code for up to 5 min, but the code is single-use and
-        // unguessable, so the trade-off favors correctness over slot pressure.
+        // launch-time config), not on-disk config — disk may have been edited
+        // without a server restart, so wsPort/tls can differ from the running
+        // state. A refused setup strands a live code for up to 5 min, but the
+        // code is single-use and unguessable, so the trade-off favors correctness
+        // over slot pressure.
         if HostAddressResolver.requiresTLS(candidate) && !response.tls {
             print("""
             The only reachable address (\(candidate.host)) needs TLS, but the server has none configured.

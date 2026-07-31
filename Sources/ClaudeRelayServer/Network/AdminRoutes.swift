@@ -24,7 +24,8 @@ enum AdminRoutes {
         body: ByteBuffer?,
         sessionManager: SessionManager,
         tokenStore: TokenStore,
-        pairingStore: PairingCodeStore
+        pairingStore: PairingCodeStore,
+        config: RelayConfig
     ) async -> AdminResponse {
         let parts = uri.split(separator: "?", maxSplits: 1)
         let path = parts.first.map(String.init) ?? uri
@@ -57,7 +58,7 @@ enum AdminRoutes {
         case (.POST, "hook"):
             return await handleHookState(components, body: body, sessionManager: sessionManager)
         case (.POST, "pair"):
-            return await handlePairCreate(components, body: body, pairingStore: pairingStore)
+            return await handlePairCreate(components, body: body, pairingStore: pairingStore, config: config)
         default:
             return .error("Not found", status: 404)
         }
@@ -108,7 +109,8 @@ enum AdminRoutes {
     private static func handlePairCreate(
         _ components: [String],
         body: ByteBuffer?,
-        pairingStore: PairingCodeStore
+        pairingStore: PairingCodeStore,
+        config: RelayConfig
     ) async -> AdminResponse {
         guard components == ["pair", "create"] else { return .error("Not found", status: 404) }
 
@@ -128,14 +130,13 @@ enum AdminRoutes {
         }
 
         let grant = await pairingStore.mint(label: label)
-        let config = (try? ConfigManager.load()) ?? .default
 
         let payload: [String: Any] = [
             "code": grant.code,
             "formattedCode": PairingCode.formatted(grant.code),
             "expiresAt": ISO8601DateFormatter().string(from: grant.expiresAt),
             "wsPort": Int(config.wsPort),
-            "tls": !(config.tlsCert?.isEmpty ?? true)
+            "tls": config.tlsEnabled
         ]
         return .json(payload)
     }
