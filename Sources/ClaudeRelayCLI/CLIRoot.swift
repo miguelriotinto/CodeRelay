@@ -18,7 +18,8 @@ struct ClaudeRelay: AsyncParsableCommand {
             TokenGroup.self,
             SessionGroup.self,
             ConfigGroup.self,
-            LogGroup.self
+            LogGroup.self,
+            HookGroup.self
         ]
     )
 }
