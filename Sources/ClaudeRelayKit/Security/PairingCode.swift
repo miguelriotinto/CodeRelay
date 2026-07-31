@@ -58,7 +58,9 @@ public enum PairingCode {
     /// Canonicalizes user input, or returns nil if it cannot be a valid code.
     /// Strips hyphens and whitespace, uppercases, and folds confusable letters.
     public static func normalize(_ input: String) -> String? {
-        guard input.count <= maxInputLength else { return nil }
+        // utf8.count, not count: String.count walks every grapheme cluster, so on a
+        // 10 MB pair_request payload the bound itself would be the expensive part.
+        guard input.utf8.count <= maxInputLength else { return nil }
         var out = ""
         out.reserveCapacity(length)
         for raw in input.uppercased() {
