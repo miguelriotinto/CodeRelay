@@ -112,9 +112,10 @@ struct SetupCommand: AsyncParsableCommand {
                              useTLS: response.tls, code: response.code)
 
         if globals.json {
+            let formatter = ISO8601DateFormatter()
             print(OutputFormatter.formatJSON(SetupJSON(
                 code: response.code, formattedCode: response.formattedCode,
-                expiresAt: response.expiresAt, host: candidate.host,
+                expiresAt: formatter.string(from: response.expiresAt), host: candidate.host,
                 port: response.wsPort, tls: response.tls, url: url.urlString)))
             return
         }
@@ -169,18 +170,32 @@ struct PairCreateResponse: Decodable {
 private struct SetupJSON: Encodable {
     let code: String
     let formattedCode: String
-    let expiresAt: Date
+    let expiresAt: String
     let host: String
     let port: UInt16
     let tls: Bool
     let url: String
 }
 
-/// Runs a shell command synchronously.
+/// Runs a shell command synchronously, capturing stderr and throwing on failure.
 private func runShell(_ arguments: [String]) throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: arguments[0])
     process.arguments = Array(arguments.dropFirst())
+
+    let pipe = Pipe()
+    process.standardError = pipe
+
     try process.run()
     process.waitUntilExit()
+
+    if process.terminationStatus != 0 {
+        let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
+        let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+        throw CLIError.shellCommandFailed(
+            command: arguments[0],
+            status: Int(process.terminationStatus),
+            stderr: errorMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
 }

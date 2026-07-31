@@ -94,6 +94,9 @@ struct HostAddressProbe {
         process.arguments = Array(arguments.dropFirst())
         let pipe = Pipe()
         process.standardOutput = pipe
+        // Deliberately discard stderr: `ipconfig getifaddr en1` fails routinely on
+        // machines with no second interface. Letting that reach the terminal on
+        // every `setup` would be noise.
         process.standardError = Pipe()
         do { try process.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()

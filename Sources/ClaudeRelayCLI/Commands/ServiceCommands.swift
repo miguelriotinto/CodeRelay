@@ -366,11 +366,15 @@ private func runLaunchctl(_ arguments: [String]) throws {
 
 enum CLIError: Error, LocalizedError {
     case launchctlFailed(String)
+    case shellCommandFailed(command: String, status: Int, stderr: String)
 
     var errorDescription: String? {
         switch self {
         case .launchctlFailed(let msg):
             return "launchctl failed: \(msg)"
+        case .shellCommandFailed(let cmd, let status, let stderr):
+            let name = (cmd as NSString).lastPathComponent
+            return "\(name) failed (exit \(status)): \(stderr)"
         }
     }
 }
