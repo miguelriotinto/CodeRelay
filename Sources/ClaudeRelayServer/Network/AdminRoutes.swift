@@ -23,7 +23,8 @@ enum AdminRoutes {
         uri: String,
         body: ByteBuffer?,
         sessionManager: SessionManager,
-        tokenStore: TokenStore
+        tokenStore: TokenStore,
+        pairingStore: PairingCodeStore
     ) async -> AdminResponse {
         let parts = uri.split(separator: "?", maxSplits: 1)
         let path = parts.first.map(String.init) ?? uri
@@ -55,6 +56,8 @@ enum AdminRoutes {
             return handleLogs(components, query: query)
         case (.POST, "hook"):
             return await handleHookState(components, body: body, sessionManager: sessionManager)
+        case (.POST, "pair"):
+            return await handlePairCreate(components, body: body, pairingStore: pairingStore)
         default:
             return .error("Not found", status: 404)
         }
@@ -91,6 +94,42 @@ enum AdminRoutes {
         let applied = await sessionManager.reportHookState(sessionId: sessionId, state: state)
         guard applied else { return .error("Unknown or inactive session", status: 404) }
         return .json(["ok": true])
+    }
+
+    // MARK: - Pairing (F11)
+
+    /// `POST /pair/create` — mint a one-time pairing code for a device to
+    /// redeem over the WebSocket. Body (optional): `{"label": "<device name>"}`.
+    ///
+    /// Localhost-only, like every admin route: whoever can reach this port is
+    /// already on the machine and could read the token store directly, so the
+    /// code adds no privilege. It exists so the *token* never has to be
+    /// displayed or transcribed.
+    private static func handlePairCreate(
+        _ components: [String],
+        body: ByteBuffer?,
+        pairingStore: PairingCodeStore
+    ) async -> AdminResponse {
+        guard components == ["pair", "create"] else { return .error("Not found", status: 404) }
+
+        var label: String?
+        if let body, let data = body.getData(at: body.readerIndex, length: body.readableBytes),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            label = (json["label"] as? String)?.trimmingCharacters(in: .whitespaces)
+            if label?.isEmpty == true { label = nil }
+        }
+
+        let grant = await pairingStore.mint(label: label)
+        let config = (try? ConfigManager.load()) ?? .default
+
+        let payload: [String: Any] = [
+            "code": grant.code,
+            "formattedCode": PairingCode.formatted(grant.code),
+            "expiresAt": ISO8601DateFormatter().string(from: grant.expiresAt),
+            "wsPort": Int(config.wsPort),
+            "tls": !(config.tlsCert?.isEmpty ?? true)
+        ]
+        return .json(payload)
     }
 
     // MARK: - Health & Status

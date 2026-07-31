@@ -26,7 +26,8 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
             uri: uri,
             body: buf,
             sessionManager: manager ?? makeManager(),
-            tokenStore: tokenStore
+            tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
 
         let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any]
@@ -73,7 +74,8 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
             uri: "/sessions",
             body: nil,
             sessionManager: manager,
-            tokenStore: tokenStore
+            tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         XCTAssertEqual(response.statusCode, 200)
         let arr = try? JSONSerialization.jsonObject(with: response.body) as? [[String: Any]]
@@ -104,7 +106,8 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
             uri: "/tokens",
             body: nil,
             sessionManager: makeManager(),
-            tokenStore: tokenStore
+            tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         XCTAssertEqual(response.statusCode, 200)
         let arr = try? JSONSerialization.jsonObject(with: response.body) as? [[String: Any]]
