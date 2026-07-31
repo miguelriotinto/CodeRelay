@@ -261,7 +261,6 @@ struct StatusCommand: AsyncParsableCommand {
 
             let owner = ServiceManagerDetector.detect().owner
             if globals.json {
-                // Add manager field to JSON output
                 let managerString: String
                 switch owner {
                 case .homebrew:    managerString = "homebrew"
@@ -269,12 +268,7 @@ struct StatusCommand: AsyncParsableCommand {
                 case .both:        managerString = "both"
                 case .none:        managerString = "none"
                 }
-                // Reconstruct JSON with manager field
-                let jsonData = try JSONEncoder().encode(response)
-                var dict = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] ?? [:]
-                dict["manager"] = managerString
-                let enhancedJSON = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
-                print(String(data: enhancedJSON, encoding: .utf8) ?? "{}")
+                print(OutputFormatter.formatJSON(response, merging: "manager", value: managerString))
             } else {
                 print(OutputFormatter.formatStatus(
                     running: response.running,
