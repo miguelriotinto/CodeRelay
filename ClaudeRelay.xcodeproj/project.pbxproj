@@ -44,6 +44,7 @@
 		8102CB9311F239F2CE8D238E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7FCEC509175BD571CE89C2 /* SettingsView.swift */; };
 		83965FD395DF96FA49CEEECD /* MicButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 508D7CD8DCA41375E993CDA2 /* MicButton.swift */; };
 		83B690BF3E8237A28F8D11A2 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE15BB470918FEC539F58286 /* QRScannerView.swift */; };
+		8A6C5D5E1162B61228D9C47C /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD5BB5ABA838DECCACC748FB /* PairingViewModel.swift */; };
 		8D0F21B7F585FDF16CF11CB7 /* AppSettingsContinuousTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFA0F04426C58852C4530707 /* AppSettingsContinuousTests.swift */; };
 		914AF6D14CDFD92EF3E05D54 /* ModifierFlagsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CE8732910310E2EB40DAF34 /* ModifierFlagsTests.swift */; };
 		938D018C46C19AA652D25CBC /* OnDeviceSpeechEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D056FB2ADC91419A5B818866 /* OnDeviceSpeechEngineTests.swift */; };
@@ -58,6 +59,7 @@
 		A9D94F9D30CF4FC923A8C6AB /* ClaudeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = 6E1855478A9ACA3614582EA5 /* ClaudeRelaySpeech */; };
 		AE20EB3A429DA20B6284117C /* TerminalContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5B785672A5F0D293AC7BF84 /* TerminalContainerView.swift */; };
 		AE54E51AD13B1D63E09B1D41 /* QRCodePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94688372C735D9B8D283F7BE /* QRCodePopover.swift */; };
+		B2BE4071D173540937E6CAF5 /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A53E6CE8384FD9002F533E1 /* PairWithHostSheet.swift */; };
 		B5928FFA4B1500FD2062C36C /* SplashScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79A7D6C757F3F4D55DDE13B0 /* SplashScreenView.swift */; };
 		B86A8371A657E020A7E507C4 /* ActiveTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BA9F1A3D0A1C24B057EF633 /* ActiveTerminalView.swift */; };
 		BB36A7F84B4D5BD57244E8AF /* ServerListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ECDDEFC7B5354014FB3BFCA /* ServerListViewModel.swift */; };
@@ -106,6 +108,7 @@
 		1604B543C9F9EFA0D4C37EE5 /* CodeRelayIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CodeRelayIcon.icns; sourceTree = "<group>"; };
 		1848CC51EF450982C0B741A1 /* TerminalPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPalette.swift; sourceTree = "<group>"; };
 		203B7144359F258D91797C4E /* ClaudeRelayApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRelayApp.swift; sourceTree = "<group>"; };
+		2BADFF233CFF54EB9CF44D84 /* host-pairing-1a */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "host-pairing-1a"; path = .; sourceTree = SOURCE_ROOT; };
 		2BC85F57C078BD1CFAAFED7C /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		2ECDDEFC7B5354014FB3BFCA /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
 		30EC88C3C7486A906F4D35E7 /* MenuBarActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarActivityTests.swift; sourceTree = "<group>"; };
@@ -113,7 +116,7 @@
 		338CD3ED0482F3AB64117CF9 /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
 		36C86DE341C6B0EC9ED1F8BB /* ServerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListView.swift; sourceTree = "<group>"; };
 		42FCDD4B9EDF313C4B8EC47F /* ClaudeRelayMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRelayMacApp.swift; sourceTree = "<group>"; };
-		45DC656CAA02FE345E387335 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
+		4A53E6CE8384FD9002F533E1 /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		508D7CD8DCA41375E993CDA2 /* MicButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicButton.swift; sourceTree = "<group>"; };
 		55B2AF59490A10B933D223D7 /* AddEditServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerView.swift; sourceTree = "<group>"; };
 		563F4F7F71211D99C0146EAC /* RecordingShortcutMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingShortcutMonitor.swift; sourceTree = "<group>"; };
@@ -157,6 +160,7 @@
 		D5CC0C27F254AABEE0CFF19D /* ClaudeRelayApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ClaudeRelayApp.entitlements; sourceTree = "<group>"; };
 		D78DC0EE4B30D251D06A848D /* AddEditServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerView.swift; sourceTree = "<group>"; };
 		D7FB5BCA00B611C22E4B93FD /* MainWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow.swift; sourceTree = "<group>"; };
+		DD5BB5ABA838DECCACC748FB /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		DD7FCEC509175BD571CE89C2 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		DE629162439FC9496A0EA4D4 /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
 		DECD505C04D50E2D42420381 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
@@ -211,6 +215,7 @@
 			isa = PBXGroup;
 			children = (
 				338CD3ED0482F3AB64117CF9 /* AddEditServerViewModel.swift */,
+				DD5BB5ABA838DECCACC748FB /* PairingViewModel.swift */,
 				2ECDDEFC7B5354014FB3BFCA /* ServerListViewModel.swift */,
 				AE187F4CD17DE18B5927964D /* SessionCoordinator.swift */,
 			);
@@ -262,6 +267,7 @@
 			children = (
 				0BA9F1A3D0A1C24B057EF633 /* ActiveTerminalView.swift */,
 				55B2AF59490A10B933D223D7 /* AddEditServerView.swift */,
+				4A53E6CE8384FD9002F533E1 /* PairWithHostSheet.swift */,
 				F3D21FADD27700A6E040337F /* QRCodeSheet.swift */,
 				EE15BB470918FEC539F58286 /* QRScannerView.swift */,
 				36C86DE341C6B0EC9ED1F8BB /* ServerListView.swift */,
@@ -289,7 +295,7 @@
 		7D4E3B0EAF3D5DCAC3E10215 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				45DC656CAA02FE345E387335 /* CodeRelay */,
+				2BADFF233CFF54EB9CF44D84 /* host-pairing-1a */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -615,6 +621,8 @@
 				160B187EE7D20A9CD01192BC /* KeyCaptureView.swift in Sources */,
 				2F089377DAA194A044572F1D /* KeyboardAccessory.swift in Sources */,
 				83965FD395DF96FA49CEEECD /* MicButton.swift in Sources */,
+				B2BE4071D173540937E6CAF5 /* PairWithHostSheet.swift in Sources */,
+				8A6C5D5E1162B61228D9C47C /* PairingViewModel.swift in Sources */,
 				7C1BDD714B65C5AEFBCD74D6 /* QRCodeComponents.swift in Sources */,
 				0D5C609EB39AC81E2A65632B /* QRCodeSheet.swift in Sources */,
 				83B690BF3E8237A28F8D11A2 /* QRScannerView.swift in Sources */,

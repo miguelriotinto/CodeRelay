@@ -1,7 +1,7 @@
 import Foundation
 
 /// Configuration for connecting to a ClaudeRelay server.
-public struct ConnectionConfig: Codable, Identifiable, Sendable {
+public struct ConnectionConfig: Codable, Identifiable, Sendable, Equatable {
     public var id: UUID
     public var name: String
     public var host: String
