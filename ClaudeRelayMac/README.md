@@ -101,7 +101,7 @@ ClaudeRelayMac/
     AppCommands.swift               -- Menu bar commands with FocusedValue routing
     LaunchAtLogin.swift             -- SMAppService wrapper
     RecordingShortcutMonitor.swift  -- Global keyboard shortcut for speech recording
-    KeyCaptureInterceptor.swift     -- Local NSEvent monitor (+ sendEvent swizzle fallback) for the Settings shortcut recorder
+    KeyCaptureInterceptor.swift     -- Local NSEvent monitor for the Settings shortcut recorder (+ a diagnostic-only sendEvent swizzle)
 ```
 
 Shared types that previously lived here (`TerminalViewModel`, `ServerStatusChecker`,

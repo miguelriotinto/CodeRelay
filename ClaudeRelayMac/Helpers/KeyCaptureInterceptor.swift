@@ -59,10 +59,11 @@ final class KeyCaptureInterceptor {
     }
 }
 
-/// Swizzle-based interceptor that runs BEFORE local monitors. Local monitors
-/// already see keyDowns before `performKeyEquivalent:` kicks in, so the swizzle
-/// is a belt-and-suspenders fallback for cases (e.g. child panels) where local
-/// monitors might miss events.
+/// Diagnostic-only `sendEvent:` swizzle, installed once at launch from
+/// `AppDelegate`. It sees key events before local monitors, but `crm_sendEvent`
+/// only logs them (and only while a capture is active) and then forwards to the
+/// original IMP — it never invokes `KeyCaptureInterceptor`'s handler, so it is
+/// **not** a capture fallback. Capture happens solely via the local monitor.
 @objc final class KeyCaptureSwizzle: NSObject {
     @MainActor
     static func install() {
