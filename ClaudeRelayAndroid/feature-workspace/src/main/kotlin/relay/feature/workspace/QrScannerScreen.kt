@@ -21,9 +21,12 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -155,6 +158,39 @@ fun QrScanner(
                 }
                 Button(onClick = onCancel) { Text("Cancel") }
             }
+        }
+    }
+}
+
+/**
+ * [QrScanner] with an always-visible Cancel affordance overlaid on the live
+ * camera, for full-screen (non-sheet) hosts like a nav destination. Mirrors the
+ * session-attach [QrScannerSheet]'s Cancel overlay so a granted-permission camera
+ * is never dismissable only by the system-back gesture.
+ *
+ * @param onDecoded see [QrScanner] — return true to accept+latch
+ * @param onCancel invoked by the overlay Cancel button (and reused as the
+ * scanner's own cancel)
+ */
+@Composable
+fun QrScannerFullScreen(
+    onDecoded: (String) -> Boolean,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier.fillMaxSize()) {
+        QrScanner(
+            onDecoded = onDecoded,
+            onCancel = onCancel,
+            modifier = Modifier.matchParentSize(),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            FilledTonalButton(onClick = onCancel) { Text("Cancel") }
         }
     }
 }

@@ -197,9 +197,9 @@ fun RelayNavGraph(
             // prefilled sheet — the exact same consumer the deep-link path uses.
             // Non-pairing QRs are rejected by the scanner (onDecoded returns false),
             // so an unrelated code never dismisses the camera.
-            relay.feature.workspace.QrScanner(
+            relay.feature.workspace.QrScannerFullScreen(
                 onDecoded = { raw ->
-                    val url = relay.protocol.PairingURL.parse(raw) ?: return@QrScanner false
+                    val url = relay.protocol.PairingURL.parse(raw) ?: return@QrScannerFullScreen false
                     onPairScanned(url)
                     navController.popBackStack(Routes.SERVERS, inclusive = false)
                     true
