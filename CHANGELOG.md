@@ -6,6 +6,186 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-08-01 — Device pairing via QR
+
+Ships the F11 device-pairing feature across all four targets (herdr F11, 1a/1b/1c).
+
+### Server + CLI
+
+- **`claude-relay setup`** mints a single-use pairing code (8 chars Crockford
+  Base32 = 40 bits, 5-minute TTL) via `POST /pair/create` on the localhost-only
+  admin API and renders it as a terminal QR encoding
+  `clauderelay://pair?host=&port=&tls=&code=`. `setup` also starts the service
+  using whichever manager owns it.
+- **Pre-auth redemption** — the device sends `pair_request` and receives
+  `pair_success{token, tokenId, label}`, then performs the normal
+  `auth_request` with the minted token, all on one socket inside the existing
+  10 s auth timer. Pairing never sets `isAuthenticated`, so there remains
+  exactly one path to an authenticated connection.
+- **Abuse bounds** — a bad code is a `RateLimiter.recordFailure(ip:)` identical
+  to a bad token (10 attempts / 60 s), plus a per-connection cap of 3 mirroring
+  `maxAuthAttempts`. `PairingCodeStore` is in-memory, constructed once in
+  `main.swift`, and injected with no default parameter.
+- **Revocable per-device tokens** — the minted token is labeled
+  `"<device> (paired)"` (or the operator's `setup --label`), sanitised
+  identically on both the mint and redeem paths: control characters and
+  newlines stripped, capped at 60 scalars.
+- **Service manager awareness** — `ServiceManagerDetector` resolves whether
+  `homebrew.mxcl.clauderelay` or `com.claude.relay` owns the server, and every
+  service command nudges with the correct command instead of driving the wrong
+  label. `load` refuses to create a second manager without `--force`.
+  Previously `start`/`stop`/`restart`/`unload` failed outright on a Homebrew
+  install.
+
+### Clients (iOS, macOS, Android)
+
+- QR scanning on iOS and Android; macOS gets both a scanner and manual code
+  entry (`Cmd+Shift+Q`). `PairingURL` + `PairingCode` live in ClaudeRelayKit so
+  validation of hostile QR input happens in one tested place, shared by all
+  three clients.
+
+## [0.3.16] - 2026-07-29 — Server-side ownership visibility
+
+### Server
+
+- **`auth_success` now carries `tokenId`**, so a client can name its own
+  ownership boundary instead of inferring it.
+- **`session_list` is logged** (token truncated to 8 chars). This is the answer
+  to "which sessions does this client own" — the question behind every
+  empty-pane report — and five fixes shipped without it being visible from the
+  server side.
+
+### Clients
+
+- Six accumulated session-ownership fixes (iOS build 174, macOS build 97,
+  Android 0.3-m43): the server is now authoritative for session ownership with
+  no local owned-set (#41); lost sessions are classified by `tokenId` so a
+  relaunch no longer wipes owned sessions (#39, #40); the launch session fetch
+  is no longer lost to the debounce (#42); a just-established socket is not
+  reconnected on foreground (#43); and connect→auth→list is one
+  uninterruptible handshake (#44).
+- **macOS**: fixed a perpetual connection-dot blink that pinned Core Animation.
+
+## [0.3.15] - 2026-07-25 — Working-state detection from the spinner line
+
+### Server
+
+- **Detect Claude Code's working state from the live spinner line** (a gerund
+  followed by an elapsed-timer paren) rather than the "esc to interrupt"
+  footer, which was not reliably present.
+
+## [0.3.14] - 2026-07-25 — Auth desync and reconnect-storm fixes
+
+### Clients
+
+- **Treat auth `error(400)` as idempotent success.** `authenticate()` was the
+  only `SessionController` method missing a `case .error` branch, so a server
+  error on the auth path fell through to `default` and threw
+  `unexpectedResponse(typeString)` = `"error"` — surfacing on iOS as
+  "Unexpected server response: error" and blocking session creation. A 400
+  "Already authenticated" means the socket *is* authenticated (a client/server
+  auth-state desync), so the client now adopts the authed state; other codes
+  (429/401/500) surface their real message. Mirrored in the Kotlin client.
+- **macOS: stopped a runaway status-poll reconnect storm.** A dead
+  `MainWindow.serverList` `@StateObject` that was never referenced kept a 5 s
+  status poller alive forever.
+
+### Server
+
+- Excluded the creator's own steal observer on `session_create`.
+
+## [0.3.13] - 2026-07-24 — herdr feature set + Android FCM
+
+### Server
+
+- **F5 — broader agent support**: Copilot CLI, Cursor Agent, and Droid join the
+  `CodingAgent` registry (#32).
+- **F6 — hook-based state authority**: an optional local Claude Code hook
+  POSTs `{sessionId, state}` to the localhost-only `POST /hook/state`,
+  overriding screen detection for a 10 s TTL. The hook reports state only —
+  agent identity stays owned by the foreground poll (#33).
+- **F11 (first half) — two-way clipboard**: `OSC52Parser` runs over the raw PTY
+  stream and forwards decoded clipboard writes as `clipboard_update`, so tmux,
+  vim, and kitty get clipboard-to-device sync with no per-tool integration
+  (#35).
+- **F1/F2 — push notifications and workspace rollups**: APNs/FCM delivery with
+  per-session ordered edge detection (#30), and server `cwd`→git-root mapping
+  driving grouped sidebars (#29). Per-device APNs topic so iOS and macOS both
+  receive push (#31).
+
+### Clients
+
+- **iOS/macOS**: F3 session/layout persistence and restore (#34), the F5 agent
+  palette, and F11 clipboard writes.
+- **Android**: FCM push (messaging service, token registration, notifications),
+  F5, F3, and `applicationId` set to `com.singular.coderelay` for Firebase.
+
+### CI
+
+- macOS app builds on `macos-26` (Xcode 26 SDK) for `ToolbarSpacer` (#36); the
+  Swift job is capped at 20 min so a hung test fails fast (#37).
+
+## [0.3.12] - 2026-07-22 — Agent-cluster flicker fix
+
+### Server
+
+- **The OSC terminal-title path could evict a running agent.** Claude Code
+  continuously rewrites its window title while working, with no "claude"
+  keyword; two such titles between foreground-process polls tripped the shared
+  exit-debounce counter and fired `exitAgent()`, pushing `agent=nil` to
+  clients — so the sidebar agent cluster and tab color vanished and reappeared
+  every few seconds. The title path now drives agent **entry** only; exit is
+  owned solely by the foreground-process poll (kernel process-tree ground
+  truth).
+
+### Clients
+
+- The idle/"Waiting" state color changes from teal to yellow across the sidebar
+  dot, activity dot, state pill, and session tab.
+- Session state indicators redesigned across all clients, with an animated
+  agent sparkle in the sidebar row (#28).
+
+### Packaging
+
+- **The Homebrew formula now installs the `ClaudeRelayServer` resource bundle.**
+  Without it `session_create` crashed the server, while `status` and `health`
+  still passed.
+
+## [0.3.11] - 2026-07-22 — Uptime and reply-routing fixes
+
+### Server
+
+- **`/status` uptime no longer always reports ~0 s.** `AdminRoutes.startTime`
+  was a lazily-initialized `Date()` set on the first `/status` call; it now
+  reads the kernel process start time via CPTYShim, matching `PTYSession`.
+
+### iOS
+
+- **Fixed the "unexpected server response: auth_success" popup on connect** by
+  scoping every `SessionController` command waiter to its own reply type, so a
+  concurrent `auth_success` can no longer be captured by a
+  `createSession`/`attach`/`resume` waiter.
+
+## [0.3.10] - 2026-07-22 — Agent-state detection across all clients
+
+### Server
+
+- **Manifest-driven agent state detector** with bundled per-agent manifests and
+  a screen-detection arbiter, plus the herdr screen-region slicers and
+  opencode support. Produces idle/working/blocked/unknown per session.
+
+### Clients
+
+- iOS, macOS, and Android surface the agent state and window title in the
+  sidebar; Android also shows rich agent state in its compact session tabs.
+- Fixed flagging the active session as unseen, bounded emulator scrollback, and
+  pinned the SwiftTerm floor to 1.10.0.
+
+### Dependencies
+
+- WhisperKit bumped to 1.0.0 (drops swift-transformers/jinja). The release CI
+  build is scoped to server products so it skips the WhisperKit compile.
+
 ## [0.3.9] - 2026-07-08 — Refresh actually repaints Claude Code
 
 ### Server

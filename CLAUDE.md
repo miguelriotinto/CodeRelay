@@ -101,7 +101,7 @@ The iOS/macOS apps scope plaintext `ws://` to RFC1918 / loopback / `.local` / li
 ### Config Validation
 
 Two-layer validation:
-- **CLI client-side** (`ConfigSetCommand`): rejects unknown keys, bad port ranges, non-numeric values, invalid log levels, and negative `maxSessionsPerToken` before shipping to the admin API. `claude-relay config validate` runs the same checks against the saved file without touching the server.
+- **CLI client-side** (`ConfigSetCommand`): rejects unknown keys, bad port ranges, non-numeric values, invalid log levels, and negative `maxSessionsPerToken` before shipping to the admin API. `claude-relay config validate` is a **narrower, server-dependent** check: it fetches `/config` over the admin API (so it needs the service running) and only verifies that both ports parse into 1–65535 and that `wsPort != adminPort`. It does not re-run the `config set` validations, and its port bound is looser than the server's own 1024–65535.
 - **Server-side** (`AdminRoutes.applyConfigValue()`): ports must be 1024–65535, `scrollbackSize` >= 1024, `detachTimeout` >= 0, `maxSessionsPerToken` >= 0, `logLevel` one of trace/debug/info/warning/error; push bools (`pushEnabled`/`pushNotifyOnFinished`/`apnsUseSandbox`) must parse as bool, and `apnsKeyPath`/`fcmServiceAccountPath` must be readable regular files.
 
 The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments. `ConfigManager.load()` returns `RelayConfig.default` (logging to stderr) when `config.json` is corrupt, so a bad edit never takes launchd down.
@@ -115,7 +115,7 @@ Both apps share `SharedSessionCoordinator` (in ClaudeRelayClient) for session li
 - **WorkspaceView** (iOS) / **MainWindow** (macOS) — NavigationSplitView: sidebar (sessions) + detail (terminal)
 - **SharedSessionCoordinator** — Cross-platform: manages auth, session lifecycle, caches TerminalViewModels, routes I/O, handles recovery
 - **SessionCoordinator** (per platform) — Thin subclass: iOS uses default; macOS adds sleep/wake recovery and tab navigation
-- **OnDeviceSpeechEngine** — Offline speech-to-text via WhisperKit (CoreML/ANE), with LLM-based text cleanup and optional cloud prompt enhancement via Anthropic Haiku
+- **OnDeviceSpeechEngine** — Offline speech-to-text via WhisperKit (CoreML/ANE), with LLM-based text cleanup and optional cloud prompt enhancement via Bedrock Haiku
 
 ### Connection Health & Quality Monitoring
 
@@ -130,9 +130,9 @@ Both apps share `SharedSessionCoordinator` (in ClaudeRelayClient) for session li
 
 ### Server-Side Activity Monitoring
 
-The server monitors all PTY output continuously (even for detached sessions) via `SessionActivityMonitor`. It detects coding agent entry/exit and output silence, maintaining an `ActivityState` per session. Agents are identified via the `CodingAgent` registry (process-name matching + OSC title keywords); currently ships with Claude Code and Codex. State changes are pushed to clients via `sessionActivity` WebSocket messages. This ensures background tabs correctly reflect agent running/idle state even when the client is attached to a different session.
+The server monitors all PTY output continuously (even for detached sessions) via `SessionActivityMonitor`. It detects coding agent entry/exit and output silence, maintaining an `ActivityState` per session. Agents are identified via the `CodingAgent` registry (process-name matching + OSC title keywords); currently ships with Claude Code, Codex, opencode, Copilot CLI, Cursor Agent, and Droid (see `CodingAgent.all`, each with a bundled manifest under `Sources/ClaudeRelayServer/Resources/Agents/`). State changes are pushed to clients via `sessionActivity` WebSocket messages. This ensures background tabs correctly reflect agent running/idle state even when the client is attached to a different session.
 
-**Performance**: The foreground-process poll runs at 2 s when an agent is active and slows to 5 s when the session is detached. ANSI regex processing is skipped on the hot output path when no agent is running. `CodingAgent.processNames` is pre-lowercased at init so polling doesn't re-allocate strings on every tick.
+**Performance**: The foreground-process poll runs at 1 s while a client is attached (`PTYSession.attachedPollCadence`) and slows to 5 s once the session is detached (`detachedPollCadence`); `SessionManager` switches cadence on attach/detach. ANSI regex processing is skipped on the hot output path when no agent is running. `CodingAgent.processNames` is pre-lowercased at init so polling doesn't re-allocate strings on every tick.
 
 **Hook-based state authority (F6)**: An optional local Claude Code hook can report authoritative lifecycle state, overriding screen detection while fresh. `PTYSession` injects `CLAUDE_RELAY_SESSION_ID` + `CLAUDE_RELAY_ADMIN_PORT` into each session's shell env (admin port threaded through the default `PTYFactory` closure; the `PTYFactory` typealias is unchanged so test mocks are unaffected). The shipped hook (`Scripts/hooks/claude-relay-state-hook.sh`) POSTs `{sessionId, state}` to the localhost-only `POST /hook/state` admin route → `SessionManager.reportHookState` → `SessionActivityMonitor.applyHookState`. Hook state is trusted for a 10 s TTL (`hookStateTTL`); `updateScreenDetection` no-ops while a fresh hook state exists, then screen detection resumes automatically when it goes stale. The hook reports **state only** — agent *identity* stays owned by the foreground poll, so a hook can never assert or evict an agent. With no hook installed, behavior is identical to screen-detection-only. Install docs: `Scripts/hooks/README.md`.
 

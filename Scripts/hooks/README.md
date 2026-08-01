@@ -41,6 +41,11 @@ Event → state mapping:
 | `Notification`                          | `blocked`      |
 | `Stop`, `SubagentStop`                  | `idle`         |
 
+The script handles all six events, but `hook install` registers only
+`UserPromptSubmit`, `PreToolUse`, `Notification`, and `Stop` — those four are
+sufficient to drive every state. Add `PostToolUse`/`SubagentStop` by hand if you
+want them.
+
 The hook reports **state only** — the server still owns agent *identity* via
 process detection, so the hook can never mislabel which agent is running.
 
@@ -51,7 +56,8 @@ claude-relay hook install
 ```
 
 That copies the script to `~/.claude-relay/hooks/`, makes it executable, backs up
-`~/.claude/settings.json`, and registers the four lifecycle events — adding only
+`~/.claude/settings.json` (only when it actually has an event to add), and
+registers the four lifecycle events — adding only
 what is missing, so it is safe to re-run and never clobbers hooks you already
 have. Use `--dry-run` to preview, and `claude-relay hook uninstall` to reverse it.
 

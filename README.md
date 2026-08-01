@@ -14,9 +14,14 @@ A remote terminal relay server and CLI over WebSocket, enabling secure terminal 
 - **iOS client** - Native iOS app with terminal emulation, session tabs, and coding agent detection
 - **macOS client** - Native macOS app with menu-bar persistence, full keyboard shortcuts, and iOS feature parity
 - **Android client** - Native Android app (Jetpack Compose) with a real VT100 terminal, session tabs, recovery, and on-device speech (in test-build distribution; see [ClaudeRelayAndroid](ClaudeRelayAndroid/))
-- **Multi-agent detection** - Pluggable coding agent registry (Claude Code, Codex) with per-agent tab colors
+- **Multi-agent detection** - Pluggable coding agent registry (Claude Code, Codex, opencode, Copilot CLI, Cursor Agent, Droid) with per-agent tab colors
+- **Device pairing** - `claude-relay setup` prints a QR carrying a single-use, 5-minute pairing code; the app redeems it for its own revocable per-device token
+- **Push notifications** - Optional APNs/FCM alerts when an agent finishes or needs input, coalesced per workspace (off by default)
+- **Clipboard bridging** - Two-way: device→host image paste, and host→device via OSC 52, so tmux/vim/kitty copies land on the device clipboard
+- **Workspace rollups** - Sessions group by git root in the sidebar with an aggregate status badge
 - **On-device speech engine** - Offline speech-to-text via WhisperKit (CoreML/ANE) with LLM text cleanup (iOS + macOS)
-- **Cloud prompt enhancement** - Optional rewriting of transcriptions into clear prompts via Anthropic Haiku
+- **Continuous listening** - Optional always-on mode with a wake word ("Claude"), on-device VAD and turn-end detection
+- **Cloud prompt enhancement** - Optional rewriting of transcriptions into clear prompts via Bedrock Haiku
 - **Admin API** - Localhost-only HTTP API for service management and monitoring (64 KB request body cap)
 - **Config validation** - Two-layer validation: CLI client-side (fails fast on typos/bad values) + server-side (authoritative)
 - **Per-token session cap** - Configurable `maxSessionsPerToken` (default 50) prevents runaway clients from exhausting server resources
@@ -33,7 +38,7 @@ The macOS server/CLI and the two Apple clients are built from one Swift package;
 - **ClaudeRelayClient** - Swift client library for building custom clients (includes shared `SessionCoordinating` protocol and `SessionNaming` helpers)
 - **ClaudeRelaySpeech** - Cross-platform on-device speech pipeline shared by both Apple apps (WhisperKit + LLM cleanup + `SpeechEngineState`)
 - **ClaudeRelayApp** - iOS application with terminal emulation
-- **ClaudeRelayMac** (branded "ClaudeDock") - Native macOS application with menu-bar persistence and full feature parity with iOS
+- **ClaudeRelayMac** - Native macOS application with menu-bar persistence and full feature parity with iOS (both apps ship as **Code[Relay]**)
 
 **Android client (separate Gradle project, `ClaudeRelayAndroid/`):**
 
@@ -44,7 +49,7 @@ The macOS server/CLI and the two Apple clients are built from one Swift package;
 ### Homebrew (macOS)
 
 ```bash
-brew install miguelriotinto/claude-relay/clauderelay
+brew install miguelriotinto/clauderelay/clauderelay
 ```
 
 ### From Source
@@ -66,7 +71,7 @@ Binaries will be in `.build/release/`:
 ### 1. Install and pair
 
 ```bash
-brew install miguelriotinto/claude-relay/clauderelay
+brew install miguelriotinto/clauderelay/clauderelay
 claude-relay setup
 ```
 
@@ -78,16 +83,15 @@ your auth token. The app exchanges it over the WebSocket for its own per-device
 token, which shows up in `claude-relay token list` under the device's name and
 can be revoked individually.
 
-> **Scanning lands with the next app release.** The host side ships now; the
-> iOS/Android scanners and macOS code entry are in the next client update. Until
-> then, connect the old way:
+Scan it from the app's server list: iOS and Android open a camera scanner, and
+macOS offers both a scanner and manual code entry (`Cmd+Shift+Q`).
+
+> **Prefer to connect manually?** Mint a token instead and paste it into the
+> app's Add Server sheet (labelled **Auth Token** on iOS, **Token** on macOS):
 >
 > ```bash
 > claude-relay token create --label "my-device"
 > ```
->
-> Copy the generated token and paste it into the token field of the app's Add
-> Server sheet (labelled **Auth Token** on iOS, **Token** on macOS).
 
 ### 2. Optional: authoritative agent state
 
@@ -157,10 +161,10 @@ claude-relay config set adminPort 9100               # Set admin API port
 claude-relay config set bindAll false                # Restrict to 127.0.0.1 (default is 0.0.0.0, all interfaces)
 claude-relay config set maxSessionsPerToken 50       # Cap sessions per token (0 = unlimited)
 claude-relay config set logLevel info                # trace/debug/info/warning/error
-claude-relay config validate                         # Validate the saved config file
+claude-relay config validate                         # Sanity-check the running server's config
 ```
 
-`config set` validates keys and value ranges locally before forwarding to the admin API — unknown keys, out-of-range ports, and bad log levels are rejected immediately. `config validate` runs the same checks against `~/.claude-relay/config.json` without needing the server to be running.
+`config set` validates keys and value ranges locally before forwarding to the admin API — unknown keys, out-of-range ports, and bad log levels are rejected immediately. `config validate` is a lighter, separate check: it reads the config back over the admin API (so the service must be running) and only verifies that both ports parse into range and that `wsPort` and `adminPort` differ.
 
 ## Configuration
 
@@ -176,7 +180,8 @@ Configuration is stored at `~/.claude-relay/config.json`:
   "tlsKey": "~/.claude-relay/certs/key.pem",
   "logLevel": "info",
   "maxSessionsPerToken": 50,
-  "bindAll": true
+  "bindAll": true,
+  "pushEnabled": false
 }
 ```
 
@@ -190,6 +195,13 @@ Configuration is stored at `~/.claude-relay/config.json`:
 - `logLevel` - Logging verbosity: "trace", "debug", "info", "warning", "error" (default: "info")
 - `maxSessionsPerToken` - Maximum active (non-terminal) sessions per token; 0 = unlimited (default: 50)
 - `bindAll` - When `true` (default), the WebSocket server binds `0.0.0.0` — it accepts connections from any interface (loopback, LAN, VPN, bridges). Set to `false` to bind `127.0.0.1` only. Startup logs an explicit warning when `bindAll=true` without TLS, because tokens travel in plaintext on the bound network.
+
+**Push notification options** (all off/unset by default — see [Push Notifications](#push-notifications)):
+- `pushEnabled` - Master switch for sending pushes (default: `false`). Device tokens are accepted and stored even while this is off, so enabling it later needs no client reconnect.
+- `pushNotifyOnFinished` - Server-wide default for "notify when an agent finishes"; a per-device preference overrides it (default: `false`)
+- `apnsKeyPath` / `apnsKeyId` / `apnsTeamId` / `apnsBundleId` - APNs auth-key credentials for iOS/macOS delivery. `apnsKeyPath` must point at a readable `.p8`.
+- `apnsUseSandbox` - Target the APNs sandbox host, for development builds (default: `false`)
+- `fcmServiceAccountPath` / `fcmProjectId` - Firebase service-account JSON path and project id for Android delivery
 
 A corrupt `config.json` is tolerated: the server logs to stderr and falls back to `RelayConfig.default` so launchd-managed services stay up. App-side, `terminalScrollbackLines` (iOS + macOS Settings, default 5000, max 25000) controls the client's in-memory terminal history independent of the server's ring buffer.
 
@@ -248,7 +260,7 @@ swift build
 ### Run Tests
 
 ```bash
-swift test                                    # All SPM tests (700+ across 5 targets)
+swift test                                    # All SPM tests (1000+ across 5 targets)
 swift test --filter ClaudeRelayKitTests       # Specific suite
 swift test --filter testTokenGeneration       # Specific test
 ```
@@ -346,20 +358,25 @@ All WebSocket messages use `MessageEnvelope` with JSON encoding:
 ```
 
 **Client Messages:**
+- `pair_request` - Redeem a single-use pairing code for a per-device token (sent **pre-auth**)
 - `auth_request` - Authenticate with token (includes optional `protocolVersion`)
-- `session_create` - Create new session (optional `name`)
+- `session_create` - Create new session (optional `name`, `cols`, `rows`)
 - `session_attach` - Attach to session
-- `session_resume` - Resume detached session with scrollback replay
+- `session_resume` - Resume detached session with scrollback replay (optional `skipReplay`)
 - `session_detach` - Detach from session
 - `session_terminate` - Terminate a session
 - `session_list` - List own sessions
 - `session_list_all` - List sessions across all tokens (for cross-device attach)
 - `session_rename` - Rename a session
+- `refresh` - Ask the server to re-push current session state
 - `resize` - Resize terminal
 - `paste_image` - Paste image data (base64)
+- `register_push_token` - Register/update this device's push token and per-device preferences
+- `unregister_push_token` - Remove this device's push registration
 - `ping` - Keep-alive ping
 
 **Server Messages:**
+- `pair_success` - Pairing code redeemed; carries the minted `token`, `tokenId`, and `label`
 - `auth_success` / `auth_failure` - Authentication result (includes optional `protocolVersion`)
 - `session_created` - Session creation result
 - `session_attached` - Attachment confirmation
@@ -376,6 +393,8 @@ All WebSocket messages use `MessageEnvelope` with JSON encoding:
 - `session_list_all_result` - List of all sessions
 - `resize_ack` - Terminal resize acknowledged
 - `paste_image_result` - Image paste success/failure
+- `clipboard_update` - Host clipboard write captured from the PTY via OSC 52 (active session only)
+- `push_token_ack` - Push registration accepted/rejected
 - `pong` - Keep-alive response
 - `error` - Error message
 
@@ -401,6 +420,8 @@ The Admin HTTP API (default port 9100) binds to `127.0.0.1` only. No authenticat
 | `GET` | `/config` | Get current configuration |
 | `PUT` | `/config/{key}` | Update config value (body: `{"value": ...}`) |
 | `GET` | `/logs` | Get recent logs (query: `?lines=N`, max 2000) |
+| `POST` | `/pair/create` | Mint a single-use pairing code (used by `claude-relay setup`) |
+| `POST` | `/hook/state` | Report authoritative agent lifecycle state (body: `{"sessionId": "...", "state": "..."}`) |
 
 All responses are JSON. Token creation returns `201 Created`; all other successes return `200 OK`.
 

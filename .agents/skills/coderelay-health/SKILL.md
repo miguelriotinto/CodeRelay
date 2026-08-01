@@ -11,11 +11,11 @@ skill — report and let the user decide.
 ## Checks
 
 ### Server
-1. `Codex-relay status` (or `swift run Codex-relay status`) → running? version? uptime? sessions?
+1. `claude-relay status` (or `swift run claude-relay status`) → running? version? uptime? sessions?
 2. `curl -s http://127.0.0.1:9100/health` → ok?
 3. Version coherence: status version vs `Formula/clauderelay.rb` vs the version
    constant in `Sources/`. The Homebrew Cellar symlink
-   (`ls -l /opt/homebrew/bin/Codex-relay-server`) encodes the built commit —
+   (`ls -l /opt/homebrew/bin/claude-relay-server`) encodes the built commit —
    compare to the latest release commit.
 
 ### Android
