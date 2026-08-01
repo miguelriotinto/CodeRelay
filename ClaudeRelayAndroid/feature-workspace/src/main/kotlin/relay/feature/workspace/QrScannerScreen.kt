@@ -27,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -175,6 +176,13 @@ private fun CameraPreview(
     // Latch so we accept at most one QR (Swift `hasScanned`).
     val scanned = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
+    // Shut the executor down when the scanner leaves composition — otherwise its
+    // thread leaks each time the camera is opened (now reachable from two entry
+    // points: session-attach and pairing).
+    DisposableEffect(Unit) {
+        onDispose { analysisExecutor.shutdown() }
+    }
+
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
@@ -228,17 +236,23 @@ private class QrAnalyzer(
         val input = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
         scanner.process(input)
             .addOnSuccessListener { barcodes ->
+                // Single-fire rests on ML Kit's success listeners defaulting to the
+                // main thread + ImageAnalysis STRATEGY_KEEP_ONLY_LATEST closing each
+                // proxy before the next frame is delivered: at most one decoded
+                // result is handled at a time, so `scanned.get()` (set on accept)
+                // gates every subsequent frame. The `for` loop's own guard stops a
+                // multi-code frame from firing `onDecoded` twice.
                 for (barcode in barcodes) {
+                    if (scanned.get()) break
                     if (barcode.format != Barcode.FORMAT_QR_CODE) continue
                     val value = barcode.rawValue ?: continue
-                    // Only latch if the caller accepts this payload — and check the
-                    // latch first so a burst of frames can't double-fire onDecoded.
-                    if (!scanned.get() && onDecoded(value)) {
-                        if (scanned.compareAndSet(false, true)) {
-                            vibrate(context)
-                        }
+                    // `onDecoded` decides AND acts (navigate/attach); a `false`
+                    // (unrecognized QR) leaves the latch clear so scanning continues.
+                    if (onDecoded(value)) {
+                        scanned.set(true)
+                        vibrate(context)
+                        break
                     }
-                    if (scanned.get()) break
                 }
             }
             .addOnFailureListener { Log.w(TAG, "Barcode scan failed", it) }
