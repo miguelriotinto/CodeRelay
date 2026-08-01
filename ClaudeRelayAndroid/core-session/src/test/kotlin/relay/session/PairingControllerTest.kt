@@ -1,5 +1,8 @@
 package relay.session
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -175,6 +178,50 @@ class PairingControllerTest {
 
         // Assert disconnect was called
         assertTrue(callLog.contains("disconnect"))
+
+        // Assert NOTHING persisted
+        assertEquals(0, store.savedConfigs.size)
+        assertEquals(0, tokenStore.tokens.size)
+    }
+
+    @Test
+    fun `external coroutine cancellation disconnects and propagates CancellationException`() = runTest {
+        val callLog = mutableListOf<String>()
+        val connection = FakePairingConnection(callLog)
+        val store = FakeConnectionStore()
+        val tokenStore = FakeTokenStore()
+
+        // Script NO reply (connection will wait indefinitely)
+        connection.scriptedReply = null
+
+        val controller = PairingController(
+            store = store,
+            tokenStore = tokenStore,
+            deviceName = "TestDevice",
+            platform = "android",
+            connectionFactory = { connection },
+            timeoutMs = 10_000L // Long timeout so we control cancellation timing
+        )
+
+        val url = PairingURL.parse("clauderelay://pair?host=test.local&port=9200&tls=0&code=CANCEL12")!!
+
+        // Launch pair() in a child coroutine
+        val job = launch {
+            controller.pair(url)
+        }
+
+        // Wait a moment for the job to reach the awaiting state (after send, before reply)
+        kotlinx.coroutines.delay(50L)
+
+        // Cancel the job
+        job.cancel()
+        job.join()
+
+        // Assert disconnect was called despite cancellation
+        assertTrue(callLog.contains("disconnect"), "disconnect() must run even when cancelled")
+
+        // Assert the job was cancelled (CancellationException propagated, not remapped)
+        assertTrue(job.isCancelled, "Job must be cancelled, not completed with PairingError")
 
         // Assert NOTHING persisted
         assertEquals(0, store.savedConfigs.size)

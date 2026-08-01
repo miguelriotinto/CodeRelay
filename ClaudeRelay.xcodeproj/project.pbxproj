@@ -19,6 +19,7 @@
 		1B1622962D01C4FA694625F2 /* AppSettingsBedrockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4048D36660C870B9573724 /* AppSettingsBedrockTests.swift */; };
 		208847B59339D16E6FE9C702 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAE5CC46536E8CA8C49EB434 /* QRScannerView.swift */; };
 		20A4769EBD9A6D1D8634B31D /* WhisperHallucinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73B3DBEA35055556AD1BCA31 /* WhisperHallucinationTests.swift */; };
+		22A88F3B3F85341BF17DC47F /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB871A678305AA3B049AABBE /* PairWithHostSheet.swift */; };
 		299B416F1397BA56DE9F1BF6 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 2FA8AF8C498C1695C7EDA79A /* SwiftTerm */; };
 		2BD76AD6A79D0ABC114DFF65 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B9B72D775E497F2FB66C38A /* AppCommands.swift */; };
 		2F089377DAA194A044572F1D /* KeyboardAccessory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03CCD809DA85DE7858FE6A87 /* KeyboardAccessory.swift */; };
@@ -69,6 +70,7 @@
 		CC50C840F4CB8B067339A21D /* ImagePasteHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8738BA3A8400468879A7EA72 /* ImagePasteHandler.swift */; };
 		CCCBDB052AD5F9FFDFEE452F /* ClaudeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = 597BC4C72DD7FDEF83563F6F /* ClaudeRelaySpeech */; };
 		D5D85EABC55C071F8597AA44 /* MockSpeechComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3126D30262A416EE37DCA6E /* MockSpeechComponents.swift */; };
+		D9CD0E2229FCF9C13CA84ACB /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E3D3FFC281A7E9B24BC0EDD /* PairingViewModel.swift */; };
 		E5A9B0683CE8446B1F90DFB6 /* ClaudeRelayMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42FCDD4B9EDF313C4B8EC47F /* ClaudeRelayMacApp.swift */; };
 		E773E7EDA1271778ADC748E0 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC85F57C078BD1CFAAFED7C /* AppSettings.swift */; };
 		E9FBE1A1DE907E4CF7E23433 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = CB2627EF23FDE67AF2E31A6A /* SwiftTerm */; };
@@ -107,6 +109,7 @@
 		1481B919F081FD62AD2BBD9A /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
 		1604B543C9F9EFA0D4C37EE5 /* CodeRelayIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CodeRelayIcon.icns; sourceTree = "<group>"; };
 		1848CC51EF450982C0B741A1 /* TerminalPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPalette.swift; sourceTree = "<group>"; };
+		1E3D3FFC281A7E9B24BC0EDD /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		203B7144359F258D91797C4E /* ClaudeRelayApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRelayApp.swift; sourceTree = "<group>"; };
 		2BADFF233CFF54EB9CF44D84 /* host-pairing-1a */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "host-pairing-1a"; path = .; sourceTree = SOURCE_ROOT; };
 		2BC85F57C078BD1CFAAFED7C /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
@@ -140,6 +143,7 @@
 		9AE2628EFBF436099BE3C66E /* RelayTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayTerminalView.swift; sourceTree = "<group>"; };
 		9D717204F74BA58AC8D5C168 /* MenuBarViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarViewModel.swift; sourceTree = "<group>"; };
 		AAE5CC46536E8CA8C49EB434 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		AB871A678305AA3B049AABBE /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		AD4048D36660C870B9573724 /* AppSettingsBedrockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsBedrockTests.swift; sourceTree = "<group>"; };
 		AE187F4CD17DE18B5927964D /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
 		B2BA4095B6DFC9164DB8C74D /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
@@ -333,6 +337,7 @@
 			children = (
 				DE629162439FC9496A0EA4D4 /* AddEditServerViewModel.swift */,
 				9D717204F74BA58AC8D5C168 /* MenuBarViewModel.swift */,
+				1E3D3FFC281A7E9B24BC0EDD /* PairingViewModel.swift */,
 				1481B919F081FD62AD2BBD9A /* ServerListViewModel.swift */,
 				B2BA4095B6DFC9164DB8C74D /* SessionCoordinator.swift */,
 			);
@@ -387,6 +392,7 @@
 				9A314CF6083AD77911749C92 /* AttachRemoteSessionSheet.swift */,
 				D7FB5BCA00B611C22E4B93FD /* MainWindow.swift */,
 				C97EFAD8FF50D4650290995A /* MenuBarDropdown.swift */,
+				AB871A678305AA3B049AABBE /* PairWithHostSheet.swift */,
 				94688372C735D9B8D283F7BE /* QRCodePopover.swift */,
 				AAE5CC46536E8CA8C49EB434 /* QRScannerView.swift */,
 				BCEC36B4A1645DB4968FE179 /* ServerListWindow.swift */,
@@ -580,6 +586,8 @@
 				3A2F3332CF50028F70BBDE38 /* MainWindow.swift in Sources */,
 				60B5CBCAA01CABA8AC289702 /* MenuBarDropdown.swift in Sources */,
 				028D1B51EA464565B380385D /* MenuBarViewModel.swift in Sources */,
+				22A88F3B3F85341BF17DC47F /* PairWithHostSheet.swift in Sources */,
+				D9CD0E2229FCF9C13CA84ACB /* PairingViewModel.swift in Sources */,
 				AE54E51AD13B1D63E09B1D41 /* QRCodePopover.swift in Sources */,
 				208847B59339D16E6FE9C702 /* QRScannerView.swift in Sources */,
 				524215008EB1ED37BB7BEF5C /* RecordingShortcutMonitor.swift in Sources */,

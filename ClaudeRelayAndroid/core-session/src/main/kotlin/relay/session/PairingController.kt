@@ -1,6 +1,9 @@
 package relay.session
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.protocol.ClientMessage
 import relay.protocol.ConnectionConfig
@@ -81,7 +84,9 @@ class PairingController(
             tokenStore.saveToken(success.token, config.id)
             return config
         } finally {
-            connection.disconnect()
+            withContext(NonCancellable) {
+                connection.disconnect()
+            }
         }
     }
 
@@ -103,6 +108,8 @@ class PairingController(
         try {
             connection.send(ClientMessage.PairRequest(code, deviceName, platform))
             return withTimeoutOrNull(timeoutMs) { deferred.await() } ?: throw PairingError.TimedOut
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: PairingError) {
             throw e
         } catch (e: Exception) {
