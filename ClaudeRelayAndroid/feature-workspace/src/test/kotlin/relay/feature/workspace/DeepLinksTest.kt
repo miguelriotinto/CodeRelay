@@ -83,4 +83,39 @@ class DeepLinksTest {
         val uuid = UUID.randomUUID()
         assertEquals(uuid, DeepLinks.parseSessionId(DeepLinks.sessionUri(uuid)))
     }
+
+    @Test
+    fun `parsePairingUrl parses a valid pair link`() {
+        val u = DeepLinks.parsePairingUrl("clauderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4X")
+        assertEquals("h.local", u?.host)
+        assertEquals(9200, u?.port)
+        assertEquals(false, u?.useTLS)
+        assertEquals("K7QP2M4X", u?.code)
+    }
+
+    @Test
+    fun `parsePairingUrl parses a TLS pair link`() {
+        val u = DeepLinks.parsePairingUrl("clauderelay://pair?host=example.com&port=443&tls=1&code=ABC123XY")
+        assertEquals("example.com", u?.host)
+        assertEquals(443, u?.port)
+        assertEquals(true, u?.useTLS)
+        assertEquals("ABC123XY", u?.code)
+    }
+
+    @Test
+    fun `parsePairingUrl rejects a session link`() {
+        assertNull(DeepLinks.parsePairingUrl("clauderelay://session/${UUID.randomUUID()}"))
+    }
+
+    @Test
+    fun `parsePairingUrl rejects garbage`() {
+        assertNull(DeepLinks.parsePairingUrl(""))
+        assertNull(DeepLinks.parsePairingUrl("just text"))
+        assertNull(DeepLinks.parsePairingUrl("https://pair?host=h&port=9200&tls=0&code=X"))
+    }
+
+    @Test
+    fun `parseSessionId still rejects a pair link`() {
+        assertNull(DeepLinks.parseSessionId("clauderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4X"))
+    }
 }

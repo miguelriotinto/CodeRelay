@@ -78,6 +78,14 @@ class MainActivity : ComponentActivity() {
     val pendingSessionId: StateFlow<UUID?> get() = _pendingSessionId.asStateFlow()
     private val _pendingSessionId = MutableStateFlow<UUID?>(null)
 
+    /**
+     * The most recent pairing URL parsed from a `clauderelay://pair?...` deep link,
+     * or null. The nav graph collects this on the Servers route, presents the pairing
+     * sheet prefilled from it, then clears it via [clearPendingPairing].
+     */
+    val pendingPairing: StateFlow<relay.protocol.PairingURL?> get() = _pendingPairing.asStateFlow()
+    private val _pendingPairing = MutableStateFlow<relay.protocol.PairingURL?>(null)
+
     /** The server to auto-connect to on launch, or null when auto-connect is off. */
     private val _autoConnectConfig = MutableStateFlow<ConnectionConfig?>(null)
 
@@ -122,6 +130,8 @@ class MainActivity : ComponentActivity() {
                         connectivity = networkObserver,
                         pendingSessionId = pendingSessionId,
                         clearPendingSession = ::clearPendingSession,
+                        pendingPairing = pendingPairing,
+                        clearPendingPairing = ::clearPendingPairing,
                         autoConnectConfig = collectAutoConnect(),
                         appVersion = BuildConfig.VERSION_NAME,
                         buildNumber = BuildConfig.VERSION_CODE.toString(),
@@ -148,6 +158,11 @@ class MainActivity : ComponentActivity() {
     /** Clears the pending session once the nav graph has consumed it. */
     fun clearPendingSession() {
         _pendingSessionId.value = null
+    }
+
+    /** Clears the pending pairing once the nav graph has consumed it. */
+    fun clearPendingPairing() {
+        _pendingPairing.value = null
     }
 
     /**
@@ -184,6 +199,15 @@ class MainActivity : ComponentActivity() {
 
     private fun handleDeepLink(intent: Intent?) {
         val data = intent?.data?.toString() ?: return
+
+        // Try pairing link first (clauderelay://pair?...).
+        DeepLinks.parsePairingUrl(data)?.let {
+            Log.i(TAG, "Deep link → pending pairing: ${it.host}:${it.port}")
+            _pendingPairing.value = it
+            return
+        }
+
+        // Then try session link (clauderelay://session/<uuid>).
         val sessionId = DeepLinks.parseSessionId(data)
         if (sessionId == null) {
             Log.w(TAG, "Ignoring unparseable deep link: $data")

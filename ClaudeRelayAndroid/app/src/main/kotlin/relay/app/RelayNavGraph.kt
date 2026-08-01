@@ -79,6 +79,8 @@ private object Routes {
  * @param connectivity the network observer feeding recovery
  * @param pendingSessionId deep-link session id to consume on workspace entry
  * @param clearPendingSession clears [pendingSessionId] once consumed
+ * @param pendingPairing deep-link pairing URL to consume on servers entry
+ * @param clearPendingPairing clears [pendingPairing] once consumed
  * @param autoConnectConfig the server to auto-connect to on launch, or null
  * @param appVersion / @param buildNumber BuildConfig values for the About section
  */
@@ -89,6 +91,8 @@ fun RelayNavGraph(
     connectivity: NetworkObserver,
     pendingSessionId: StateFlow<UUID?>,
     clearPendingSession: () -> Unit,
+    pendingPairing: StateFlow<relay.protocol.PairingURL?>,
+    clearPendingPairing: () -> Unit,
     autoConnectConfig: ConnectionConfig?,
     appVersion: String,
     buildNumber: String,
@@ -166,6 +170,8 @@ fun RelayNavGraph(
             ServersRoute(
                 snackbarHostState = snackbarHostState,
                 connecting = connecting,
+                pendingPairing = pendingPairing,
+                clearPendingPairing = clearPendingPairing,
                 onConnect = { config ->
                     val token = loadTokenFor(context, config.id)
                     if (token.isNullOrEmpty()) {
@@ -244,11 +250,25 @@ fun RelayNavGraph(
 private fun ServersRoute(
     snackbarHostState: SnackbarHostState,
     connecting: Boolean,
+    pendingPairing: StateFlow<relay.protocol.PairingURL?>,
+    clearPendingPairing: () -> Unit,
     onConnect: (ConnectionConfig) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val context = LocalContext.current
     val viewModel: ServersViewModel = viewModel(factory = ServersViewModel.factory(context))
+
+    // Consume pending pairing deep link (Task 7 seam). When non-null, Task 8 will
+    // present a pairing sheet prefilled from the URL, redeem the code, save the
+    // resulting server bookmark, then call clearPendingPairing(). For now, we just
+    // clear it immediately to complete the plumbing.
+    val pending by pendingPairing.collectAsStateWithLifecycle()
+    LaunchedEffect(pending) {
+        val pairing = pending ?: return@LaunchedEffect
+        // TODO(Task 8): Present pairing sheet with pairing.host/port/code/useTLS
+        android.util.Log.i("ServersRoute", "TODO: Present pairing sheet for ${pairing.host}:${pairing.port}")
+        clearPendingPairing()
+    }
 
     // ServersScreen owns its own Scaffold/TopAppBar/Add-FAB, gates cleartext on
     // connect, and owns the add/edit sheet (onEdit → AddEditServerSheet). We host
