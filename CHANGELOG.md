@@ -39,10 +39,10 @@ Ships the F11 device-pairing feature across all four targets (herdr F11, 1a/1b/1
 
 ### Clients (iOS, macOS, Android)
 
-- QR scanning on iOS and Android; macOS gets both a scanner and manual code
-  entry (`Cmd+Shift+Q`). `PairingURL` + `PairingCode` live in ClaudeRelayKit so
-  validation of hostile QR input happens in one tested place, shared by all
-  three clients.
+- QR scanning on iOS and Android; macOS pairs via manual code entry in the
+  **Pair** sheet (its `Cmd+Shift+Q` scanner still handles session-attach QRs
+  only). `PairingURL` + `PairingCode` live in ClaudeRelayKit so validation of
+  hostile QR input happens in one tested place, shared by all three clients.
 
 ## [0.3.16] - 2026-07-29 — Server-side ownership visibility
 

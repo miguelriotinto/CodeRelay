@@ -83,8 +83,9 @@ your auth token. The app exchanges it over the WebSocket for its own per-device
 token, which shows up in `claude-relay token list` under the device's name and
 can be revoked individually.
 
-Scan it from the app's server list: iOS and Android open a camera scanner, and
-macOS offers both a scanner and manual code entry (`Cmd+Shift+Q`).
+Scan it from the app's server list: iOS and Android open a camera scanner. On
+macOS, use the **Pair** button in the server list and type the code — the Mac's
+`Cmd+Shift+Q` scanner reads session-attach QRs only, not pairing QRs.
 
 > **Prefer to connect manually?** Mint a token instead and paste it into the
 > app's Add Server sheet (labelled **Auth Token** on iOS, **Token** on macOS):
@@ -164,7 +165,7 @@ claude-relay config set logLevel info                # trace/debug/info/warning/
 claude-relay config validate                         # Sanity-check the running server's config
 ```
 
-`config set` validates keys and value ranges locally before forwarding to the admin API — unknown keys, out-of-range ports, and bad log levels are rejected immediately. `config validate` is a lighter, separate check: it reads the config back over the admin API (so the service must be running) and only verifies that both ports parse into range and that `wsPort` and `adminPort` differ.
+`config set` validates keys and value ranges locally before forwarding to the admin API — unknown keys, out-of-range ports, and bad log levels are rejected immediately. `config validate` is a lighter, separate check: it reads the config back over the admin API (so the service must be running) and only verifies that any port that *does* parse as an integer falls in 1–65535 and that `wsPort` and `adminPort` differ. A non-numeric port is skipped rather than reported, so a clean `validate` is not proof the config is loadable.
 
 ## Configuration
 
@@ -196,7 +197,7 @@ Configuration is stored at `~/.claude-relay/config.json`:
 - `maxSessionsPerToken` - Maximum active (non-terminal) sessions per token; 0 = unlimited (default: 50)
 - `bindAll` - When `true` (default), the WebSocket server binds `0.0.0.0` — it accepts connections from any interface (loopback, LAN, VPN, bridges). Set to `false` to bind `127.0.0.1` only. Startup logs an explicit warning when `bindAll=true` without TLS, because tokens travel in plaintext on the bound network.
 
-**Push notification options** (all off/unset by default — see [Push Notifications](#push-notifications)):
+**Push notification options** (all off/unset by default):
 - `pushEnabled` - Master switch for sending pushes (default: `false`). Device tokens are accepted and stored even while this is off, so enabling it later needs no client reconnect.
 - `pushNotifyOnFinished` - Server-wide default for "notify when an agent finishes"; a per-device preference overrides it (default: `false`)
 - `apnsKeyPath` / `apnsKeyId` / `apnsTeamId` / `apnsBundleId` - APNs auth-key credentials for iOS/macOS delivery. `apnsKeyPath` must point at a readable `.p8`.
@@ -260,7 +261,7 @@ swift build
 ### Run Tests
 
 ```bash
-swift test                                    # All SPM tests (1000+ across 5 targets)
+swift test                                    # All SPM tests (5 targets)
 swift test --filter ClaudeRelayKitTests       # Specific suite
 swift test --filter testTokenGeneration       # Specific test
 ```
@@ -323,7 +324,7 @@ ClaudeRelay/
 │   ├── Views/                  # SwiftUI views + menu-bar dropdown
 │   ├── ViewModels/             # Observable view models
 │   ├── Models/                 # App settings, saved connections
-│   └── Helpers/                # NetworkMonitor, SleepWakeObserver, image paste
+│   └── Helpers/                # SleepWakeObserver, image paste, key capture, launch-at-login
 ├── ClaudeRelayAndroid/         # Android application (Jetpack Compose, Gradle — separate build)
 │   ├── core-protocol/          # Kotlin wire-protocol models (ClientMessage/ServerMessage/MessageEnvelope)
 │   ├── core-net/               # OkHttp WebSocket transport + SessionController
@@ -368,7 +369,7 @@ All WebSocket messages use `MessageEnvelope` with JSON encoding:
 - `session_list` - List own sessions
 - `session_list_all` - List sessions across all tokens (for cross-device attach)
 - `session_rename` - Rename a session
-- `refresh` - Ask the server to re-push current session state
+- `refresh` - Ask the server to force a screen repaint (delivers SIGWINCH so the foreground app re-emits its screen)
 - `resize` - Resize terminal
 - `paste_image` - Paste image data (base64)
 - `register_push_token` - Register/update this device's push token and per-device preferences
