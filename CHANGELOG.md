@@ -6,6 +6,48 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
+### Fixed
+
+- **Resumed sessions no longer poll at the slow cadence.** `SessionManager.resumeSession`
+  reached `.activeAttached` without restoring `PTYSession.attachedPollCadence`, so the
+  foreground-process poll stayed at the 5 s detached cadence. Same-device tab switches
+  detach-then-resume, which made this the common path rather than a rare one: after
+  switching tabs, agent entry/exit (and therefore the activity dot) could lag by up to
+  5 s. `resumeSession` now restores the 1 s cadence exactly as `attachSession` does.
+  All three cadence updates (attach/detach/resume) are now awaited rather than dispatched
+  in unstructured `Task`s, so a tab switch's sequential detach→resume can no longer land
+  its two writes out of order and leave an attached session polling slowly. Awaiting adds
+  a suspension point to the reentrant `SessionManager` actor, so the three call sites no
+  longer write the PTY directly: they route through a new `syncPollCadence(id:)` that
+  **re-reads the cadence from the session's committed state after every suspension**
+  rather than capturing it up front. Without that, a transition suspended mid-write still
+  applies the value it decided on before suspending, so a detach's 5 s can land after a
+  resume's 1 s — the same bug one level down, and one that statement ordering cannot fix
+  because the race is between the two PTY writes. The loop exits on state agreement
+  rather than a pass count: a bounded version stranded a stale cadence when a transition
+  committed during its final write. `detachSession` additionally installs
+  its detach-expiry timer above the suspension point; otherwise a reentrant
+  `resumeSession` cancels a not-yet-installed timer and the detach then arms one against
+  a session that is once again `.activeAttached`. Two adjacent detach-timer
+  leaks are fixed alongside it: `attachSession` now cancels a live expiry timer (as
+  `resumeSession` already did), and `handleDetachTimeout` drops its `detachTimers` entry
+  unconditionally instead of returning from either early guard with the entry intact.
+- **`claude-relay config validate` now uses the same port range the admin API enforces.**
+  It checked 1–65535 while `PUT /config` accepts only 1024–65535
+  (`AdminRoutes.validatePort`), so a privileged port such as 80 was reported as
+  "Configuration is valid." even though `config set` refuses it — and, if it was already
+  in `config.json`, the server would fail to bind it without root. A `wsPort ==
+  adminPort` collision is also reported in the same pass as a range error rather than
+  only after the range error is fixed. Additionally, a non-numeric port is now an error
+  rather than being silently skipped by the old `if let port = Int(value), <range>`
+  form — defence in depth, since `/config` serves a typed `RelayConfig` and so cannot
+  currently put a non-integer on the wire.
+- **The accepted port range is now defined once.** `1024...65535` was written out
+  separately in `AdminRoutes.validatePort` and `ConfigSetCommand`, while
+  `ConfigValidateCommand` kept its own already-drifted `1`/`65535` pair. All three now
+  derive from `RelayConfig.portRange` in ClaudeRelayKit, so the CLI's client-side checks
+  cannot disagree with what the admin API accepts.
+
 ## [0.3.17] - 2026-08-01 — Device pairing via QR
 
 Ships the F11 device-pairing feature across all four targets (herdr F11, 1a/1b/1c).

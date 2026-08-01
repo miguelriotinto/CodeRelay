@@ -3,6 +3,19 @@ import Foundation
 /// Configuration model for the ClaudeRelay server.
 public struct RelayConfig: Codable, Sendable {
 
+    /// Ports the server accepts for `wsPort`/`adminPort`. The 1024 floor is
+    /// project policy: 1–1023 are privileged and need root to bind, and 0 would
+    /// request an arbitrary ephemeral port, which is useless for a config a
+    /// client has to dial back into.
+    ///
+    /// Single source of truth for every layer that checks a port —
+    /// `AdminRoutes.validatePort` (server), `ConfigSetCommand` and
+    /// `ConfigValidateCommand` (CLI). Previously each restated the bound:
+    /// `ConfigSetCommand` and `AdminRoutes` both hard-coded `1024...65535`, while
+    /// `ConfigValidateCommand` compared against `1` and `65535` and so reported
+    /// privileged ports as valid.
+    public static let portRange = 1024...65535
+
     /// WebSocket listening port.
     public var wsPort: UInt16
 

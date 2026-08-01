@@ -20,6 +20,12 @@ public actor SessionManager {
     private let ptyFactory: PTYFactory
     private var sessions: [UUID: ManagedSession] = [:]
     private var detachTimers: [UUID: Task<Void, Never>] = [:]
+
+    /// Test-only view of the detach-expiry timer table. A timer registered for a
+    /// session that is not `.activeDetached` is a bug — it is armed to expire a
+    /// session that must not expire — so tests assert on the key set directly.
+    /// `internal`, so it is reachable from `@testable import` only.
+    var detachTimerSessionIds: Set<UUID> { Set(detachTimers.keys) }
     public typealias ActivityObserver =
         @Sendable (UUID, ActivityState, String?, AgentDetectedState?, String?, String?) -> Void
     private var activityObservers = ObserverRegistry<ActivityObserver>()
@@ -192,14 +198,39 @@ public actor SessionManager {
         managed.info = newInfo
         sessions[id] = managed
 
-        // Attached: bump to the fast poll cadence for responsive Claude entry/exit.
-        Task { await pty.setPollCadence(PTYSession.attachedPollCadence) }
+        // Attaching a detached session cancels its expiry, exactly as
+        // `resumeSession` does. Without this, a cross-device attach left the
+        // detach timer live: it would later fire against an attached session and
+        // decline to expire it.
+        detachTimers[id]?.cancel()
+        detachTimers[id] = nil
+
+        // Attached: fast poll for responsive agent entry/exit. Derived from the
+        // committed state above rather than written directly — see
+        // `syncPollCadence`.
+        await syncPollCadence(id: id)
 
         return (newInfo, pty)
     }
 
     /// Detach a session (client disconnected, session stays alive).
-    public func detachSession(id: UUID) throws {
+    ///
+    /// `async` so the poll-cadence change is awaited rather than dispatched in
+    /// an unstructured `Task`: for the sequential detach→resume a tab switch
+    /// performs, dispatching let this method's slow cadence overtake resume's
+    /// fast one and strand an attached session polling every 5 s. Every caller
+    /// already awaited this actor method.
+    ///
+    /// The cadence sync is deliberately the **last** statement, so the state
+    /// transition and the detach-expiry timer install above it share one
+    /// suspension-free region. `SessionManager` is a reentrant actor: any
+    /// `await` here lets `resumeSession` run to completion in between, and if
+    /// the timer were installed after that suspension it would be registered for
+    /// a session that is once again `.activeAttached` — an expiry timer for a
+    /// session that must not expire. (`handleDetachTimeout` does drop its
+    /// `detachTimers` entry unconditionally and declines to expire an attached
+    /// session, so this no longer leaks the slot; it is still wrong to arm.)
+    public func detachSession(id: UUID) async throws {
         guard var managed = sessions[id] else {
             throw SessionError.notFound(id)
         }
@@ -218,9 +249,6 @@ public actor SessionManager {
             Task {
                 await pty.clearOutputHandler()
             }
-            // Detached: slow the poll — we still need activity for background
-            // iOS tabs, but 1 s resolution is only needed for the user's foreground session.
-            Task { await pty.setPollCadence(PTYSession.detachedPollCadence) }
         }
 
         // Start detach timeout timer (0 = never expire).
@@ -236,6 +264,12 @@ public actor SessionManager {
             detachTimers[id]?.cancel()
             detachTimers[id] = timer
         }
+
+        // Detached: slow the poll — we still need activity for background iOS
+        // tabs, but 1 s resolution is only needed for the user's foreground
+        // session. Last, and only after the state above is committed, so a
+        // reentrant resume cannot observe a torn transition.
+        await syncPollCadence(id: id)
     }
 
     /// Resume a detached session.
@@ -290,6 +324,14 @@ public actor SessionManager {
         // Cancel detach timer
         detachTimers[id]?.cancel()
         detachTimers[id] = nil
+
+        // Resume lands in .activeAttached, so restore the fast poll exactly as
+        // attachSession does. Without this a session that was ever detached
+        // keeps polling at detachedPollCadence — and since same-device tab
+        // switches detach-then-resume, that was the common path, not the rare
+        // one. Routed through `syncPollCadence` so a detach suspended in the PTY
+        // write cannot land its slow cadence after this attached transition.
+        await syncPollCadence(id: id)
 
         // Buffer reading requires awaiting the PTYSession actor, so return
         // empty data here — the caller reads the buffer via pty.readBuffer().
@@ -641,7 +683,91 @@ public actor SessionManager {
         purgeTerminalSessions()
     }
 
+    // MARK: - Poll cadence
+
+    /// Sessions with a `syncPollCadence` loop currently running.
+    private var cadenceSyncInFlight: Set<UUID> = []
+
+    /// Pushes the foreground-poll cadence implied by the session's **committed
+    /// state** to its PTY: 1 s attached, 5 s detached.
+    ///
+    /// Why this is not simply `await pty.setPollCadence(x)` at each call site.
+    /// `setPollCadence` is a cross-actor call, so it suspends, and
+    /// `SessionManager` is reentrant — a lifecycle transition can run to
+    /// completion while another is parked in that call. Each caller captures the
+    /// cadence it wants *before* suspending, so whichever write reaches the PTY
+    /// last wins even if its value was derived from state that has since
+    /// changed. Ordering the statements cannot fix that: the race is between the
+    /// two writes, not the two methods. A tab switch (detach→resume) hitting it
+    /// left an *attached* session polling every 5 s — the bug this whole change
+    /// set out to fix, reintroduced one level down.
+    ///
+    /// The fix is that the value is **re-read from committed state after every
+    /// suspension** instead of captured once by the caller. Whoever writes last
+    /// therefore writes the cadence the last committed transition implies, so the
+    /// PTY converges on the right value regardless of arrival order. (That is the
+    /// load-bearing part: replacing this re-read with a captured constant
+    /// reproduces the original bug — measured, see `SessionPollCadenceTests`.)
+    ///
+    /// Writes are additionally single-flight per session, which serialises them
+    /// and gives one owner responsibility for reaching agreement. It is *not*
+    /// what fixes the race — delete the guard and the tests still pass, because
+    /// each caller loops on its own. What it does buy is a simple ownership
+    /// story: `lastWritten` is this task's own write, and with one writer per
+    /// session it is also the PTY's current value, so comparing against it is a
+    /// sound exit test rather than an assumption about who else may have written.
+    ///
+    /// A caller that finds a loop already in flight writes nothing and returns.
+    /// That is only safe because it has *already committed its state* before
+    /// calling, and the owner re-reads state after every write — so the owner
+    /// picks up the skipped caller's transition on its next pass. The loop
+    /// therefore exits on **state agreement**, never on a pass count: an earlier
+    /// version capped it at 8 passes, which reintroduced the bug at the boundary.
+    /// A transition committing during the eighth write returned early on the
+    /// guard, then the owner finished its stale write and exhausted the loop
+    /// without re-reading, and nothing was left to repair it. Guarded by
+    /// `testSyncLoopTakesAsManyPassesAsThereAreTransitions`, which drives more
+    /// passes than that cap allowed — the gated reentrancy test drives only two,
+    /// so it cannot tell `while true` from any cap >= 2.
+    ///
+    /// Termination does not need the cap: a further pass only happens when
+    /// another task committed a *different* state while this one was suspended,
+    /// so the loop stops one pass after lifecycle transitions quiesce. It is not
+    /// that transitions are inherently finite — two connections could in
+    /// principle alternate detach/resume indefinitely and keep the owner
+    /// looping — but that costs nothing worth capping: each pass suspends on the
+    /// PTY actor rather than spinning on CPU, overtaking callers return on the
+    /// guard instead of accumulating, and the work per pass is exactly the write
+    /// the flapping asked for. The terminal paths cannot sustain it either:
+    /// `handleDetachTimeout` and `handlePTYExit` are one-way and nil out
+    /// `ptySession`, so the owner exits on its next `guard let pty`.
+    private func syncPollCadence(id: UUID) async {
+        guard !cadenceSyncInFlight.contains(id) else { return }
+        cadenceSyncInFlight.insert(id)
+        defer { cadenceSyncInFlight.remove(id) }
+
+        var lastWritten: TimeInterval?
+        while true {
+            guard let managed = sessions[id], let pty = managed.ptySession else { return }
+            let desired = managed.info.state == .activeAttached
+                ? PTYSession.attachedPollCadence
+                : PTYSession.detachedPollCadence
+            // Exit only when the PTY already holds what committed state implies.
+            if desired == lastWritten { return }
+            await pty.setPollCadence(desired)
+            lastWritten = desired
+        }
+    }
+
     private func handleDetachTimeout(sessionId: UUID) {
+        // Drop the entry first, unconditionally: this timer has fired, so it is
+        // spent whether or not the session is still expirable. Both guards below
+        // used to return with the entry still populated, so a timer that fired
+        // against an already-attached session leaked its slot forever. Safe to
+        // remove before the guards because a fired timer is never reusable, and
+        // any later detach installs a fresh one.
+        detachTimers.removeValue(forKey: sessionId)
+
         guard var managed = sessions[sessionId] else { return }
         let currentState = managed.info.state
         guard currentState.canTransition(to: .expired) else { return }
@@ -649,9 +775,6 @@ public actor SessionManager {
         managed.info = managed.info.transitioning(to: .expired)
         managed.terminalSince = Date()
         sessions[sessionId] = managed
-
-        // Clean up timer entry
-        detachTimers.removeValue(forKey: sessionId)
 
         // Terminate PTY
         if let pty = managed.ptySession {

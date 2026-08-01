@@ -61,7 +61,43 @@ actor MockPTYSession: PTYSessionProtocol {
         activityHandler = handler
     }
     func recordInput() {}
-    func setPollCadence(_ seconds: TimeInterval) {}
+    /// Records every cadence change so tests can assert that attach/resume
+    /// restore the fast poll and detach slows it back down.
+    private(set) var pollCadences: [TimeInterval] = []
+    var lastPollCadence: TimeInterval? { pollCadences.last }
+    func setPollCadence(_ seconds: TimeInterval) async {
+        if let gate = pollCadenceGate {
+            // Suspends the *caller* — i.e. SessionManager — inside its
+            // `await pty.setPollCadence(...)`, holding it at that exact
+            // suspension point so a test can drive a reentrant call into
+            // SessionManager and observe what state it sees. See
+            // `testDetachTimerIsInstalledBeforeCadenceSuspension`.
+            await gate.wait()
+        }
+        pollCadences.append(seconds)
+        if let hook = onPollCadenceWrite {
+            // Same idea as the gate, but re-armable: the caller stays suspended
+            // here for as many writes as the test wants, so it can commit a
+            // fresh transition on each pass instead of only once. Both actors
+            // are reentrant at their awaits, so a hook that calls back into
+            // `SessionManager` (and from there into this mock) cannot deadlock.
+            await hook(pollCadences.count)
+        }
+    }
+
+    /// Set to hold `setPollCadence` open until the test releases it.
+    private var pollCadenceGate: AsyncGate?
+    func installPollCadenceGate(_ gate: AsyncGate) { pollCadenceGate = gate }
+    func removePollCadenceGate() { pollCadenceGate = nil }
+
+    /// Invoked after each cadence write with that write's 1-based index. Lets a
+    /// test commit a lifecycle transition while `SessionManager` is suspended in
+    /// the write, forcing its sync loop to take another repair pass.
+    private var onPollCadenceWrite: (@Sendable (Int) async -> Void)?
+    func setPollCadenceWriteHook(_ hook: @escaping @Sendable (Int) async -> Void) {
+        onPollCadenceWrite = hook
+    }
+    func removePollCadenceWriteHook() { onPollCadenceWrite = nil }
     /// Records the last hook state applied, so tests can assert that
     /// `SessionManager.reportHookState` forwarded to the PTY.
     private(set) var lastHookState: AgentDetectedState?
@@ -81,6 +117,41 @@ actor MockPTYSession: PTYSessionProtocol {
 
     /// Test hook: whether any output callback is currently installed.
     var hasOutputHandler: Bool { outputHandler != nil }
+}
+
+// MARK: - AsyncGate
+
+/// A one-shot gate: `wait()` suspends until someone calls `open()`. Lets a test
+/// pin a production actor at a chosen suspension point instead of racing it with
+/// sleeps, so reentrancy assertions are deterministic rather than probabilistic.
+///
+/// `open()` before any `wait()` is safe — the gate latches, so a later `wait()`
+/// returns immediately rather than parking forever.
+actor AsyncGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var arrivals = 0
+
+    func wait() async {
+        if isOpen { return }
+        // Incremented before suspending, and `withCheckedContinuation`'s closure
+        // runs synchronously on this actor, so once `hasArrived` is true the
+        // caller is genuinely parked with its continuation registered.
+        arrivals += 1
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    /// Whether anyone is parked in `wait()`. A latch, not a transient: it stays
+    /// true until `open()`, which is what makes polling for it sound.
+    var hasArrived: Bool { arrivals > 0 }
+
+    func open() {
+        isOpen = true
+        for continuation in waiters { continuation.resume() }
+        waiters.removeAll()
+    }
 }
 
 // MARK: - Shared base

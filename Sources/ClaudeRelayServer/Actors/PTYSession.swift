@@ -44,7 +44,14 @@ public protocol PTYSessionProtocol: Actor {
     )
     func recordInput()
     /// 1.0 for attached (responsive entry detection); 5.0 for detached.
-    func setPollCadence(_ seconds: TimeInterval)
+    ///
+    /// Declared `async` even though `PTYSession`'s implementation is
+    /// synchronous — a sync method satisfies an `async` requirement, and every
+    /// call site already suspends because this is a cross-actor call. The
+    /// widening lets a test double suspend here on purpose, pinning
+    /// `SessionManager` at this exact point to check what a reentrant caller
+    /// observes (see `testDetachTimerIsInstalledBeforeCadenceSuspension`).
+    func setPollCadence(_ seconds: TimeInterval) async
     /// Apply an authoritative agent state reported by a local lifecycle hook
     /// (F6). While fresh, hook state overrides screen detection. No-op when no
     /// agent is currently active.
