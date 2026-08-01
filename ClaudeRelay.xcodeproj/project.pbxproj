@@ -111,7 +111,6 @@
 		1848CC51EF450982C0B741A1 /* TerminalPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPalette.swift; sourceTree = "<group>"; };
 		1E3D3FFC281A7E9B24BC0EDD /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		203B7144359F258D91797C4E /* ClaudeRelayApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRelayApp.swift; sourceTree = "<group>"; };
-		2BADFF233CFF54EB9CF44D84 /* host-pairing-1a */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "host-pairing-1a"; path = .; sourceTree = SOURCE_ROOT; };
 		2BC85F57C078BD1CFAAFED7C /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		2ECDDEFC7B5354014FB3BFCA /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
 		30EC88C3C7486A906F4D35E7 /* MenuBarActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarActivityTests.swift; sourceTree = "<group>"; };
@@ -119,6 +118,7 @@
 		338CD3ED0482F3AB64117CF9 /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
 		36C86DE341C6B0EC9ED1F8BB /* ServerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListView.swift; sourceTree = "<group>"; };
 		42FCDD4B9EDF313C4B8EC47F /* ClaudeRelayMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRelayMacApp.swift; sourceTree = "<group>"; };
+		45DC656CAA02FE345E387335 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		4A53E6CE8384FD9002F533E1 /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		508D7CD8DCA41375E993CDA2 /* MicButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicButton.swift; sourceTree = "<group>"; };
 		55B2AF59490A10B933D223D7 /* AddEditServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerView.swift; sourceTree = "<group>"; };
@@ -299,7 +299,7 @@
 		7D4E3B0EAF3D5DCAC3E10215 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				2BADFF233CFF54EB9CF44D84 /* host-pairing-1a */,
+				45DC656CAA02FE345E387335 /* CodeRelay */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -668,7 +668,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = ClaudeRelayMac/ClaudeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 97;
+				CURRENT_PROJECT_VERSION = 98;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				INFOPLIST_FILE = ClaudeRelayMac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
@@ -848,7 +848,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = ClaudeRelayApp/ClaudeRelayApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 174;
+				CURRENT_PROJECT_VERSION = 175;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ClaudeRelayApp/Info.plist;
@@ -881,7 +881,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = ClaudeRelayApp/ClaudeRelayApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 174;
+				CURRENT_PROJECT_VERSION = 175;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ClaudeRelayApp/Info.plist;
@@ -931,7 +931,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = ClaudeRelayMac/ClaudeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 97;
+				CURRENT_PROJECT_VERSION = 98;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				INFOPLIST_FILE = ClaudeRelayMac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
