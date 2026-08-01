@@ -258,17 +258,10 @@ private fun ServersRoute(
     val context = LocalContext.current
     val viewModel: ServersViewModel = viewModel(factory = ServersViewModel.factory(context))
 
-    // Consume pending pairing deep link (Task 7 seam). When non-null, Task 8 will
-    // present a pairing sheet prefilled from the URL, redeem the code, save the
-    // resulting server bookmark, then call clearPendingPairing(). For now, we just
-    // clear it immediately to complete the plumbing.
-    val pending by pendingPairing.collectAsStateWithLifecycle()
-    LaunchedEffect(pending) {
-        val pairing = pending ?: return@LaunchedEffect
-        // TODO(Task 8): Present pairing sheet with pairing.host/port/code/useTLS
-        android.util.Log.i("ServersRoute", "TODO: Present pairing sheet for ${pairing.host}:${pairing.port}")
-        clearPendingPairing()
-    }
+    // Consume pending pairing deep link (Task 7→8 seam). The URL flows into
+    // ServersScreen, which triggers the pairing sheet prefilled from the URL and
+    // calls clearPendingPairing after presentation.
+    val pendingPairingUrl by pendingPairing.collectAsStateWithLifecycle()
 
     // ServersScreen owns its own Scaffold/TopAppBar/Add-FAB, gates cleartext on
     // connect, and owns the add/edit sheet (onEdit → AddEditServerSheet). We host
@@ -282,6 +275,8 @@ private fun ServersRoute(
             viewModel = viewModel,
             onConnect = onConnect,
             modifier = Modifier.fillMaxSize(),
+            pendingPairingUrl = pendingPairingUrl,
+            clearPendingPairing = clearPendingPairing,
         )
 
         IconButton(

@@ -97,6 +97,29 @@ class ServersViewModel(
     /** Returns the saved token for [config], or null. Used to prefill the edit sheet. */
     fun tokenFor(config: ConnectionConfig): String? = tokenStore.loadToken(config.id)
 
+    /**
+     * Internal helper for [PairingViewModel] to persist a config + token via the
+     * same adapters the real [addOrUpdate] uses. Returns the updated list of
+     * bookmarks (conforming to [relay.session.ConnectionStoreAdapter.add]).
+     */
+    internal suspend fun addOrUpdateInternal(config: ConnectionConfig, token: String?): List<ConnectionConfig> {
+        store.add(config)
+        if (!token.isNullOrEmpty()) {
+            tokenStore.saveToken(token, config.id)
+        }
+        reloadServers()
+        statusChecker.refresh(_servers.value)
+        return _servers.value
+    }
+
+    /**
+     * Internal helper for [PairingViewModel] to save a token. Wraps [tokenStore]
+     * so the pairing controller can inject it via [relay.session.TokenStoreAdapter].
+     */
+    internal fun saveTokenInternal(token: String, connectionId: UUID) {
+        tokenStore.saveToken(token, connectionId)
+    }
+
     override fun onCleared() {
         statusChecker.stopPolling()
         super.onCleared()

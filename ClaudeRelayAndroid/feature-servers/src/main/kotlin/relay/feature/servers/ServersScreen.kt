@@ -59,7 +59,7 @@ import relay.session.ServerStatus
  *  - pull-to-refresh re-runs the status poll;
  *  - leading swipe → edit (blue), trailing swipe → delete (red);
  *  - an empty-state when no bookmarks exist;
- *  - a "+" FAB opens the add sheet.
+ *  - a "+" FAB opens the add sheet OR the pairing sheet.
  *
  * Tapping a row routes to [onConnect] — but only after a friendly inline
  * cleartext pre-check (`CleartextPolicy.isPrivateNetworkHost`): a non-private host
@@ -70,6 +70,10 @@ import relay.session.ServerStatus
  * deep-link attach, and the status probe are gated too even though they never go
  * through this screen. This replicates the iOS/macOS ATS behaviour explicitly
  * (Android's network-security-config can't express RFC1918 CIDR ranges).
+ *
+ * @param pendingPairingUrl when non-null, triggers the pairing sheet prefilled from
+ * the URL (deep link from `claude-relay setup` QR scan). The caller must clear it
+ * via [clearPendingPairing] after consumption.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,6 +81,8 @@ fun ServersScreen(
     viewModel: ServersViewModel,
     onConnect: (ConnectionConfig) -> Unit,
     modifier: Modifier = Modifier,
+    pendingPairingUrl: relay.protocol.PairingURL? = null,
+    clearPendingPairing: () -> Unit = {},
 ) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val statuses by viewModel.statuses.collectAsStateWithLifecycle()
@@ -104,13 +110,28 @@ fun ServersScreen(
         onConnect(config)
     }
 
+    // Pairing mode: null = closed, Manual = manual sheet, or prefilled from deep link
+    var pairingMode by remember { mutableStateOf<PairingMode?>(null) }
+
+    // Consume pending pairing deep link (Task 7→8 seam replacement)
+    LaunchedEffect(pendingPairingUrl) {
+        val url = pendingPairingUrl ?: return@LaunchedEffect
+        pairingMode = PairingMode.Prefilled(url)
+        clearPendingPairing()
+    }
+
     Scaffold(
         modifier = modifier,
         topBar = { TopAppBar(title = { Text("Servers") }) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { sheetMode = ServerSheetMode.Add }) {
-                Icon(Icons.Filled.Add, contentDescription = "Add Server")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FloatingActionButton(onClick = { pairingMode = PairingMode.Manual }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Pair with Host")
+                }
+                FloatingActionButton(onClick = { sheetMode = ServerSheetMode.Add }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Add Server")
+                }
             }
         },
     ) { innerPadding ->
@@ -161,6 +182,37 @@ fun ServersScreen(
             onDismiss = { sheetMode = null },
         )
     }
+
+    pairingMode?.let { mode ->
+        val pairingVm = remember(mode) {
+            PairingViewModel(
+                controllerFactory = { PairingViewModel.createController(viewModel) },
+            ).apply {
+                // Prefill if from deep link
+                if (mode is PairingMode.Prefilled) {
+                    host = mode.url.host
+                    port = mode.url.port.toString()
+                    useTLS = mode.url.useTLS
+                    code = mode.url.code
+                }
+            }
+        }
+        PairWithHostSheet(
+            viewModel = pairingVm,
+            onPaired = { config ->
+                pairingMode = null
+                // Auto-connect after successful pairing
+                coroutineScope.launch { attemptConnect(config) }
+            },
+            onDismiss = { pairingMode = null },
+        )
+    }
+}
+
+/** Pairing sheet mode: manual entry or prefilled from deep link. */
+private sealed interface PairingMode {
+    data object Manual : PairingMode
+    data class Prefilled(val url: relay.protocol.PairingURL) : PairingMode
 }
 
 private suspend fun SnackbarHostState.showMessage(message: String) {
