@@ -177,6 +177,9 @@ private fun CameraPreview(
     val scanned = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     // The bound provider, captured once resolved so onDispose can unbind it.
     val cameraProviderRef = remember { java.util.concurrent.atomic.AtomicReference<ProcessCameraProvider?>(null) }
+    // Set on dispose so the async provider callback, if it resolves AFTER we've
+    // left composition, skips binding onto the already-terminated executor.
+    val disposed = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
     // On leaving composition: UNBIND the CameraX use cases FIRST (stops the camera
     // and halts frame dispatch to the analyzer), THEN shut the executor down.
@@ -187,6 +190,7 @@ private fun CameraPreview(
     // leaves the camera bound.
     DisposableEffect(Unit) {
         onDispose {
+            disposed.set(true)
             cameraProviderRef.get()?.unbindAll()
             analysisExecutor.shutdown()
         }
@@ -200,6 +204,13 @@ private fun CameraPreview(
             providerFuture.addListener({
                 val cameraProvider = providerFuture.get()
                 cameraProviderRef.set(cameraProvider)
+                // Provider resolved after we already left the scanner: don't bind
+                // onto the terminated executor. Unbind defensively in case a
+                // partial bind slipped in, and bail.
+                if (disposed.get()) {
+                    runCatching { cameraProvider.unbindAll() }
+                    return@addListener
+                }
                 val preview = Preview.Builder().build().also {
                     it.setSurfaceProvider(previewView.surfaceProvider)
                 }
