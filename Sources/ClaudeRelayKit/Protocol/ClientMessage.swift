@@ -29,6 +29,9 @@ public enum ClientMessage: Equatable, Sendable {
                            enabled: Bool, notifyOnFinished: Bool, topic: String? = nil)
     /// Remove this device's push registration (e.g. user turned push off).
     case unregisterPushToken(deviceId: String)
+    /// Redeem a one-time pairing code for a freshly minted per-device token.
+    /// Sent **before** `authRequest` on a brand-new connection.
+    case pairRequest(code: String, deviceName: String, platform: String)
 
     // MARK: - Wire type strings
 
@@ -49,6 +52,7 @@ public enum ClientMessage: Equatable, Sendable {
         case .ping:           return "ping"
         case .registerPushToken:   return "register_push_token"
         case .unregisterPushToken: return "unregister_push_token"
+        case .pairRequest:         return "pair_request"
         }
     }
 
@@ -59,7 +63,8 @@ public enum ClientMessage: Equatable, Sendable {
         "session_create", "session_attach", "session_resume", "session_detach",
         "session_terminate", "session_list", "session_list_all", "session_rename",
         "resize", "refresh", "paste_image", "ping",
-        "register_push_token", "unregister_push_token"
+        "register_push_token", "unregister_push_token",
+        "pair_request"
     ]
 }
 
@@ -69,6 +74,7 @@ extension ClientMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case token, sessionId, cols, rows, name, data, protocolVersion, skipReplay
         case platform, deviceId, enabled, notifyOnFinished, topic
+        case code, deviceName
     }
 
     public func encodePayload(to encoder: Encoder) throws {
@@ -117,6 +123,10 @@ extension ClientMessage: Codable {
             try container.encodeIfPresent(topic, forKey: .topic)
         case .unregisterPushToken(let deviceId):
             try container.encode(deviceId, forKey: .deviceId)
+        case .pairRequest(let code, let deviceName, let platform):
+            try container.encode(code, forKey: .code)
+            try container.encode(deviceName, forKey: .deviceName)
+            try container.encode(platform, forKey: .platform)
         }
     }
 
@@ -173,6 +183,11 @@ extension ClientMessage: Codable {
                 topic: try container.decodeIfPresent(String.self, forKey: .topic))
         case "unregister_push_token":
             return .unregisterPushToken(deviceId: try container.decode(String.self, forKey: .deviceId))
+        case "pair_request":
+            return .pairRequest(
+                code: try container.decode(String.self, forKey: .code),
+                deviceName: try container.decode(String.self, forKey: .deviceName),
+                platform: try container.decode(String.self, forKey: .platform))
         default:
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(

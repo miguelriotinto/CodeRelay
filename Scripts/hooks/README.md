@@ -46,6 +46,18 @@ process detection, so the hook can never mislabel which agent is running.
 
 ## Install
 
+```sh
+claude-relay hook install
+```
+
+That copies the script to `~/.claude-relay/hooks/`, makes it executable, backs up
+`~/.claude/settings.json`, and registers the four lifecycle events — adding only
+what is missing, so it is safe to re-run and never clobbers hooks you already
+have. Use `--dry-run` to preview, and `claude-relay hook uninstall` to reverse it.
+
+<details>
+<summary>Manual install (if you prefer to edit settings.json yourself)</summary>
+
 Copy the script somewhere stable and mark it executable:
 
 ```sh
@@ -79,6 +91,8 @@ argument; the hook derives the state from it:
 
 The hook is a no-op outside a CodeRelay session (the env vars are absent), so
 this configuration is harmless when you run Claude Code locally.
+
+</details>
 
 ## Verify
 

@@ -161,4 +161,24 @@ final class RelayConfigTests: XCTestCase {
         XCTAssertFalse(config.pushEnabled)
         XCTAssertNil(config.apnsKeyPath)
     }
+
+    // MARK: - tlsEnabled computed property
+
+    func testTLSEnabledOnlyWhenBothCertAndKeyArePresent() {
+        var config = RelayConfig.default
+        XCTAssertFalse(config.tlsEnabled, "no cert/key → false")
+
+        config.tlsCert = "/path/to/cert.pem"
+        XCTAssertFalse(config.tlsEnabled, "cert without key → false")
+
+        config.tlsKey = "/path/to/key.pem"
+        XCTAssertTrue(config.tlsEnabled, "cert + key → true")
+
+        config.tlsCert = nil
+        XCTAssertFalse(config.tlsEnabled, "key without cert → false")
+
+        config.tlsCert = ""
+        config.tlsKey = ""
+        XCTAssertFalse(config.tlsEnabled, "empty paths → false")
+    }
 }

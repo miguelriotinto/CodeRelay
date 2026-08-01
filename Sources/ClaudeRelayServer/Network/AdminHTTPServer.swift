@@ -9,23 +9,31 @@ public final class AdminHTTPServer {
     private let group: EventLoopGroup
     private let sessionManager: SessionManager
     private let tokenStore: TokenStore
+    private let pairingStore: PairingCodeStore
     private let rateLimiter: RateLimiter
+    private let config: RelayConfig
     private let port: UInt16
     private var channel: Channel?
 
     public init(group: EventLoopGroup, port: UInt16,
                 sessionManager: SessionManager, tokenStore: TokenStore,
+                pairingStore: PairingCodeStore,
+                config: RelayConfig,
                 rateLimiter: RateLimiter = RateLimiter(maxAttempts: 30, windowSeconds: 60)) {
         self.group = group
         self.port = port
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
+        self.pairingStore = pairingStore
+        self.config = config
         self.rateLimiter = rateLimiter
     }
 
     public func start() async throws {
         let sessionManager = self.sessionManager
         let tokenStore = self.tokenStore
+        let pairingStore = self.pairingStore
+        let config = self.config
         let rateLimiter = self.rateLimiter
 
         let bootstrap = ServerBootstrap(group: group)
@@ -36,6 +44,8 @@ public final class AdminHTTPServer {
                     let handler = AdminHTTPHandler(
                         sessionManager: sessionManager,
                         tokenStore: tokenStore,
+                        pairingStore: pairingStore,
+                        config: config,
                         rateLimiter: rateLimiter
                     )
                     return channel.pipeline.addHandler(handler)
@@ -62,15 +72,20 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
     private let sessionManager: SessionManager
     private let tokenStore: TokenStore
+    private let pairingStore: PairingCodeStore
+    private let config: RelayConfig
     private let rateLimiter: RateLimiter
 
     private var requestHead: HTTPRequestHead?
     private var requestBody: ByteBuffer?
     private var requestBodyOverflow: Bool = false
 
-    init(sessionManager: SessionManager, tokenStore: TokenStore, rateLimiter: RateLimiter) {
+    init(sessionManager: SessionManager, tokenStore: TokenStore,
+         pairingStore: PairingCodeStore, config: RelayConfig, rateLimiter: RateLimiter) {
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
+        self.pairingStore = pairingStore
+        self.config = config
         self.rateLimiter = rateLimiter
     }
 
@@ -118,6 +133,8 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
             let body = requestBody
             let sessionManager = self.sessionManager
             let tokenStore = self.tokenStore
+            let pairingStore = self.pairingStore
+            let config = self.config
             let rateLimiter = self.rateLimiter
 
             // Extract client IP for rate limiting
@@ -140,7 +157,9 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                     uri: head.uri,
                     body: body,
                     sessionManager: sessionManager,
-                    tokenStore: tokenStore
+                    tokenStore: tokenStore,
+                    pairingStore: pairingStore,
+                    config: config
                 )
 
                 // Track failures (4xx/5xx) for rate limiting

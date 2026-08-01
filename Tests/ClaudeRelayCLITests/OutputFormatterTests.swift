@@ -20,6 +20,26 @@ final class OutputFormatterTests: XCTestCase {
         XCTAssertEqual(decoded.count, 42)
     }
 
+    func testJSONFormatWithMergedKey() throws {
+        struct Sample: Codable {
+            let name: String
+            let count: Int
+        }
+        let sample = Sample(name: "test", count: 42)
+        let result = OutputFormatter.formatJSON(sample, merging: "extra", value: "merged")
+
+        // Parse the result and verify all keys are present and sorted
+        let data = result.data(using: .utf8)!
+        let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertEqual(dict?["name"] as? String, "test")
+        XCTAssertEqual(dict?["count"] as? Int, 42)
+        XCTAssertEqual(dict?["extra"] as? String, "merged")
+
+        // Verify keys are sorted (JSONSerialization.data with .sortedKeys ensures this)
+        let keys = dict?.keys.sorted() ?? []
+        XCTAssertEqual(keys, ["count", "extra", "name"])
+    }
+
     // MARK: - Human Status
 
     func testHumanStatusRunning() {

@@ -63,44 +63,60 @@ Binaries will be in `.build/release/`:
 
 ## Quick Start
 
-### 1. Start the Server
+### 1. Install and pair
 
-Using Homebrew services:
 ```bash
-brew services start clauderelay
+brew install miguelriotinto/claude-relay/clauderelay
+claude-relay setup
 ```
 
-Or manually:
+`setup` starts the service (using whichever manager owns it — Homebrew or a
+launchd agent), then prints a QR code.
+
+The QR carries a **single-use pairing code** that expires in five minutes, not
+your auth token. The app exchanges it over the WebSocket for its own per-device
+token, which shows up in `claude-relay token list` under the device's name and
+can be revoked individually.
+
+> **Scanning lands with the next app release.** The host side ships now; the
+> iOS/Android scanners and macOS code entry are in the next client update. Until
+> then, connect the old way:
+>
+> ```bash
+> claude-relay token create --label "my-device"
+> ```
+>
+> Copy the generated token and paste it into the token field of the app's Add
+> Server sheet (labelled **Auth Token** on iOS, **Token** on macOS).
+
+### 2. Optional: authoritative agent state
+
 ```bash
-claude-relay load --ws-port 9200
+claude-relay hook install
 ```
 
-### 2. Create an Authentication Token
+Lets Claude Code report its lifecycle directly instead of the server inferring
+state from the terminal screen. Safe to re-run; reverse with `hook uninstall`.
+
+### 3. Check on it
 
 ```bash
-claude-relay token create --label "my-device"
-```
-
-Copy the generated token - you'll need it to authenticate clients.
-
-### 3. Check Service Status
-
-```bash
-claude-relay status
+claude-relay status     # includes which manager owns the service
 claude-relay health
-```
-
-### 4. View Logs
-
-```bash
 claude-relay logs show
-claude-relay logs tail
 ```
+
+> **Which service manager?** A Homebrew install is managed by `brew services`;
+> `claude-relay load` installs its own launchd agent instead. Only ever use one
+> — two managers would compete for the same port. The CLI detects which one owns
+> your service and tells you the right command if you reach for the wrong one.
 
 ## CLI Commands
 
 ### Service Management
 ```bash
+claude-relay setup         # Start service + generate pairing QR code
+claude-relay hook install  # Install Claude Code state hook (optional)
 claude-relay load          # Install and start launchd service
 claude-relay unload        # Remove launchd service
 claude-relay start         # Start the service

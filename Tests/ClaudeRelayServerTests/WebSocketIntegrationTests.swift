@@ -48,7 +48,8 @@ final class WebSocketIntegrationTests: XCTestCase {
             group: group,
             config: config,
             sessionManager: sessionManager,
-            tokenStore: tokenStore
+            tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         try await server.start()
 
@@ -119,7 +120,8 @@ final class WebSocketIntegrationTests: XCTestCase {
             group: group,
             config: config,
             sessionManager: sessionManager,
-            tokenStore: tokenStore
+            tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         try await server.start()
         try? await Task.sleep(for: .milliseconds(100))
@@ -181,7 +183,8 @@ final class WebSocketIntegrationTests: XCTestCase {
             group: group,
             config: config,
             sessionManager: sessionManager,
-            tokenStore: tokenStore
+            tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         try await server.start()
 
@@ -254,7 +257,8 @@ final class WebSocketIntegrationTests: XCTestCase {
         let server = WebSocketServer(
             group: group, config: config,
             sessionManager: sessionManager, tokenStore: tokenStore,
-            rateLimiter: limiter
+            rateLimiter: limiter,
+            pairingStore: PairingCodeStore()
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -351,7 +355,8 @@ final class WebSocketIntegrationTests: XCTestCase {
 
         let server = WebSocketServer(
             group: group, config: config,
-            sessionManager: sessionManager, tokenStore: tokenStore
+            sessionManager: sessionManager, tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -416,7 +421,8 @@ final class WebSocketIntegrationTests: XCTestCase {
 
         let server = WebSocketServer(
             group: group, config: config,
-            sessionManager: sessionManager, tokenStore: tokenStore
+            sessionManager: sessionManager, tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -484,7 +490,8 @@ final class WebSocketIntegrationTests: XCTestCase {
 
         let server = WebSocketServer(
             group: group, config: config,
-            sessionManager: sessionManager, tokenStore: tokenStore
+            sessionManager: sessionManager, tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -559,7 +566,8 @@ final class WebSocketIntegrationTests: XCTestCase {
 
         let server = WebSocketServer(
             group: group, config: config,
-            sessionManager: sessionManager, tokenStore: tokenStore
+            sessionManager: sessionManager, tokenStore: tokenStore,
+            pairingStore: PairingCodeStore()
         )
         try await server.start()
         defer { Task { try? await server.stop() } }

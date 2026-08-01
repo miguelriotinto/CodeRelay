@@ -28,6 +28,8 @@ public enum ServerMessage: Equatable, Sendable {
     /// `text` to the device clipboard.
     case clipboardUpdate(sessionId: UUID, text: String)
     case error(code: Int, message: String)
+    /// A pairing code was redeemed: here is the newly minted device token.
+    case pairSuccess(token: String, tokenId: String, label: String)
 
     // MARK: - Wire type strings
 
@@ -54,6 +56,7 @@ public enum ServerMessage: Equatable, Sendable {
         case .pushTokenAck:        return "push_token_ack"
         case .clipboardUpdate:     return "clipboard_update"
         case .error:               return "error"
+        case .pairSuccess:         return "pair_success"
         }
     }
 
@@ -65,7 +68,8 @@ public enum ServerMessage: Equatable, Sendable {
         "session_terminated", "session_expired", "session_state", "session_activity",
         "session_stolen", "session_renamed",
         "session_list_result", "session_list_all_result",
-        "resize_ack", "paste_image_result", "pong", "push_token_ack", "clipboard_update", "error"
+        "resize_ack", "paste_image_result", "pong", "push_token_ack", "clipboard_update", "error",
+        "pair_success"
     ]
 }
 
@@ -75,6 +79,7 @@ extension ServerMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case reason, sessionId, cols, rows, state, code, message, sessions, activity, agent, name, success, protocolVersion
         case agentState, title, workingDir, accepted, text, tokenId
+        case token, label
     }
 
     public func encodePayload(to encoder: Encoder) throws {
@@ -137,6 +142,10 @@ extension ServerMessage: Codable {
         case .error(let code, let message):
             try container.encode(code, forKey: .code)
             try container.encode(message, forKey: .message)
+        case .pairSuccess(let token, let tokenId, let label):
+            try container.encode(token, forKey: .token)
+            try container.encode(tokenId, forKey: .tokenId)
+            try container.encode(label, forKey: .label)
         }
     }
 
@@ -219,6 +228,11 @@ extension ServerMessage: Codable {
             let code = try container.decode(Int.self, forKey: .code)
             let message = try container.decode(String.self, forKey: .message)
             return .error(code: code, message: message)
+        case "pair_success":
+            return .pairSuccess(
+                token: try container.decode(String.self, forKey: .token),
+                tokenId: try container.decode(String.self, forKey: .tokenId),
+                label: try container.decode(String.self, forKey: .label))
         default:
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(

@@ -23,13 +23,15 @@ public final class WebSocketServer {
     private let clipboardService: ClipboardService
     private let config: RelayConfig
     private let pushStore: PushRegistrationStore
+    private let pairingStore: PairingCodeStore
     private var channel: Channel?
 
     public init(group: EventLoopGroup, config: RelayConfig,
                 sessionManager: SessionManager, tokenStore: TokenStore,
                 rateLimiter: RateLimiter = RateLimiter(maxAttempts: 10, windowSeconds: 60),
                 clipboardService: ClipboardService = MacClipboardService(),
-                pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory)) {
+                pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory),
+                pairingStore: PairingCodeStore) {
         self.group = group
         self.config = config
         self.sessionManager = sessionManager
@@ -37,6 +39,7 @@ public final class WebSocketServer {
         self.rateLimiter = rateLimiter
         self.clipboardService = clipboardService
         self.pushStore = pushStore
+        self.pairingStore = pairingStore
     }
 
     /// Create SSL context from configured cert and key files.
@@ -73,6 +76,7 @@ public final class WebSocketServer {
         let sessionManager = self.sessionManager
         let tokenStore = self.tokenStore
         let pushStore = self.pushStore
+        let pairingStore = self.pairingStore
         let rateLimiter = self.rateLimiter
         let clipboardService = self.clipboardService
         let sslContext: NIOSSLContext? = try createSSLContextIfConfigured()
@@ -88,7 +92,8 @@ public final class WebSocketServer {
                     tokenStore: tokenStore,
                     rateLimiter: rateLimiter,
                     clipboardService: clipboardService,
-                    pushStore: pushStore
+                    pushStore: pushStore,
+                    pairingStore: pairingStore
                 )
                 return channel.pipeline.addHandler(handler)
             }
@@ -159,10 +164,7 @@ public final class WebSocketServer {
 
     /// Create SSL context if TLS is configured (both cert and key present).
     private func createSSLContextIfConfigured() throws -> NIOSSLContext? {
-        guard let certPath = config.tlsCert, !certPath.isEmpty,
-              let keyPath = config.tlsKey, !keyPath.isEmpty else {
-            return nil
-        }
+        guard config.tlsEnabled else { return nil }
         return try createSSLContext()
     }
 

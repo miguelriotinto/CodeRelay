@@ -37,6 +37,10 @@ let pushStore = PushRegistrationStore(directory: RelayConfig.configDirectory)
 // tokens but cheap enough to stall credential-stuffing tools.
 let rateLimiter = RateLimiter(maxAttempts: 10, windowSeconds: 60)
 
+// In-memory pairing code store for host pairing (F11). Codes are single-use
+// and short-lived (5 min default TTL), so disk persistence is unnecessary.
+let pairingStore = PairingCodeStore()
+
 // Every 30 minutes, evict observers older than 1 hour. Prevents unbounded
 // growth if a channel dies without its ChannelInboundHandler running cleanup.
 let observerPurgeTask = Task {
@@ -79,11 +83,14 @@ let wsServer = WebSocketServer(
     group: group, config: config,
     sessionManager: sessionManager, tokenStore: tokenStore,
     rateLimiter: rateLimiter,
-    pushStore: pushStore
+    pushStore: pushStore,
+    pairingStore: pairingStore
 )
 let adminServer = AdminHTTPServer(
     group: group, port: config.adminPort,
     sessionManager: sessionManager, tokenStore: tokenStore,
+    pairingStore: pairingStore,
+    config: config,
     rateLimiter: rateLimiter
 )
 

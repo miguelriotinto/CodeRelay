@@ -15,6 +15,23 @@ public enum OutputFormatter {
         return string
     }
 
+    /// Format an Encodable value with an extra top-level string key merged in.
+    /// Returns "{}" if encoding or merging fails.
+    public static func formatJSON<T: Encodable>(_ value: T, merging key: String, value extraValue: String) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(value),
+              var dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return "{}"
+        }
+        dict[key] = extraValue
+        guard let merged = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
+              let string = String(data: merged, encoding: .utf8) else {
+            return "{}"
+        }
+        return string
+    }
+
     // MARK: - Human-Readable Status
 
     /// Format service status for human reading.
