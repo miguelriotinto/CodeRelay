@@ -14,19 +14,24 @@ final class PairingViewModel: ObservableObject {
     @Published var isPairing = false
 
     var isValid: Bool {
-        !host.isEmpty && UInt16(port) != nil && PairingCode.normalize(code) != nil
+        !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && UInt16(port) != nil && PairingCode.normalize(code) != nil
     }
 
     /// Builds a PairingURL from the fields, redeems it, returns the saved config.
     func pair() async -> ConnectionConfig? {
         errorMessage = nil
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty else {
+            errorMessage = "Host is required."; return nil
+        }
         guard let portNumber = UInt16(port), portNumber >= 1 else {
             errorMessage = "Port must be a number between 1 and 65535."; return nil
         }
         guard let normalized = PairingCode.normalize(code) else {
             errorMessage = "That code is not a valid pairing code."; return nil
         }
-        let url = PairingURL(host: host, port: portNumber, useTLS: useTLS, code: normalized)
+        let url = PairingURL(host: trimmedHost, port: portNumber, useTLS: useTLS, code: normalized)
         let controller = PairingController(
             store: ClaudeRelayApp.savedConnections,
             deviceName: UIDevice.current.name,
@@ -36,7 +41,7 @@ final class PairingViewModel: ObservableObject {
         do {
             return try await controller.pair(url)
         } catch let error as PairingError {
-            errorMessage = Self.message(for: error, host: host, useTLS: useTLS)
+            errorMessage = Self.message(for: error, host: trimmedHost, useTLS: useTLS)
             return nil
         } catch {
             errorMessage = "Pairing failed: \(error.localizedDescription)"
