@@ -49,7 +49,7 @@ data class PairingURL(
 
             // Parse query parameters
             val query = uri.rawQuery ?: return null
-            val params = parseQueryParams(query)
+            val params = parseQueryParams(query) ?: return null
 
             // Extract and validate host
             val host = params["host"]?.trim()
@@ -73,15 +73,22 @@ data class PairingURL(
             return PairingURL(host, port, useTLS, code)
         }
 
-        private fun parseQueryParams(query: String): Map<String, String> {
-            return query.split("&").mapNotNull {
-                val i = it.indexOf('=')
-                if (i < 0) null else {
-                    val key = URLDecoder.decode(it.substring(0, i), "UTF-8")
-                    val value = URLDecoder.decode(it.substring(i + 1), "UTF-8")
-                    key to value
-                }
-            }.toMap()
+        private fun parseQueryParams(query: String): Map<String, String>? {
+            return try {
+                query.split("&").mapNotNull {
+                    val i = it.indexOf('=')
+                    if (i < 0) null else {
+                        val key = URLDecoder.decode(it.substring(0, i), "UTF-8")
+                        val value = URLDecoder.decode(it.substring(i + 1), "UTF-8")
+                        key to value
+                    }
+                }.toMap()
+            } catch (e: IllegalArgumentException) {
+                // URLDecoder.decode throws IllegalArgumentException on malformed
+                // percent-encoding. While URI() typically rejects these first,
+                // we guard here for defense-in-depth.
+                null
+            }
         }
     }
 }

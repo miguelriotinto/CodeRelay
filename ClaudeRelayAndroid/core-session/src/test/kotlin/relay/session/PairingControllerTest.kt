@@ -185,6 +185,38 @@ class PairingControllerTest {
     }
 
     @Test
+    fun `cleartext policy violation maps to TlsRequired`() = runTest {
+        val callLog = mutableListOf<String>()
+        val connection = FakePairingConnection(callLog)
+        val store = FakeConnectionStore()
+        val tokenStore = FakeTokenStore()
+
+        // Script CleartextPolicyException on connect
+        connection.connectError = relay.net.CleartextPolicyException("TLS required")
+
+        val controller = PairingController(
+            store = store,
+            tokenStore = tokenStore,
+            deviceName = "TestDevice",
+            platform = "android",
+            connectionFactory = { connection },
+            timeoutMs = 10_000L
+        )
+
+        val url = PairingURL.parse("clauderelay://pair?host=public.example.com&port=9200&tls=0&code=TLS12345")!!
+
+        assertThrows(PairingError.TlsRequired::class.java) {
+            kotlinx.coroutines.runBlocking {
+                controller.pair(url)
+            }
+        }
+
+        // Assert NOTHING persisted
+        assertEquals(0, store.savedConfigs.size)
+        assertEquals(0, tokenStore.tokens.size)
+    }
+
+    @Test
     fun `external coroutine cancellation disconnects and propagates CancellationException`() = runTest {
         val callLog = mutableListOf<String>()
         val connection = FakePairingConnection(callLog)
@@ -237,11 +269,13 @@ class PairingControllerTest {
         override val isConnected: Boolean = true
 
         var scriptedReply: ServerMessage? = null
+        var connectError: Exception? = null
         val sentMessages = mutableListOf<ClientMessage>()
         private val subscribers = ConcurrentHashMap<UUID, (ServerMessage) -> Unit>()
 
         override suspend fun connect(config: ConnectionConfig, token: String) {
             callLog.add("connect")
+            connectError?.let { throw it }
         }
 
         override suspend fun disconnect() {

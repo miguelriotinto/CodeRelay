@@ -50,4 +50,19 @@ class PairingUrlTest {
     @Test fun `empty host is null`() {
         assertNull(PairingURL.parse("clauderelay://pair?host=&port=9200&tls=0&code=K7QP2M4X"))
     }
+
+    @Test fun `malformed percent-encoding with invalid hex returns null`() {
+        assertNull(PairingURL.parse("clauderelay://pair?host=%ZZ&port=9200&tls=0&code=K7QP2M4X"))
+    }
+
+    @Test fun `malformed percent-encoding with lone percent returns null`() {
+        assertNull(PairingURL.parse("clauderelay://pair?host=%&port=9200&tls=0&code=K7QP2M4X"))
+    }
+
+    @Test fun `valid percent-encoded host parses successfully`() {
+        val u = PairingURL.parse("clauderelay://pair?host=a%2Eb&port=9200&tls=0&code=K7QP2M4X")!!
+        assertEquals("a.b", u.host)
+        assertEquals(9200, u.port)
+        assertEquals("K7QP2M4X", u.code)
+    }
 }

@@ -5,6 +5,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import relay.net.CleartextPolicyException
 import relay.protocol.ClientMessage
 import relay.protocol.ConnectionConfig
 import relay.protocol.PairingConnection
@@ -67,6 +68,11 @@ class PairingController(
         )
         try {
             connection.connect(dialConfig, token = "")
+        } catch (e: CancellationException) {
+            // Never swallow CancellationException — coroutine cancellation must propagate
+            throw e
+        } catch (e: CleartextPolicyException) {
+            throw PairingError.TlsRequired
         } catch (e: Exception) {
             throw PairingError.Unreachable
         }
