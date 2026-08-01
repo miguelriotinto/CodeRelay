@@ -96,10 +96,15 @@ public final class PairingController {
                 box.resume(with: message)
             }
             defer { connection.removeSubscriber(subId) }
+            defer { group.cancelAll() }
 
             group.addTask { @MainActor in
-                try await withCheckedThrowingContinuation { cont in
-                    box.attach(cont)
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { cont in
+                        box.attach(cont)
+                    }
+                } onCancel: {
+                    box.cancel()
                 }
             }
             group.addTask { @MainActor [timeout] in
@@ -111,12 +116,10 @@ public final class PairingController {
                 try await connection.send(.pairRequest(
                     code: code, deviceName: deviceName, platform: platform))
             } catch {
-                group.cancelAll()
                 throw PairingError.unreachable
             }
 
             guard let result = try await group.next() else { throw PairingError.timedOut }
-            group.cancelAll()
             return result
         }
     }
@@ -135,7 +138,8 @@ public final class PairingController {
 
 /// Bridges the subscriber callback (sync) to the awaiting continuation. The
 /// subscriber may fire before or after the continuation is attached, so it
-/// stores the first value and replays it on attach.
+/// stores the first value and replays it on attach. Cancellation-aware: when
+/// the task is cancelled, resumes the continuation with CancellationError.
 @MainActor
 private final class ContinuationBox {
     private var continuation: CheckedContinuation<ServerMessage, Error>?
@@ -143,7 +147,8 @@ private final class ContinuationBox {
     private var done = false
 
     func attach(_ cont: CheckedContinuation<ServerMessage, Error>) {
-        if let pending, !done {
+        guard !done else { return }
+        if let pending {
             done = true
             cont.resume(returning: pending)
         } else {
@@ -158,6 +163,14 @@ private final class ContinuationBox {
             continuation.resume(returning: message)
         } else {
             pending = message
+        }
+    }
+
+    nonisolated func cancel() {
+        Task { @MainActor in
+            guard !done else { return }
+            done = true
+            continuation?.resume(throwing: CancellationError())
         }
     }
 }

@@ -92,6 +92,7 @@ final class PairingControllerTests: XCTestCase {
         let url = PairingURL(host: "h.local", port: 9200, useTLS: false, code: "K7QP2M4X")
         do { _ = try await controller.pair(url); XCTFail("expected throw") }
         catch let e as PairingError { XCTAssertEqual(e, .rateLimited) }
+        XCTAssertTrue(conn.disconnected, "socket must be torn down on failure")
     }
 
     func testNoReplyTimesOut() async throws {
