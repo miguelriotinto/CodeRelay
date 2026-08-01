@@ -168,7 +168,7 @@ Off by default (`pushEnabled=false`); device tokens are still accepted + stored 
 
 **Human/portal setup (required for real delivery):**
 - **iOS/macOS:** enable the Push Notifications capability on the App ID in the Apple Developer portal (the `aps-environment` entitlement is already in `project.yml`/`.entitlements`; a signed build fails without the capability on the profile). Upload an APNs auth key (`.p8`) and set `apnsKeyPath/apnsKeyId/apnsTeamId/apnsBundleId` (+ `apnsUseSandbox` for dev).
-- **Android (deferred):** create a Firebase project, add `google-services.json` + the `com.google.gms.google-services` Gradle plugin + `firebase-messaging`, an FCM service, a notification channel, and the `POST_NOTIFICATIONS` runtime permission. The wire messages + `PushRegistrationController` exist; the messaging service is gated on that Firebase config (adding the plugin without the JSON breaks the Gradle build). Server side: set `fcmServiceAccountPath` + `fcmProjectId`.
+- **Android:** shipped. `google-services.json` is tracked in `ClaudeRelayAndroid/app/`, the `com.google.gms.google-services` plugin is applied (`app/build.gradle.kts`), `RelayFirebaseMessagingService` is registered in `AndroidManifest.xml`, and `POST_NOTIFICATIONS` is requested at runtime (API 33+). Note the Gradle plugin *requires* the JSON — removing it breaks the build. Server side: set `fcmServiceAccountPath` + `fcmProjectId`.
 - Secrets (`.p8`, service-account JSON) are server-only, never logged (`PushHTTP.redact` strips `bearer` tokens); device push tokens persist `0o600`.
 
 ### Key Pattern: sendAndWaitForResponse

@@ -84,8 +84,9 @@ token, which shows up in `claude-relay token list` under the device's name and
 can be revoked individually.
 
 Scan it from the app's server list: iOS and Android open a camera scanner. On
-macOS, use the **Pair** button in the server list and type the code — the Mac's
-`Cmd+Shift+Q` scanner reads session-attach QRs only, not pairing QRs.
+macOS, use the **Pair** button in the server list and enter the host, port, and
+code by hand — the Mac's `Cmd+Shift+Q` scanner reads session-attach QRs only,
+not pairing QRs.
 
 > **Prefer to connect manually?** Mint a token instead and paste it into the
 > app's Add Server sheet (labelled **Auth Token** on iOS, **Token** on macOS):
@@ -484,5 +485,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Links
 
 - **GitHub**: https://github.com/miguelriotinto/ClaudeRelay
-- **Homebrew Tap**: https://github.com/miguelriotinto/homebrew-claude-relay
+- **Homebrew Tap**: https://github.com/miguelriotinto/homebrew-clauderelay
 - **Issues**: https://github.com/miguelriotinto/ClaudeRelay/issues
