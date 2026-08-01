@@ -175,12 +175,21 @@ private fun CameraPreview(
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     // Latch so we accept at most one QR (Swift `hasScanned`).
     val scanned = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    // The bound provider, captured once resolved so onDispose can unbind it.
+    val cameraProviderRef = remember { java.util.concurrent.atomic.AtomicReference<ProcessCameraProvider?>(null) }
 
-    // Shut the executor down when the scanner leaves composition — otherwise its
-    // thread leaks each time the camera is opened (now reachable from two entry
-    // points: session-attach and pairing).
+    // On leaving composition: UNBIND the CameraX use cases FIRST (stops the camera
+    // and halts frame dispatch to the analyzer), THEN shut the executor down.
+    // Order matters — shutting the executor while use cases are still bound to the
+    // Activity lifecycle lets CameraX submit frames to a terminated executor
+    // (RejectedExecutionException) and can leave the camera active after nav-away.
+    // Both are needed: unbind alone leaks the executor thread; shutdown alone
+    // leaves the camera bound.
     DisposableEffect(Unit) {
-        onDispose { analysisExecutor.shutdown() }
+        onDispose {
+            cameraProviderRef.get()?.unbindAll()
+            analysisExecutor.shutdown()
+        }
     }
 
     AndroidView(
@@ -190,6 +199,7 @@ private fun CameraPreview(
             val providerFuture = ProcessCameraProvider.getInstance(ctx)
             providerFuture.addListener({
                 val cameraProvider = providerFuture.get()
+                cameraProviderRef.set(cameraProvider)
                 val preview = Preview.Builder().build().also {
                     it.setSurfaceProvider(previewView.surfaceProvider)
                 }
