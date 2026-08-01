@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -72,8 +73,13 @@ import relay.session.ServerStatus
  * (Android's network-security-config can't express RFC1918 CIDR ranges).
  *
  * @param pendingPairingUrl when non-null, triggers the pairing sheet prefilled from
- * the URL (deep link from `claude-relay setup` QR scan). The caller must clear it
- * via [clearPendingPairing] after consumption.
+ * the URL (deep link from `claude-relay setup` QR scan, OR a QR scanned via
+ * [onScanPair]). Both entry points converge on this one flow. The caller must
+ * clear it via [clearPendingPairing] after consumption.
+ * @param onScanPair opens the camera QR scanner. A scanned `clauderelay://pair`
+ * QR is parsed by the host and delivered back through [pendingPairingUrl], so the
+ * scan and deep-link paths share the same prefilled-sheet consumption. The camera
+ * lives in the app/workspace module, so the Servers screen only asks for it.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,6 +89,7 @@ fun ServersScreen(
     modifier: Modifier = Modifier,
     pendingPairingUrl: relay.protocol.PairingURL? = null,
     clearPendingPairing: () -> Unit = {},
+    onScanPair: () -> Unit = {},
 ) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val statuses by viewModel.statuses.collectAsStateWithLifecycle()
@@ -126,11 +133,14 @@ fun ServersScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FloatingActionButton(onClick = onScanPair) {
+                    Icon(Icons.Filled.QrCodeScanner, contentDescription = "Scan pairing QR code")
+                }
                 FloatingActionButton(onClick = { pairingMode = PairingMode.Manual }) {
                     Icon(Icons.Filled.Add, contentDescription = "Pair with Host")
                 }
                 FloatingActionButton(onClick = { sheetMode = ServerSheetMode.Add }) {
-                    Icon(Icons.Filled.Add, contentDescription = "Add Server")
+                    Icon(Icons.Filled.Storage, contentDescription = "Add Server")
                 }
             }
         },

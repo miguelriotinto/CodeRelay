@@ -52,6 +52,7 @@ private object Routes {
     const val SERVERS = "servers"
     const val WORKSPACE = "workspace"
     const val SETTINGS = "settings"
+    const val PAIR_SCANNER = "pair_scanner"
 }
 
 /**
@@ -93,6 +94,7 @@ fun RelayNavGraph(
     clearPendingSession: () -> Unit,
     pendingPairing: StateFlow<relay.protocol.PairingURL?>,
     clearPendingPairing: () -> Unit,
+    onPairScanned: (relay.protocol.PairingURL) -> Unit,
     autoConnectConfig: ConnectionConfig?,
     appVersion: String,
     buildNumber: String,
@@ -184,6 +186,26 @@ fun RelayNavGraph(
                     }
                 },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                onScanPair = { navController.navigate(Routes.PAIR_SCANNER) },
+            )
+        }
+
+        composable(Routes.PAIR_SCANNER) {
+            // Camera QR scanner for pairing. A scanned `clauderelay://pair` QR is
+            // parsed to a PairingURL and handed to `onPairScanned` (→ the host's
+            // pending-pairing flow), then we pop back to Servers, which shows the
+            // prefilled sheet — the exact same consumer the deep-link path uses.
+            // Non-pairing QRs are rejected by the scanner (onDecoded returns false),
+            // so an unrelated code never dismisses the camera.
+            relay.feature.workspace.QrScannerFullScreen(
+                onDecoded = { raw ->
+                    val url = relay.protocol.PairingURL.parse(raw) ?: return@QrScannerFullScreen false
+                    onPairScanned(url)
+                    navController.popBackStack(Routes.SERVERS, inclusive = false)
+                    true
+                },
+                onCancel = { navController.popBackStack(Routes.SERVERS, inclusive = false) },
+                modifier = Modifier.fillMaxSize(),
             )
         }
 
@@ -254,6 +276,7 @@ private fun ServersRoute(
     clearPendingPairing: () -> Unit,
     onConnect: (ConnectionConfig) -> Unit,
     onOpenSettings: () -> Unit,
+    onScanPair: () -> Unit,
 ) {
     val context = LocalContext.current
     val viewModel: ServersViewModel = viewModel(factory = ServersViewModel.factory(context))
@@ -277,6 +300,7 @@ private fun ServersRoute(
             modifier = Modifier.fillMaxSize(),
             pendingPairingUrl = pendingPairingUrl,
             clearPendingPairing = clearPendingPairing,
+            onScanPair = onScanPair,
         )
 
         IconButton(

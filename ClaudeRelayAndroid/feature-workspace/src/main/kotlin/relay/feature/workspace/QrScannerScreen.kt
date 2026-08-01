@@ -21,12 +21,16 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +61,11 @@ private const val TAG = "QrScannerScreen"
  * Swift `onCodeScanned` → `UUID` path). Non-session QR payloads are ignored so
  * an unrelated code does not dismiss the scanner.
  *
+ * This session-attach entry point is a thin wrapper over the generalized
+ * [QrScannerScreen] (`onDecoded`) overload: it accepts a scanned string only
+ * when [DeepLinks.parseSessionId] resolves it, so pairing and any future scan
+ * consumer can reuse the same camera pipeline without this one changing.
+ *
  * Runtime CAMERA permission is requested via
  * [rememberLauncherForActivityResult]; while denied a rationale + retry button is
  * shown (the Swift authorization-denied state).
@@ -73,8 +82,39 @@ fun QrScannerScreen(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    QrScanner(
+        onDecoded = { raw ->
+            val sessionId = DeepLinks.parseSessionId(raw) ?: return@QrScanner false
+            onSessionScanned(sessionId)
+            true
+        },
+        onCancel = onCancel,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Generalized camera QR scanner. Runs decoded QR payloads through [onDecoded];
+ * the caller inspects the raw string and returns `true` to ACCEPT it (which
+ * latches the scanner + fires a haptic, so a single QR is consumed exactly once)
+ * or `false` to keep scanning (an unrelated code does not dismiss the scanner).
+ *
+ * Session-attach ([QrScannerScreen]) passes a [DeepLinks.parseSessionId]
+ * predicate; pairing passes a [relay.protocol.PairingURL.parse] predicate. One
+ * camera pipeline, many consumers — the raw-string payload is the only coupling.
+ * (Distinct name, not an overload: `(UUID)->Unit` and `(String)->Boolean` erase
+ * to the same JVM signature.)
+ *
+ * @param onDecoded called on each decoded QR string; return true to accept+latch
+ * @param onCancel leave the scanner without scanning
+ */
+@Composable
+fun QrScanner(
+    onDecoded: (String) -> Boolean,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
 
     var hasPermission by remember {
         mutableStateOf(
@@ -94,7 +134,7 @@ fun QrScannerScreen(
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         if (hasPermission) {
             CameraPreview(
-                onSessionScanned = onSessionScanned,
+                onDecoded = onDecoded,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -123,21 +163,74 @@ fun QrScannerScreen(
 }
 
 /**
+ * [QrScanner] with an always-visible Cancel affordance overlaid on the live
+ * camera, for full-screen (non-sheet) hosts like a nav destination. Mirrors the
+ * session-attach [QrScannerSheet]'s Cancel overlay so a granted-permission camera
+ * is never dismissable only by the system-back gesture.
+ *
+ * @param onDecoded see [QrScanner] — return true to accept+latch
+ * @param onCancel invoked by the overlay Cancel button (and reused as the
+ * scanner's own cancel)
+ */
+@Composable
+fun QrScannerFullScreen(
+    onDecoded: (String) -> Boolean,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier.fillMaxSize()) {
+        QrScanner(
+            onDecoded = onDecoded,
+            onCancel = onCancel,
+            modifier = Modifier.matchParentSize(),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            FilledTonalButton(onClick = onCancel) { Text("Cancel") }
+        }
+    }
+}
+
+/**
  * The live preview + analysis pipeline. Binds a CameraX [Preview] and an
  * [ImageAnalysis] (backpressure: keep only the latest frame) to the lifecycle,
  * feeding frames to [QrAnalyzer].
  */
 @Composable
 private fun CameraPreview(
-    onSessionScanned: (UUID) -> Unit,
+    onDecoded: (String) -> Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     // Single-thread analysis executor; remembered so we can shut it down.
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-    // Latch so we fire onSessionScanned at most once (Swift `hasScanned`).
+    // Latch so we accept at most one QR (Swift `hasScanned`).
     val scanned = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    // The bound provider, captured once resolved so onDispose can unbind it.
+    val cameraProviderRef = remember { java.util.concurrent.atomic.AtomicReference<ProcessCameraProvider?>(null) }
+    // Set on dispose so the async provider callback, if it resolves AFTER we've
+    // left composition, skips binding onto the already-terminated executor.
+    val disposed = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+
+    // On leaving composition: UNBIND the CameraX use cases FIRST (stops the camera
+    // and halts frame dispatch to the analyzer), THEN shut the executor down.
+    // Order matters — shutting the executor while use cases are still bound to the
+    // Activity lifecycle lets CameraX submit frames to a terminated executor
+    // (RejectedExecutionException) and can leave the camera active after nav-away.
+    // Both are needed: unbind alone leaks the executor thread; shutdown alone
+    // leaves the camera bound.
+    DisposableEffect(Unit) {
+        onDispose {
+            disposed.set(true)
+            cameraProviderRef.get()?.unbindAll()
+            analysisExecutor.shutdown()
+        }
+    }
 
     AndroidView(
         modifier = modifier,
@@ -146,13 +239,21 @@ private fun CameraPreview(
             val providerFuture = ProcessCameraProvider.getInstance(ctx)
             providerFuture.addListener({
                 val cameraProvider = providerFuture.get()
+                cameraProviderRef.set(cameraProvider)
+                // Provider resolved after we already left the scanner: don't bind
+                // onto the terminated executor. Unbind defensively in case a
+                // partial bind slipped in, and bail.
+                if (disposed.get()) {
+                    runCatching { cameraProvider.unbindAll() }
+                    return@addListener
+                }
                 val preview = Preview.Builder().build().also {
                     it.setSurfaceProvider(previewView.surfaceProvider)
                 }
                 val analysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
-                    .also { it.setAnalyzer(analysisExecutor, QrAnalyzer(ctx, scanned, onSessionScanned)) }
+                    .also { it.setAnalyzer(analysisExecutor, QrAnalyzer(ctx, scanned, onDecoded)) }
 
                 runCatching {
                     cameraProvider.unbindAll()
@@ -170,13 +271,15 @@ private fun CameraPreview(
 }
 
 /**
- * ML Kit [ImageAnalysis.Analyzer] that decodes QR codes and, on a payload that
- * parses to a session [UUID], fires a haptic + [onSessionScanned] exactly once.
+ * ML Kit [ImageAnalysis.Analyzer] that decodes QR codes and hands each raw
+ * payload to [onDecoded]. When [onDecoded] returns true (the caller accepted the
+ * code) it fires a haptic and latches, so exactly one QR is consumed; a false
+ * return keeps scanning so an unrelated code does not dismiss the scanner.
  */
 private class QrAnalyzer(
     private val context: Context,
     private val scanned: java.util.concurrent.atomic.AtomicBoolean,
-    private val onSessionScanned: (UUID) -> Unit,
+    private val onDecoded: (String) -> Boolean,
 ) : ImageAnalysis.Analyzer {
     private val scanner = BarcodeScanning.getClient()
 
@@ -190,15 +293,23 @@ private class QrAnalyzer(
         val input = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
         scanner.process(input)
             .addOnSuccessListener { barcodes ->
+                // Single-fire rests on ML Kit's success listeners defaulting to the
+                // main thread + ImageAnalysis STRATEGY_KEEP_ONLY_LATEST closing each
+                // proxy before the next frame is delivered: at most one decoded
+                // result is handled at a time, so `scanned.get()` (set on accept)
+                // gates every subsequent frame. The `for` loop's own guard stops a
+                // multi-code frame from firing `onDecoded` twice.
                 for (barcode in barcodes) {
+                    if (scanned.get()) break
                     if (barcode.format != Barcode.FORMAT_QR_CODE) continue
                     val value = barcode.rawValue ?: continue
-                    val sessionId = DeepLinks.parseSessionId(value) ?: continue
-                    if (scanned.compareAndSet(false, true)) {
+                    // `onDecoded` decides AND acts (navigate/attach); a `false`
+                    // (unrecognized QR) leaves the latch clear so scanning continues.
+                    if (onDecoded(value)) {
+                        scanned.set(true)
                         vibrate(context)
-                        onSessionScanned(sessionId)
+                        break
                     }
-                    break
                 }
             }
             .addOnFailureListener { Log.w(TAG, "Barcode scan failed", it) }

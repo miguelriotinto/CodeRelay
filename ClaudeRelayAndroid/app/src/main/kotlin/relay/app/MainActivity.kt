@@ -132,6 +132,7 @@ class MainActivity : ComponentActivity() {
                         clearPendingSession = ::clearPendingSession,
                         pendingPairing = pendingPairing,
                         clearPendingPairing = ::clearPendingPairing,
+                        onPairScanned = ::setPendingPairing,
                         autoConnectConfig = collectAutoConnect(),
                         appVersion = BuildConfig.VERSION_NAME,
                         buildNumber = BuildConfig.VERSION_CODE.toString(),
@@ -163,6 +164,15 @@ class MainActivity : ComponentActivity() {
     /** Clears the pending pairing once the nav graph has consumed it. */
     fun clearPendingPairing() {
         _pendingPairing.value = null
+    }
+
+    /**
+     * Feeds a pairing URL from the in-app QR scanner into the SAME pending-pairing
+     * flow a `clauderelay://pair` deep link uses, so scan and deep-link converge on
+     * one prefilled-sheet consumer on the Servers screen.
+     */
+    fun setPendingPairing(url: relay.protocol.PairingURL) {
+        _pendingPairing.value = url
     }
 
     /**
