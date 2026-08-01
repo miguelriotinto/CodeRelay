@@ -642,9 +642,35 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     // MARK: - Switch
 
+    /// Switches the visible session.
+    ///
+    /// **The selection is published BEFORE the RPCs, not after.** Both the
+    /// sidebar's `List(selection:)` binding and the terminal container's
+    /// `updateNSView` key off `activeSessionId`, so assigning it last made the
+    /// whole UI wait on the wire: `resumeSession` sits in `SessionController`'s
+    /// *serialized* RPC chain (replies carry no request ids, so at most one may be
+    /// outstanding), each hop has a 10 s timeout, and a timeout POISONS the socket
+    /// — every later RPC then throws `connectionDesynchronized` until a reconnect.
+    /// One slow hop therefore cascaded into handshake retries plus recovery
+    /// backoff while the pane stayed frozen on the old session, which is how a tab
+    /// switch took minutes. Publishing first decouples perceived responsiveness
+    /// from wire latency; the guard on `id != activeSessionId` then also stops an
+    /// impatient re-click from queueing a second resume onto a stalled chain.
     public func switchToSession(id: UUID) async {
         guard !isRecovering, id != activeSessionId else { return }
         let previousId = activeSessionId
+
+        // A live native terminal for the target means its SwiftTerm scrollback is
+        // still on screen, so the server's ring-buffer replay would re-stream
+        // `scrollbackSize` bytes the client already has (in 64 KB frames, parsed
+        // on the main actor) — the reason `skipReplay` exists. When we skip it we
+        // must also NOT reset the cached view's buffering state: `prepareForReplay`
+        // clears `terminalSized`, which makes `terminalReady()` emit RIS and blank
+        // the very glyphs we are reusing. The server still resize-wiggles
+        // (`repaintAfter`) after a skipped replay, so a full-screen app redraws
+        // itself if the grid changed while we were away.
+        let hasLiveTerminal = terminalCache.view(for: id) != nil
+
         do {
             if let currentId = previousId, currentId != id {
                 terminalViewModels[currentId]?.prepareForSwitch()
@@ -654,28 +680,46 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             // binary replay frames are routed to the correct VM from the start.
             if terminalViewModels[id] == nil {
                 terminalViewModels[id] = TerminalViewModel(sessionId: id, connection: connection)
-            } else {
+            } else if !hasLiveTerminal {
                 terminalViewModels[id]?.prepareForReplay()
             }
-            terminalViewModels[id]?.beginReplay()
+            if !hasLiveTerminal {
+                terminalViewModels[id]?.beginReplay()
+            }
             wireTerminalOutput(to: id)
 
-            try await withAuth { controller in
-                if previousId != nil {
-                    try? await controller.detach()
-                }
-                try await controller.resumeSession(id: id, skipReplay: false)
-            }
-
+            // Optimistic: publish the selection now so the sidebar highlight and
+            // the terminal swap immediately. Everything below is bookkeeping the
+            // views don't block on. Reverted in the catch if the resume fails.
             activeSessionId = id
             activityCoordinator.markSeen(id)
             terminalCache.touch(id)
             terminalCache.enforceLimit(activeSessionId: activeSessionId)
 
+            try await withAuth { controller in
+                if previousId != nil {
+                    try? await controller.detach()
+                }
+                try await controller.resumeSession(id: id, skipReplay: hasLiveTerminal)
+            }
+
             // force: bypass the debounce so the switched-to session refreshes
             // immediately (see createNewSession).
             await fetchSessions(force: true)
         } catch {
+            // The optimistic publish has to be undone, or the pane sits on a
+            // session that isn't attached: the server auto-detaches the previous
+            // one before it can fail this resume, so after a failure NEITHER is
+            // attached. Restore the previous selection and re-resume it (mirroring
+            // `attachRemoteSession`'s rollback); with no previous session — the F3
+            // restore path — clear the selection rather than show a blank terminal.
+            if activeSessionId == id {
+                activeSessionId = previousId
+                if let previousId {
+                    try? await sessionController?.resumeSession(id: previousId)
+                    wireTerminalOutput(to: previousId)
+                }
+            }
             presentError(error.localizedDescription)
         }
     }
