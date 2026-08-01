@@ -2,6 +2,13 @@
 
 *Based on analysis of 20 sessions (Jun 10 – Jul 7, 2026) on the ClaudeRelay repo: 186 user messages, ~2,400 tool calls, plus the current `.claude/` configuration.*
 
+> **Status (2026-08-01): completed — historical record.** Every recommendation in
+> the checklists below has landed: the ship skill exists (since renamed
+> `/cr-ship` → `/coderelay-deploy`), the graph hook matcher is scoped to
+> `Edit|Write`, the permission allowlist and SwiftLint hook are configured, the
+> release runbook is in CLAUDE.md, and the unused skills were deleted. The
+> unchecked `- [ ]` boxes are the original proposal, not outstanding work.
+
 ---
 
 ## Your usage profile

@@ -1,6 +1,12 @@
 # herdr → CodeRelay — Feature Spec (post-parity build-out)
 
 **Date:** 2026-07-22
+**Status (2026-08-01): all six features shipped.** F1/F2 in server 0.3.13,
+F3/F5/F6 and the F11 clipboard half in 0.3.13, and the F11 device-pairing half
+in 0.3.17. This is now a historical spec — the figures below are a snapshot from
+the authoring date and are no longer current (e.g. the agent registry has since
+grown from 3 to 6). See CLAUDE.md for present behavior.
+
 **Method:** Reviewed [herdr](https://github.com/ogulcancelik/herdr) (README + docs: session-state,
 socket-api, integrations, plugins, notifications, remote, concepts, agent-automation) against a
 full inventory of CodeRelay's current features, then ran a feature-by-feature inclusion vote.
