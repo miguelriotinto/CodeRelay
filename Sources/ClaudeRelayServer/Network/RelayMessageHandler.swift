@@ -497,6 +497,24 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                 return PairSuccessPayload(token: plaintext, tokenId: info.id, label: label)
             },
             onSuccess: { handler, ctx, payload in
+                // Late-arrival guard, mirroring handleAuth's observer cleanup.
+                // The token is already minted and never expires, so if the
+                // channel tore down while redeem/create were in flight, nobody
+                // will ever hold it: `sendServerMessage` would drop the frame on
+                // its own `isActive` check and leave an unusable credential in
+                // the store forever. Delete it instead.
+                //
+                // Deliberately narrow: this fires only when we know the frame was
+                // never written. A write that fails *after* the channel was
+                // active keeps its token, because the client may have received
+                // it — deleting one the client holds would break the auth that
+                // immediately follows.
+                guard !handler.isCleanedUp, ctx.channel.isActive else {
+                    RelayLogger.log(.error, category: "auth",
+                        "Connection closed before pair_success could be sent — deleting undelivered token \(payload.tokenId)")
+                    Task { try? await tokenStore.delete(id: payload.tokenId) }
+                    return
+                }
                 RelayLogger.log(category: "auth",
                     "Pairing succeeded for \(payload.label) — minted token \(payload.tokenId)")
                 handler.sendServerMessage(

@@ -252,6 +252,43 @@ final class PairRequestHandlerTests: XCTestCase {
         XCTAssertNotNil(stillValid, "the code should still be redeemable after the 400 rejection")
     }
 
+    /// A minted token must never outlive a connection that never received it.
+    /// `sendServerMessage` drops frames on a dead channel, so without the
+    /// late-arrival guard the token would sit in the store forever with nobody
+    /// holding it — and it never expires.
+    ///
+    /// Closing mid-flight is inherently a race, so this asserts the *invariant*
+    /// rather than one outcome: either `pair_success` went out and the token
+    /// lives, or it did not and the token is gone. The leak this guards against
+    /// is the third combination — no `pair_success`, but a live token.
+    func testUndeliveredTokenIsNotLeakedWhenConnectionClosesFirst() async throws {
+        let store = PairingCodeStore()
+        let fixture = try await makeFixture(pairingStore: store)
+        let grant = await store.mint(label: "Doomed iPhone")
+
+        // No settle time: close while redeem/create are still in flight.
+        try await fixture.channel.writeInbound(pairFrame(code: grant.code))
+        _ = try? await fixture.channel.close()
+        try await Task.sleep(for: .milliseconds(250))
+
+        let messages = (try? await serverMessages(fixture.channel)) ?? []
+        let delivered = messages.contains {
+            if case .pairSuccess = $0 { return true } else { return false }
+        }
+        let tokens = await fixture.tokenStore.list()
+
+        if delivered {
+            XCTAssertEqual(tokens.count, 1, "a delivered pair_success must keep its token")
+        } else {
+            XCTAssertTrue(
+                tokens.isEmpty,
+                "pair_success was never delivered, so the minted token must have been "
+                + "deleted; found \(tokens.map { $0.label ?? "<nil>" })")
+        }
+
+        try? FileManager.default.removeItem(at: fixture.tempDir)
+    }
+
     func testServerFaultDuringPairingReturns500WithoutBurningCode() async throws {
         // This test requires a TokenStore whose create() throws. Since TokenStore
         // is an actor and cannot be easily mocked, and making the directory
