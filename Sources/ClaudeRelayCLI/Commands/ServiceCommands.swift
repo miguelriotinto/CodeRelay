@@ -6,9 +6,12 @@ private let serviceLabel = "com.claude.relay"
 
 /// Prints the nudge and returns true when the caller should stop.
 /// `--quiet` suppresses the text but still blocks the wrong action.
+///
+/// The nudge goes to stderr because every caller follows a `true` with
+/// `throw ExitCode.failure` — it is a refusal, and stdout may be carrying JSON.
 private func nudgeBlocks(_ verb: ServiceVerb, quiet: Bool) -> Bool {
     guard let nudge = ServiceManagerDetector.detect().nudge(for: verb) else { return false }
-    if !quiet { print(nudge) }
+    if !quiet { CLIOutput.error(nudge) }
     return true
 }
 

@@ -76,7 +76,7 @@ struct SetupCommand: AsyncParsableCommand {
             // Give the server a moment to bind before minting.
             try await Task.sleep(for: .seconds(1))
             guard await client.isServiceRunning() else {
-                print("The service did not come up. Check: claude-relay logs show")
+                CLIOutput.error("The service did not come up. Check: claude-relay logs show")
                 throw ExitCode.failure
             }
         }
@@ -90,7 +90,7 @@ struct SetupCommand: AsyncParsableCommand {
             candidate = HostCandidate(host: host, kind: kind)
         } else {
             guard let chosen = HostAddressResolver.choose(from: HostAddressProbe.candidates()) else {
-                print("Could not determine a host address. Pass --host explicitly.")
+                CLIOutput.error("Could not determine a host address. Pass --host explicitly.")
                 throw ExitCode.failure
             }
             candidate = chosen
@@ -100,7 +100,9 @@ struct SetupCommand: AsyncParsableCommand {
         // before minting: a typo must not burn a code, because burning enough of
         // them evicts codes that are legitimately pending.
         guard PairingURL.isValidHost(candidate.host) else {
-            print("The host '\(candidate.host)' produces an invalid pairing URL. Pass a valid hostname or IP address.")
+            CLIOutput.error(
+                "The host '\(candidate.host)' produces an invalid pairing URL. "
+                + "Pass a valid hostname or IP address.")
             throw ExitCode.failure
         }
 
@@ -115,7 +117,7 @@ struct SetupCommand: AsyncParsableCommand {
         // code is single-use and unguessable, so the trade-off favors correctness
         // over slot pressure.
         if HostAddressResolver.requiresTLS(candidate) && !response.tls {
-            print("""
+            CLIOutput.error("""
             The only reachable address (\(candidate.host)) needs TLS, but the server has none configured.
             Apple's ATS blocks plaintext ws:// to this address, so a pairing code would not connect.
             Configure TLS first:
@@ -149,35 +151,50 @@ struct SetupCommand: AsyncParsableCommand {
     /// installs a second competing launchd agent.
     private func startService() async throws {
         let detector = ServiceManagerDetector.detect()
+
+        // `start`/`load` narrate to stdout, which is correct when they are the
+        // command the operator ran but not when they are a subroutine of
+        // `setup --json` — their chatter would land ahead of the JSON. Borrowing
+        // `--quiet` suppresses it without teaching those commands about JSON.
+        var subGlobals = globals
+        if globals.json { subGlobals.quiet = true }
+
         switch detector.owner {
         case .homebrew:
-            print("Starting via Homebrew services…")
+            progress("Starting via Homebrew services…")
             try runShell(["/bin/sh", "-c", "brew services start clauderelay"])
         case .launchAgent:
-            print("Starting the launchd agent…")
+            progress("Starting the launchd agent…")
             var start = StartCommand()
-            start.globals = globals
+            start.globals = subGlobals
             try await start.run()
         case .both:
-            print(detector.nudge(for: .start) ?? "Two service managers are installed.")
+            CLIOutput.error(detector.nudge(for: .start) ?? "Two service managers are installed.")
             throw ExitCode.failure
         case .none:
             // If the binary came from Homebrew but no service is installed yet,
             // tell the operator to start the Homebrew service instead of
             // installing a CLI-managed agent that will conflict later.
             if detector.installedViaHomebrew {
-                print("""
+                CLIOutput.error("""
                     clauderelay was installed via Homebrew.
                     Start the service with:
                       brew services start clauderelay
                     """)
                 throw ExitCode.failure
             }
-            print("Installing the launchd agent…")
+            progress("Installing the launchd agent…")
             var load = LoadCommand()
-            load.globals = globals
+            load.globals = subGlobals
             try await load.run()
         }
+    }
+
+    /// Progress narration, suppressed by `--quiet` and kept off stdout so
+    /// `--json` output stays parseable.
+    private func progress(_ message: String) {
+        guard !globals.quiet else { return }
+        CLIOutput.note(message)
     }
 }
 

@@ -136,7 +136,9 @@ struct HookInstallCommand: AsyncParsableCommand {
         let displayPath = "~/.claude-relay/hooks/claude-relay-state-hook.sh"
 
         guard let source = HookInstallCommand.locateBundledScript() else {
-            print("Could not find claude-relay-state-hook.sh. Expected it next to the CLI or in the repo's Scripts/hooks/.")
+            CLIOutput.error(
+                "Could not find claude-relay-state-hook.sh. "
+                + "Expected it next to the CLI or in the repo's Scripts/hooks/.")
             throw ExitCode.failure
         }
 
@@ -144,7 +146,7 @@ struct HookInstallCommand: AsyncParsableCommand {
         if FileManager.default.fileExists(atPath: settingsURL.path) {
             guard let data = try? Data(contentsOf: settingsURL),
                   let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                print("""
+                CLIOutput.error("""
                     Error: \(settingsURL.path) exists but cannot be parsed.
                     Fix or move the file before installing the hook.
                     """)
@@ -159,7 +161,7 @@ struct HookInstallCommand: AsyncParsableCommand {
         do {
             (merged, added) = try HookSettingsMerger.merge(into: settings, hookPath: displayPath)
         } catch let error as HookSettingsError {
-            print("Error: \(error)")
+            CLIOutput.error("Error: \(error)")
             throw ExitCode.failure
         }
 
@@ -242,7 +244,7 @@ struct HookUninstallCommand: AsyncParsableCommand {
 
         guard let data = try? Data(contentsOf: settingsURL),
               let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            print("""
+            CLIOutput.error("""
                 Error: \(settingsURL.path) exists but cannot be parsed.
                 Fix or move the file before uninstalling the hook.
                 """)
@@ -254,7 +256,7 @@ struct HookUninstallCommand: AsyncParsableCommand {
         do {
             (updated, removed) = try HookSettingsMerger.remove(from: settings, hookPath: displayPath)
         } catch let error as HookSettingsError {
-            print("Error: \(error)")
+            CLIOutput.error("Error: \(error)")
             throw ExitCode.failure
         }
 
