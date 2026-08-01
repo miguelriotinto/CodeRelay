@@ -21,6 +21,7 @@ import relay.protocol.ClientMessage
 import relay.protocol.ConnectionConfig
 import relay.protocol.ConnectionQuality
 import relay.protocol.MessageEnvelope
+import relay.protocol.PairingConnection
 import relay.protocol.ServerMessage
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -72,7 +73,7 @@ interface ConnectionSurface {
 class RelayConnection(
     private val scope: CoroutineScope = CoroutineScope(NetworkConfinement.dispatcher),
     private val client: OkHttpClient = defaultClient,
-) : ConnectionSurface {
+) : ConnectionSurface, PairingConnection {
 
     enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED }
 
@@ -180,7 +181,7 @@ class RelayConnection(
      * gate is the authoritative enforcer. The check runs first so a rejected
      * config never mutates [config]/[token] or touches the socket.
      */
-    suspend fun connect(config: ConnectionConfig, token: String) {
+    override suspend fun connect(config: ConnectionConfig, token: String) {
         CleartextPolicy.requireAllowed(config)
         this.config = config
         this.token = token
@@ -224,7 +225,7 @@ class RelayConnection(
      * immediately reconnects observes a fully torn-down state (no `scope.launch`
      * fire-and-forget interleaving with the next [connect]).
      */
-    suspend fun disconnect(): Unit = withContext(scope.coroutineContext) {
+    override suspend fun disconnect(): Unit = withContext(scope.coroutineContext) {
         cancelKeepalive()
         resolvePendingPong(false)
         activePing?.cancel()
