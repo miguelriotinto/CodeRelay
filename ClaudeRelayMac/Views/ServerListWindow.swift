@@ -6,6 +6,7 @@ struct ServerListWindow: View {
     @State private var addEditTarget: AddEditTarget?
     @State private var showDeleteAlert = false
     @State private var deleteTarget: ConnectionConfig?
+    @State private var showPairSheet = false
 
     /// Callback when the user connects to a server.
     var onConnect: ((ConnectionConfig) -> Void)?
@@ -52,6 +53,11 @@ struct ServerListWindow: View {
                 } label: {
                     Label("Add Server", systemImage: "plus")
                 }
+                Button {
+                    showPairSheet = true
+                } label: {
+                    Label("Pair", systemImage: "qrcode")
+                }
                 Spacer()
                 Button("Connect") {
                     if let c = viewModel.selectedConnection() {
@@ -78,6 +84,15 @@ struct ServerListWindow: View {
                 viewModel.addOrUpdate(newConnection)
                 addEditTarget = nil
             }
+        }
+        .sheet(isPresented: $showPairSheet) {
+            PairWithHostSheet(
+                onPaired: { config in
+                    viewModel.addOrUpdate(config)
+                    onConnect?(config)
+                },
+                prefill: nil
+            )
         }
         .alert("Delete Server?", isPresented: $showDeleteAlert, presenting: deleteTarget) { target in
             Button("Delete", role: .destructive) {

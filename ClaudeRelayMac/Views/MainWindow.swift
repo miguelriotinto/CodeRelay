@@ -56,6 +56,11 @@ struct MainWindow: View {
         .onReceive(NotificationCenter.default.publisher(for: .showServerList)) { _ in
             showServerList = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .connectToServer)) { notification in
+            if let config = notification.object as? ConnectionConfig {
+                Task { await connect(to: config) }
+            }
+        }
         // Re-sync push registration when APNs vends/rotates a token or the user
         // changes push settings (parity with iOS WorkspaceView).
         .onReceive(PushTokenBridge.shared.$deviceToken) { _ in Task { await syncPush() } }

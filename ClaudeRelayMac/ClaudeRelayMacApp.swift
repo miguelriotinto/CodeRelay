@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ClaudeRelayClient
+import ClaudeRelayKit
 
 @main
 struct ClaudeRelayMacApp: App {
@@ -12,6 +13,8 @@ struct ClaudeRelayMacApp: App {
     )
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @State private var pendingPairing: PairingURL?
+    @State private var pendingConnectConfig: ConnectionConfig?
 
     var body: some Scene {
         WindowGroup("Code[Relay]") {
@@ -23,6 +26,23 @@ struct ClaudeRelayMacApp: App {
                 .onReceive(PushTokenBridge.shared.$pendingDeepLink.compactMap { $0 }) { url in
                     handleDeepLink(url)
                     PushTokenBridge.shared.pendingDeepLink = nil
+                }
+                .sheet(item: $pendingPairing) { pairing in
+                    PairWithHostSheet(
+                        onPaired: { config in
+                            pendingConnectConfig = config
+                        },
+                        prefill: pairing
+                    )
+                }
+                .onChange(of: pendingConnectConfig) { _, config in
+                    if let config {
+                        NotificationCenter.default.post(
+                            name: .connectToServer,
+                            object: config
+                        )
+                        pendingConnectConfig = nil
+                    }
                 }
         }
         .windowResizability(.contentMinSize)
@@ -44,6 +64,13 @@ struct ClaudeRelayMacApp: App {
     }
 
     private func handleDeepLink(_ url: URL) {
+        // Handle pairing deep links first (before any coordinator exists)
+        if url.host == "pair", let pairing = PairingURL(url: url) {
+            pendingPairing = pairing
+            return
+        }
+
+        // Handle session deep links
         guard url.scheme == "clauderelay",
               url.host == "session",
               let uuidString = url.pathComponents.dropFirst().first,
