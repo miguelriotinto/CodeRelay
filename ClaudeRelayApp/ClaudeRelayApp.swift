@@ -2,7 +2,13 @@ import SwiftUI
 import UIKit
 import UserNotifications
 import ClaudeRelayClient
+import ClaudeRelayKit
 import ClaudeRelaySpeech
+
+/// App-target conformance to enable `.sheet(item:)` presentation.
+extension PairingURL: @retroactive Identifiable {
+    public var id: String { urlString }
+}
 
 /// Handles APNs registration + notification taps, publishing results to the
 /// shared `PushTokenBridge`. Registration-vs-unregister decisions and the wire
@@ -66,12 +72,17 @@ struct ClaudeRelayApp: App {
 
     @State private var showSplash = true
     @State private var pendingSessionId: UUID?
+    @State private var pendingPairing: PairingURL?
+    @State private var pendingConnectConfig: ConnectionConfig?
     @State private var preloadTask: Task<Void, Never>?
 
     var body: some Scene {
         WindowGroup {
             ZStack {
-                ServerListView(pendingSessionId: $pendingSessionId)
+                ServerListView(
+                    pendingSessionId: $pendingSessionId,
+                    pendingConnectConfig: $pendingConnectConfig
+                )
 
                 if showSplash {
                     SplashScreenView {
@@ -103,10 +114,22 @@ struct ClaudeRelayApp: App {
                     pushDelegate.requestAndRegister()
                 }
             }
+            .sheet(item: $pendingPairing) { pairing in
+                PairWithHostSheet(onPaired: { config in
+                    pendingConnectConfig = config
+                }, prefill: pairing)
+            }
         }
     }
 
     private func handleDeepLink(_ url: URL) {
+        // Handle pairing deep links
+        if url.host == "pair", let pairing = PairingURL(url: url) {
+            pendingPairing = pairing
+            return
+        }
+
+        // Handle session deep links
         guard url.scheme == "clauderelay",
               url.host == "session",
               let uuidString = url.pathComponents.dropFirst().first,

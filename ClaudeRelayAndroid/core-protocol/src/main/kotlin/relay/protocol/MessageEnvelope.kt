@@ -74,6 +74,11 @@ object MessageEnvelope {
                 }
                 is ClientMessage.UnregisterPushToken ->
                     put("deviceId", JsonPrimitive(message.deviceId))
+                is ClientMessage.PairRequest -> {
+                    put("code", JsonPrimitive(message.code))
+                    put("deviceName", JsonPrimitive(message.deviceName))
+                    put("platform", JsonPrimitive(message.platform))
+                }
             }
         }
         val envelope = buildJsonObject {
@@ -138,6 +143,9 @@ object MessageEnvelope {
             "paste_image_result" -> ServerMessage.PasteImageResult(payload.getValue("success").jsonPrimitive.boolean)
             "pong" -> ServerMessage.Pong
             "error" -> ServerMessage.Error(payload.int("code"), payload.string("message"))
+            "pair_success" -> ServerMessage.PairSuccess(
+                payload.string("token"), payload.string("tokenId"), payload.string("label"),
+            )
             else -> throw IllegalArgumentException("Unknown server message type: $type")
         }
     } catch (e: IllegalArgumentException) {

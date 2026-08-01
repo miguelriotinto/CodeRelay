@@ -95,6 +95,11 @@ sealed interface ServerMessage {
         override val typeString get() = "error"
     }
 
+    /** Pairing succeeded — token minted. Client should authenticate with it. */
+    data class PairSuccess(val token: String, val tokenId: String, val label: String) : ServerMessage {
+        override val typeString get() = "pair_success"
+    }
+
     companion object {
         val ALL_TYPE_STRINGS: Set<String> = setOf(
             "auth_success", "auth_failure",
@@ -103,6 +108,7 @@ sealed interface ServerMessage {
             "session_activity", "session_stolen", "session_renamed",
             "session_list_result", "session_list_all_result",
             "resize_ack", "paste_image_result", "pong", "error",
+            "pair_success",
         )
     }
 }

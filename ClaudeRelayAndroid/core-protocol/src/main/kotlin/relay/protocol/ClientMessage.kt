@@ -96,6 +96,11 @@ sealed interface ClientMessage {
         override val typeString get() = "unregister_push_token"
     }
 
+    /** Redeem a pairing code to mint a token (pre-auth). */
+    data class PairRequest(val code: String, val deviceName: String, val platform: String) : ClientMessage {
+        override val typeString get() = "pair_request"
+    }
+
     companion object {
         val ALL_TYPE_STRINGS: Set<String> = setOf(
             "auth_request",
@@ -103,6 +108,7 @@ sealed interface ClientMessage {
             "session_terminate", "session_list", "session_list_all", "session_rename",
             "resize", "refresh", "paste_image", "ping",
             "register_push_token", "unregister_push_token",
+            "pair_request",
         )
     }
 }

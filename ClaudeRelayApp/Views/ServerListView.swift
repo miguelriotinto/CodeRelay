@@ -1,59 +1,21 @@
 import SwiftUI
 import ClaudeRelayClient
+import ClaudeRelayKit
 
 struct ServerListView: View {
     @StateObject private var viewModel = ServerListViewModel()
     @Binding var pendingSessionId: UUID?
+    @Binding var pendingConnectConfig: ConnectionConfig?
     @State private var showAddSheet = false
     @State private var showSettings = false
     @State private var serverToEdit: ConnectionConfig?
+    @State private var showScanner = false
+    @State private var showManualPair = false
+    @State private var scannedPairing: PairingURL?
 
     var body: some View {
         NavigationStack {
-            Group {
-                if viewModel.servers.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Servers", systemImage: "server.rack")
-                    } description: {
-                        Text("Add a server to get started.")
-                    } actions: {
-                        Button("Add Server") {
-                            showAddSheet = true
-                        }
-                    }
-                } else {
-                    List {
-                        ForEach(viewModel.servers) { server in
-                            Button {
-                                viewModel.startConnect(to: server)
-                            } label: {
-                                ServerRowView(
-                                    server: server,
-                                    status: viewModel.serverStatuses[server.id],
-                                    isConnected: viewModel.connectedServerId == server.id
-                                )
-                            }
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    viewModel.deleteServer(id: server.id)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-
-                                Button {
-                                    serverToEdit = server
-                                } label: {
-                                    Label("Edit", systemImage: "pencil")
-                                }
-                                .tint(.blue)
-                            }
-                        }
-                    }
-                    .refreshable {
-                        viewModel.refreshStatuses()
-                    }
-                }
-            }
+            contentView
             .navigationTitle("Servers")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -68,6 +30,22 @@ struct ServerListView: View {
                         showAddSheet = true
                     } label: {
                         Image(systemName: "plus")
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button {
+                            showScanner = true
+                        } label: {
+                            Label("Scan QR Code", systemImage: "qrcode.viewfinder")
+                        }
+                        Button {
+                            showManualPair = true
+                        } label: {
+                            Label("Enter Code Manually", systemImage: "keyboard")
+                        }
+                    } label: {
+                        Image(systemName: "link.badge.plus")
                     }
                 }
             }
@@ -110,6 +88,34 @@ struct ServerListView: View {
                     )
                 }
             }
+            .sheet(isPresented: $showScanner) {
+                NavigationStack {
+                    QRScannerView { value in
+                        showScanner = false
+                        if let pairing = PairingURL(string: value) {
+                            scannedPairing = pairing
+                        }
+                    }
+                    .navigationTitle("Scan QR Code")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { showScanner = false }
+                        }
+                    }
+                }
+            }
+            .sheet(item: $scannedPairing) { pairing in
+                PairWithHostSheet(onPaired: { config in
+                    viewModel.refreshServers()
+                    viewModel.startConnect(to: config)
+                }, prefill: pairing)
+            }
+            .sheet(isPresented: $showManualPair) {
+                PairWithHostSheet(onPaired: { config in
+                    viewModel.refreshServers()
+                    viewModel.startConnect(to: config)
+                }, prefill: nil)
+            }
             .onAppear {
                 viewModel.refreshServers()
                 viewModel.startPolling()
@@ -120,12 +126,66 @@ struct ServerListView: View {
                     viewModel.startConnect(to: first)
                 }
             }
+            .onChange(of: pendingConnectConfig) { _, config in
+                guard let config = config else { return }
+                viewModel.refreshServers()
+                viewModel.startConnect(to: config)
+                pendingConnectConfig = nil
+            }
         }
     }
 
     private func consumePendingSession() -> UUID? {
         defer { pendingSessionId = nil }
         return pendingSessionId
+    }
+
+    @ViewBuilder
+    private var contentView: some View {
+        Group {
+            if viewModel.servers.isEmpty {
+                ContentUnavailableView {
+                    Label("No Servers", systemImage: "server.rack")
+                } description: {
+                    Text("Add a server to get started.")
+                } actions: {
+                    Button("Add Server") {
+                        showAddSheet = true
+                    }
+                }
+            } else {
+                List {
+                    ForEach(viewModel.servers) { server in
+                        Button {
+                            viewModel.startConnect(to: server)
+                        } label: {
+                            ServerRowView(
+                                server: server,
+                                status: viewModel.serverStatuses[server.id],
+                                isConnected: viewModel.connectedServerId == server.id
+                            )
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                viewModel.deleteServer(id: server.id)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+
+                            Button {
+                                serverToEdit = server
+                            } label: {
+                                Label("Edit", systemImage: "pencil")
+                            }
+                            .tint(.blue)
+                        }
+                    }
+                }
+                .refreshable {
+                    viewModel.refreshStatuses()
+                }
+            }
+        }
     }
 }
 
@@ -217,5 +277,8 @@ struct ServerRowView: View {
 }
 
 #Preview {
-    ServerListView(pendingSessionId: .constant(nil))
+    ServerListView(
+        pendingSessionId: .constant(nil),
+        pendingConnectConfig: .constant(nil)
+    )
 }

@@ -63,4 +63,16 @@ object DeepLinks {
      * through [parseSessionId].
      */
     fun sessionUri(id: UUID): String = "$PREFIX${id.toString().lowercase()}"
+
+    /**
+     * Parse a `clauderelay://pair?host=&port=&tls=&code=` pairing link to a
+     * [relay.protocol.PairingURL].
+     *
+     * Returns null on any mismatch — wrong scheme, wrong host, missing or invalid
+     * query parameters. Thin delegate to [relay.protocol.PairingURL.parse] so
+     * the feature module has one deep-link entry point while parsing/validation
+     * stays in core-protocol (Task 5). Robust: never throws.
+     */
+    fun parsePairingUrl(uri: String): relay.protocol.PairingURL? =
+        relay.protocol.PairingURL.parse(uri)
 }
