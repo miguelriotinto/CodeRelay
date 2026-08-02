@@ -74,6 +74,38 @@ private final class ActivityCallbackBox: @unchecked Sendable {
     var handler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
 }
 
+/// Tracks whether the PTY master fd is still open.
+///
+/// This cannot be actor state. The read source's cancel handler closes the fd
+/// from a dispatch queue, and `handleExit()` — the actor-isolated side of the
+/// same event — hops onto the actor and so can run arbitrarily later. A flag set
+/// on the actor would therefore still be `false` for a window *after* the fd is
+/// already closed. Recording it here, immediately before the `close()`, closes
+/// that window: the flag is never `false` while the fd is dead.
+///
+/// The distinction matters because `terminated` is not a proxy for fd liveness:
+/// `handleExit()` deliberately does not set it (the session object outlives its
+/// child so scrollback stays readable), so after a natural child exit
+/// `terminated == false` while the fd is closed. An ioctl on that fd number does
+/// not merely fail — the kernel may have recycled it for another session's PTY,
+/// in which case it *succeeds* and returns an unrelated terminal's size.
+private final class FDLiveness: @unchecked Sendable {
+    private let lock = NSLock()
+    private var closed = false
+
+    var isClosed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return closed
+    }
+
+    func markClosed() {
+        lock.lock()
+        defer { lock.unlock() }
+        closed = true
+    }
+}
+
 // MARK: - PTYSession Actor
 
 public actor PTYSession: PTYSessionProtocol {
@@ -110,6 +142,9 @@ public actor PTYSession: PTYSessionProtocol {
     /// Shared box to bridge the monitor's synchronous onChange callback into the actor.
     /// The monitor captures this box (not `self`) so the closure doesn't require `self` to be fully initialized.
     private let activityCallbackBox = ActivityCallbackBox()
+    /// Whether `masterFD` has been closed. Set off-actor by the read source's
+    /// cancel handler — see `FDLiveness` for why this can't be actor state.
+    private let fdLiveness = FDLiveness()
     private var activityHandler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
     /// Callback for working-directory changes, fired from the foreground poll.
     private var workingDirHandler: (@Sendable (String) -> Void)?
@@ -254,7 +289,7 @@ public actor PTYSession: PTYSessionProtocol {
     /// Must be called after init to avoid actor-initializer isolation warning (Swift 6).
     public func startReading() {
         guard readSource == nil else { return }
-        let readSrc = Self.makeReadSource(fd: masterFD, session: self)
+        let readSrc = Self.makeReadSource(fd: masterFD, session: self, liveness: fdLiveness)
         self.readSource = readSrc
 
         activityMonitor.onSilenceTimeout = { [weak self] in
@@ -376,7 +411,7 @@ public actor PTYSession: PTYSessionProtocol {
 
     /// Creates and activates a DispatchSourceRead for the master file descriptor.
     /// Bridges GCD callbacks into the actor context via unstructured Tasks.
-    private static func makeReadSource(fd: Int32, session: PTYSession) -> DispatchSourceRead {
+    private static func makeReadSource(fd: Int32, session: PTYSession, liveness: FDLiveness) -> DispatchSourceRead {
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .global())
 
         // Persistent read buffer — reused across callbacks to avoid per-read allocation.
@@ -404,6 +439,9 @@ public actor PTYSession: PTYSessionProtocol {
         }
 
         source.setCancelHandler {
+            // Mark before closing, never after: between the two, another thread
+            // could see "open" for an fd that is already gone.
+            liveness.markClosed()
             close(fd)
         }
 
@@ -612,22 +650,6 @@ public actor PTYSession: PTYSessionProtocol {
         _ = relay_set_winsize(masterFD, rows, cols)
     }
 
-    /// The window size the kernel currently holds for this PTY, as `(rows, cols)`.
-    ///
-    /// Master and slave share one `struct winsize`, so this is exactly what the
-    /// child's own TIOCGWINSZ reports — i.e. the value a Node/Ink app compares
-    /// against its cache to decide whether to repaint. Tests assert on this
-    /// rather than on a shell echoing `$COLUMNS`, which additionally requires
-    /// SIGWINCH to reach the shell's process group and the shell to be
-    /// scheduled to run a command — neither of which holds on every machine.
-    func kernelWindowSize() -> (rows: UInt16, cols: UInt16)? {
-        guard !terminated else { return nil }
-        var rows: UInt16 = 0
-        var cols: UInt16 = 0
-        guard relay_get_winsize(masterFD, &rows, &cols) == 0 else { return nil }
-        return (rows, cols)
-    }
-
     /// Best-effort cwd of the session's shell (the stable workspace anchor).
     ///
     /// `childPID` is the setuid `login` process, whose vnode path info is not
@@ -726,5 +748,30 @@ public actor PTYSession: PTYSessionProtocol {
                 }
             }
         }
+    }
+
+    // MARK: - Test Hooks
+
+    /// The window size the kernel currently holds for this PTY, as `(rows, cols)`.
+    /// Prefix `_testOnly_` is the convention; do not call from production code —
+    /// the supported view of the size is `resize()`'s own `currentCols`/`currentRows`.
+    ///
+    /// Master and slave share one `struct winsize`, so this reads exactly the
+    /// state the child's own TIOCGWINSZ reports — i.e. what a Node/Ink app
+    /// compares against its cache to decide whether to repaint. Tests assert on
+    /// this rather than on a shell echoing `$COLUMNS`, which additionally
+    /// requires the shell to be scheduled to run a command.
+    ///
+    /// Nil once the master fd is closed. Guarding on `fdLiveness` rather than
+    /// `terminated` is load-bearing: `handleExit()` closes the fd without setting
+    /// `terminated`, and an ioctl on a closed fd number whose slot the kernel has
+    /// since recycled can *succeed*, returning an unrelated PTY's size as a
+    /// plausible-looking value.
+    func _testOnly_kernelWindowSize() -> (rows: UInt16, cols: UInt16)? {
+        guard !fdLiveness.isClosed else { return nil }
+        var rows: UInt16 = 0
+        var cols: UInt16 = 0
+        guard relay_get_winsize(masterFD, &rows, &cols) == 0 else { return nil }
+        return (rows, cols)
     }
 }

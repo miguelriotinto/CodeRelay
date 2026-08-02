@@ -56,16 +56,28 @@ public actor GitRootResolver {
     ///
     /// Derived by dropping trailing path components off the string rather than by
     /// calling `deletingLastPathComponent()` until it reaches a fixed point. That
-    /// fixed point does not exist on every Foundation implementation: the
-    /// Objective-C `NSURL` backing (Swift 6.1 and earlier, which is what CI's
-    /// Xcode 16 toolchain uses) maps `"/"` to `"/.."`, then `"/../.."`, without
-    /// converging — so a `parent == current` guard never fires and the walk spins
-    /// forever, doing a filesystem probe per iteration. Swift 6.2's
-    /// swift-foundation `URL` maps `"/"` to `"/"` and terminates, which is why
-    /// this only ever hung on CI. Splitting the string is implementation-
-    /// independent and finite by construction.
+    /// fixed point is not guaranteed: which implementation backs `URL` is chosen
+    /// by the Foundation the process links against at *runtime* — not by the
+    /// Swift toolchain or the deployment target — and the `NSURL`-backed one maps
+    /// `"/"` to `"/.."`, then `"/../.."`, without ever converging. A
+    /// `parent == current` guard therefore never fires and the walk spins
+    /// forever, doing a filesystem probe per iteration. Observed: it diverged on
+    /// GitHub's `macos-15` runner and converged on macOS 26 locally, which is why
+    /// it only ever hung on CI. Neither behaviour is a documented contract, so
+    /// this walk depends on neither — splitting the string is finite by
+    /// construction on every platform.
+    ///
+    /// Splits on Unicode *scalars*, not `Character`s: a path component may begin
+    /// with a combining mark, which grapheme-cluster splitting fuses onto the
+    /// preceding `"/"` — the separator then isn't equal to `"/"` any more, so it
+    /// is missed and an ancestor level is silently dropped. `U+002F` is a single
+    /// scalar that never participates in a larger one, so splitting the scalar
+    /// view is exactly the kernel's own notion of a path component (it splits
+    /// the UTF-8 byte 0x2F, and UTF-8 is self-synchronizing).
     static func ancestorPaths(of path: String) -> [String] {
-        var components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        var components = path.unicodeScalars
+            .split(separator: "/")
+            .map { String(String.UnicodeScalarView($0)) }
         var result: [String] = []
         while !components.isEmpty {
             result.append("/" + components.joined(separator: "/"))
