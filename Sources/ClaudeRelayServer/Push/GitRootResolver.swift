@@ -36,9 +36,29 @@ public actor GitRootResolver {
     }
 
     private func computeRoot(for path: String) -> String {
-        let normalized = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         let fileManager = FileManager.default
-        return Self.gitRoot(of: normalized) { fileManager.fileExists(atPath: $0) }
+        return Self.computeRoot(for: path) { fileManager.fileExists(atPath: $0) }
+    }
+
+    /// Normalizes `path`, then searches its ancestors — the whole production
+    /// resolution step, with only the filesystem lifted out.
+    ///
+    /// This exists so a test can drive the *production* path and still see which
+    /// paths get probed. Asserting on `gitRoot(of:exists:)` alone does not do that:
+    /// it pins the helper's behaviour, but nothing pins `computeRoot` to the helper,
+    /// so a rewrite that walks the tree some other way leaves those assertions
+    /// green. Nor can the return value close the gap here — `resolvingSymlinksInPath()`
+    /// collapses exactly the inputs (`..`, `//`) on which a divergent walk would
+    /// return something different, so through this seam the two are distinguishable
+    /// only by their probes.
+    ///
+    /// The filesystem is a closure parameter rather than a stored dependency
+    /// deliberately: the actor has no other injectable collaborator, and adding an
+    /// initializer parameter to make one function observable would put a production
+    /// seam in every construction site for a test's benefit.
+    static func computeRoot(for path: String, exists: (String) -> Bool) -> String {
+        let normalized = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        return gitRoot(of: normalized, exists: exists)
     }
 
     /// The nearest ancestor of `normalized` (inclusive) holding a `.git` entry, or
@@ -55,8 +75,12 @@ public actor GitRootResolver {
     /// `testProbesExactlyTheFiniteAncestorList` closes that gap by pinning the probe
     /// sequence, which composes with `testAncestorWalkIsFiniteAndEndsAtRoot` into the
     /// termination guarantee neither test gives alone: the list is finite, and the
-    /// search probes exactly that list and nothing else. A correct helper that
-    /// nothing called would now fail the first of those two.
+    /// search probes exactly that list and nothing else.
+    ///
+    /// Neither of those reaches production, though — both call these statics
+    /// directly, so a correct helper that `computeRoot` had stopped calling would
+    /// leave both green. That is what `computeRoot(for:exists:)` is for; the probe
+    /// assertions go through it.
     static func gitRoot(of normalized: String, exists: (String) -> Bool) -> String {
         // Over a list that is finite by construction — see `ancestorPaths` for why
         // this is not a `deletingLastPathComponent()` loop.
@@ -95,10 +119,16 @@ public actor GitRootResolver {
     /// with a combining mark, which grapheme-cluster splitting fuses onto the
     /// preceding `"/"` — the separator then isn't equal to `"/"` any more, so it
     /// is missed and an ancestor level is silently dropped. `U+002F` is a single
-    /// scalar that never participates in a larger one, so splitting the scalar
-    /// view matches the kernel's own notion of a path component for any path a
-    /// `String` can hold (the kernel splits the UTF-8 byte 0x2F, and UTF-8 is
-    /// self-synchronizing).
+    /// scalar that never participates in a larger one, so splitting the scalar view
+    /// finds every separator the kernel would (it splits the UTF-8 byte 0x2F, and
+    /// UTF-8 is self-synchronizing).
+    ///
+    /// Component *semantics* match only for the paths this actually receives.
+    /// Dropping empty subsequences collapses `//` the way the kernel does, but that
+    /// also rewrites the input, so `ancestorPaths(of: "/tmp//x")` starts at
+    /// `"/tmp/x"`; and `.` / `..` are returned as ordinary components rather than
+    /// interpreted. Neither reaches here — `computeRoot` normalizes first — which is
+    /// the property `testProbesExactlyTheFiniteAncestorList` asserts.
     static func ancestorPaths(of path: String) -> [String] {
         var components = path.unicodeScalars
             .split(separator: "/")
