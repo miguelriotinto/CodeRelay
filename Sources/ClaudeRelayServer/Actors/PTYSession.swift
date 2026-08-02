@@ -128,13 +128,20 @@ public actor PTYSession: PTYSessionProtocol {
     /// session's PTY, in which case it *succeeds* and returns an unrelated
     /// terminal's size.
     ///
-    /// Every fd use must happen *inside* a `withLock`, so the closed check and the
-    /// use are one critical section. Checking, unlocking, and then using the fd
-    /// would be a check-then-act race — the cancel handler could mark-and-close in
-    /// the gap, which is the exact hazard this flag exists to rule out. Copies share
-    /// the underlying allocation, so the cancel handler's captured copy is this same
-    /// state. `os_unfair_lock` is not recursive: never re-enter it from a `withLock`
-    /// body.
+    /// Scope: this guards `_testOnly_kernelWindowSize()`, the only fd use that
+    /// *returns a value the caller believes*. The other uses of `masterFD`
+    /// (`read`/`write`, the two dispatch sources, and `relay_set_winsize` in
+    /// `resize()`/`forceRepaint()`) deliberately do not take this lock — they check
+    /// `terminated` instead, and their failure mode is a discarded errno on an fd
+    /// that no longer belongs to us, not a plausible-looking wrong answer handed
+    /// back to an assertion. So this is not a file-wide "always lock the fd" rule.
+    ///
+    /// Where it *is* taken, the closed check and the use must be one critical
+    /// section. Checking, unlocking, and then using the fd would be a check-then-act
+    /// race — the cancel handler could mark-and-close in the gap, which is the exact
+    /// hazard this flag exists to rule out. Copies share the underlying allocation,
+    /// so the cancel handler's captured copy is this same state. `os_unfair_lock` is
+    /// not recursive: never re-enter it from a `withLock` body.
     private let fdClosed = OSAllocatedUnfairLock(initialState: false)
     private var activityHandler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
     /// Callback for working-directory changes, fired from the foreground poll.
@@ -747,33 +754,75 @@ public actor PTYSession: PTYSessionProtocol {
 
     // MARK: - Test Hooks
 
-    /// The window size the kernel currently holds for this PTY, as `(rows, cols)`.
+    /// Why a window-size read produced no size.
+    ///
+    /// Two cases rather than `nil`, so a test can tell *the guard short-circuited*
+    /// from *the ioctl ran and failed*. Both collapse to "no size" for a caller that
+    /// only wants the width, but they are what makes the `fdClosed` guard
+    /// observable: without the distinction, deleting the guard still yields a
+    /// failure (`EBADF`) and the mutant survives. See
+    /// `testWindowSizeReportsClosedFDRatherThanProbingIt`.
+    ///
+    /// Callers deciding whether a *live* session is at fault should not read
+    /// significance into which case appeared — `TIOCGWINSZ` on an open pty master
+    /// does not fail, so in practice a read only fails once the fd is closed. The
+    /// split serves the guard's testability, not failure triage.
+    enum WindowSizeFailure: Error, Equatable {
+        /// The master fd has been closed; there is no PTY left to ask.
+        case fdClosed
+        /// The ioctl was issued and failed, with this errno.
+        case ioctlFailed(errno: Int32)
+    }
+
+    /// The window size the kernel currently holds for this PTY.
     /// Prefix `_testOnly_` is the convention; do not call from production code —
     /// the supported view of the size is `resize()`'s own `currentCols`/`currentRows`.
     ///
-    /// Master and slave share one `struct winsize`, so this reads exactly the
-    /// state the child's own TIOCGWINSZ reports — i.e. what a Node/Ink app
-    /// compares against its cache to decide whether to repaint. Tests assert on
-    /// this rather than on a shell echoing `$COLUMNS`, which additionally
-    /// requires the shell to be scheduled to run a command.
+    /// Master and slave share one `struct winsize`, so this reads exactly the state
+    /// the child's own TIOCGWINSZ reports — i.e. what a Node/Ink app compares against
+    /// its cache to decide whether to repaint. Why tests read it here rather than
+    /// through a shell: `PTYForceRepaintTests`' file comment.
     ///
-    /// Nil once the master fd is closed, or if the ioctl itself fails. Callers
-    /// that need to tell those apart from a *different* size — a test asserting
-    /// on the size cannot distinguish "not what I expected" from "no PTY left to
-    /// ask" — should treat nil as its own outcome rather than as a mismatch.
-    ///
-    /// Guarding on `fdClosed` rather than `terminated` is load-bearing, and the
-    /// ioctl runs *inside* the `withLock` so the fd cannot be closed between the
-    /// check and the call: an ioctl on a closed fd number whose slot the kernel has
-    /// since recycled can *succeed*, returning an unrelated PTY's size as a
-    /// plausible-looking value. See `fdClosed`.
-    func _testOnly_kernelWindowSize() -> (rows: UInt16, cols: UInt16)? {
-        fdClosed.withLock { closed -> (rows: UInt16, cols: UInt16)? in
-            guard !closed else { return nil }
+    /// Guarding on `fdClosed` rather than `terminated`, and running the ioctl *inside*
+    /// the `withLock`: see `fdClosed`. Failure cases: see `WindowSizeFailure`.
+    func _testOnly_kernelWindowSize() -> Result<(rows: UInt16, cols: UInt16), WindowSizeFailure> {
+        fdClosed.withLock { closed -> Result<(rows: UInt16, cols: UInt16), WindowSizeFailure> in
+            guard !closed else { return .failure(.fdClosed) }
             var rows: UInt16 = 0
             var cols: UInt16 = 0
-            guard relay_get_winsize(masterFD, &rows, &cols) == 0 else { return nil }
-            return (rows: rows, cols: cols)
+            guard relay_get_winsize(masterFD, &rows, &cols) == 0 else {
+                return .failure(.ioctlFailed(errno: errno))
+            }
+            return .success((rows: rows, cols: cols))
         }
+    }
+
+    /// Marks the master fd closed — the cancel handler's first step — so a test can
+    /// reach the `fdClosed` guard in `_testOnly_kernelWindowSize()`.
+    ///
+    /// Without this the guard is unreachable from a test: the real close happens on a
+    /// dispatch queue when the child exits, and every test read happens while the PTY
+    /// is deliberately alive. Deleting the guard therefore left the suite green.
+    ///
+    /// It deliberately does *not* `close()` the fd, even though the name of the state
+    /// it sets says "closed". Two reasons, and both are why this is a mark and not a
+    /// close:
+    ///
+    /// - The fd is still monitored by a live `DispatchSourceRead`, which owns it until
+    ///   its cancel handler runs. Closing it here would break that contract and hand
+    ///   the handler a second `close()` of an fd number the process may have already
+    ///   recycled — the exact cross-session mix-up `fdClosed` exists to prevent, only
+    ///   caused by the test rather than caught by it.
+    /// - It makes the assertion stronger. With the descriptor still open, an
+    ///   unguarded read *succeeds* and returns the real size, so deleting the guard
+    ///   fails `testWindowSizeReportsClosedFDRatherThanProbingIt` deterministically.
+    ///   A genuine close would instead yield `EBADF`, leaving the mutant's death
+    ///   dependent on the kernel not having recycled the number.
+    ///
+    /// That divergence from the cancel handler is sound precisely because the guard
+    /// reads *only* this flag: the fd's real state is what the flag exists to stand in
+    /// for, so setting it is the whole of what the guard can observe.
+    func _testOnly_markMasterFDClosed() {
+        fdClosed.withLock { $0 = true }
     }
 }

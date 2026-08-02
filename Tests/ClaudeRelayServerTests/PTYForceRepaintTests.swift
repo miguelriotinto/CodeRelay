@@ -45,25 +45,44 @@ final class PTYForceRepaintTests: XCTestCase {
     /// headroom: a 15 ms hold satisfies "observed once" but fails this.
     private static let minimumHold: TimeInterval = 0.03
 
-    /// The PTY's current size, skipping the test if the master fd has closed.
+    /// The PTY's current size, skipping the test if no size can be read.
     ///
     /// Every read of the size goes through here so a dead fd is never asserted
     /// against as though it were a wrong size. `XCTAssertEqual(nil, 120)` reports
     /// "PTY did not start at the requested width" when in fact the child shell
     /// died and there is no width to report — a product accusation for an
     /// environmental failure. Found by mutation: forcing
-    /// `_testOnly_kernelWindowSize()` to return nil produced exactly that
-    /// message from the pre-wiggle check.
+    /// `_testOnly_kernelWindowSize()` to fail produced exactly that message from
+    /// the pre-wiggle check.
+    ///
+    /// Skipping on *any* read failure — rather than only on `.fdClosed` — is
+    /// deliberate, and the reason is a property of pty masters rather than a
+    /// convenience: `TIOCGWINSZ` on an open master cannot fail. It keeps returning
+    /// the stored `winsize` even after the child is gone, and fails only once the
+    /// descriptor itself is closed (`EBADF`) — a non-tty fd being impossible here.
+    /// So a read failure means the read source's cancel handler ran, i.e. the child
+    /// hung up. `forceRepaint` only issues `TIOCSWINSZ` and never closes the fd, so
+    /// it cannot be the cause. Note the initial 120 read does *not* license a
+    /// stronger claim later: it proves only that the master was open, and a child
+    /// dead since spawn still reads 120 until the EOF is processed asynchronously.
     private func kernelSize(
         of session: PTYSession,
         file: StaticString = #filePath,
         line: UInt = #line
     ) async throws -> (rows: UInt16, cols: UInt16) {
-        guard let size = await session._testOnly_kernelWindowSize() else {
+        guard case .success(let size) = await session._testOnly_kernelWindowSize() else {
             throw XCTSkip("the PTY's master fd is closed — the child shell died, not a forceRepaint defect",
                           file: file, line: line)
         }
         return size
+    }
+
+    /// The PTY's width, or nil if no size could be read at all.
+    ///
+    /// The polling helpers need "is it 119 yet?" without deciding what a failure
+    /// means; the caller re-reads through `kernelSize` to attribute it.
+    private func polledCols(of session: PTYSession) async -> UInt16? {
+        try? await session._testOnly_kernelWindowSize().get().cols
     }
 
     /// The outcome of polling for a width, keeping "the PTY went away" distinct
@@ -78,8 +97,11 @@ final class PTYForceRepaintTests: XCTestCase {
         case matched
         /// Polling ended with the PTY reporting this width instead.
         case mismatched(UInt16)
-        /// `_testOnly_kernelWindowSize()` returned nil: the master fd is closed,
-        /// so there is no size to observe. Not a statement about `forceRepaint`.
+        /// No size could be read at all, so there is nothing to compare. Reached
+        /// via `polledCols`, which collapses both `WindowSizeFailure` cases: mid-poll
+        /// the distinction isn't actionable from inside the loop, so the caller
+        /// re-reads through `kernelSize` to attribute it. Not a statement about
+        /// `forceRepaint`.
         case ptyUnavailable
     }
 
@@ -97,29 +119,50 @@ final class PTYForceRepaintTests: XCTestCase {
         timeout: TimeInterval
     ) async throws -> ColsOutcome {
         let deadline = Date().addingTimeInterval(timeout)
-        var last = await session._testOnly_kernelWindowSize()?.cols
+        var last = await polledCols(of: session)
         while Date() < deadline {
             if last == cols { return .matched }
             try await Task.sleep(nanoseconds: 5_000_000)
-            last = await session._testOnly_kernelWindowSize()?.cols
+            last = await polledCols(of: session)
         }
         guard let last else { return .ptyUnavailable }
         return .mismatched(last)
     }
 
     private enum HoldObservation {
-        /// `cols` was seen at least once. `heldFor` spans first to last sighting.
+        /// `cols` was seen at least once. `heldFor` spans first to last sighting,
+        /// across which *every* sample matched `cols`.
         ///
         /// This is a *sampled* span, not a proof of continuous observability:
         /// polling establishes only that the width matched at each sample, and
-        /// says nothing about the gaps between them. It also understates the true
-        /// hold, since the width may have been set before the first sighting and
-        /// persisted after the last. The understatement has no fixed bound —
+        /// says nothing about the gaps between them. It generally understates the
+        /// true hold, since the width may have been set before the first sighting
+        /// and persisted after the last, and the understatement has no fixed bound —
         /// `Task.sleep` and the cross-actor `await` each guarantee a *minimum*
-        /// delay, so a descheduled poller can miss an arbitrary stretch. Only the
-        /// direction is guaranteed, which is what the assertion relies on: a
-        /// measured span can be too short but never too long, so a passing
-        /// `heldFor >= minimumHold` is trustworthy.
+        /// delay, so a descheduled poller can miss an arbitrary stretch. It is not
+        /// a one-directional guarantee, though: both stamps are `Date()` reads taken
+        /// *after* the matching size came back, so a restore landing between the last
+        /// read and its stamp inflates the span. That overstatement is bounded by one
+        /// poll gap plus scheduling latency, against a 30 ms floor — small, but not
+        /// zero, and the assertion should not be described as conservative-by-
+        /// construction.
+        ///
+        /// The span is *not* guaranteed to be a single continuous hold, and the
+        /// assertion must not be read as proving one. `measureHold` breaks on the
+        /// first non-matching sample it *observes*, so a width that departs and
+        /// returns entirely within one ~5 ms gap is never seen, and `firstSeen ...
+        /// lastSeen` then spans two shorter holds plus the gap between them. An
+        /// earlier version of this comment claimed the measured span "can be too
+        /// short but never too long"; that does not follow from the premise above,
+        /// and the counter-example is exactly the flicker this test guards against.
+        ///
+        /// What the assertion does establish is weaker and still useful: the width
+        /// was observed at `cols` across a span of at least `minimumHold`, with no
+        /// contrary observation in between. A regression to a bare same-size
+        /// SIGWINCH — the one that actually shipped — never reaches `cols` at all
+        /// and fails on `neverObserved`, which is the failure this file exists to
+        /// catch. Detecting sub-sample flicker would need the PTY to timestamp its
+        /// own `TIOCSWINSZ` calls, which the kernel does not offer.
         case held(heldFor: TimeInterval)
         /// Polling ran to its deadline with the PTY reporting this width instead.
         case neverObserved(lastSeen: UInt16)
@@ -153,7 +196,7 @@ final class PTYForceRepaintTests: XCTestCase {
         var last: UInt16?
 
         while Date() < deadline {
-            last = await session._testOnly_kernelWindowSize()?.cols
+            last = await polledCols(of: session)
             if last == cols {
                 let now = Date()
                 if firstSeen == nil { firstSeen = now }
@@ -169,6 +212,59 @@ final class PTYForceRepaintTests: XCTestCase {
         }
         guard let last else { return .ptyUnavailable }
         return .neverObserved(lastSeen: last)
+    }
+
+    /// Once the fd is marked closed, reading the size must report `.fdClosed` rather
+    /// than issuing the ioctl.
+    ///
+    /// This is the only test that reaches the `fdClosed` guard: every other read
+    /// happens while the PTY is deliberately alive, and the real close happens on a
+    /// dispatch queue when the child exits, which no assertion here can schedule.
+    /// Deleting the guard therefore left the whole suite green (verified by
+    /// mutation) — the lock and its check were entirely uncovered.
+    ///
+    /// The setup marks the flag *without* closing the descriptor (see
+    /// `_testOnly_markMasterFDClosed`), which is what gives the assertion its teeth
+    /// rather than weakening it. The fd stays valid, so an unguarded read succeeds and
+    /// comes back `.success(120x40)` — a deterministic failure. That is also the real
+    /// hazard in miniature: production's danger is an ioctl on a *recycled* fd number
+    /// succeeding and returning a plausible size that belongs to another session, and
+    /// a read that succeeds when the flag says closed is exactly that bug, with the
+    /// recycling made deterministic instead of left to the kernel.
+    ///
+    /// Hence `.fdClosed` specifically, not merely "no size": `.ioctlFailed` would mean
+    /// the guard let the call through and the fd happened to be unusable, which is the
+    /// same defect passing for a pass.
+    func testWindowSizeReportsClosedFDRatherThanProbingIt() async throws {
+        let session = try PTYSession(
+            sessionId: UUID(),
+            cols: 120,
+            rows: 40,
+            scrollbackSize: 64 * 1024
+        )
+        pty = session
+        await session.startReading()
+
+        // Live first, so the failure below can only come from the guard.
+        let live = try await kernelSize(of: session)
+        XCTAssertEqual(live.cols, 120, "PTY did not start at the requested width")
+
+        await session._testOnly_markMasterFDClosed()
+
+        switch await session._testOnly_kernelWindowSize() {
+        case .success(let size):
+            XCTFail("""
+                read a size (\(size.cols)x\(size.rows)) despite the fd being marked closed — the \
+                guard is not in force; against a recycled fd this would be another session's PTY
+                """)
+        case .failure(.fdClosed):
+            break   // the guard held
+        case .failure(.ioctlFailed(let code)):
+            XCTFail("""
+                the ioctl was issued instead of short-circuiting, and failed (errno \(code)) — the \
+                fd here is still open, so the guard was bypassed and only an unrelated error hid it
+                """)
+        }
     }
 
     func testForceRepaintDeliversRealSizeChangeAndRestores() async throws {
@@ -191,7 +287,7 @@ final class PTYForceRepaintTests: XCTestCase {
         // the redraw. Measuring the hold (not just sighting it once) is what
         // makes the duration part of the contract enforceable. A regression back
         // to a bare same-size SIGWINCH never changes the kernel winsize at all,
-        // so `observed` goes false and this fails deterministically.
+        // so the hold comes back `.neverObserved` and this fails deterministically.
         async let repaint: Void = session.forceRepaint()
         let hold = try await measureHold(of: 119, in: session, timeout: 2.0)
         await repaint

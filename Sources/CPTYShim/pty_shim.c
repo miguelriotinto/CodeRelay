@@ -29,8 +29,8 @@ int relay_set_winsize(int fd, unsigned short rows, unsigned short cols) {
 int relay_get_winsize(int fd, unsigned short *rows, unsigned short *cols) {
     struct winsize ws;
     if (ioctl(fd, TIOCGWINSZ, &ws) < 0) return -1;
-    if (rows) *rows = ws.ws_row;
-    if (cols) *cols = ws.ws_col;
+    *rows = ws.ws_row;
+    *cols = ws.ws_col;
     return 0;
 }
 
