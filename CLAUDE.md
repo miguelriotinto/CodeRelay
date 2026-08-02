@@ -94,6 +94,46 @@ The iOS/macOS apps scope plaintext `ws://` to RFC1918 / loopback / `.local` / li
 
 **Per-token session cap**: `SessionManager.createSession` enforces `config.maxSessionsPerToken` (default 50, 0 = unlimited) and throws `SessionError.sessionLimitExceeded` when exceeded. Prevents runaway clients from fork-bombing the server.
 
+**fd liveness is tracked outside actor isolation, and only reads whose result is
+believed take the lock.** The master fd is closed by the read source's *cancel
+handler*, which runs on a dispatch queue, not on the actor — so actor state
+(`terminated`) cannot be the authority on whether the fd is still ours.
+`PTYSession.fdClosed` is an `OSAllocatedUnfairLock<Bool>` for exactly that reason:
+the cancel handler marks it before closing, and copies of the lock share one
+allocation, so the handler's captured copy is the same state the actor reads.
+
+This is deliberately **not** a file-wide "always lock the fd" rule, and reading it
+as one has already produced a false comment. `read`/`write`, both dispatch sources,
+and `relay_set_winsize` in `resize()`/`forceRepaint()` check `terminated` instead.
+Their failure mode on a stale fd is a discarded errno, or at worst a resize
+delivered to a PTY that is no longer ours — never a plausible-looking wrong answer
+handed back to a caller. `TIOCGWINSZ` is the exception: it *returns data the caller
+trusts*, and a recycled fd number would yield another session's real dimensions, so
+`_testOnly_kernelWindowSize()` performs the closed-check and the ioctl in one
+critical section. Splitting them would be a check-then-act race against the cancel
+handler. `os_unfair_lock` is not recursive — never re-enter it from a `withLock`
+body.
+
+The lock is only observable because `_testOnly_markMasterFDClosed()` exists to reach
+it; the real close can't be scheduled from a test. Deleting the guard left the whole
+suite green before that, and `WindowSizeFailure` distinguishes `.fdClosed` from
+`.ioctlFailed` so the assertion can tell the guard firing from an ioctl that merely
+failed. That hook **marks the flag without closing the fd** — the `DispatchSourceRead`
+still owns the descriptor until its cancel handler runs, so a real `close()` there
+would double-close a number the process may have recycled. It also sharpens the test:
+with the fd open, an unguarded read *succeeds* and returns the live size, which is the
+production hazard (a recycled fd answering for another session) made deterministic.
+
+**Don't walk a path tree by `deletingLastPathComponent()` until it reaches a fixed
+point.** Foundation doesn't document that one exists, and whether it does depends on
+the Foundation in play: on GitHub's `macos-15` runner `"/"` mapped to `"/.."`, then
+`"/../.."`, so a `parent == current` guard never fired and `GitRootResolver` spun a
+filesystem probe per iteration — a hung `swift test` with no failing test named, for
+a month. Enumerate ancestors by dropping components off the path *string*
+(`GitRootResolver.ancestorPaths`), which is finite by construction, and split
+Unicode **scalars** rather than `Character`s so a component starting with a
+combining mark can't fuse onto the preceding `/` and drop an ancestor level.
+
 ### NIO ↔ Swift Concurrency Bridge
 
 `ChannelHandlerContext` is not `Sendable`. To use it inside `Task` blocks, wrap it in `UnsafeTransfer` (defined in `UnsafeTransfer.swift`) and only access `ctx.value` inside `eventLoop.execute { }`. Both `RelayMessageHandler` and `AdminHTTPHandler` use this pattern.
