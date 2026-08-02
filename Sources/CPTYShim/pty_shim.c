@@ -1,4 +1,5 @@
 #include "pty_shim.h"
+#include <assert.h>
 #include <util.h>
 #include <unistd.h>
 #include <string.h>
@@ -27,6 +28,12 @@ int relay_set_winsize(int fd, unsigned short rows, unsigned short cols) {
 }
 
 int relay_get_winsize(int fd, unsigned short *rows, unsigned short *cols) {
+    // The header states both out-params are required; assert rather than leaving
+    // that unenforced, since the alternative is a NULL write after a *successful*
+    // ioctl. Not a NULL-return path: a caller passing NULL is a programming error,
+    // and there is no sensible way to report a size without somewhere to put it.
+    // Compiled out under NDEBUG, so release builds keep the bare ioctl.
+    assert(rows != NULL && cols != NULL);
     struct winsize ws;
     if (ioctl(fd, TIOCGWINSZ, &ws) < 0) return -1;
     *rows = ws.ws_row;

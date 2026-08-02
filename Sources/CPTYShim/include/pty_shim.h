@@ -13,7 +13,9 @@ int relay_set_winsize(int fd, unsigned short rows, unsigned short cols);
 
 /// Read the terminal window size currently held by the kernel for `fd`.
 /// Writes rows/cols through the out-params. Returns 0 on success, -1 on error
-/// with errno set. Both pointers are required; neither may be NULL.
+/// with errno set. Both pointers are required; neither may be NULL — checked by
+/// an `assert` in debug builds, and undefined behaviour in a release build, not
+/// an error return.
 ///
 /// Why callers read the size from here rather than from a shell: see
 /// `PTYSession._testOnly_kernelWindowSize()`.

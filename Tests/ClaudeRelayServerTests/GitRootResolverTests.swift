@@ -55,6 +55,44 @@ final class GitRootResolverTests: XCTestCase {
         var value: String?
     }
 
+    /// Records the paths an existence check is asked about, answering `true` only for
+    /// `hit`.
+    ///
+    /// Locked rather than a captured `var` because `GitRootResolver.ExistenceCheck` is
+    /// `@Sendable` and runs inside the actor: the calls are in fact serial, but the
+    /// compiler cannot see that from the closure's type, and asserting it with
+    /// `@unchecked Sendable` over mutable state would be the assertion rather than the
+    /// proof.
+    ///
+    /// `limit` stops a non-terminating search from appending forever: past it every
+    /// answer is `true`, which ends the walk and leaves the oversized trail for the
+    /// caller to report as a failure instead of hanging the suite.
+    private final class ProbeRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var trail: [String] = []
+        private let hit: String?
+        private let limit: Int
+
+        init(hit: String?, limit: Int) {
+            self.hit = hit
+            self.limit = limit
+        }
+
+        func record(_ candidate: String) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard trail.count < limit else { return true }   // break the loop
+            trail.append(candidate)
+            return candidate == hit
+        }
+
+        var probed: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return trail
+        }
+    }
+
     func testRootFindsGitDirAncestor() throws {
         let repo = tmpDir()
         let deep = repo.appendingPathComponent("Sources/Deep")
@@ -178,34 +216,47 @@ final class GitRootResolverTests: XCTestCase {
     ///
     /// That is a real limit, not an equivalence. The two implementations are *not*
     /// observationally identical for every input even on such a platform: `/a/../b`
-    /// probes 2 paths under the walk and 5 under `ancestorPaths`, and `/tmp//x`
-    /// probes `/tmp//x/.git` versus `/tmp/x/.git`. They agree only on inputs already
-    /// free of `..` and `//` — which is every input production supplies, because
-    /// `computeRoot` normalizes first, and is why the mutation survived. The `hit:`
-    /// case below pins one such input so the equivalence is not silently assumed.
+    /// probes 2 paths under the walk and 4 under `ancestorPaths`
+    /// (`/a/../b`, `/a/..`, `/a`, `/`), and `/tmp//x` probes `/tmp//x/.git` versus
+    /// `/tmp/x/.git`. They agree only on inputs already free of `..` and `//` — which
+    /// is every input production supplies, because `computeRoot` normalizes first, and
+    /// is why the mutation survived. The `hit:` case below pins one such input so the
+    /// equivalence is not silently assumed.
     ///
     /// What the limit buys is that the same assertion becomes a named failure
     /// wherever they *do* differ, which is precisely where the old code hung. Pair it
     /// with `testAncestorWalkIsFiniteAndEndsAtRoot`, which pins finiteness of the
     /// list directly and is platform-independent.
     ///
-    /// Probes go through `GitRootResolver.computeRoot(for:exists:)`, the production
-    /// resolution step, not through `gitRoot(of:exists:)` — otherwise a rewrite that
-    /// stopped calling the tested helper would leave this green. The normalization
-    /// that entails is asserted rather than worked around: it is what makes the
+    /// Probes are observed through `root(for:)` — the entry point production calls —
+    /// via the `exists` check injected on the internal initializer, not by calling a
+    /// static helper directly. An earlier version of this test drove a static
+    /// `computeRoot(for:exists:)` instead, and so asserted on a *sibling* of
+    /// production: rewriting the private instance method above it to walk the tree some
+    /// other way bypassed everything pinned here.
+    ///
+    /// To be exact about what routing through `root(for:)` did and did not buy, because
+    /// the two are easy to conflate: it means a future change that stops calling
+    /// `gitRoot(of:exists:)` fails this test. It does **not** make the pre-fix walk
+    /// fail it — that mutation survives either way, for the platform reason given
+    /// above, and the static seam was never what was keeping it alive. The
+    /// normalization is asserted rather than worked around, since it is what makes the
     /// unnormalized inputs above unreachable in production.
-    func testProbesExactlyTheFiniteAncestorList() {
+    func testProbesExactlyTheFiniteAncestorList() async {
         /// Enough for the deepest input below, and far below the unbounded walk's
         /// appetite. Reached only by a search that does not terminate on the list.
         let probeLimit = 24
 
-        func probes(of path: String, hit: String? = nil) -> (probed: [String], root: String) {
-            var probed: [String] = []
-            let root = GitRootResolver.computeRoot(for: path) { candidate in
-                guard probed.count < probeLimit else { return true }   // break the loop
-                probed.append(candidate)
-                return candidate == hit
-            }
+        /// Collects the probe trail for one resolution.
+        ///
+        /// A fresh resolver per call, so the LRU cache can never answer instead of the
+        /// search — a cache hit would record an empty trail and pass every assertion
+        /// below vacuously.
+        func probes(of path: String, hit: String? = nil) async -> (probed: [String], root: String) {
+            let recorder = ProbeRecorder(hit: hit, limit: probeLimit)
+            let resolver = GitRootResolver(exists: { recorder.record($0) })
+            let root = await resolver.root(for: path)
+            let probed = recorder.probed
             XCTAssertLessThan(probed.count, probeLimit,
                               "the search did not terminate on the ancestor list; trail: \(probed)")
             return (probed, root)
@@ -214,15 +265,16 @@ final class GitRootResolverTests: XCTestCase {
         // Inputs are chosen to normalize to themselves, so the expected trails don't
         // depend on which real paths happen to be symlinks. `/private/tmp` would not
         // qualify: it resolves to `/tmp`, dropping a level.
-        let none = probes(of: "/a/b/c")
+        let none = await probes(of: "/a/b/c")
         XCTAssertEqual(none.probed, ["/a/b/c/.git", "/a/b/.git", "/a/.git", "/.git"])
         XCTAssertEqual(none.root, "/a/b/c", "with no .git found, the input is its own group")
 
         // The degenerate input: nowhere to go up to, so exactly one probe.
-        XCTAssertEqual(probes(of: "/").probed, ["/.git"])
+        let root = await probes(of: "/")
+        XCTAssertEqual(root.probed, ["/.git"])
 
         // And the search must stop at the first hit rather than probing to the root.
-        let found = probes(of: "/a/b/c", hit: "/a/b/.git")
+        let found = await probes(of: "/a/b/c", hit: "/a/b/.git")
         XCTAssertEqual(found.probed, ["/a/b/c/.git", "/a/b/.git"])
         XCTAssertEqual(found.root, "/a/b")
 
@@ -230,9 +282,11 @@ final class GitRootResolverTests: XCTestCase {
         // `ancestorPaths` genuinely disagree — never reach the search, because
         // normalization removes them first. Asserting that here is what makes the
         // equivalence noted above a checked property rather than an assumption.
-        XCTAssertEqual(probes(of: "/a/../b").probed, ["/b/.git", "/.git"],
+        let dotDot = await probes(of: "/a/../b")
+        XCTAssertEqual(dotDot.probed, ["/b/.git", "/.git"],
                        "`..` survived normalization and reached the ancestor walk")
-        XCTAssertEqual(probes(of: "/a//b").probed, ["/a/b/.git", "/a/.git", "/.git"],
+        let doubleSep = await probes(of: "/a//b")
+        XCTAssertEqual(doubleSep.probed, ["/a/b/.git", "/a/.git", "/.git"],
                        "a repeated separator survived normalization")
     }
 

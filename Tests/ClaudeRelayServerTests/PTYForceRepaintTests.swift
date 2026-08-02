@@ -57,14 +57,25 @@ final class PTYForceRepaintTests: XCTestCase {
     ///
     /// Skipping on *any* read failure — rather than only on `.fdClosed` — is
     /// deliberate, and the reason is a property of pty masters rather than a
-    /// convenience: `TIOCGWINSZ` on an open master cannot fail. It keeps returning
-    /// the stored `winsize` even after the child is gone, and fails only once the
-    /// descriptor itself is closed (`EBADF`) — a non-tty fd being impossible here.
-    /// So a read failure means the read source's cancel handler ran, i.e. the child
-    /// hung up. `forceRepaint` only issues `TIOCSWINSZ` and never closes the fd, so
-    /// it cannot be the cause. Note the initial 120 read does *not* license a
-    /// stronger claim later: it proves only that the master was open, and a child
-    /// dead since spawn still reads 120 until the EOF is processed asynchronously.
+    /// convenience: an `ioctlFailed` is not reachable from here. `TIOCGWINSZ` keeps
+    /// returning the stored `winsize` even after the child is gone, a non-tty fd is
+    /// impossible on this path, and `_testOnly_kernelWindowSize()` short-circuits on
+    /// `fdClosed` before issuing the ioctl at all — so the surviving failure mode is
+    /// `.fdClosed`, and the two cases need not be told apart to decide on a skip.
+    ///
+    /// The skip message attributes that to the child hanging up, which holds for the
+    /// tests that call this helper but is *not* a property of the flag: `fdClosed` is
+    /// also set by `_testOnly_markMasterFDClosed()`, which leaves the descriptor open
+    /// and no child dead. No test both marks the flag and then reads through here
+    /// (`testWindowSizeReportsClosedFDRatherThanProbingIt` reads
+    /// `_testOnly_kernelWindowSize()` directly, so it can assert on the case), and a
+    /// future one that did would get a misattributed skip rather than a failure —
+    /// worth knowing before adding it. `forceRepaint` never closes the fd, so it can
+    /// never be the cause.
+    ///
+    /// Note the initial 120 read does *not* license a stronger claim later: it proves
+    /// only that the master was open, and a child dead since spawn still reads 120
+    /// until the EOF is processed asynchronously.
     private func kernelSize(
         of session: PTYSession,
         file: StaticString = #filePath,
@@ -99,9 +110,11 @@ final class PTYForceRepaintTests: XCTestCase {
         case mismatched(UInt16)
         /// No size could be read at all, so there is nothing to compare. Reached
         /// via `polledCols`, which collapses both `WindowSizeFailure` cases: mid-poll
-        /// the distinction isn't actionable from inside the loop, so the caller
-        /// re-reads through `kernelSize` to attribute it. Not a statement about
-        /// `forceRepaint`.
+        /// the distinction isn't actionable from inside the loop. Callers treat this
+        /// as environmental and `XCTSkip` — they do not re-read to narrow it, because
+        /// only `.fdClosed` is reachable here (see `kernelSize`) and it is terminal:
+        /// nothing reopens the descriptor, so a second read would return the same
+        /// case. Not a statement about `forceRepaint`.
         case ptyUnavailable
     }
 
@@ -142,10 +155,13 @@ final class PTYForceRepaintTests: XCTestCase {
         /// delay, so a descheduled poller can miss an arbitrary stretch. It is not
         /// a one-directional guarantee, though: both stamps are `Date()` reads taken
         /// *after* the matching size came back, so a restore landing between the last
-        /// read and its stamp inflates the span. That overstatement is bounded by one
-        /// poll gap plus scheduling latency, against a 30 ms floor — small, but not
-        /// zero, and the assertion should not be described as conservative-by-
-        /// construction.
+        /// read and its stamp inflates the span. No bound is claimed on that
+        /// overstatement — it is the interval between an ioctl returning and the next
+        /// `Date()` read on a descheduled task, which nothing here limits, and an
+        /// earlier version of this comment asserting "one poll gap plus scheduling
+        /// latency" was stating a bound it had no basis for. In practice it is a
+        /// handful of microseconds against a 30 ms floor; the point is that the
+        /// assertion is not conservative *by construction*, only in expectation.
         ///
         /// The span is *not* guaranteed to be a single continuous hold, and the
         /// assertion must not be read as proving one. `measureHold` breaks on the
@@ -166,8 +182,10 @@ final class PTYForceRepaintTests: XCTestCase {
         case held(heldFor: TimeInterval)
         /// Polling ran to its deadline with the PTY reporting this width instead.
         case neverObserved(lastSeen: UInt16)
-        /// The master fd is closed, so there was no size to sample. Says nothing
-        /// about `forceRepaint`.
+        /// No size could be sampled — in practice the master fd is closed, the only
+        /// reachable failure (see `kernelSize`). Says nothing about `forceRepaint`,
+        /// and callers skip on it rather than re-reading: see
+        /// `ColsOutcome.ptyUnavailable`.
         case ptyUnavailable
     }
 

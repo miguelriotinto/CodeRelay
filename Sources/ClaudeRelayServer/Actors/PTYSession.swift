@@ -129,12 +129,26 @@ public actor PTYSession: PTYSessionProtocol {
     /// terminal's size.
     ///
     /// Scope: this guards `_testOnly_kernelWindowSize()`, the only fd use that
-    /// *returns a value the caller believes*. The other uses of `masterFD`
-    /// (`read`/`write`, the two dispatch sources, and `relay_set_winsize` in
-    /// `resize()`/`forceRepaint()`) deliberately do not take this lock — they check
-    /// `terminated` instead, and their failure mode is a discarded errno on an fd
-    /// that no longer belongs to us, not a plausible-looking wrong answer handed
-    /// back to an assertion. So this is not a file-wide "always lock the fd" rule.
+    /// *returns a value the caller believes*. No other use of `masterFD` takes this
+    /// lock, because their failure mode is a discarded errno on an fd that no longer
+    /// belongs to us, not a plausible-looking wrong answer handed back to a caller.
+    /// So this is not a file-wide "always lock the fd" rule.
+    ///
+    /// What those uses check instead varies, and it is worth being precise rather than
+    /// claiming a uniformity that isn't there:
+    /// - `relay_set_winsize` in `resize()`/`forceRepaint()` and the entry to `write(_:)`
+    ///   check `terminated`.
+    /// - `drainWriteQueue()` does not, and cannot rely on its caller to: the write
+    ///   source's event handler calls it directly, bypassing `write(_:)`'s guard, so a
+    ///   drain scheduled before termination can write after it.
+    /// - `read(fd, …)` in the read source's event handler has no check at all — the
+    ///   handler is not actor-isolated, so reaching `terminated` would need an `await`
+    ///   inside the hot read path. It is instead ordered by the source itself: the same
+    ///   `cancel()` that stops the handler firing is what runs the cancel handler that
+    ///   closes the fd.
+    ///
+    /// None of the three can hand back a wrong *answer*, which is the line this lock
+    /// draws.
     ///
     /// Where it *is* taken, the closed check and the use must be one critical
     /// section. Checking, unlocking, and then using the fd would be a check-then-act

@@ -103,11 +103,22 @@ the cancel handler marks it before closing, and copies of the lock share one
 allocation, so the handler's captured copy is the same state the actor reads.
 
 This is deliberately **not** a file-wide "always lock the fd" rule, and reading it
-as one has already produced a false comment. `read`/`write`, both dispatch sources,
-and `relay_set_winsize` in `resize()`/`forceRepaint()` check `terminated` instead.
-Their failure mode on a stale fd is a discarded errno, or at worst a resize
-delivered to a PTY that is no longer ours — never a plausible-looking wrong answer
-handed back to a caller. `TIOCGWINSZ` is the exception: it *returns data the caller
+as one has already produced a false comment. No other fd use takes the lock; their
+failure mode on a stale fd is a discarded errno, or at worst a resize delivered to a
+PTY that is no longer ours — never a plausible-looking wrong answer handed back to a
+caller. What they check instead is **not** uniform, and summarising it as "they check
+`terminated`" is the false comment in question:
+
+- `relay_set_winsize` in `resize()`/`forceRepaint()`, and the entry to `write(_:)`,
+  do check `terminated`.
+- `drainWriteQueue()` does not, and can't delegate to its caller — the write source's
+  event handler calls it directly, so it bypasses `write(_:)`'s guard entirely.
+- the read source's `read(fd, …)` has no check available: the event handler isn't
+  actor-isolated, so reading `terminated` would mean an `await` in the hot read path.
+  Ordering comes from the source instead — the `cancel()` that stops the handler is
+  what runs the cancel handler that closes the fd.
+
+`TIOCGWINSZ` is the exception that needs the lock: it *returns data the caller
 trusts*, and a recycled fd number would yield another session's real dimensions, so
 `_testOnly_kernelWindowSize()` performs the closed-check and the ioctl in one
 critical section. Splitting them would be a check-then-act race against the cancel
