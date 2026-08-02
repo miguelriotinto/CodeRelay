@@ -52,46 +52,7 @@ jobs:
         # Serial mode emits per-test XCTest counts that are visible in CI logs.
         # The full suite currently runs in ~5 s; parallel's speed win doesn't
         # justify losing the per-test output.
-        #
-        # Diagnostics (temporary, for the hang first seen 8 Jul): the runner is
-        # macOS 15 / Swift 6.1 while dev machines are on 6.2, and the failure
-        # does not reproduce locally, so evidence has to come from here.
-        #   - SWIFT_BACKTRACE: print a symbolicated stack on crash, so a dead
-        #     process is distinguishable from a stuck one.
-        #   - `sample` after a stall: if the suite is still alive past the point
-        #     it should have finished, dump every thread's stack. This is the
-        #     only way to see WHICH await is parked.
-        run: |
-          set -o pipefail
-          export SWIFT_BACKTRACE=enable=yes,sanitize=yes,threads=all
-          swift test 2>&1 | tee /tmp/swift-test.log &
-          test_pid=$!
-
-          # Watchdog: the suite takes ~70 s healthy. If it is still running at
-          # 5 min it is hung, not slow — sample it, then let it keep going so
-          # the job's own timeout still applies.
-          (
-            sleep 300
-            if kill -0 "$test_pid" 2>/dev/null; then
-              echo "::group::Hang diagnostics (suite still running at 5 min)"
-              echo "--- last output line seen ---"
-              tail -3 /tmp/swift-test.log || true
-              for p in $(pgrep -f 'ClaudeRelayPackageTests|xctest' || true); do
-                echo "--- sample of pid $p ---"
-                /usr/bin/sample "$p" 3 -mayDie 2>&1 | head -150 || true
-                echo "--- spindump-style thread states for $p ---"
-                /bin/ps -M -p "$p" 2>&1 | head -40 || true
-              done
-              echo "::endgroup::"
-            fi
-          ) &
-          watchdog=$!
-
-          wait "$test_pid"
-          status=$?
-          kill "$watchdog" 2>/dev/null || true
-          echo "swift test exited with status $status"
-          exit $status
+        run: swift test
 
       - name: SwiftLint
         run: |
