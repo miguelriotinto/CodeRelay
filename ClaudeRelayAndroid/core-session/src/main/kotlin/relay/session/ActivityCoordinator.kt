@@ -161,7 +161,7 @@ class ActivityCoordinator(
 
     /**
      * Group [sessions] into workspace rollups (one per working directory / git
-     * root), worst-state first. Parity with Swift `ActivityCoordinator.rollups`:
+     * root), ordered by title. Parity with Swift `ActivityCoordinator.rollups`:
      * uses the live [agentStates] map (leads the snapshot) + [unseenSessions].
      */
     fun rollups(sessions: List<SessionInfo>): List<WorkspaceRollup> =
@@ -169,8 +169,14 @@ class ActivityCoordinator(
             sessions = sessions,
             agentStates = _agentStates.value,
             unseen = _unseenSessions.value,
-            groupKey = { it.workingDir ?: "~" },
-            title = { if (it == "~") "Other" else it.substringAfterLast('/') },
+            groupKey = { it.workingDir ?: WorkspaceRollup.OTHER_GROUP_KEY },
+            title = {
+                if (it == WorkspaceRollup.OTHER_GROUP_KEY) {
+                    WorkspaceRollup.OTHER_TITLE
+                } else {
+                    it.substringAfterLast('/')
+                }
+            },
         )
 
     // MARK: - Server-event handlers

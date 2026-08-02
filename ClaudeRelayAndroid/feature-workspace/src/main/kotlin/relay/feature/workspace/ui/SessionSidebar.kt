@@ -5,6 +5,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,7 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallSplit
@@ -55,7 +56,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import relay.protocol.ActivityState
 import relay.protocol.SessionInfo
@@ -91,8 +95,11 @@ fun SessionSidebar(
     activityForSession: (UUID) -> ActivityState,
     agentStateForSession: (UUID) -> relay.protocol.AgentDetectedState? = { null },
     seenForSession: (UUID) -> Boolean = { true },
+    // Previews/tests only: one flat group. Uses a distinct id rather than
+    // `OTHER_GROUP_KEY`, which `WorkspaceRollup.group` treats as the catch-all
+    // and pins last. `WorkspaceScreen` always passes the real grouping.
     rollupsForSessions: (List<SessionInfo>) -> List<relay.protocol.WorkspaceRollup> =
-        { list -> listOf(relay.protocol.WorkspaceRollup("~", "Sessions", list.map { it.id },
+        { list -> listOf(relay.protocol.WorkspaceRollup("all", "Sessions", list.map { it.id },
             relay.protocol.RollupState.SEEN, 0)) },
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
@@ -145,20 +152,33 @@ fun SessionSidebar(
                 val byId = sessions.associateBy { it.id }
                 val groups = rollupsForSessions(sessions)
                 val collapsed = remember { mutableStateListOf<String>() }
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                ) {
                     groups.forEach { group ->
+                        // Each group renders as one rounded tile: the header rounds
+                        // its top corners, the last session row its bottom ones,
+                        // and the rows between draw a square-cornered fill so the
+                        // whole group reads as a single continuous card. Rows stay
+                        // separate LazyColumn items so SwipeToDismissBox
+                        // (swipe-to-kill) keeps working. Parity with the Swift
+                        // `WorkspaceTileEdge`.
+                        val members = group.sessionIds.mapNotNull { byId[it] }
+                        val isCollapsed = collapsed.contains(group.id) || members.isEmpty()
                         item(key = "hdr-${group.id}") {
                             RollupHeader(
                                 group = group,
-                                collapsed = collapsed.contains(group.id),
+                                collapsed = isCollapsed,
+                                edge = if (isCollapsed) TileEdge.ONLY else TileEdge.TOP,
                                 onToggle = {
                                     if (collapsed.contains(group.id)) collapsed.remove(group.id)
                                     else collapsed.add(group.id)
                                 },
                             )
                         }
-                        if (!collapsed.contains(group.id)) {
-                            items(group.sessionIds.mapNotNull { byId[it] }, key = { it.id }) { session ->
+                        if (!isCollapsed) {
+                            itemsIndexed(members, key = { _, s -> s.id }) { index, session ->
                                 SwipeableSessionRow(
                                     session = session,
                                     name = nameForSession(session.id),
@@ -167,6 +187,7 @@ fun SessionSidebar(
                                     agentId = agentForSession(session.id),
                                     agentState = agentStateForSession(session.id),
                                     seen = seenForSession(session.id),
+                                    edge = if (index == members.lastIndex) TileEdge.BOTTOM else TileEdge.MIDDLE,
                                     onSelect = { onSelect(session.id) },
                                     onTerminate = { onTerminate(session.id) },
                                     onRenameRequest = {
@@ -176,6 +197,7 @@ fun SessionSidebar(
                                 )
                             }
                         }
+                        item(key = "gap-${group.id}") { Spacer(Modifier.height(10.dp)) }
                     }
                 }
             }
@@ -198,6 +220,21 @@ fun SessionSidebar(
 private data class RenameTarget(val id: UUID, val name: String)
 
 /**
+ * Where a row sits within its group's tile, driving which corners round.
+ * Parity with the Swift `WorkspaceTileEdge`.
+ */
+internal enum class TileEdge { ONLY, TOP, MIDDLE, BOTTOM }
+
+private val TileCornerRadius = 10.dp
+
+/** Corner shape for a tile row at [edge]. */
+internal fun TileEdge.shape(): RoundedCornerShape {
+    val top = if (this == TileEdge.TOP || this == TileEdge.ONLY) TileCornerRadius else 0.dp
+    val bottom = if (this == TileEdge.BOTTOM || this == TileEdge.ONLY) TileCornerRadius else 0.dp
+    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
+}
+
+/**
  * A session row wrapped in a trailing swipe-to-delete (Swift "Kill" swipe
  * action). Like the servers screen, the swipe is consumed (returns false from
  * `confirmValueChange`) so the row settles back after firing — the list mutation
@@ -213,6 +250,7 @@ private fun SwipeableSessionRow(
     agentId: String?,
     agentState: relay.protocol.AgentDetectedState?,
     seen: Boolean,
+    edge: TileEdge,
     onSelect: () -> Unit,
     onTerminate: () -> Unit,
     onRenameRequest: () -> Unit,
@@ -229,6 +267,9 @@ private fun SwipeableSessionRow(
     )
 
     SwipeToDismissBox(
+        // Clipped to the tile's corner shape so the red delete background stays
+        // inside the tile instead of squaring off its rounded bottom edge.
+        modifier = Modifier.clip(edge.shape()),
         state = dismissState,
         enableDismissFromStartToEnd = false,
         backgroundContent = {
@@ -251,6 +292,7 @@ private fun SwipeableSessionRow(
             agentId = agentId,
             agentState = agentState,
             seen = seen,
+            edge = edge,
             onSelect = onSelect,
             onRenameRequest = onRenameRequest,
             onShareQr = onShareQr,
@@ -268,6 +310,7 @@ private fun SessionRow(
     agentId: String?,
     agentState: relay.protocol.AgentDetectedState?,
     seen: Boolean,
+    edge: TileEdge,
     onSelect: () -> Unit,
     onRenameRequest: () -> Unit,
     onShareQr: () -> Unit,
@@ -278,18 +321,31 @@ private fun SessionRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(edge.shape())
                 .background(
+                    // The tile fill; the active row lifts a step above it so the
+                    // selection still reads inside the grouped card.
                     if (isActive) {
                         MaterialTheme.colorScheme.surfaceVariant
                     } else {
-                        MaterialTheme.colorScheme.surface
+                        TileFill()
                     },
                 )
                 .combinedClickable(
                     onClick = onSelect,
                     onLongClick = { menuExpanded = true },
                 )
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                // The sparkle conveys the agent by colour alone, so with the name
+                // text gone the agent would be invisible to TalkBack. Merge the
+                // row into one node and state its identity explicitly.
+                .semantics(mergeDescendants = true) {
+                    contentDescription = listOfNotNull(
+                        name,
+                        friendlyAgentName(agentId).takeIf { agentState != null },
+                        agentState?.let { agentStateWord(it) },
+                    ).joinToString(", ")
+                }
+                .padding(horizontal = 12.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -309,19 +365,14 @@ private fun SessionRow(
                 modifier = Modifier.weight(1f),
             )
 
-            // Trailing agent cluster: sparkle micro-icon + friendly name + state
-            // pill. Parity with iOS/macOS `SessionRow`. The terminal window title
-            // (`titleForSession`) is intentionally NOT shown as a subtitle — for a
-            // coding-agent session it just duplicates the friendly name here.
-            val friendly = friendlyAgentName(agentId)
-            if (friendly != null && agentState != null) {
+            // Trailing agent cluster: sparkle micro-icon + state pill. Parity
+            // with iOS/macOS `SessionRow`. The agent's *name* is deliberately
+            // omitted: dot + name + sparkle + agent name + pill left no room for
+            // the session name in a narrow sidebar (it truncated to "Claude…"),
+            // and the colour-coded sparkle already identifies the agent. The
+            // terminal window title (`titleForSession`) is likewise not shown.
+            if (agentId != null && agentState != null) {
                 AgentSparkleIcon(agentId = agentId, agentState = agentState)
-                Text(
-                    text = friendly,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
                 AgentStatePill(agentState = agentState, agentId = agentId, seen = seen)
             }
         }
@@ -399,28 +450,36 @@ private fun relay.protocol.RollupState.badgeColor(): Color = when (this) {
     relay.protocol.RollupState.SEEN -> QualityGreen
 }
 
-/** Collapsible workspace-group header: chevron + rollup dot + title + count. */
+/**
+ * The tile's fill: a step above the sidebar surface so a group reads as a raised
+ * dark-grey card. `surfaceContainerHigh` rather than a literal grey, so the tile
+ * still has contrast if the app is ever themed light.
+ */
+@Composable
+private fun TileFill(): Color = MaterialTheme.colorScheme.surfaceContainerHigh
+
+/**
+ * Tile header: rollup dot + folder title + attention count + trailing chevron.
+ *
+ * The chevron is trailing (parity with the Swift `WorkspaceTileHeader`) — inside
+ * a tile a leading chevron reads as part of the title rather than as a control.
+ */
 @Composable
 private fun RollupHeader(
     group: relay.protocol.WorkspaceRollup,
     collapsed: Boolean,
+    edge: TileEdge,
     onToggle: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
+            .clip(edge.shape())
+            .background(TileFill())
             .clickable(onClick = onToggle)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = if (collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight
-                          else Icons.Filled.KeyboardArrowDown,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.width(4.dp))
         Box(
             modifier = Modifier
                 .size(8.dp)
@@ -432,6 +491,8 @@ private fun RollupHeader(
             text = group.title,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.weight(1f))
         if (group.attentionCount > 0) {
@@ -447,6 +508,13 @@ private fun RollupHeader(
                     color = Color.White,
                 )
             }
+            Spacer(Modifier.width(6.dp))
         }
+        Icon(
+            imageVector = if (collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight
+                          else Icons.Filled.KeyboardArrowDown,
+            contentDescription = if (collapsed) "Expand group" else "Collapse group",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

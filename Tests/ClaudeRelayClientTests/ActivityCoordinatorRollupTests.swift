@@ -23,7 +23,24 @@ final class ActivityCoordinatorRollupTests: XCTestCase {
         let b = session("codex", .working, dir: "/repo/b")
         let groups = coord.rollups(for: [a, b])
         XCTAssertEqual(groups.count, 2)
-        XCTAssertEqual(groups.first?.state, .blocked)   // /repo/a sorts first
+        XCTAssertEqual(groups.map(\.title), ["a", "b"])
+        XCTAssertEqual(groups.first?.state, .blocked)
+    }
+
+    /// The coordinator's `title` closure is what maps a path to a display name,
+    /// so the ordering contract has to be pinned here too and not only in
+    /// `WorkspaceRollupTests` — a regression in either the closure or the sort
+    /// would reshuffle the real sidebar.
+    func testRollupOrderIsAlphabeticalWithOtherLast() {
+        let coord = makeCoordinator()
+        let zeta = session("claude", .blocked, dir: "/repo/zeta")   // worst, sorts last
+        let alpha = session("codex", .idle, dir: "/repo/alpha")
+        let homeless = SessionInfo(id: UUID(), name: nil, state: .activeAttached, tokenId: "t",
+                                   createdAt: Date(), cols: 80, rows: 24, activity: .agentActive,
+                                   agent: "claude", agentState: .blocked, title: nil,
+                                   workingDir: nil)
+        XCTAssertEqual(coord.rollups(for: [zeta, homeless, alpha]).map(\.title),
+                       ["alpha", "zeta", "Other"])
     }
 
     func testRollupsUseLiveAgentStatesOverSnapshot() {
