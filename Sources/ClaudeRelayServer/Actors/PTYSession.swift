@@ -612,6 +612,22 @@ public actor PTYSession: PTYSessionProtocol {
         _ = relay_set_winsize(masterFD, rows, cols)
     }
 
+    /// The window size the kernel currently holds for this PTY, as `(rows, cols)`.
+    ///
+    /// Master and slave share one `struct winsize`, so this is exactly what the
+    /// child's own TIOCGWINSZ reports — i.e. the value a Node/Ink app compares
+    /// against its cache to decide whether to repaint. Tests assert on this
+    /// rather than on a shell echoing `$COLUMNS`, which additionally requires
+    /// SIGWINCH to reach the shell's process group and the shell to be
+    /// scheduled to run a command — neither of which holds on every machine.
+    func kernelWindowSize() -> (rows: UInt16, cols: UInt16)? {
+        guard !terminated else { return nil }
+        var rows: UInt16 = 0
+        var cols: UInt16 = 0
+        guard relay_get_winsize(masterFD, &rows, &cols) == 0 else { return nil }
+        return (rows, cols)
+    }
+
     /// Best-effort cwd of the session's shell (the stable workspace anchor).
     ///
     /// `childPID` is the setuid `login` process, whose vnode path info is not

@@ -11,6 +11,15 @@ int relay_forkpty(int *master_fd, struct winsize *ws);
 /// Set terminal window size on the given master fd.
 int relay_set_winsize(int fd, unsigned short rows, unsigned short cols);
 
+/// Read the terminal window size currently held by the kernel for `fd`.
+/// Writes rows/cols through the out-params. Returns 0 on success, -1 on error.
+///
+/// Master and slave share a single `struct winsize`, so this returns exactly
+/// what the child process's own TIOCGWINSZ would report — which makes it the
+/// observable side of `relay_set_winsize` without depending on the child being
+/// scheduled, or on a shell refreshing `$COLUMNS`.
+int relay_get_winsize(int fd, unsigned short *rows, unsigned short *cols);
+
 /// Get the foreground process group ID for the given fd via tcgetpgrp.
 /// Returns the PGID, or -1 on error.
 int relay_get_foreground_pgid(int fd);
