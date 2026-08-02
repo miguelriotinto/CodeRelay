@@ -167,7 +167,7 @@ claude-relay config set logLevel info                # trace/debug/info/warning/
 claude-relay config validate                         # Sanity-check the running server's config
 ```
 
-`config set` validates keys and value ranges locally before forwarding to the admin API — unknown keys, out-of-range ports, and bad log levels are rejected immediately. `config validate` is a lighter, separate check: it reads the config back over the admin API (so the service must be running) and only verifies that any port that *does* parse as an integer falls in 1–65535 and that `wsPort` and `adminPort` differ. A non-numeric port is skipped rather than reported, so a clean `validate` is not proof the config is loadable.
+`config set` validates keys and value ranges locally before forwarding to the admin API — unknown keys, out-of-range ports, and bad log levels are rejected immediately. `config validate` is a lighter, separate check: it reads the config back over the admin API (so the service must be running) and verifies that each port is an integer in the 1024–65535 range the admin API accepts (the same bound `config set` enforces), and that `wsPort` and `adminPort` differ. It checks ports only — a clean `validate` is not full semantic validation of the config.
 
 ## Configuration
 

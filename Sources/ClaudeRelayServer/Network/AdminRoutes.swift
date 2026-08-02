@@ -443,9 +443,16 @@ enum AdminRoutes {
 
     // MARK: - Config Validation
 
+    /// Authoritative port check for `PUT /config`. The bound itself lives on
+    /// `RelayConfig.portRange` so the CLI's two client-side checks cannot drift
+    /// from what this route actually accepts — `config validate` had already
+    /// drifted to 1–65535 and called privileged ports valid.
     private static func validatePort(_ port: Int, name: String) throws {
-        guard port >= 1024 && port <= 65535 else {
-            throw ConfigError(message: "\(name) must be in range 1024-65535, got \(port)")
+        guard RelayConfig.portRange.contains(port) else {
+            throw ConfigError(
+                message: "\(name) must be in range \(RelayConfig.portRange.lowerBound)-"
+                    + "\(RelayConfig.portRange.upperBound), got \(port)"
+            )
         }
     }
 

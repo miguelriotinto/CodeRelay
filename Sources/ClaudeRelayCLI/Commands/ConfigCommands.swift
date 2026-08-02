@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import ClaudeRelayKit
 
 struct ConfigGroup: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -80,8 +81,11 @@ struct ConfigSetCommand: AsyncParsableCommand {
         let typedValue = ConfigValue.infer(from: value)
         switch (key, typedValue) {
         case ("wsPort", .int(let portValue)), ("adminPort", .int(let portValue)):
-            guard (1024...65535).contains(portValue) else {
-                FileHandle.standardError.write(Data("Error: port must be 1024..65535\n".utf8))
+            // Shared bound, not a local literal: this is a fast-path copy of the
+            // check `AdminRoutes.validatePort` performs, and the two must agree.
+            guard RelayConfig.portRange.contains(portValue) else {
+                FileHandle.standardError.write(Data(
+                    "Error: port must be \(RelayConfig.portRange.lowerBound)..\(RelayConfig.portRange.upperBound)\n".utf8))
                 throw ExitCode.failure
             }
         case ("scrollbackSize", .int(let s)):
@@ -154,25 +158,15 @@ struct ConfigValidateCommand: AsyncParsableCommand {
 
             var errors: [String] = []
 
-            // Basic validation checks
-            if let wsPort = config["wsPort"] {
-                if let port = Int(wsPort.description), port < 1 || port > 65535 {
-                    errors.append("wsPort: must be between 1 and 65535")
-                }
-            }
+            // Ports must parse AND fall in the range `config set` accepts. A
+            // value that isn't an integer is an error in its own right rather
+            // than silently skipped; `/config` serves a typed `RelayConfig`, so
+            // that branch is unreachable today and kept as defence in depth.
+            let ws = Self.validatePort(config["wsPort"], name: "wsPort", errors: &errors)
+            let admin = Self.validatePort(config["adminPort"], name: "adminPort", errors: &errors)
 
-            if let adminPort = config["adminPort"] {
-                if let port = Int(adminPort.description), port < 1 || port > 65535 {
-                    errors.append("adminPort: must be between 1 and 65535")
-                }
-            }
-
-            if let wsPort = config["wsPort"], let adminPort = config["adminPort"] {
-                let ws = Int(wsPort.description) ?? 0
-                let admin = Int(adminPort.description) ?? 0
-                if ws > 0 && ws == admin {
-                    errors.append("wsPort and adminPort cannot be the same (\(ws))")
-                }
+            if let ws, let admin, ws == admin {
+                errors.append("wsPort and adminPort cannot be the same (\(ws))")
             }
 
             if globals.json {
@@ -193,6 +187,31 @@ struct ConfigValidateCommand: AsyncParsableCommand {
             print(OutputFormatter.formatError(error, json: globals.json))
             throw ExitCode.failure
         }
+    }
+
+    /// Range the admin API enforces on writes (`AdminRoutes.validatePort`, on
+    /// the `PUT /config` path). Derived from the shared `RelayConfig.portRange`
+    /// rather than restated, because a looser bound here would report a port as
+    /// valid that `config set` then refuses — which is exactly the drift this
+    /// command shipped with. Note the server does *not* re-check the range at
+    /// startup: `main.swift` binds whatever `config.json` holds and dies on the
+    /// bind error.
+    static let minPort = RelayConfig.portRange.lowerBound
+    static let maxPort = RelayConfig.portRange.upperBound
+
+    /// Returns the parsed port so the caller can still compare the two for
+    /// collision, appending an error when the value is non-numeric or out of
+    /// range. Returns nil only when there is no number to compare.
+    static func validatePort(_ value: ConfigValue?, name: String, errors: inout [String]) -> Int? {
+        guard let value else { return nil }
+        guard let port = Int(value.description) else {
+            errors.append("\(name): must be an integer, got \"\(value.description)\"")
+            return nil
+        }
+        if port < minPort || port > maxPort {
+            errors.append("\(name): must be between \(minPort) and \(maxPort), got \(port)")
+        }
+        return port
     }
 }
 
