@@ -24,14 +24,23 @@ struct SessionSidebarView: View {
                     let sessions = coordinator.activeSessions
                     let byId = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
                     ForEach(coordinator.activityCoordinator.rollups(for: sessions)) { group in
+                        // One rounded tile per group. The header is a plain row
+                        // (not a Section header) so it shares the tile
+                        // background; `selectionDisabled` keeps it out of the
+                        // List's selection, which drives session switching.
+                        let members = group.sessionIds.compactMap { byId[$0] }
+                        let collapsed = collapse.isCollapsed(group.id) || members.isEmpty
                         Section {
-                            if !collapse.isCollapsed(group.id) {
-                                ForEach(group.sessionIds.compactMap { byId[$0] }, id: \.id) { session in
-                                    sessionRow(session).tag(session.id)
+                            rollupHeader(group, isCollapsed: collapsed)
+                                .workspaceTileRow(collapsed ? .only : .top)
+                                .selectionDisabled()
+                            if !collapsed {
+                                ForEach(Array(members.enumerated()), id: \.element.id) { index, session in
+                                    sessionRow(session)
+                                        .tag(session.id)
+                                        .workspaceTileRow(.forSession(index: index, of: members.count))
                                 }
                             }
-                        } header: {
-                            rollupHeader(group)
                         }
                     }
                 }
@@ -131,30 +140,18 @@ struct SessionSidebarView: View {
         }
     }
 
-    /// Collapsible group header: chevron + rollup dot + title + attention count.
+    /// Collapsible tile header: rollup dot + folder title + attention count +
+    /// trailing chevron. Shared with the iOS sidebar via `WorkspaceTileHeader`.
     @ViewBuilder
-    private func rollupHeader(_ group: WorkspaceRollup) -> some View {
-        Button {
+    private func rollupHeader(_ group: WorkspaceRollup, isCollapsed: Bool) -> some View {
+        WorkspaceTileHeader(
+            group: group,
+            isCollapsed: isCollapsed,
+            titleFont: .caption.weight(.semibold)
+        ) {
             collapse.toggle(group.id)
             coordinator.saveCollapsedGroups(collapse.collapsedGroupIds)  // F3
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: collapse.isCollapsed(group.id) ? "chevron.right" : "chevron.down")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Circle().fill(group.state.badgeColor).frame(width: 8, height: 8)
-                Text(group.title).font(.caption.weight(.semibold))
-                Spacer()
-                if group.attentionCount > 0 {
-                    Text("\(group.attentionCount)")
-                        .font(.caption2.monospacedDigit())
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Capsule().fill(Color.red.opacity(0.85)))
-                        .foregroundStyle(.white)
-                }
-            }
         }
-        .buttonStyle(.plain)
     }
 }
 
@@ -167,20 +164,28 @@ private struct SessionRow: View {
     let seen: Bool
     let createdAt: Date
 
+    /// Spoken row summary: session name, then agent and state when one is running.
+    private var accessibilityDescription: String {
+        guard let friendly = AgentDisplayName.friendly(agentId), let agentState else { return name }
+        return "\(name), \(friendly), \(AgentStatePillModel.word(agentState))"
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             SessionStatusDot(state: state, size: 6)
             Text(name).font(.body).lineLimit(1).truncationMode(.tail)
-            Spacer()
-            if let agentId, let friendly = AgentDisplayName.friendly(agentId), let agentState {
+            Spacer(minLength: 4)
+            // Agent *name* omitted for parity with iOS: dot + name + sparkle +
+            // agent name + pill left no room for the session name in a narrow
+            // sidebar, and the colour-coded sparkle already identifies the agent.
+            if let agentId, let agentState {
                 AgentSparkleIcon(agentId: agentId, agentState: agentState)
-                Text(friendly)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
                 AgentStatePill(agentState: agentState, agentId: agentId, seen: seen)
             }
         }
-        .padding(.vertical, 2)
+        // The sparkle is `accessibilityHidden` and colour-only, so fold the agent
+        // identity into the row's spoken label now that the text is gone.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityDescription)
     }
 }

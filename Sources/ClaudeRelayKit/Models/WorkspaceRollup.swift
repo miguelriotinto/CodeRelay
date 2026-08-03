@@ -1,8 +1,10 @@
 import Foundation
 
-/// Severity of a workspace group, lowest → highest. Drives the sidebar sort
-/// order and which groups raise attention. Mirrors ActivityCoordinator's
+/// Severity of a workspace group, lowest → highest. Drives the group's badge
+/// colour and which groups raise attention. Mirrors ActivityCoordinator's
 /// unseen logic: `blocked` > finished-but-unseen > working > unknown > seen.
+///
+/// Deliberately *not* the sidebar sort key — see `WorkspaceRollup.group`.
 public enum RollupState: Int, Comparable, Sendable {
     case seen = 0
     case unknown = 1
@@ -17,6 +19,16 @@ public enum RollupState: Int, Comparable, Sendable {
 /// testable. Consumed by the client sidebars and by the server push dispatcher's
 /// coalescing.
 public struct WorkspaceRollup: Equatable, Sendable, Identifiable {
+    /// Group key for sessions with no working directory. Callers map it to the
+    /// `otherTitle` display string; `group` pins it last.
+    ///
+    /// The pin is keyed on this, not on the title, so a repo that happens to be
+    /// named "Other" still sorts alphabetically among its peers.
+    public static let otherGroupKey = "~"
+
+    /// Display title for the `otherGroupKey` catch-all group.
+    public static let otherTitle = "Other"
+
     public let id: String
     public let title: String
     public let sessionIds: [UUID]
@@ -50,9 +62,21 @@ public struct WorkspaceRollup: Equatable, Sendable, Identifiable {
         }
     }
 
-    /// Fold a session list into groups, worst-state-first then title-ascending.
+    /// Fold a session list into groups, ordered by title alone.
     /// `agentStates` is the live per-session state map (leads the snapshot), so
     /// an observer event that arrived ahead of a refreshed list still wins.
+    ///
+    /// Order is **independent of `state`** by design. Sorting worst-state-first
+    /// auto-surfaced blocked groups, but it also meant a group jumped position
+    /// every time an agent changed state — so the sidebar reshuffled under the
+    /// user's finger while they were reaching for a row. Attention is signalled
+    /// by the badge colour and the unread count instead, which don't move.
+    ///
+    /// The comparator must be a **total** order, not merely severity-free:
+    /// `buckets` is a `Dictionary`, so `map` yields groups in hash order, and
+    /// `sorted(by:)` is not guaranteed stable — two rollups the comparator
+    /// calls equal may swap between calls. `id` (the group key, unique by
+    /// construction) is the final tiebreak so no such pair exists.
     public static func group(
         sessions: [SessionInfo],
         agentStates: [UUID: AgentDetectedState],
@@ -71,6 +95,25 @@ public struct WorkspaceRollup: Equatable, Sendable, Identifiable {
                 state: states.max() ?? .seen,
                 attentionCount: states.filter { $0 == .blocked || $0 == .finishedUnseen }.count)
         }
-        return rollups.sorted { $0.state != $1.state ? $0.state > $1.state : $0.title < $1.title }
+        return rollups.sorted(by: orderedBefore)
+    }
+
+    /// Title-ascending order with the catch-all group pinned last.
+    ///
+    /// `localizedStandardCompare` rather than `<`: `<` is codepoint ordering, so
+    /// `Zebra` would sort before `apple`. This is the Finder comparison —
+    /// case-insensitive plus natural numeric ordering, so `repo2` precedes
+    /// `repo10`.
+    static func orderedBefore(_ lhs: WorkspaceRollup, _ rhs: WorkspaceRollup) -> Bool {
+        let lhsIsOther = lhs.id == otherGroupKey
+        let rhsIsOther = rhs.id == otherGroupKey
+        if lhsIsOther != rhsIsOther { return rhsIsOther }
+        switch lhs.title.localizedStandardCompare(rhs.title) {
+        case .orderedAscending: return true
+        case .orderedDescending: return false
+        // Same displayed title from two different directories (e.g. two clones
+        // of one repo). Fall through to the unique key so the order is total.
+        case .orderedSame: return lhs.id < rhs.id
+        }
     }
 }

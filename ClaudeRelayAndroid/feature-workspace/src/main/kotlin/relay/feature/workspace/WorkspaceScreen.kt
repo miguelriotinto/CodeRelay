@@ -230,8 +230,14 @@ fun WorkspaceScreen(
                     sessions = list,
                     agentStates = agentStates,
                     unseen = unseenSessions,
-                    groupKey = { it.workingDir ?: "~" },
-                    title = { if (it == "~") "Other" else it.substringAfterLast('/') },
+                    groupKey = { it.workingDir ?: relay.protocol.WorkspaceRollup.OTHER_GROUP_KEY },
+                    title = {
+                        if (it == relay.protocol.WorkspaceRollup.OTHER_GROUP_KEY) {
+                            relay.protocol.WorkspaceRollup.OTHER_TITLE
+                        } else {
+                            it.substringAfterLast('/')
+                        }
+                    },
                 )
             },
             isRefreshing = isLoading || isHandshaking,

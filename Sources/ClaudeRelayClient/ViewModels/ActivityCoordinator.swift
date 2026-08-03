@@ -111,7 +111,7 @@ public final class ActivityCoordinator: ObservableObject {
     }
 
     /// Group the given sessions into workspace rollups (one per working
-    /// directory / git root), worst-state first. Uses the live `agentStates`
+    /// directory / git root), ordered by title. Uses the live `agentStates`
     /// map — which leads the session-list snapshot — so a fresh observer event
     /// wins over stale snapshot state. `unseenSessions` (@Published) drives the
     /// view refresh; the caller passes its current session list.
@@ -120,8 +120,12 @@ public final class ActivityCoordinator: ObservableObject {
             sessions: sessions,
             agentStates: agentStates,
             unseen: unseenSessions,
-            groupKey: { $0.workingDir ?? "~" },
-            title: { $0 == "~" ? "Other" : ($0 as NSString).lastPathComponent })
+            groupKey: { $0.workingDir ?? WorkspaceRollup.otherGroupKey },
+            title: {
+                $0 == WorkspaceRollup.otherGroupKey
+                    ? WorkspaceRollup.otherTitle
+                    : ($0 as NSString).lastPathComponent
+            })
     }
 
     // MARK: - Server-event handlers
