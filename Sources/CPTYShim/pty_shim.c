@@ -1,5 +1,6 @@
 #include "pty_shim.h"
 #include <assert.h>
+#include <errno.h>
 #include <util.h>
 #include <unistd.h>
 #include <string.h>
@@ -120,6 +121,52 @@ int relay_get_parent_pid(int pid) {
     if (sysctl(mib, 4, &info, &size, NULL, 0) < 0) return -1;
     if (size == 0) return -1;
     return (int)info.kp_eproc.e_ppid;
+}
+
+int relay_get_session_members(int sid, int *out, int max_out) {
+    assert(out != NULL && max_out > 0);
+
+    // KERN_PROC_SESSION (the filter that would do this in one call) returns
+    // ENOENT on macOS 15 for a session that demonstrably exists — verified
+    // against a live PTY session leader, with and without the NULL sizing pass.
+    // So enumerate every process and filter with getsid(2) instead.
+    int mib[3] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL };
+    size_t size = 0;
+    if (sysctl(mib, 3, NULL, &size, NULL, 0) < 0) return -1;
+
+    // Processes can be created between the sizing call and the fetch, which
+    // makes the second sysctl fail with ENOMEM. Ask for headroom and retry a
+    // couple of times rather than treating a busy machine as an error — a
+    // failed enumeration here means a session's strays are never signalled.
+    struct kinfo_proc *procs = NULL;
+    size_t capacity = 0;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        capacity = size + (sizeof(struct kinfo_proc) * 64);
+        struct kinfo_proc *grown = realloc(procs, capacity);
+        if (grown == NULL) { free(procs); return -1; }
+        procs = grown;
+        size = capacity;
+        if (sysctl(mib, 3, procs, &size, NULL, 0) == 0) break;
+        if (errno != ENOMEM) { free(procs); return -1; }
+        // Re-size and try again.
+        if (sysctl(mib, 3, NULL, &size, NULL, 0) < 0) { free(procs); return -1; }
+        if (attempt == 2) { free(procs); return -1; }
+    }
+
+    size_t count = size / sizeof(struct kinfo_proc);
+    int found = 0;
+    for (size_t i = 0; i < count && found < max_out; i++) {
+        pid_t candidate = procs[i].kp_proc.p_pid;
+        // Never report pid 0/1: signalling them is either meaningless or fatal,
+        // and neither can be in our session anyway.
+        if (candidate <= 1) continue;
+        // getsid() is the authority rather than kp_eproc.e_sess, which is a
+        // kernel pointer, not a session id.
+        if (getsid(candidate) == sid) out[found++] = (int)candidate;
+    }
+
+    free(procs);
+    return found;
 }
 
 long long relay_get_process_start_time(int pid) {

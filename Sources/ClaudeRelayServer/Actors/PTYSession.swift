@@ -95,6 +95,14 @@ public actor PTYSession: PTYSessionProtocol {
     /// microseconds-since-epoch so sub-second restarts are distinguishable;
     /// `-1` means the lookup failed at init and SIGKILL will skip the check.
     private let childStartTime: Int64
+    /// The terminal session the child leads, captured right after `forkpty`.
+    ///
+    /// `forkpty` calls `setsid()`, so this is normally `childPID` — but it is read
+    /// from the kernel rather than assumed, and it is captured at init because
+    /// `getsid(childPID)` fails once the leader exits, which is exactly when the
+    /// strays we need to signal are still alive. `-1` means the lookup failed and
+    /// the reap falls back to group-only signalling.
+    private let childSessionID: pid_t
     private var ringBuffer: RingBuffer
     private var readSource: DispatchSourceRead?
     private var outputHandler: (@Sendable (Data) -> Void)?
@@ -280,6 +288,23 @@ public actor PTYSession: PTYSessionProtocol {
         // best-effort; if it fails we store -1 and skip the check at kill
         // time, accepting the residual reuse risk.
         self.childStartTime = relay_get_process_start_time(pid)
+        // The session the sweep will target is `pid` itself, asserted rather than
+        // read back from the kernel — and that is a safety property, not a
+        // shortcut.
+        //
+        // `getsid(pid)` here is a RACE, and it loses essentially always: `forkpty`
+        // returns in the parent before the child has run its `setsid()`, so the
+        // value observed is *the parent's own session*. Measured: 8/8 forkpty calls
+        // reported the server's sid. Feeding that to the reap would make a routine
+        // session teardown SIGKILL the server and every session it hosts — during
+        // development it killed the test runner outright (exit 144, no output).
+        //
+        // Sleeping until it settles would trade that for a slow init and a residual
+        // race. There is nothing to read: POSIX guarantees `setsid()` in the child
+        // makes the child's sid equal its pid, so `pid` IS the answer. The sweep
+        // additionally refuses to signal our own session, so if this ever became
+        // wrong it degrades to signalling nothing rather than to suicide.
+        self.childSessionID = pid
         // Put the master FD into non-blocking mode so write() never pins the
         // actor. write(2) returns EAGAIN when the shell's input buffer is full;
         // we buffer the remainder in writeQueue and drain from a DispatchSource.
@@ -759,110 +784,14 @@ public actor PTYSession: PTYSessionProtocol {
         writeQueue.removeAll()
         writeQueueBytes = 0
 
-        Self.reap(pid: childPID, sessionLabel: "\(sessionId)", startTime: childStartTime)
-    }
-
-    /// SIGTERM the session's process **group**, then escalate to SIGKILL after
-    /// 2 s for whatever is left.
-    ///
-    /// **Why the group and not just `pid`.** `forkpty` calls `setsid()` in the
-    /// child, so the child is a session *and* process-group leader: its pgid
-    /// equals its pid. Everything the session goes on to run — `login`, the `zsh`
-    /// it execs, the coding agent the user starts, and that agent's own children —
-    /// inherits that group unless it deliberately leaves it. A bare
-    /// `kill(childPID, …)` reaches only the one process at the top, so the rest
-    /// survive: measured, a grandchild outlived both SIGTERM and SIGKILL and
-    /// reparented to launchd.
-    ///
-    /// Those survivors are the leak. Each keeps the resources of a session the
-    /// server believes it already reclaimed, and they accumulate across every
-    /// create/terminate cycle for as long as the server lives — until the machine
-    /// cannot start a new shell at all. This is a **separate** leak from the
-    /// `FD_CLOEXEC` one in `init`: that flag stops a master being *duplicated*
-    /// into other sessions' shells, and says nothing about descendants outliving
-    /// the process they were signalled through. Fixing either alone leaves the
-    /// other.
-    ///
-    /// `killpg` is safe against signalling the server itself precisely because of
-    /// the `setsid()`: the child's group is its own, never ours. `pid` is also
-    /// signalled individually — belt and braces for the case where it somehow left
-    /// its own group, which the group signal would then miss.
-    ///
-    /// SIGCHLD is `SIG_IGN` in `main.swift`, so the kernel auto-reaps; no waitpid.
-    ///
-    /// `static` and taking its target as a parameter so the reap is testable
-    /// against a stand-in group: nothing outside the child's session can join it
-    /// (`setpgid` across sessions is EPERM), so a test cannot place an observable
-    /// member in the real one. See `PTYTerminateProcessGroupTests`.
-    private static func reap(pid: pid_t, sessionLabel: String, startTime: Int64) {
-        // ESRCH means "already gone", which is success here, so it is not worth an
-        // error line; anything else is.
-        if killpg(pid, SIGTERM) != 0 && errno != ESRCH {
-            RelayLogger.log(.error, category: "session",
-                "PTYSession \(sessionLabel) SIGTERM failed for process group \(pid): errno \(errno)")
-        }
-        if kill(pid, SIGTERM) != 0 && errno != ESRCH {
-            RelayLogger.log(.error, category: "session",
-                "PTYSession \(sessionLabel) SIGTERM failed for pid \(pid): errno \(errno)")
-        }
-
-        // zsh exits within ~100 ms of SIGTERM in practice, so 2 s is a generous
-        // margin before forcing the issue.
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) {
-            // Liveness is checked on the process GROUP, not on the leader.
-            //
-            // `kill(pid, 0)` was the wrong question, and it gated the whole
-            // escalation: the leader is `login`/`zsh`, which exits promptly on
-            // SIGTERM, while the processes that actually linger are the agent and
-            // its children. So in the exact case this backstop exists for — leader
-            // gone, descendants still running — the old check saw "already dead",
-            // returned, and never escalated. `killpg(pid, 0)` instead succeeds
-            // while *any* member of the group remains.
-            guard killpg(pid, 0) == 0 else { return }
-
-            // Skip SIGKILL if the pid was recycled for an unrelated process in the
-            // last 2 s (C-10). `startTime == -1` means the init-time lookup failed,
-            // in which case we accept the residual reuse risk and proceed.
-            //
-            // Only meaningful while the leader itself is alive: once it has exited,
-            // its pid is not what the surviving members are, so there is no start
-            // time to compare. A recycled pid also cannot redirect the group
-            // signal, because pid reuse does not transfer group leadership — the
-            // group named here either still holds our own descendants or is empty
-            // (and then `killpg` above already returned ESRCH).
-            if kill(pid, 0) == 0, startTime != -1 {
-                let current = relay_get_process_start_time(pid)
-                if current != -1 && current != startTime {
-                    RelayLogger.log(.error, category: "session",
-                        "PTYSession \(sessionLabel) PID \(pid) was recycled (start \(startTime) → \(current)); skipping SIGKILL")
-                    return
-                }
-            }
-            // Group first, then the leader — same reasoning as the SIGTERM above.
-            // Without the group signal the escalation inherits the original bug: it
-            // would force-kill the one process that was already ignoring SIGTERM
-            // and leave its children running.
-            if killpg(pid, SIGKILL) != 0 && errno != ESRCH {
-                RelayLogger.log(.error, category: "session",
-                    "PTYSession \(sessionLabel) SIGKILL failed for process group \(pid): errno \(errno)")
-            }
-            if kill(pid, SIGKILL) != 0 && errno != ESRCH {
-                RelayLogger.log(.error, category: "session",
-                    "PTYSession \(sessionLabel) SIGKILL failed for pid \(pid): errno \(errno)")
-            }
-        }
+        Self.reap(pid: childPID, sessionLabel: "\(sessionId)", startTime: childStartTime,
+                  sessionID: childSessionID)
     }
 
     // MARK: - Test Hooks
 
-    /// Runs `terminate()`'s exact reap against an arbitrary process group.
-    ///
-    /// `startTime: -1` skips the pid-recycle guard, which is what a stand-in group
-    /// needs: the guard exists to protect *our* forked child's pid, and a test
-    /// group has no `relay_get_process_start_time` baseline recorded at fork.
-    static func _testOnly_reap(pid: pid_t, sessionLabel: String) {
-        reap(pid: pid, sessionLabel: sessionLabel, startTime: -1)
-    }
+    /// The terminal session `terminate()` sweeps.
+    var _testOnly_childSessionID: pid_t { childSessionID }
 
     /// Why a window-size read produced no size.
     ///

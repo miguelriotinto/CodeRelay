@@ -75,9 +75,10 @@ The iOS/macOS apps scope plaintext `ws://` to RFC1918 / loopback / `.local` / li
 
 `PTYSession` is an actor that uses `forkpty` via `CPTYShim` to spawn an
 interactive zsh login shell. Several non-obvious invariants are load-bearing
-here — the `FD_CLOEXEC` master flag, the out-of-actor fd-liveness lock, and the
-ancestor-path walk. See `Sources/ClaudeRelayServer/CLAUDE.md` before touching
-any of it.
+here — the `FD_CLOEXEC` master flag, the out-of-actor fd-liveness lock, the
+ancestor-path walk, and the **session**-wide reap in `PTYSessionReap.swift`
+(`pid ⊂ group ⊂ session`; a group kill misses zsh's job-control groups). See
+`Sources/ClaudeRelayServer/CLAUDE.md` before touching any of it.
 
 ### NIO ↔ Swift Concurrency Bridge
 

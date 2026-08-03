@@ -36,46 +36,77 @@ must be spawned by a bare `posix_spawn`: `Foundation.Process` sets
 `POSIX_SPAWN_CLOEXEC_DEFAULT` and inherits nothing regardless of the flag, so a
 `Process`-based probe passes against the unfixed code.
 
-**`terminate()` signals the process GROUP, and that is also load-bearing.**
-`forkpty` calls `setsid()` in the child, so the child is a session *and*
-process-group leader (pgid == pid). Everything the session then runs inherits that
-group: `login`, the `zsh` it execs, the coding agent the user starts, and that
-agent's children. A bare `kill(childPID, …)` reaches only the process at the top,
-so the rest survive — measured, a grandchild outlived both SIGTERM and SIGKILL and
-reparented to launchd. Each survivor holds the resources of a session the server
+**`terminate()` sweeps the child's terminal SESSION, and the widening from `pid` to
+group to session was three separate fixes.** `forkpty` calls `setsid()` in the
+child, so the child leads a new session *and* its own process group (pgid == pid).
+Each survivor of an incomplete reap holds the resources of a session the server
 believes it already reclaimed, and they accumulate for the life of the server.
 
-Three distinct defects lived in that one sequence, and fixing fewer than all three
-leaves the leak:
+The reap target widened by exactly one level three times, and each step felt like
+the complete fix:
 
-1. SIGTERM was single-pid.
-2. The SIGKILL escalation was single-pid.
-3. **The escalation was gated on the *leader's* liveness** (`kill(pid, 0)`), which
+1. **pid → group.** SIGTERM and the SIGKILL escalation were both single-pid, so
+   they reached only the process at the top; measured, a grandchild outlived both
+   and reparented to launchd.
+2. **The escalation was gated on the *leader's* liveness** (`kill(pid, 0)`), which
    is false in the exact case the backstop exists for: `login`/`zsh` exits promptly
    on SIGTERM while the agent lingers. So the guard concluded "already dead" and
-   returned. It is now `killpg(pid, 0)`, which succeeds while *any* group member
-   remains.
+   returned. It is now `killpg(pid, 0) == 0 || !survivors.isEmpty`.
+3. **group → session** (shipped 0.3.21). Fixes 1–2 shipped as 0.3.20 and *still
+   leaked*, because an interactive `zsh` runs **job control**: every job it starts
+   gets its OWN pgid via `setpgid`, so the leader's group holds `login` and nothing
+   else. Measured on the live 0.3.20 server: session 26119 had **13 members across
+   5 process groups**, and `killpg(26119)` reached exactly 1. The session is the
+   boundary that actually means "everything this PTY started" — job control
+   fragments groups freely, but nothing leaves the session without calling
+   `setsid()` itself.
 
-`killpg` cannot hit the server itself, precisely because of the `setsid()`: the
-child's group is its own, never ours. The pid-recycle start-time check is skipped
-once the leader is gone — pid reuse does not transfer group leadership, so the
-named group either still holds our descendants or is empty (`killpg` then returns
-ESRCH and nothing is signalled).
+`pid ⊂ process group ⊂ session` is the distinction to keep in mind; a
+group-liveness check is the *narrower* question, which is why the escalation guard
+now consults the session too. The group signal stays as the floor: the sweep needs
+a sysctl enumeration that can fail, so a failed sweep degrades to 0.3.20 behaviour
+rather than to signalling nothing.
 
-The reap lives in one `static PTYSession.reap(pid:sessionLabel:startTime:)` so
-tests exercise production code. They must drive it against a **stand-in** group:
-nothing outside the child's session can join the real one (`setpgid` /
-`POSIX_SPAWN_SETPGROUP` across sessions is EPERM by design), and driving the
-session's own shell doesn't work either because under a test harness `login -fp`
-echoes commands without running them — so a shell-driven test can only skip, i.e.
-silently pass the bug it exists to catch. Guarded by
-`PTYTerminateProcessGroupTests`, verified to fail against single-pid `kill`.
+The sweep is `relay_get_session_members` (KERN_PROC_ALL + `getsid()`, *not* the
+KERN_PROC_SESSION filter — that returns ENOENT on macOS 15 for a session that
+exists). Two guards matter, and both trace to a real defect: `sessionMembers`
+refuses `sessionID == getsid(0)`, and `childSessionID` is `childPID` **by
+construction rather than read back**. `getsid(childPID)` from the parent is a race
+that loses essentially always — `forkpty` returns before the child runs `setsid()`,
+so it reports *the parent's* session (measured 8/8), and an earlier draft stored
+exactly that and SIGKILLed the test runner. POSIX guarantees the child's sid equals
+its pid, so there is nothing to read.
+
+Neither signal can hit the server, and for the same reason in both cases — the
+`setsid()` means the child's group and session are its own. The pid-recycle
+start-time check is skipped once the leader is gone: pid reuse transfers neither
+group nor session leadership.
+
+The reap lives in `PTYSessionReap.swift` as `static` functions taking their targets
+as parameters, so tests exercise production code. They must drive it against a
+**stand-in** group: nothing outside the child's session can join the real one
+(`setpgid` / `POSIX_SPAWN_SETPGROUP` across sessions is EPERM by design), and
+driving the session's own shell doesn't work either because under a test harness
+`login -fp` echoes commands without running them — so a shell-driven test can only
+skip, i.e. silently pass the bug it exists to catch. `_testOnly_reap` therefore
+defaults `sessionID` to -1 (group path in isolation), and
+`_testOnly_sessionMembers` exposes the enumeration alone so the fragmented-group
+case can be asserted without signalling anything. A leak probe that never starts a
+background job passes against the *buggy* code — no fragmented groups ever exist —
+so the multi-pgid tree is modelled directly (fork + setsid + setpgid). Guarded by
+`PTYTerminateProcessGroupTests`.
 
 **A process in `U` state cannot be reaped at all.** Two leaked `login` processes on
 the dev machine survived `SIGKILL` to their group and showed `Us+` — uninterruptible
 kernel wait. Nothing in userspace can clear those; their ptys are pinned until
 reboot. This is why the fix must prevent the leak rather than rely on any sweep, and
 why "hard reset was required" is consistent with a correct group kill.
+
+**Residual gap the session sweep cannot close (known, accepted):** a child that
+calls `setsid()` itself leaves the session and survives any sweep — Claude Code's
+own Bash tool does exactly this. Reaping those would need ancestry-walking, which
+races pid reuse. So "no leaks" means *no leaks via group or session*, not zero
+strays.
 
 **Non-blocking writes**: The master FD is set to `O_NONBLOCK`. A `DispatchSourceWrite` drains a 4 MB pending queue when the FD becomes writable. Overflow drops oldest bytes with a once-per-session warning. This prevents paste/rapid-input workloads from EAGAIN-spinning inside the actor and starving resize/output dispatch.
 

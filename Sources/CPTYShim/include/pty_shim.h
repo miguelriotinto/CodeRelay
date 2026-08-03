@@ -40,6 +40,25 @@ int relay_get_process_script_name(int pid, char *buf, int bufsize);
 /// Returns the PPID, or -1 on error.
 int relay_get_parent_pid(int pid);
 
+/// Collect the PIDs belonging to terminal session `sid` into `out`, returning
+/// how many were written (capped at `max_out`), or -1 on error. `out` must be
+/// non-NULL and `max_out` > 0 — checked by `assert`.
+///
+/// This is the set `PTYSession.terminate` must signal. A process *group* is too
+/// narrow: `forkpty` calls `setsid()`, so the child leads a new session, but the
+/// interactive `zsh` inside it puts every job in its OWN group via `setpgid` as
+/// part of normal job control. Signalling only the leader's group therefore
+/// reaches `login` and nothing else. The session is the boundary that actually
+/// means "everything this PTY started" — job control fragments groups, and
+/// nothing can leave the session without calling `setsid()` itself.
+///
+/// pids 0 and 1 are never reported: signalling them is meaningless or fatal, and
+/// neither can be a member of our session.
+///
+/// NOTE: implemented via KERN_PROC_ALL + `getsid()`, not the KERN_PROC_SESSION
+/// filter, which returns ENOENT on macOS 15 for a session that exists.
+int relay_get_session_members(int sid, int *out, int max_out);
+
 /// Get the start time of the given PID, packed as microseconds since the
 /// Unix epoch, via sysctl(KERN_PROC). Used by PTYSession.terminate to detect
 /// PID reuse before sending SIGKILL — see C-10. Returns -1 on error
