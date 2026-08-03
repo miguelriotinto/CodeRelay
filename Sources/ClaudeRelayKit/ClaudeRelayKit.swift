@@ -1,6 +1,6 @@
 /// ClaudeRelayKit provides shared types and utilities for the ClaudeRelay system.
 public enum ClaudeRelayKit {
-    public static let version = "0.3.21"
+    public static let version = "0.3.22"
 
     /// Current wire-protocol version. Bump when messages change in breaking ways.
     public static let protocolVersion = 1
