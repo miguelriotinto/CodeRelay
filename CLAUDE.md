@@ -88,6 +88,32 @@ The iOS/macOS apps scope plaintext `ws://` to RFC1918 / loopback / `.local` / li
 
 **Two-phase init**: `PTYSession.init()` creates the PTY but does not start reading. Call `startReading()` after init to activate the dispatch source (required for Swift 6 actor-initializer isolation).
 
+**The master FD is `FD_CLOEXEC`, and that is load-bearing.** `forkpty` closes the
+master in the child *it* forks, so a session's own shell is never the problem —
+the masters at risk are the ones already in the server's fd table when a *later*
+session forks. `fork` copies the table verbatim, so without this flag every one
+of them survives the `execv("/usr/bin/login", …)`, and session N's shell holds
+N−1 masters. Both halves of the resulting bug trace to that single flag:
+
+- **PTY exhaustion.** Closing our master doesn't free the kernel pty pair while
+  another session's shell still references it. `ptmx` is a fixed pool
+  (`kern.tty.ptmx_max`, 511), so a long-lived server that churns sessions
+  eventually can't fork one at all.
+- **Process leak.** A shell on a leaked pty never sees its master close, so it
+  never gets EOF/SIGHUP and never exits — it outlives the server that spawned it
+  and reparents to launchd. Measured before the fix: 38 stray `login -fp`
+  processes, 28 already owned by pid 1 from earlier server restarts.
+
+`terminate()`'s SIGTERM→SIGKILL is *not* a backstop for this. Those signals go to
+this session's `login` child, whose own pty is fine; the wedged processes are
+other sessions' shells holding this master. Set on the parent's copy after the
+fork, next to the `O_NONBLOCK` call — note `F_SETFD` (descriptor flag) is a
+different command from `F_SETFL` (file-status flag); don't merge the two
+read-modify-writes. Guarded by `PTYMasterFDInheritanceTests`, whose probe child
+must be spawned by a bare `posix_spawn`: `Foundation.Process` sets
+`POSIX_SPAWN_CLOEXEC_DEFAULT` and inherits nothing regardless of the flag, so a
+`Process`-based probe passes against the unfixed code.
+
 **Non-blocking writes**: The master FD is set to `O_NONBLOCK`. A `DispatchSourceWrite` drains a 4 MB pending queue when the FD becomes writable. Overflow drops oldest bytes with a once-per-session warning. This prevents paste/rapid-input workloads from EAGAIN-spinning inside the actor and starving resize/output dispatch.
 
 **Output backpressure**: `RelayMessageHandler` caps inflight WebSocket-write bytes per session at 2 MB (`maxInflightOutputBytes`). When the cap is hit the server skips frames until writes drain — the `RingBuffer` holds the authoritative copy and clients replay from it on resume.

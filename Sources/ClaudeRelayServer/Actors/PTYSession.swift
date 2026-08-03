@@ -285,6 +285,37 @@ public actor PTYSession: PTYSessionProtocol {
         // we buffer the remainder in writeQueue and drain from a DispatchSource.
         let existingFlags = fcntl(fd, F_GETFL, 0)
         _ = fcntl(fd, F_SETFL, existingFlags | O_NONBLOCK)
+
+        // Mark the master close-on-exec, or every session created *after* this
+        // one leaks it into its shell.
+        //
+        // `forkpty` closes the master in the child it forks, so this session's
+        // own shell is never the problem. The masters it knows nothing about are
+        // the ones already in our fd table: `fork` copies the table verbatim, and
+        // without this flag they all survive the `execv("/usr/bin/login", …)`
+        // below. Session N's shell would hold N−1 masters.
+        //
+        // Both symptoms of the leak follow from that:
+        // - The kernel pty pair is not freed when we close our master, because
+        //   another session's shell still references it. `ptmx` is a fixed pool
+        //   (`kern.tty.ptmx_max`, 511), so a long-running server that churns
+        //   sessions eventually cannot fork one at all.
+        // - The shell on a leaked pty never sees its master close, so it never
+        //   gets EOF/SIGHUP and never exits — it survives even the server that
+        //   spawned it, reparenting to launchd. This is why `terminate()`'s
+        //   SIGTERM/SIGKILL was not a sufficient backstop: those go to the
+        //   `login` child, whose own pty is fine; the wedged processes are
+        //   *other* sessions' shells, holding *this* master.
+        //
+        // Set on the parent's copy, after the fork, deliberately: it must not be
+        // set before, or `forkpty`'s own child plumbing would be affected, and
+        // the child that matters is every *future* one. `F_SETFD` (descriptor
+        // flag) is a different command from the `F_SETFL` above (file-status
+        // flag) — read-modify-write each independently rather than merging them.
+        let existingDescriptorFlags = fcntl(fd, F_GETFD, 0)
+        if existingDescriptorFlags != -1 {
+            _ = fcntl(fd, F_SETFD, existingDescriptorFlags | FD_CLOEXEC)
+        }
         let box = self.activityCallbackBox
         self.activityMonitor = SessionActivityMonitor(
             silenceThreshold: 1.0,
@@ -839,4 +870,9 @@ public actor PTYSession: PTYSessionProtocol {
     func _testOnly_markMasterFDClosed() {
         fdClosed.withLock { $0 = true }
     }
+
+    /// `F_GETFD` on the master fd, or -1 if the call fails. Lets a test assert
+    /// `FD_CLOEXEC` directly, so the no-inheritance invariant stays covered even
+    /// where a child's fd table is unreadable and the consequence test skips.
+    var _testOnly_masterFDFlags: Int32 { fcntl(masterFD, F_GETFD) }
 }
