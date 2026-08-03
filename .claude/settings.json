@@ -31,8 +31,25 @@
         "hooks": [
           {
             "type": "command",
+            "command": "code-review-graph update --skip-flows",
+            "timeout": 30
+          },
+          {
+            "type": "command",
             "command": "echo \"$CLAUDE_FILE_PATHS\" | tr ' ' '\\n' | grep '\\.swift$' | while read -r f; do [ -f \"$f\" ] && swiftlint lint --quiet \"$f\"; done; exit 0",
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "code-review-graph status",
+            "timeout": 10
           }
         ]
       }

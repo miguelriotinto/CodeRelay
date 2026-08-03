@@ -36,15 +36,30 @@ import ClaudeRelayKit
 //
 // So those handlers drop the request (logging at debug) instead, matching
 // `handleBinaryFrame`, which has always silently dropped terminal input when
-// unattached. Nothing recoverable is lost: the client resends its size on the
-// next layout, and `session_resume` already resize-wiggles the PTY via
-// `repaintAfter`.
+// unattached.
+//
+// A dropped resize is genuinely lost, and that is the accepted cost — do not
+// write it up as harmless. Two plausible-sounding recovery paths do NOT exist:
+// SwiftTerm only fires `sizeChanged` when the grid actually *changes*, so a
+// client whose grid is already correct never re-sends; and `forceRepaint()`
+// wiggles to `currentCols - 1` and back to the PTY's *own* stored `currentCols`,
+// so it never learns the value that was dropped. The PTY therefore keeps the
+// stale grid until the next real layout change (rotation, split, font change).
+// We take that over the alternative: an `.error` here fails an unrelated RPC,
+// and a client-side timeout poisons the socket via `desyncedGeneration`. A wrong
+// grid is recoverable by the user; a poisoned socket is not.
 //
 // The rule is about the reply *type*, not about staying silent — a request with
 // a dedicated failure reply should still use it (`paste_image` answers
-// `.pasteImageResult(success: false)`). The request-response handlers below
-// (`attach`/`resume`/`detach`/`create`/`list`) keep replying `.error`: they have
-// a waiter the error legitimately belongs to.
+// `.pasteImageResult(success: false)`).
+//
+// Which handlers may reply `.error`: only those with a real waiter on both
+// clients — `attach`, `resume`, `detach`, `create`, `list`. `rename` and
+// `terminate` look like request-response but are **fire-and-forget on both
+// clients** (bare `connection.send`, no `sendAndWaitForResponse`), so their
+// failure paths must not reply `.error` either; they log instead. Before adding
+// an `.error` to any handler, check the actual client call site — the shape of
+// the server method tells you nothing about whether a waiter exists.
 
 extension RelayMessageHandler {
 
@@ -101,8 +116,15 @@ extension RelayMessageHandler {
             onSuccess: { _, _, _ in
                 RelayLogger.log(category: "session", "Session renamed: \(sessionId) -> \(name)")
             },
-            onFailure: { handler, ctx, error in
-                handler.sendServerMessage(.error(code: 404, message: "Rename failed: \(error)"), context: ctx)
+            onFailure: { _, _, error in
+                // Dropped, NOT answered with `.error` — see the unattached-request
+                // reply rule at the top of this file. `renameSession` is
+                // fire-and-forget on both clients, so an `.error` here would
+                // resolve whichever unrelated RPC is in flight (a rename racing a
+                // session switch would fail the switch). The client re-reads names
+                // from the next `session_list`, so a failed rename self-corrects.
+                RelayLogger.log(.debug, category: "session",
+                                "rename of \(sessionId) dropped: \(error)")
             }
         )
     }
@@ -249,8 +271,15 @@ extension RelayMessageHandler {
                     handler.attachedPTY = nil
                 }
             },
-            onFailure: { handler, ctx, error in
-                handler.sendServerMessage(.error(code: 404, message: "Terminate failed: \(error)"), context: ctx)
+            onFailure: { _, _, error in
+                // Dropped, NOT answered with `.error` — see the unattached-request
+                // reply rule at the top of this file. Terminate is fire-and-forget
+                // (`SharedSessionCoordinator` sends it, then immediately calls
+                // `fetchSessions()`), so an `.error` here lands on that
+                // `session_list` waiter. The refresh is also the recovery: a
+                // terminate that failed leaves the session in the list.
+                RelayLogger.log(.debug, category: "session",
+                                "terminate of \(sessionId) dropped: \(error)")
             }
         )
     }

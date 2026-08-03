@@ -4,6 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Test Commands
 
+```bash
+swift build                                    # Build all SPM targets
+swift test                                     # Run all tests
+swift test --filter ClaudeRelayKitTests        # One test suite
+swift test --filter testTokenGeneration        # One test by name
+```
+
 **Server management** (always use CLI, never run server binary directly or pkill):
 ```bash
 swift run claude-relay load --ws-port 9200     # Install + start launchd service

@@ -407,49 +407,6 @@ public final class SessionController: ObservableObject {
     /// parallel `fetchSessions`, failed its type check and returned empty.
     /// Every call site names its own reply type, so a new one cannot silently
     /// inherit the hazard.
-    /// The server's reply to a request that arrived while nothing was attached.
-    /// Matched as data because that is all the wire carries — see
-    /// `isForeignError`.
-    private static let noSessionAttachedMessage = "no session attached"
-
-    /// True when this `.error` provably belongs to some *other* request, so this
-    /// waiter must ignore it rather than fail on it.
-    ///
-    /// Only one such proof is available, and it is narrow by design. `error`
-    /// carries no request id (nothing does), so a waiter normally cannot tell an
-    /// error meant for it from one meant for a request nobody is awaiting — which
-    /// is why `matchTypes` accepts `error` unconditionally in the first place.
-    ///
-    /// `"No session attached"` is the exception: server-side it is emitted only by
-    /// handlers for requests that arrive while unattached, and of those, only
-    /// `detach` has a waiter. Every other handler that *does* have a waiter fails
-    /// with its own prefix instead (`"Attach failed: …"`, `"Resume failed: …"`,
-    /// `"Terminate failed: …"`). So this error reaching an attach/resume/list
-    /// waiter means a fire-and-forget request produced it — the resize/refresh
-    /// race that made an iOS session switch report "Unexpected server response:
-    /// No session attached" and roll the pane back to the previous session.
-    ///
-    /// Servers from this commit on don't send it for those requests at all (see
-    /// the unattached-request reply rule atop the server's
-    /// `SessionRequestHandlers.swift`). This check is what protects a client
-    /// talking to an OLDER server, which the app cannot assume has been rebuilt.
-    /// Both layers are wanted: the server stops manufacturing an unaddressed
-    /// error, and the client stops accepting the one kind it can identify.
-    ///
-    /// Deliberately NOT generalized into "ignore errors that don't look like
-    /// mine". Any unrecognized message shape would then be dropped and the
-    /// waiter would hang to its timeout — and a timeout poisons the socket
-    /// (`desyncedGeneration`), which is far worse than surfacing one wrong error.
-    /// Matching a single known string fails safe: an unmatched error still
-    /// resolves the waiter exactly as before.
-    private static func isForeignError(_ message: ServerMessage, expected: Set<String>) -> Bool {
-        // A detach waiter is the one place this error is legitimately addressed.
-        guard !expected.contains("session_detached") else { return false }
-        guard case .error(_, let detail) = message else { return false }
-        return detail.trimmingCharacters(in: .whitespacesAndNewlines)
-            .caseInsensitiveCompare(noSessionAttachedMessage) == .orderedSame
-    }
-
     private func awaitResponse(
         _ message: ClientMessage,
         expected: Set<String>
@@ -539,6 +496,53 @@ public final class SessionController: ObservableObject {
                 guard_.resume(throwing: SessionError.timeout)
             }
         }
+    }
+
+    /// The server's reply to a request that arrived while nothing was attached.
+    /// Matched as data because that is all the wire carries — see
+    /// `isForeignError`.
+    private static let noSessionAttachedMessage = "no session attached"
+
+    /// True when this `.error` provably belongs to some *other* request, so this
+    /// waiter must ignore it rather than fail on it.
+    ///
+    /// Only one such proof is available, and it is narrow by design. `error`
+    /// carries no request id (nothing does), so a waiter normally cannot tell an
+    /// error meant for it from one meant for a request nobody is awaiting — which
+    /// is why `matchTypes` accepts `error` unconditionally in the first place.
+    ///
+    /// `"No session attached"` is the exception: server-side it was emitted only by
+    /// handlers for requests that arrive while unattached, and of those, only
+    /// `detach` has a waiter. Every other handler that *does* have a waiter fails
+    /// with its own prefix instead (`"Attach failed: …"`, `"Resume failed: …"`).
+    /// So this error reaching an attach/resume/list waiter means a fire-and-forget
+    /// request produced it — the resize/refresh race that made an iOS session
+    /// switch report "Unexpected server response: No session attached" and roll
+    /// the pane back to the previous session.
+    ///
+    /// Servers from this commit on don't send it for those requests at all (see
+    /// the unattached-request reply rule atop the server's
+    /// `SessionRequestHandlers.swift`). This check is what protects a client
+    /// talking to an OLDER server, which the app cannot assume has been rebuilt.
+    /// Both layers are wanted: the server stops manufacturing an unaddressed
+    /// error, and the client stops accepting the one kind it can identify.
+    ///
+    /// Deliberately NOT generalized into "ignore errors that don't look like
+    /// mine". Any unrecognized message shape would then be dropped and the
+    /// waiter would hang to its timeout — and a timeout poisons the socket
+    /// (`desyncedGeneration`), which is far worse than surfacing one wrong error.
+    /// Matching a single known string fails safe: an unmatched error still
+    /// resolves the waiter exactly as before. Note this is why an older server's
+    /// `"Rename failed: …"` / `"Terminate failed: …"` — also unaddressed, since
+    /// both are fire-and-forget — is NOT filtered here: those strings are not
+    /// distinguishable from a legitimate reply, so the fix for them is server-side
+    /// only.
+    private static func isForeignError(_ message: ServerMessage, expected: Set<String>) -> Bool {
+        // A detach waiter is the one place this error is legitimately addressed.
+        guard !expected.contains("session_detached") else { return false }
+        guard case .error(_, let detail) = message else { return false }
+        return detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(noSessionAttachedMessage) == .orderedSame
     }
 }
 
