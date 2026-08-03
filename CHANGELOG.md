@@ -6,8 +6,35 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
+## [0.3.18] - 2026-08-03 — PTY master fd leak
+
 ### Fixed
 
+- **PTY masters are close-on-exec, ending both the pty exhaustion and the stray
+  `login` processes.** `PTYSession.init` never set `FD_CLOEXEC` on the master fd.
+  `forkpty` closes the master in the child *it* forks, so a session's own shell was
+  never the problem — the masters at risk are the ones already in the server's fd
+  table when a *later* session forks. `fork` copies that table verbatim and
+  `execv("/usr/bin/login", …)` drops only close-on-exec descriptors, so session N's
+  shell held N−1 masters (measured cumulatively: 0, 1, 2, 3, 4, 5). Two symptoms
+  followed from the one flag. First, closing our master does not free the kernel pty
+  pair while a *sibling* session's shell still references it; `ptmx` is a fixed pool
+  (`kern.tty.ptmx_max`, 511), so a long-lived server that churns sessions eventually
+  cannot fork one at all. Second, a shell on a leaked pty never sees its master
+  close, so it never gets EOF/SIGHUP and never exits — it outlives the server that
+  spawned it and reparents to launchd. Measured on a dev machine before the fix: 84
+  stray `login -fp` processes, 75 already owned by pid 1 from earlier server
+  restarts, with the pool degraded far enough that `ls /dev/ttys*` hung.
+  `terminate()`'s SIGTERM→SIGKILL was never a backstop for this: those signals go to
+  *this* session's `login` child, whose own pty is fine, while the wedged processes
+  are *other* sessions' shells holding *this* master. The flag is set on the parent's
+  copy after the fork, next to the existing `O_NONBLOCK` call; `F_SETFD` (descriptor
+  flag) is a different command from `F_SETFL` (file-status flag), so the two
+  read-modify-writes stay separate. The guarding test's probe child must be spawned
+  by a bare `posix_spawn` — `Foundation.Process` sets `POSIX_SPAWN_CLOEXEC_DEFAULT`
+  and inherits nothing regardless of the flag, so a `Process`-based probe passes
+  against the unfixed code. That false pass occurred during development and is
+  recorded in the test's doc comment.
 - **Workspace grouping can no longer wedge the foreground poll.**
   `GitRootResolver` resolves each session's cwd to its enclosing repo so sessions
   group by repo; it runs on the per-session foreground poll via
