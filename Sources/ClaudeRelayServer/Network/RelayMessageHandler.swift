@@ -661,7 +661,12 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// the clipboard (see the inline note below for why a keystroke is wrong).
     private func handlePasteImage(base64Data: String, context: ChannelHandlerContext) {
         guard let pty = attachedPTY else {
-            sendServerMessage(.error(code: 400, message: "No session attached"), context: context)
+            // `.pasteImageResult(success: false)`, not `.error` — see the
+            // unattached-request reply rule atop `SessionRequestHandlers.swift`.
+            // This request DOES have a dedicated failure reply, so unlike
+            // resize/refresh it can report the failure without borrowing the one
+            // reply type that every RPC waiter accepts.
+            sendServerMessage(.pasteImageResult(success: false), context: context)
             return
         }
 

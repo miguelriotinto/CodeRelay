@@ -273,6 +273,26 @@ Off by default (`pushEnabled=false`); device tokens are still accepted + stored 
 
 `SessionController.sendAndWaitForResponse()` installs a response handler **before** sending the message (not after) to avoid a race condition where the server response arrives before the handler is in place.
 
+**Corollary — a fire-and-forget request must never be answered with `.error`.**
+Replies carry no request ids, so a waiter can only correlate on the response
+*type*, and `error` is a legal reply to every request: every waiter's match set is
+`expected ∪ {"error"}`. An `.error` produced by a request nobody is awaiting
+therefore resolves whichever RPC is in flight, and that waiter cannot reject it.
+`resize`/`refresh`/`paste_image` and binary terminal input are all
+fire-and-forget, so the server drops them when unattached rather than replying
+(`handleResize`/`handleRefresh` log at debug; `paste_image` uses its own
+`.pasteImageResult(success: false)` — the rule is about the reply *type*, not
+about staying silent). `detach` keeps its `.error(400, "No session attached")`: it
+has a real waiter. Full rationale at the top of
+`Sources/ClaudeRelayServer/Network/SessionRequestHandlers.swift`.
+
+Clients enforce the same thing from the other end, for servers that predate the
+above: `SessionController.isForeignError` (Swift + Kotlin) refuses to let an
+`.error` whose message is exactly `"No session attached"` resolve any waiter
+other than `detach`'s. Deliberately one exact string — dropping anything
+*unrecognized* would hang the waiter to its 10 s timeout, and a timeout poisons
+the socket (`desyncedGeneration`), which is worse than surfacing a wrong error.
+
 ### Speech Layer Concurrency
 
 `TextCleaner` is `@MainActor`-isolated (not `@unchecked Sendable`). All real callers (`OnDeviceSpeechEngine`, `ClaudeRelayApp.preloadSpeechModels`, macOS `AppDelegate.applicationWillTerminate`) are or must be main-actor-isolated. This enforces "no concurrent `clean()`/`unload()`" at compile time instead of by convention.
