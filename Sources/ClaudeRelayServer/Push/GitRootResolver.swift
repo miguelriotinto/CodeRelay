@@ -113,8 +113,13 @@ public actor GitRootResolver {
     /// Termination is therefore pinned by `testAncestorWalkIsFiniteAndEndsAtRoot`
     /// asserting on the list itself, which holds on any Foundation. The probe test
     /// contributes the other half — that this search consults that list and nothing
-    /// else — and would have caught the CI hang, since a diverging walk exceeds
-    /// `probeLimit` and fails by name rather than parking the suite.
+    /// else — and either way a divergence fails by name rather than parking the suite.
+    /// Which of its two bounds catches that depends on where the divergence is, and
+    /// they are not interchangeable: a loop that probes each iteration trips
+    /// `probeLimit`, while one that spins building the ancestor list issues no probe
+    /// at all and is caught only by the wall-clock deadline the helper resolves
+    /// through. Verified by mutation — a spin inserted at the top of `ancestorPaths`
+    /// failed the test in 2.6 s.
     static func gitRoot(of normalized: String, exists: (String) -> Bool) -> String {
         // Over a list that is finite by construction — see `ancestorPaths` for why
         // this is not a `deletingLastPathComponent()` loop.

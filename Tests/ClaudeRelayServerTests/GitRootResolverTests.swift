@@ -242,7 +242,7 @@ final class GitRootResolverTests: XCTestCase {
     /// above, and the static seam was never what was keeping it alive. The
     /// normalization is asserted rather than worked around, since it is what makes the
     /// unnormalized inputs above unreachable in production.
-    func testProbesExactlyTheFiniteAncestorList() async {
+    func testProbesExactlyTheFiniteAncestorList() throws {
         /// Enough for the deepest input below, and far below the unbounded walk's
         /// appetite. Reached only by a search that does not terminate on the list.
         let probeLimit = 24
@@ -252,10 +252,21 @@ final class GitRootResolverTests: XCTestCase {
         /// A fresh resolver per call, so the LRU cache can never answer instead of the
         /// search — a cache hit would record an empty trail and pass every assertion
         /// below vacuously.
-        func probes(of path: String, hit: String? = nil) async -> (probed: [String], root: String) {
+        ///
+        /// Goes through `resolvedRoot` — i.e. under the wall-clock deadline — rather
+        /// than awaiting `root(for:)` directly, and `probeLimit` does *not* make that
+        /// redundant. The two bounds catch disjoint failures: the limit only fires on a
+        /// loop that *calls* `exists`, and the canonical regression here diverges while
+        /// building the ancestor list, before the first probe is ever issued. A bare
+        /// `await` would then park the whole suite with no test named — the exact
+        /// failure mode this file exists to prevent, reintroduced by its own helper.
+        /// It is also what `resolvedRoot`'s "every call in this suite goes through
+        /// here" is asserting; an earlier version of this helper made that sentence
+        /// false.
+        func probes(of path: String, hit: String? = nil) throws -> (probed: [String], root: String) {
             let recorder = ProbeRecorder(hit: hit, limit: probeLimit)
             let resolver = GitRootResolver(exists: { recorder.record($0) })
-            let root = await resolver.root(for: path)
+            let root = try XCTUnwrap(resolvedRoot(for: path, using: resolver))
             let probed = recorder.probed
             XCTAssertLessThan(probed.count, probeLimit,
                               "the search did not terminate on the ancestor list; trail: \(probed)")
@@ -265,16 +276,16 @@ final class GitRootResolverTests: XCTestCase {
         // Inputs are chosen to normalize to themselves, so the expected trails don't
         // depend on which real paths happen to be symlinks. `/private/tmp` would not
         // qualify: it resolves to `/tmp`, dropping a level.
-        let none = await probes(of: "/a/b/c")
+        let none = try probes(of: "/a/b/c")
         XCTAssertEqual(none.probed, ["/a/b/c/.git", "/a/b/.git", "/a/.git", "/.git"])
         XCTAssertEqual(none.root, "/a/b/c", "with no .git found, the input is its own group")
 
         // The degenerate input: nowhere to go up to, so exactly one probe.
-        let root = await probes(of: "/")
+        let root = try probes(of: "/")
         XCTAssertEqual(root.probed, ["/.git"])
 
         // And the search must stop at the first hit rather than probing to the root.
-        let found = await probes(of: "/a/b/c", hit: "/a/b/.git")
+        let found = try probes(of: "/a/b/c", hit: "/a/b/.git")
         XCTAssertEqual(found.probed, ["/a/b/c/.git", "/a/b/.git"])
         XCTAssertEqual(found.root, "/a/b")
 
@@ -282,10 +293,10 @@ final class GitRootResolverTests: XCTestCase {
         // `ancestorPaths` genuinely disagree — never reach the search, because
         // normalization removes them first. Asserting that here is what makes the
         // equivalence noted above a checked property rather than an assumption.
-        let dotDot = await probes(of: "/a/../b")
+        let dotDot = try probes(of: "/a/../b")
         XCTAssertEqual(dotDot.probed, ["/b/.git", "/.git"],
                        "`..` survived normalization and reached the ancestor walk")
-        let doubleSep = await probes(of: "/a//b")
+        let doubleSep = try probes(of: "/a//b")
         XCTAssertEqual(doubleSep.probed, ["/a/b/.git", "/a/.git", "/.git"],
                        "a repeated separator survived normalization")
     }
