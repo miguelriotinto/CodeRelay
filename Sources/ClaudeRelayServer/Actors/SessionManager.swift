@@ -604,9 +604,30 @@ public actor SessionManager {
         }
     }
 
+    /// Evict terminal-state sessions past the grace period. Called periodically
+    /// from main.swift.
+    ///
+    /// The event-driven `purgeTerminalSessions()` calls on the lifecycle paths
+    /// are not sufficient on their own: all three fire only when a session is
+    /// created, terminated, or exits, so once churn stops the last batch of
+    /// terminal sessions is retained indefinitely — each still holding a
+    /// `scrollbackSize` `RingBuffer` that `RingBuffer.init` allocates and
+    /// zero-fills in full (2 MB per session at the default config), regardless
+    /// of how little output the session actually produced. Bounded by
+    /// `maxSessionsPerToken`, but that bound is ~100 MB of resident memory held
+    /// by an otherwise idle server.
+    public func purgeTerminalSessionsNow(gracePeriod: TimeInterval = 300) {
+        purgeTerminalSessions(gracePeriod: gracePeriod)
+    }
+
     /// Exposed only for tests. Do not call from production code.
     public var _testOnly_observerCount: Int {
         activityObservers.count + stealObservers.count + renameObservers.count
+    }
+
+    /// Exposed only for tests. Do not call from production code.
+    public var _testOnly_sessionCount: Int {
+        sessions.count
     }
 
     // MARK: - Shutdown

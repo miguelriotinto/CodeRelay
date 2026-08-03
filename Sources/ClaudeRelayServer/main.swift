@@ -51,6 +51,20 @@ let observerPurgeTask = Task {
     }
 }
 
+// Every 60 seconds, evict terminal-state sessions past their grace period.
+// The lifecycle-event purge calls cannot do this alone — they only fire on
+// create/terminate/exit, so the final batch after churn stops is retained
+// until the next session event, holding a fully-allocated RingBuffer each.
+// The interval is independent of the grace period: this bounds how long a
+// purgeable session lingers, `gracePeriod` still decides what's purgeable.
+let terminalSessionPurgeTask = Task {
+    while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(60))
+        guard !Task.isCancelled else { return }
+        await sessionManager.purgeTerminalSessionsNow()
+    }
+}
+
 // Push notifications: construct a delivery pipeline only when enabled AND at
 // least one provider is configured. Registration still works when off (the
 // store is always constructed above).
@@ -150,6 +164,7 @@ RelayLogger.log(category: "server", "Shutdown signal received")
 print("\nShutting down...")
 
 observerPurgeTask.cancel()
+terminalSessionPurgeTask.cancel()
 pushReapTask?.cancel()
 if let pushHTTPClient { try? await pushHTTPClient.shutdown() }
 

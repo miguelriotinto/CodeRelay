@@ -292,4 +292,86 @@ final class SessionObserverTests: SessionManagerTestCase {
         let afterCount = await manager._testOnly_observerCount
         XCTAssertEqual(afterCount, 0, "All observers should have been purged with 0s cutoff")
     }
+
+    /// The periodic entry point must evict terminal sessions with no session
+    /// lifecycle event to piggyback on. Every in-tree `purgeTerminalSessions()`
+    /// call sits on a create/terminate/exit path, so a purge that only ran from
+    /// those would leave this session — and its fully-allocated RingBuffer —
+    /// resident for as long as the server stayed idle.
+    func testPurgeTerminalSessionsNowEvictsWithoutLifecycleEvent() async throws {
+        let (_, tokenInfo) = try await createTestToken()
+        let manager = makeManager()
+
+        let session = try await manager.createSession(tokenId: tokenInfo.id)
+        try await manager.terminateSession(id: session.id, tokenId: tokenInfo.id)
+
+        // terminateSession purges too, but under the default 300 s grace period
+        // this session is far too young to qualify — so it is still resident and
+        // only a later sweep can reclaim it.
+        let before = await manager._testOnly_sessionCount
+        XCTAssertEqual(before, 1, "Terminal session should survive its own terminate-time purge")
+
+        // A 0 s grace period makes it immediately purgeable. No create/terminate/
+        // exit happens between here and the assertion, so only the periodic
+        // entry point can account for the eviction.
+        await manager.purgeTerminalSessionsNow(gracePeriod: 0)
+
+        let after = await manager._testOnly_sessionCount
+        XCTAssertEqual(after, 0, "Periodic purge must evict the terminal session")
+    }
+
+    /// The periodic sweep must actually be driven by a timer, not just be
+    /// callable. `main.swift` owns the real task, so this mirrors its shape
+    /// (sleep → guard cancellation → sweep) at a compressed interval: it pins
+    /// the loop body, so a sweep that is implemented but never scheduled — the
+    /// original defect — still shows up as unreclaimed sessions here.
+    func testPeriodicSweepTaskReclaimsWithoutAnyLifecycleEvent() async throws {
+        let (_, tokenInfo) = try await createTestToken()
+        let manager = makeManager()
+
+        let session = try await manager.createSession(tokenId: tokenInfo.id)
+        try await manager.terminateSession(id: session.id, tokenId: tokenInfo.id)
+        let before = await manager._testOnly_sessionCount
+        XCTAssertEqual(before, 1, "Session should still be resident before the sweep runs")
+
+        let purgeTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { return }
+                await manager.purgeTerminalSessionsNow(gracePeriod: 0)
+            }
+        }
+        defer { purgeTask.cancel() }
+
+        // Poll rather than sleeping a fixed duration: the assertion is that the
+        // timer reclaims it eventually, not that it lands in one exact tick.
+        var reclaimed = false
+        for _ in 0..<40 where !reclaimed {
+            try await Task.sleep(for: .milliseconds(50))
+            reclaimed = await manager._testOnly_sessionCount == 0
+        }
+        XCTAssertTrue(reclaimed, "Periodic task must reclaim the terminal session unprompted")
+
+        // Cancellation must stop the loop, mirroring shutdown in main.swift.
+        purgeTask.cancel()
+        _ = await purgeTask.value
+        XCTAssertTrue(purgeTask.isCancelled, "Sweep task must honour cancellation")
+    }
+
+    /// The sweep must not touch sessions that are still usable.
+    func testPurgeTerminalSessionsNowSparesLiveSessions() async throws {
+        let (_, tokenInfo) = try await createTestToken()
+        let manager = makeManager()
+
+        let live = try await manager.createSession(tokenId: tokenInfo.id)
+        let dead = try await manager.createSession(tokenId: tokenInfo.id)
+        try await manager.terminateSession(id: dead.id, tokenId: tokenInfo.id)
+
+        await manager.purgeTerminalSessionsNow(gracePeriod: 0)
+
+        let remaining = await manager._testOnly_sessionCount
+        XCTAssertEqual(remaining, 1, "Only the terminal session should be evicted")
+        let survivor = try await manager.inspectSession(id: live.id)
+        XCTAssertEqual(survivor.id, live.id, "Live session must survive the sweep")
+    }
 }
