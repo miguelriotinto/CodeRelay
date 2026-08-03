@@ -26,13 +26,56 @@ N−1 masters. Both halves of the resulting bug trace to that single flag:
 
 `terminate()`'s SIGTERM→SIGKILL is *not* a backstop for this. Those signals go to
 this session's `login` child, whose own pty is fine; the wedged processes are
-other sessions' shells holding this master. Set on the parent's copy after the
+other sessions' shells holding this master. (It has its own, separate group bug —
+see **`terminate()` signals the process group** below. The two compose, and each
+had to be fixed on its own; `FD_CLOEXEC` alone did not stop the exhaustion.) Set on the parent's copy after the
 fork, next to the `O_NONBLOCK` call — note `F_SETFD` (descriptor flag) is a
 different command from `F_SETFL` (file-status flag); don't merge the two
 read-modify-writes. Guarded by `PTYMasterFDInheritanceTests`, whose probe child
 must be spawned by a bare `posix_spawn`: `Foundation.Process` sets
 `POSIX_SPAWN_CLOEXEC_DEFAULT` and inherits nothing regardless of the flag, so a
 `Process`-based probe passes against the unfixed code.
+
+**`terminate()` signals the process GROUP, and that is also load-bearing.**
+`forkpty` calls `setsid()` in the child, so the child is a session *and*
+process-group leader (pgid == pid). Everything the session then runs inherits that
+group: `login`, the `zsh` it execs, the coding agent the user starts, and that
+agent's children. A bare `kill(childPID, …)` reaches only the process at the top,
+so the rest survive — measured, a grandchild outlived both SIGTERM and SIGKILL and
+reparented to launchd. Each survivor holds the resources of a session the server
+believes it already reclaimed, and they accumulate for the life of the server.
+
+Three distinct defects lived in that one sequence, and fixing fewer than all three
+leaves the leak:
+
+1. SIGTERM was single-pid.
+2. The SIGKILL escalation was single-pid.
+3. **The escalation was gated on the *leader's* liveness** (`kill(pid, 0)`), which
+   is false in the exact case the backstop exists for: `login`/`zsh` exits promptly
+   on SIGTERM while the agent lingers. So the guard concluded "already dead" and
+   returned. It is now `killpg(pid, 0)`, which succeeds while *any* group member
+   remains.
+
+`killpg` cannot hit the server itself, precisely because of the `setsid()`: the
+child's group is its own, never ours. The pid-recycle start-time check is skipped
+once the leader is gone — pid reuse does not transfer group leadership, so the
+named group either still holds our descendants or is empty (`killpg` then returns
+ESRCH and nothing is signalled).
+
+The reap lives in one `static PTYSession.reap(pid:sessionLabel:startTime:)` so
+tests exercise production code. They must drive it against a **stand-in** group:
+nothing outside the child's session can join the real one (`setpgid` /
+`POSIX_SPAWN_SETPGROUP` across sessions is EPERM by design), and driving the
+session's own shell doesn't work either because under a test harness `login -fp`
+echoes commands without running them — so a shell-driven test can only skip, i.e.
+silently pass the bug it exists to catch. Guarded by
+`PTYTerminateProcessGroupTests`, verified to fail against single-pid `kill`.
+
+**A process in `U` state cannot be reaped at all.** Two leaked `login` processes on
+the dev machine survived `SIGKILL` to their group and showed `Us+` — uninterruptible
+kernel wait. Nothing in userspace can clear those; their ptys are pinned until
+reboot. This is why the fix must prevent the leak rather than rely on any sweep, and
+why "hard reset was required" is consistent with a correct group kill.
 
 **Non-blocking writes**: The master FD is set to `O_NONBLOCK`. A `DispatchSourceWrite` drains a 4 MB pending queue when the FD becomes writable. Overflow drops oldest bytes with a once-per-session warning. This prevents paste/rapid-input workloads from EAGAIN-spinning inside the actor and starving resize/output dispatch.
 

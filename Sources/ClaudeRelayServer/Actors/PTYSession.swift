@@ -759,45 +759,110 @@ public actor PTYSession: PTYSessionProtocol {
         writeQueue.removeAll()
         writeQueueBytes = 0
 
-        // Send SIGTERM to the child. SIGCHLD is set to SIG_IGN in main.swift,
-        // so the kernel auto-reaps — no waitpid needed.
-        let pid = childPID
-        let sid = sessionId
-        let startTime = childStartTime
-        if kill(pid, SIGTERM) != 0 {
-            RelayLogger.log(.error, category: "session", "PTYSession \(sid) SIGTERM failed for pid \(pid): errno \(errno)")
+        Self.reap(pid: childPID, sessionLabel: "\(sessionId)", startTime: childStartTime)
+    }
+
+    /// SIGTERM the session's process **group**, then escalate to SIGKILL after
+    /// 2 s for whatever is left.
+    ///
+    /// **Why the group and not just `pid`.** `forkpty` calls `setsid()` in the
+    /// child, so the child is a session *and* process-group leader: its pgid
+    /// equals its pid. Everything the session goes on to run — `login`, the `zsh`
+    /// it execs, the coding agent the user starts, and that agent's own children —
+    /// inherits that group unless it deliberately leaves it. A bare
+    /// `kill(childPID, …)` reaches only the one process at the top, so the rest
+    /// survive: measured, a grandchild outlived both SIGTERM and SIGKILL and
+    /// reparented to launchd.
+    ///
+    /// Those survivors are the leak. Each keeps the resources of a session the
+    /// server believes it already reclaimed, and they accumulate across every
+    /// create/terminate cycle for as long as the server lives — until the machine
+    /// cannot start a new shell at all. This is a **separate** leak from the
+    /// `FD_CLOEXEC` one in `init`: that flag stops a master being *duplicated*
+    /// into other sessions' shells, and says nothing about descendants outliving
+    /// the process they were signalled through. Fixing either alone leaves the
+    /// other.
+    ///
+    /// `killpg` is safe against signalling the server itself precisely because of
+    /// the `setsid()`: the child's group is its own, never ours. `pid` is also
+    /// signalled individually — belt and braces for the case where it somehow left
+    /// its own group, which the group signal would then miss.
+    ///
+    /// SIGCHLD is `SIG_IGN` in `main.swift`, so the kernel auto-reaps; no waitpid.
+    ///
+    /// `static` and taking its target as a parameter so the reap is testable
+    /// against a stand-in group: nothing outside the child's session can join it
+    /// (`setpgid` across sessions is EPERM), so a test cannot place an observable
+    /// member in the real one. See `PTYTerminateProcessGroupTests`.
+    private static func reap(pid: pid_t, sessionLabel: String, startTime: Int64) {
+        // ESRCH means "already gone", which is success here, so it is not worth an
+        // error line; anything else is.
+        if killpg(pid, SIGTERM) != 0 && errno != ESRCH {
+            RelayLogger.log(.error, category: "session",
+                "PTYSession \(sessionLabel) SIGTERM failed for process group \(pid): errno \(errno)")
+        }
+        if kill(pid, SIGTERM) != 0 && errno != ESRCH {
+            RelayLogger.log(.error, category: "session",
+                "PTYSession \(sessionLabel) SIGTERM failed for pid \(pid): errno \(errno)")
         }
 
-        // Schedule SIGKILL after 2 s if the process hasn't exited. zsh exits
-        // within ~100 ms of SIGTERM in practice, so 2 s is a generous safety
-        // margin.
-        //
-        // Before firing SIGKILL, verify the PID still belongs to our child
-        // by comparing its start time to what we captured at fork. If macOS
-        // has recycled the PID for an unrelated process in the last 2 s, the
-        // start times won't match and we skip the kill (C-10).
+        // zsh exits within ~100 ms of SIGTERM in practice, so 2 s is a generous
+        // margin before forcing the issue.
         DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) {
-            // Check if process is still alive (kill with signal 0)
-            if kill(pid, 0) == 0 {
-                // Start-time check: skip SIGKILL if the PID was recycled.
-                // `startTime == -1` means the init-time lookup failed, in
-                // which case we accept the residual reuse risk and proceed.
-                if startTime != -1 {
-                    let current = relay_get_process_start_time(pid)
-                    if current != -1 && current != startTime {
-                        RelayLogger.log(.error, category: "session",
-                            "PTYSession \(sid) PID \(pid) was recycled (start \(startTime) → \(current)); skipping SIGKILL")
-                        return
-                    }
+            // Liveness is checked on the process GROUP, not on the leader.
+            //
+            // `kill(pid, 0)` was the wrong question, and it gated the whole
+            // escalation: the leader is `login`/`zsh`, which exits promptly on
+            // SIGTERM, while the processes that actually linger are the agent and
+            // its children. So in the exact case this backstop exists for — leader
+            // gone, descendants still running — the old check saw "already dead",
+            // returned, and never escalated. `killpg(pid, 0)` instead succeeds
+            // while *any* member of the group remains.
+            guard killpg(pid, 0) == 0 else { return }
+
+            // Skip SIGKILL if the pid was recycled for an unrelated process in the
+            // last 2 s (C-10). `startTime == -1` means the init-time lookup failed,
+            // in which case we accept the residual reuse risk and proceed.
+            //
+            // Only meaningful while the leader itself is alive: once it has exited,
+            // its pid is not what the surviving members are, so there is no start
+            // time to compare. A recycled pid also cannot redirect the group
+            // signal, because pid reuse does not transfer group leadership — the
+            // group named here either still holds our own descendants or is empty
+            // (and then `killpg` above already returned ESRCH).
+            if kill(pid, 0) == 0, startTime != -1 {
+                let current = relay_get_process_start_time(pid)
+                if current != -1 && current != startTime {
+                    RelayLogger.log(.error, category: "session",
+                        "PTYSession \(sessionLabel) PID \(pid) was recycled (start \(startTime) → \(current)); skipping SIGKILL")
+                    return
                 }
-                if kill(pid, SIGKILL) != 0 {
-                    RelayLogger.log(.error, category: "session", "PTYSession \(sid) SIGKILL failed for pid \(pid): errno \(errno)")
-                }
+            }
+            // Group first, then the leader — same reasoning as the SIGTERM above.
+            // Without the group signal the escalation inherits the original bug: it
+            // would force-kill the one process that was already ignoring SIGTERM
+            // and leave its children running.
+            if killpg(pid, SIGKILL) != 0 && errno != ESRCH {
+                RelayLogger.log(.error, category: "session",
+                    "PTYSession \(sessionLabel) SIGKILL failed for process group \(pid): errno \(errno)")
+            }
+            if kill(pid, SIGKILL) != 0 && errno != ESRCH {
+                RelayLogger.log(.error, category: "session",
+                    "PTYSession \(sessionLabel) SIGKILL failed for pid \(pid): errno \(errno)")
             }
         }
     }
 
     // MARK: - Test Hooks
+
+    /// Runs `terminate()`'s exact reap against an arbitrary process group.
+    ///
+    /// `startTime: -1` skips the pid-recycle guard, which is what a stand-in group
+    /// needs: the guard exists to protect *our* forked child's pid, and a test
+    /// group has no `relay_get_process_start_time` baseline recorded at fork.
+    static func _testOnly_reap(pid: pid_t, sessionLabel: String) {
+        reap(pid: pid, sessionLabel: sessionLabel, startTime: -1)
+    }
 
     /// Why a window-size read produced no size.
     ///
@@ -875,4 +940,12 @@ public actor PTYSession: PTYSessionProtocol {
     /// `FD_CLOEXEC` directly, so the no-inheritance invariant stays covered even
     /// where a child's fd table is unreadable and the consequence test skips.
     var _testOnly_masterFDFlags: Int32 { fcntl(masterFD, F_GETFD) }
+
+    /// The process group `terminate()` must signal, or -1 once it is gone.
+    ///
+    /// `forkpty` calls `setsid()` in the child, so this is normally just
+    /// `childPID` — but it is read from the kernel rather than assumed, so a test
+    /// asserting that the whole group is reaped is anchored to the group the
+    /// child actually belongs to. See `PTYTerminateProcessGroupTests`.
+    var _testOnly_childPGID: pid_t { getpgid(childPID) }
 }
