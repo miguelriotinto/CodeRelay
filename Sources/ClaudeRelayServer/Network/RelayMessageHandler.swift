@@ -192,6 +192,16 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             handlePairRequest(code: code, deviceName: deviceName, platform: platform, context: context)
         case .ping:
             sendServerMessage(.pong, context: context)
+        case .resize, .refresh, .pasteImage, .sessionRename, .sessionTerminate:
+            // Dropped, NOT answered with `.error(401)` — these are all
+            // fire-and-forget, so see the unattached-request reply rule atop
+            // `SessionRequestHandlers.swift`. They can reach the pre-auth window
+            // because they bypass the client's RPC chain entirely: a terminal view
+            // that lays out while `auth_request` is still on the wire sends its
+            // resize immediately, and a 401 here would resolve the `authenticate`
+            // waiter with someone else's error.
+            RelayLogger.log(.debug, category: "session",
+                            "pre-auth \(message.typeString) dropped")
         default:
             sendServerMessage(.error(code: 401, message: "Not authenticated"), context: context)
         }
@@ -284,7 +294,13 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         guard isAuthenticated, let pty = attachedPTY else { return }
         let data = frame.unmaskedData
         if data.readableBytes > Self.maxBinaryFrameSize {
-            sendServerMessage(.error(code: 413, message: "Binary frame too large"), context: context)
+            // Dropped, NOT answered with `.error` — binary terminal input is
+            // fire-and-forget, so see the unattached-request reply rule atop
+            // `SessionRequestHandlers.swift`. Reachable because NIO's upgrader cap
+            // (10 MiB) is slightly above this one (10 000 000 B), leaving a band of
+            // frames that arrive here only to be rejected.
+            RelayLogger.log(.debug, category: "session",
+                            "binary frame dropped: \(data.readableBytes) B exceeds \(Self.maxBinaryFrameSize)")
             return
         }
         let inputData = data.withUnsafeReadableBytes { Data($0) }
@@ -661,7 +677,12 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// the clipboard (see the inline note below for why a keystroke is wrong).
     private func handlePasteImage(base64Data: String, context: ChannelHandlerContext) {
         guard let pty = attachedPTY else {
-            sendServerMessage(.error(code: 400, message: "No session attached"), context: context)
+            // `.pasteImageResult(success: false)`, not `.error` — see the
+            // unattached-request reply rule atop `SessionRequestHandlers.swift`.
+            // This request DOES have a dedicated failure reply, so unlike
+            // resize/refresh it can report the failure without borrowing the one
+            // reply type that every RPC waiter accepts.
+            sendServerMessage(.pasteImageResult(success: false), context: context)
             return
         }
 

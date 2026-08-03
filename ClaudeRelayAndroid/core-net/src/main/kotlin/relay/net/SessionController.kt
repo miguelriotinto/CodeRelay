@@ -402,7 +402,7 @@ class SessionController(private val connection: ConnectionSurface) {
         //    "error" is always accepted: the server answers any request with it.
         val matchTypes = expected + "error"
         val subscriptionId = connection.addServerMessageSubscriber { serverMessage ->
-            if (serverMessage.typeString in matchTypes) {
+            if (serverMessage.typeString in matchTypes && !isForeignError(serverMessage, expected)) {
                 guard.deliver(serverMessage)
             }
         }
@@ -462,6 +462,51 @@ class SessionController(private val connection: ConnectionSurface) {
 
         /** User-facing text for the desynchronized-socket refusal. */
         const val DESYNC_MESSAGE = "The connection to the server needs to be re-established."
+
+        /**
+         * The server's reply to a request that arrived while nothing was attached.
+         * Matched as data because that is all the wire carries — see
+         * [isForeignError].
+         */
+        private const val NO_SESSION_ATTACHED = "no session attached"
+
+        /**
+         * True when this `error` provably belongs to some *other* request, so this
+         * waiter must ignore it rather than fail on it.
+         *
+         * Only one such proof is available, and it is narrow by design. `error`
+         * carries no request id (nothing does), so a waiter normally cannot tell an
+         * error meant for it from one meant for a request nobody is awaiting —
+         * which is why [matchTypes] accepts `error` unconditionally to begin with.
+         *
+         * `"No session attached"` is the exception: server-side it is emitted only
+         * by handlers for requests that arrive while unattached, and of those, only
+         * `detach` has a waiter. Every other handler that *does* have a waiter
+         * fails with its own prefix instead (`"Attach failed: …"`,
+         * `"Resume failed: …"`, `"Terminate failed: …"`). So this error reaching an
+         * attach/resume/list waiter means a fire-and-forget request produced it —
+         * the resize/refresh race that made a session switch report "Unexpected
+         * server response: No session attached" and roll the pane back to the
+         * previous session.
+         *
+         * Current servers don't send it for those requests at all (see the
+         * unattached-request reply rule atop the server's
+         * `SessionRequestHandlers.swift`). This check is what protects a client
+         * talking to an OLDER server, which the app cannot assume has been rebuilt.
+         *
+         * Deliberately NOT generalized into "ignore errors that don't look like
+         * mine". Any unrecognized message shape would then be dropped and the
+         * waiter would hang to its timeout — and a timeout poisons the socket
+         * ([desyncedGeneration]), which is far worse than surfacing one wrong
+         * error. Matching a single known string fails safe: an unmatched error
+         * still resolves the waiter exactly as before.
+         */
+        internal fun isForeignError(message: ServerMessage, expected: Set<String>): Boolean {
+            // A detach waiter is the one place this error is legitimately addressed.
+            if ("session_detached" in expected) return false
+            val detail = (message as? ServerMessage.Error)?.message ?: return false
+            return detail.trim().equals(NO_SESSION_ATTACHED, ignoreCase = true)
+        }
     }
 }
 

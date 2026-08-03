@@ -13,6 +13,53 @@ import ClaudeRelayKit
 // state does so inside an `onSuccess` / `onFailure` closure handed to
 // `bridgeToEventLoop(...)`, which guarantees the callback runs on the
 // channel event loop.
+//
+// UNATTACHED-REQUEST REPLY RULE — a fire-and-forget request must never be
+// answered with `.error`.
+//
+// Replies carry no request ids, so a client waiter can only correlate on the
+// response *type* — and `error` is a legal reply to every request, so every
+// waiter's match set is `expected ∪ {"error"}` (see
+// `SessionController.awaitResponse`). An `.error` produced by a request nobody
+// is awaiting therefore resolves whichever RPC happens to be in flight, and
+// that waiter has no way to reject it.
+//
+// `resize`, `refresh` and `paste_image` are all fire-and-forget: the client
+// sends them from a `Task` and never reads their acks. When one arrived while
+// the handler was unattached, replying `.error(400, "No session attached")`
+// handed that error to the concurrent `session_resume` waiter, which failed the
+// switch and surfaced iOS's "Unexpected server response: No session attached" —
+// then rolled the pane back to the previous session. The race is routine rather
+// than exotic: `switchToSession` publishes the new selection *before* its RPCs,
+// so the incoming terminal view lays out and reports its grid while
+// `session_resume` is still on the wire and `attachedPTY` is briefly nil.
+//
+// So those handlers drop the request (logging at debug) instead, matching
+// `handleBinaryFrame`, which has always silently dropped terminal input when
+// unattached.
+//
+// A dropped resize is genuinely lost, and that is the accepted cost — do not
+// write it up as harmless. Two plausible-sounding recovery paths do NOT exist:
+// SwiftTerm only fires `sizeChanged` when the grid actually *changes*, so a
+// client whose grid is already correct never re-sends; and `forceRepaint()`
+// wiggles to `currentCols - 1` and back to the PTY's *own* stored `currentCols`,
+// so it never learns the value that was dropped. The PTY therefore keeps the
+// stale grid until the next real layout change (rotation, split, font change).
+// We take that over the alternative: an `.error` here fails an unrelated RPC,
+// and a client-side timeout poisons the socket via `desyncedGeneration`. A wrong
+// grid is recoverable by the user; a poisoned socket is not.
+//
+// The rule is about the reply *type*, not about staying silent — a request with
+// a dedicated failure reply should still use it (`paste_image` answers
+// `.pasteImageResult(success: false)`).
+//
+// Which handlers may reply `.error`: only those with a real waiter on both
+// clients — `attach`, `resume`, `detach`, `create`, `list`. `rename` and
+// `terminate` look like request-response but are **fire-and-forget on both
+// clients** (bare `connection.send`, no `sendAndWaitForResponse`), so their
+// failure paths must not reply `.error` either; they log instead. Before adding
+// an `.error` to any handler, check the actual client call site — the shape of
+// the server method tells you nothing about whether a waiter exists.
 
 extension RelayMessageHandler {
 
@@ -69,8 +116,15 @@ extension RelayMessageHandler {
             onSuccess: { _, _, _ in
                 RelayLogger.log(category: "session", "Session renamed: \(sessionId) -> \(name)")
             },
-            onFailure: { handler, ctx, error in
-                handler.sendServerMessage(.error(code: 404, message: "Rename failed: \(error)"), context: ctx)
+            onFailure: { _, _, error in
+                // Dropped, NOT answered with `.error` — see the unattached-request
+                // reply rule at the top of this file. `renameSession` is
+                // fire-and-forget on both clients, so an `.error` here would
+                // resolve whichever unrelated RPC is in flight (a rename racing a
+                // session switch would fail the switch). The client re-reads names
+                // from the next `session_list`, so a failed rename self-corrects.
+                RelayLogger.log(.debug, category: "session",
+                                "rename of \(sessionId) dropped: \(error)")
             }
         )
     }
@@ -217,8 +271,15 @@ extension RelayMessageHandler {
                     handler.attachedPTY = nil
                 }
             },
-            onFailure: { handler, ctx, error in
-                handler.sendServerMessage(.error(code: 404, message: "Terminate failed: \(error)"), context: ctx)
+            onFailure: { _, _, error in
+                // Dropped, NOT answered with `.error` — see the unattached-request
+                // reply rule at the top of this file. Terminate is fire-and-forget
+                // (`SharedSessionCoordinator` sends it, then immediately calls
+                // `fetchSessions()`), so an `.error` here lands on that
+                // `session_list` waiter. The refresh is also the recovery: a
+                // terminate that failed leaves the session in the list.
+                RelayLogger.log(.debug, category: "session",
+                                "terminate of \(sessionId) dropped: \(error)")
             }
         )
     }
@@ -263,7 +324,14 @@ extension RelayMessageHandler {
 
     func handleResize(cols: UInt16, rows: UInt16, context: ChannelHandlerContext) {
         guard let pty = attachedPTY else {
-            sendServerMessage(.error(code: 400, message: "No session attached"), context: context)
+            // Dropped, NOT answered with `.error` — see the unattached-request
+            // reply rule at the top of this file. A resize racing a session
+            // switch is routine: the client publishes the new selection before
+            // its RPCs, so the incoming terminal lays out (and reports its grid)
+            // while `session_resume` is still in flight and we are briefly
+            // unattached.
+            RelayLogger.log(.debug, category: "session",
+                            "resize \(cols)x\(rows) dropped: no session attached")
             return
         }
         bridgeToEventLoop(
@@ -282,7 +350,11 @@ extension RelayMessageHandler {
     /// bytes ARE the response.
     func handleRefresh(context: ChannelHandlerContext) {
         guard let pty = attachedPTY else {
-            sendServerMessage(.error(code: 400, message: "No session attached"), context: context)
+            // Dropped, not answered — see the reply rule at the top of this
+            // file. Doubly clear here: this request has no ack even on success,
+            // so an `.error` was the only reply it could ever produce, and there
+            // is no waiter it could legitimately belong to.
+            RelayLogger.log(.debug, category: "session", "refresh dropped: no session attached")
             return
         }
         Task {

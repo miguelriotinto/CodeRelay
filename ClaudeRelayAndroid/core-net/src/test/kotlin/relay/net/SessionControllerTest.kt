@@ -328,6 +328,78 @@ class SessionControllerTest {
         assertEquals(id, result)
     }
 
+    @Test
+    fun `resume ignores a No session attached error meant for another request`() = runTest {
+        // Regression, mirroring iOS
+        // `testResumeIgnoresANoSessionAttachedErrorMeantForAnotherRequest`.
+        //
+        // A session switch is detach-then-resume, and the incoming terminal lays out
+        // and reports its grid while `resume` is still on the wire — the coordinator
+        // publishes the new selection before its RPCs, so this is the common path.
+        // That `resize` is fire-and-forget, and an OLD server answers it
+        // `error(400, "No session attached")` when it lands in the unattached
+        // window. With `error` accepted unconditionally the resume waiter took it,
+        // the switch failed, and the pane rolled back behind an "Unexpected server
+        // response: No session attached" toast. Current servers don't send it at
+        // all, but a client can't assume the server has been rebuilt.
+        val target = UUID.randomUUID()
+        val conn = FakeConnection()
+        val controller = SessionController(conn)
+
+        var failure: Throwable? = null
+        val request = launch {
+            runCatching { controller.resumeSession(target, skipReplay = true) }
+                .onFailure { failure = it }
+        }
+        yield()
+        runCurrent()
+
+        // The concurrent fire-and-forget resize's error, from an un-rebuilt server.
+        conn.deliver(ServerMessage.Error(code = 400, message = "No session attached"))
+        runCurrent()
+        assertEquals(null, failure) { "resume must not fail on an error addressed to nobody" }
+
+        conn.deliver(ServerMessage.SessionResumed(target))
+        request.join()
+
+        assertEquals(null, failure)
+        assertEquals(target, controller.sessionId)
+    }
+
+    @Test
+    fun `resume still fails on its own error`() = runTest {
+        // The narrowness is the safety property. Only this exact message is
+        // ignored, and only for waiters it cannot belong to — a resume that
+        // genuinely failed answers "Resume failed: …" and must still surface, or a
+        // real failure becomes a 10 s timeout that poisons the socket.
+        val conn = FakeConnection(
+            autoRespond = { ServerMessage.Error(code = 404, message = "Resume failed: sessionNotFound") },
+        )
+        val controller = SessionController(conn)
+
+        val ex = assertThrows(SessionException::class.java) {
+            kotlinx.coroutines.runBlocking { controller.resumeSession(UUID.randomUUID()) }
+        }
+        assertTrue(ex.message!!.contains("Resume failed"))
+    }
+
+    @Test
+    fun `detach still fails on No session attached`() = runTest {
+        // `detach` is the ONE request for which this error is genuinely addressed —
+        // a request-response call with a real waiter, which the server still answers
+        // that way when nothing is attached. Filtering it there would hang the
+        // waiter to its timeout, which poisons the socket.
+        val conn = FakeConnection(
+            autoRespond = { ServerMessage.Error(code = 400, message = "No session attached") },
+        )
+        val controller = SessionController(conn)
+
+        val ex = assertThrows(SessionException::class.java) {
+            kotlinx.coroutines.runBlocking { controller.detach() }
+        }
+        assertTrue(ex.message!!.contains("No session attached"))
+    }
+
     /**
      * Type-scoping shrinks the cross-delivery window but cannot close it, because
      * `error` is a legal reply to EVERY request: two overlapping RPCs always share

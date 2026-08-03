@@ -30,8 +30,10 @@ since their last release tag and confirm the skip list with the user.
 - **Android**: bump `versionCode` and `versionName` (`0.3-mNN` milestone
   scheme) in `ClaudeRelayAndroid/app/build.gradle.kts`, including the
   "M-NN version." comment above them.
-- **Server**: bump the version constant + `Formula/clauderelay.rb`.
-- Commit: `chore(release): <summary of bumps>` with the standard trailer.
+- **Server**: bump the version constant + `Formula/clauderelay.rb`. Homebrew
+  builds from HEAD; the Cellar dir name `HEAD-<commit>` encodes the built commit.
+- Commit: `chore(release): server X.Y.Z, iOS build NNN, Android 0.3-mNN
+  (versionCode NN)` — adjust to what actually shipped — with the standard trailer.
 
 ## 3. Build & publish
 
@@ -44,7 +46,9 @@ since their last release tag and confirm the skip list with the user.
   `gh release create android-v<versionName> <apk> --prerelease` with title
   `Android client test build — <versionName> (<one-line summary>)` and notes
   following the m20/m21 format (What's new, server-compat warning if protocol
-  changed, Install section).
+  changed, Install section). Android releases are always **pre-releases** tagged
+  `android-v<versionName>` with asset `CodeRelay-<versionName>.apk`; the main
+  `vX.Y.Z` releases carry no binaries (the server ships via Homebrew).
 - **Server**: push to main, `brew upgrade clauderelay && brew services restart
   clauderelay` (never run the server binary directly or pkill).
 
@@ -52,7 +56,9 @@ since their last release tag and confirm the skip list with the user.
 
 - **iOS/macOS**: grep `UPLOAD SUCCEEDED` in
   `$TMPDIR/<AppName>_*.xcdistributionlogs/ContentDelivery.log` (newest dir).
-  Also confirm the archive's `CFBundleVersion` matches the bump.
+  Also confirm the archive's `CFBundleVersion` matches the bump. That log line is
+  the proof of upload — Apple-side processing then takes up to ~1 h, so a build
+  not yet visible in TestFlight is not a failure.
 - **Android**: download the APK **back from the release URL** with
   `gh release download`, then `aapt2 dump badging` must show the new
   `versionCode`/`versionName`. Byte size alone is NOT proof.
