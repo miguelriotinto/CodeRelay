@@ -246,11 +246,56 @@ class TerminalSessionVm(
     }
 
     /**
+     * Identifies the view currently wired to this vm.
+     *
+     * This vm is owned by the coordinator's terminal cache, so it OUTLIVES any
+     * single composition. A view rebuild therefore means a new owner binds while
+     * the old one is still alive and about to tear itself down — and on Android
+     * the two overlap in the dangerous order: an Activity recreation (a fold /
+     * unfold, which no `configChanges` can suppress) runs the new instance's
+     * `onCreate` + composition BEFORE the old instance's `onDestroy`. So the old
+     * view's teardown can land AFTER the new view has already wired itself here.
+     *
+     * [claimOwnership] hands out a fresh token per binder; [releaseOwnership]
+     * only tears down when the caller's token is still the current one. Without
+     * that check a superseded teardown nulls the LIVE wiring and the terminal
+     * goes permanently black: [resetState] clears [terminalSized], but the new
+     * controller's one-shot first-size latch is already spent, so nothing can
+     * re-fire [terminalReady] and output buffers forever.
+     */
+    private var ownerToken: Any? = null
+
+    /**
+     * Registers the caller as this vm's current view owner and returns its
+     * token, to be passed back to [releaseOwnership] on teardown. The previous
+     * owner is superseded silently — its later teardown becomes a no-op.
+     */
+    fun claimOwnership(): Any = Any().also { ownerToken = it }
+
+    /**
+     * Tears down the view wiring only if [token] is still the current owner
+     * (see [ownerToken]). Returns true when the teardown ran, so a caller can
+     * tell whether it was the live owner or a superseded one.
+     */
+    fun releaseOwnership(token: Any): Boolean {
+        if (token !== ownerToken) return false
+        ownerToken = null
+        resetState()
+        return true
+    }
+
+    /**
      * Called by the view when switching away from this session. Clears the
      * callbacks (the old terminal view is about to be destroyed) and resets
      * buffering state.
+     *
+     * Unconditional — this is the COORDINATOR's teardown (a real session switch
+     * or an eviction), which outranks any view's claim. View-driven teardown
+     * goes through [releaseOwnership] instead so a superseded view can't wipe
+     * its replacement's wiring.
      */
     fun prepareForSwitch() {
+        ownerToken = null
         resetState()
     }
 

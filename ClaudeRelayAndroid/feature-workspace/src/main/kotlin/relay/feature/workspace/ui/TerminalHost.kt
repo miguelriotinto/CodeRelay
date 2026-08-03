@@ -93,8 +93,19 @@ fun TerminalHost(
     }
 
     DisposableEffect(vm, engine) {
-        vm.onReplayFlushed = { engine.redraw() }
-        onDispose { vm.onReplayFlushed = null }
+        // Held in a val so the dispose below can compare by IDENTITY. A fresh
+        // lambda literal in `onDispose` would be a different object and the
+        // check would never match.
+        val replayRedraw: () -> Unit = { engine.redraw() }
+        vm.onReplayFlushed = replayRedraw
+        onDispose {
+            // Same superseded-teardown hazard as `controller.detach()` below: on
+            // an Activity recreation (fold/unfold) the NEW composition installs
+            // its own `onReplayFlushed` before this dispose runs, so nulling
+            // unconditionally would leave the new engine without a post-replay
+            // repaint. Only clear the slot if it is still OURS.
+            if (vm.onReplayFlushed === replayRedraw) vm.onReplayFlushed = null
+        }
     }
 
     // Re-show the soft keyboard when the user taps the terminal. termlib types

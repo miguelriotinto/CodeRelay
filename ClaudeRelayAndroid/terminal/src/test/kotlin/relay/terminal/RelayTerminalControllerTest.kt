@@ -5,6 +5,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -44,7 +45,14 @@ class RelayTerminalControllerTest {
         val vm = TerminalSessionVm(scope = CoroutineScope(UnconfinedTestDispatcher()))
         val sentInput = mutableListOf<ByteArray>()
         val resizes = mutableListOf<Pair<Int, Int>>()
-        val controller = RelayTerminalController(
+        val controller = bind(engine)
+
+        /**
+         * Binds an ADDITIONAL controller to the same [vm] — the shape a view
+         * rebuild takes, since the vm is owned by the coordinator's terminal
+         * cache and outlives any single composition.
+         */
+        fun bind(engine: FakeTerminalEngine) = RelayTerminalController(
             engine = engine,
             vm = vm,
             onInput = { sentInput.add(it) },
@@ -155,5 +163,91 @@ class RelayTerminalControllerTest {
 
         assertNull(h.vm.onTerminalOutput, "prepareForSwitch clears the output handler")
         assertNull(h.engine.onInput, "detach clears the engine input sink")
+    }
+
+    // MARK: - Rebind ordering (Android foldable unfold)
+    //
+    // A fold/unfold destroys and rebuilds the Activity, so the COMPOSITION is
+    // rebuilt while the coordinator-cached `TerminalSessionVm` survives. Android
+    // overlaps the two Activity instances — the new one's `onCreate`/composition
+    // runs BEFORE the old one's `onDestroy` — so the old controller's `detach()`
+    // can land AFTER the new controller has already bound to the shared vm.
+    // A controller that is no longer the vm's owner must not tear down the
+    // wiring that replaced it.
+
+    @Test
+    fun detachFromASupersededControllerDoesNotWipeTheNewWiring() {
+        val h = Harness()
+        h.controller.reportSize(40, 20)
+
+        // The new composition binds first (the overlap).
+        val newEngine = FakeTerminalEngine()
+        val newController = h.bind(newEngine)
+        newController.reportSize(80, 40)
+
+        // ...then the OLD composition's dispose lands on the SAME shared vm.
+        h.controller.detach()
+
+        assertNotNull(h.vm.onTerminalOutput, "a superseded detach must not null the new binding")
+        assertNotNull(newEngine.onInput, "a superseded detach must not clear the new engine's input sink")
+
+        // Live output must still reach the new emulator: no black screen.
+        h.vm.receiveOutput("output after the unfold".toByteArray())
+        assertEquals(1, newEngine.fedOutput.size, "live output must reach the new emulator")
+        assertArrayEquals("output after the unfold".toByteArray(), newEngine.fedOutput[0])
+    }
+
+    // The superseded controller must still release its OWN engine, or termlib's
+    // stale emulator keeps a live keystroke path into the connection.
+    @Test
+    fun detachFromASupersededControllerStillReleasesItsOwnEngine() {
+        val h = Harness()
+        h.controller.reportSize(40, 20)
+        val newEngine = FakeTerminalEngine()
+        h.bind(newEngine).reportSize(80, 40)
+
+        h.controller.detach()
+
+        assertNull(h.engine.onInput, "the superseded controller must release its own engine")
+
+        // And that stale engine's keystrokes must no longer reach the relay.
+        h.engine.onInput?.invoke("x".toByteArray())
+        assertTrue(h.sentInput.isEmpty(), "a superseded engine must not send input")
+    }
+
+    // Typing must work after the rebind — the other half of "cannot see any text
+    // nor can i input any text".
+    @Test
+    fun inputStillFlowsFromTheNewEngineAfterASupersededDetach() {
+        val h = Harness()
+        h.controller.reportSize(40, 20)
+        val newEngine = FakeTerminalEngine()
+        h.bind(newEngine).reportSize(80, 40)
+
+        h.controller.detach()
+
+        val keystroke = "ls\r".toByteArray(Charsets.US_ASCII)
+        newEngine.onInput?.invoke(keystroke)
+
+        assertEquals(1, h.sentInput.size, "the new engine's keystrokes must still reach the relay")
+        assertArrayEquals(keystroke, h.sentInput[0])
+    }
+
+    // The normal (non-overlapping) dispose-then-init order must keep working:
+    // the LAST binder still owns the vm, so its detach is a real teardown.
+    @Test
+    fun detachFromTheCurrentControllerStillTearsDown() {
+        val h = Harness()
+        h.controller.reportSize(40, 20)
+
+        val newEngine = FakeTerminalEngine()
+        val newController = h.bind(newEngine)
+        newController.reportSize(80, 40)
+
+        // Dispose in order this time: the current owner detaches.
+        newController.detach()
+
+        assertNull(h.vm.onTerminalOutput, "the current owner's detach must clear the vm wiring")
+        assertNull(newEngine.onInput, "the current owner's detach must clear its engine sink")
     }
 }

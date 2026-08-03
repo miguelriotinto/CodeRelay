@@ -40,6 +40,13 @@ class RelayTerminalController(
      */
     private var didReportSize = false
 
+    /**
+     * This controller's claim on [vm] (see [TerminalSessionVm.claimOwnership]).
+     * Taken at construction, surrendered in [detach] — and only honoured there
+     * if a newer controller hasn't already claimed the vm.
+     */
+    private val ownerToken: Any = vm.claimOwnership()
+
     init {
         // Relay → engine: feed output bytes verbatim.
         vm.onTerminalOutput = { bytes -> engine.feedOutput(bytes) }
@@ -68,12 +75,21 @@ class RelayTerminalController(
 
     /**
      * Detaches this controller from its [TerminalSessionVm] and engine when the
-     * session is switched away. Clears the VM callbacks (via
-     * [TerminalSessionVm.prepareForSwitch]) and the engine's input sink so a
-     * stale controller can't keep feeding a recycled view.
+     * session is switched away or this view is disposed.
+     *
+     * The engine sink is ALWAYS cleared: this controller's engine is going away
+     * with its composition either way, and leaving the sink live would let a
+     * stale termlib emulator keep typing into the connection.
+     *
+     * The vm wiring is only cleared if this controller is still the vm's owner
+     * (see [TerminalSessionVm.releaseOwnership]). The vm is cached by the
+     * coordinator and outlives composition, so on an Android Activity recreation
+     * — a fold/unfold — the replacement controller binds BEFORE this dispose
+     * runs. Unconditionally clearing here would null the new controller's wiring
+     * and leave the terminal permanently black and unable to accept input.
      */
     fun detach() {
-        vm.prepareForSwitch()
+        vm.releaseOwnership(ownerToken)
         engine.onInput = null
     }
 }
