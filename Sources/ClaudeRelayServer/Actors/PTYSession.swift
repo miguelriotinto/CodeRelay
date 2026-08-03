@@ -1,4 +1,5 @@
 import Foundation
+import os
 import CPTYShim
 import ClaudeRelayKit
 
@@ -110,6 +111,31 @@ public actor PTYSession: PTYSessionProtocol {
     /// Shared box to bridge the monitor's synchronous onChange callback into the actor.
     /// The monitor captures this box (not `self`) so the closure doesn't require `self` to be fully initialized.
     private let activityCallbackBox = ActivityCallbackBox()
+    /// Whether `masterFD` has been closed.
+    ///
+    /// Deliberately *not* actor state. The read source's cancel handler closes the
+    /// fd from a dispatch queue, while `handleExit()` — the actor-isolated side of
+    /// the same event — hops onto the actor and so can run arbitrarily later. A flag
+    /// set on the actor would therefore still read `false` for a window *after* the
+    /// fd is already closed. Setting it here, immediately before the `close()`,
+    /// closes that window: it is never `false` while the fd is dead.
+    ///
+    /// `terminated` is not a substitute. `handleExit()` doesn't set it; it reports
+    /// the exit upward, and `SessionManager.handlePTYExit` schedules `terminate()`
+    /// in an unstructured `Task`. Between the child exiting and that task running,
+    /// `terminated` is `false` with the fd already closed. An ioctl on that fd
+    /// number does not merely fail — the kernel may have recycled it for another
+    /// session's PTY, in which case it *succeeds* and returns an unrelated
+    /// terminal's size.
+    ///
+    /// Every fd use must happen *inside* a `withLock`, so the closed check and the
+    /// use are one critical section. Checking, unlocking, and then using the fd
+    /// would be a check-then-act race — the cancel handler could mark-and-close in
+    /// the gap, which is the exact hazard this flag exists to rule out. Copies share
+    /// the underlying allocation, so the cancel handler's captured copy is this same
+    /// state. `os_unfair_lock` is not recursive: never re-enter it from a `withLock`
+    /// body.
+    private let fdClosed = OSAllocatedUnfairLock(initialState: false)
     private var activityHandler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
     /// Callback for working-directory changes, fired from the foreground poll.
     private var workingDirHandler: (@Sendable (String) -> Void)?
@@ -403,7 +429,14 @@ public actor PTYSession: PTYSessionProtocol {
             }
         }
 
+        // Copied out of the actor rather than captured through `session`, so the
+        // handler doesn't retain the actor for the lifetime of the source. The copy
+        // shares the lock's allocation, so it is the same state `session` reads.
+        let fdClosed = session.fdClosed
         source.setCancelHandler {
+            // Mark before closing, never after: between the two, another thread
+            // could see "open" for an fd that is already gone.
+            fdClosed.withLock { $0 = true }
             close(fd)
         }
 
@@ -709,6 +742,38 @@ public actor PTYSession: PTYSessionProtocol {
                     RelayLogger.log(.error, category: "session", "PTYSession \(sid) SIGKILL failed for pid \(pid): errno \(errno)")
                 }
             }
+        }
+    }
+
+    // MARK: - Test Hooks
+
+    /// The window size the kernel currently holds for this PTY, as `(rows, cols)`.
+    /// Prefix `_testOnly_` is the convention; do not call from production code —
+    /// the supported view of the size is `resize()`'s own `currentCols`/`currentRows`.
+    ///
+    /// Master and slave share one `struct winsize`, so this reads exactly the
+    /// state the child's own TIOCGWINSZ reports — i.e. what a Node/Ink app
+    /// compares against its cache to decide whether to repaint. Tests assert on
+    /// this rather than on a shell echoing `$COLUMNS`, which additionally
+    /// requires the shell to be scheduled to run a command.
+    ///
+    /// Nil once the master fd is closed, or if the ioctl itself fails. Callers
+    /// that need to tell those apart from a *different* size — a test asserting
+    /// on the size cannot distinguish "not what I expected" from "no PTY left to
+    /// ask" — should treat nil as its own outcome rather than as a mismatch.
+    ///
+    /// Guarding on `fdClosed` rather than `terminated` is load-bearing, and the
+    /// ioctl runs *inside* the `withLock` so the fd cannot be closed between the
+    /// check and the call: an ioctl on a closed fd number whose slot the kernel has
+    /// since recycled can *succeed*, returning an unrelated PTY's size as a
+    /// plausible-looking value. See `fdClosed`.
+    func _testOnly_kernelWindowSize() -> (rows: UInt16, cols: UInt16)? {
+        fdClosed.withLock { closed -> (rows: UInt16, cols: UInt16)? in
+            guard !closed else { return nil }
+            var rows: UInt16 = 0
+            var cols: UInt16 = 0
+            guard relay_get_winsize(masterFD, &rows, &cols) == 0 else { return nil }
+            return (rows: rows, cols: cols)
         }
     }
 }

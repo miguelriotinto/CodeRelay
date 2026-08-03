@@ -1,17 +1,32 @@
 import XCTest
 import Foundation
 @testable import ClaudeRelayServer
-@testable import ClaudeRelayKit
 
-/// Exercises the REAL `PTYSession.forceRepaint()` against a live shell.
+/// Exercises the REAL `PTYSession.forceRepaint()` against a live PTY.
 ///
 /// Regression context: the original implementation sent a bare SIGWINCH at
 /// unchanged size. Node/Ink apps (Claude Code) re-query TIOCGWINSZ in their
 /// WINCH handler and skip the redraw when the dimensions match their cache —
 /// so tap-to-redraw delivered a signal that the target app ignored. The mock
-/// tests couldn't catch that: they only assert the call happened. This test
-/// asserts the observable contract instead: the foreground process sees a
-/// genuine size change AND the size ends up restored.
+/// tests couldn't catch that: they only assert the call happened. These tests
+/// assert the observable contract instead: the PTY's size genuinely changes,
+/// the intermediate value is *held* long enough to be observed, and the size
+/// ends up restored to the newest client value.
+///
+/// Assertions read the kernel's `winsize` via
+/// `PTYSession._testOnly_kernelWindowSize()` rather than making a shell
+/// `echo $COLUMNS`. Master and slave share a single `struct winsize`, so this
+/// reads the very state the child's TIOCGWINSZ reports — the same value Node
+/// compares against its cache. Asserting through a shell instead adds a
+/// requirement the contract doesn't include: the shell must be scheduled to run
+/// a command and refresh `$COLUMNS` before the assertion reads it. On a GitHub
+/// `macos-15` runner that didn't hold — test 1 saw no trap output at all, test 2
+/// read a stale `$COLUMNS` — while both passed locally. (The CI evidence shows
+/// the shell didn't *report* the new size in time; it does not establish where
+/// in signal delivery that failed, so no diagnosis beyond "don't route the
+/// assertion through the shell" is claimed here.) The mutation check still
+/// holds: a regression back to a bare same-size SIGWINCH never changes the
+/// kernel winsize, so both tests fail deterministically.
 final class PTYForceRepaintTests: XCTestCase {
 
     private var pty: PTYSession?
@@ -23,19 +38,137 @@ final class PTYForceRepaintTests: XCTestCase {
         pty = nil
     }
 
-    /// Collects PTY output until `marker` appears or `timeout` elapses.
-    private func waitForOutput(
-        containing marker: String,
-        in collector: OutputCollector,
-        timeout: TimeInterval
-    ) async -> String {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            let text = await collector.text
-            if text.contains(marker) { return text }
-            try? await Task.sleep(nanoseconds: 100_000_000)
+    /// The shortest time the intermediate width must stay observable to count as
+    /// "held". Deliberately far below `forceRepaint`'s own 150 ms so this asserts
+    /// the *contract* (a foreground process handling WINCH a few ms late still
+    /// sees the new size) without pinning the implementation's constant. Measured
+    /// headroom: a 15 ms hold satisfies "observed once" but fails this.
+    private static let minimumHold: TimeInterval = 0.03
+
+    /// The PTY's current size, skipping the test if the master fd has closed.
+    ///
+    /// Every read of the size goes through here so a dead fd is never asserted
+    /// against as though it were a wrong size. `XCTAssertEqual(nil, 120)` reports
+    /// "PTY did not start at the requested width" when in fact the child shell
+    /// died and there is no width to report — a product accusation for an
+    /// environmental failure. Found by mutation: forcing
+    /// `_testOnly_kernelWindowSize()` to return nil produced exactly that
+    /// message from the pre-wiggle check.
+    private func kernelSize(
+        of session: PTYSession,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws -> (rows: UInt16, cols: UInt16) {
+        guard let size = await session._testOnly_kernelWindowSize() else {
+            throw XCTSkip("the PTY's master fd is closed — the child shell died, not a forceRepaint defect",
+                          file: file, line: line)
         }
-        return await collector.text
+        return size
+    }
+
+    /// The outcome of polling for a width, keeping "the PTY went away" distinct
+    /// from "the PTY reported a different width".
+    ///
+    /// Collapsing the two into a plain `UInt16?` made a dead fd read as an
+    /// unexpected size, so an environmental failure (the child never spawned, or
+    /// exited early) was reported as a `forceRepaint` regression. Attributing
+    /// failures correctly is this branch's entire purpose, so the distinction is
+    /// carried in the type rather than reconstructed at the assertion.
+    private enum ColsOutcome: Equatable {
+        case matched
+        /// Polling ended with the PTY reporting this width instead.
+        case mismatched(UInt16)
+        /// `_testOnly_kernelWindowSize()` returned nil: the master fd is closed,
+        /// so there is no size to observe. Not a statement about `forceRepaint`.
+        case ptyUnavailable
+    }
+
+    /// Polls the PTY's kernel window size until `cols` is observed or `timeout`
+    /// elapses. Returns as soon as `cols` appears, so callers can act while the
+    /// wiggle is still mid-flight.
+    ///
+    /// `Task.sleep` is awaited without `try?` swallowing cancellation: on a
+    /// cancelled test the sleep throws immediately and every subsequent sleep
+    /// throws too, which turns this loop into a hot spin until its wall-clock
+    /// deadline. Rethrowing exits at the first cancellation instead.
+    private func waitForCols(
+        _ cols: UInt16,
+        in session: PTYSession,
+        timeout: TimeInterval
+    ) async throws -> ColsOutcome {
+        let deadline = Date().addingTimeInterval(timeout)
+        var last = await session._testOnly_kernelWindowSize()?.cols
+        while Date() < deadline {
+            if last == cols { return .matched }
+            try await Task.sleep(nanoseconds: 5_000_000)
+            last = await session._testOnly_kernelWindowSize()?.cols
+        }
+        guard let last else { return .ptyUnavailable }
+        return .mismatched(last)
+    }
+
+    private enum HoldObservation {
+        /// `cols` was seen at least once. `heldFor` spans first to last sighting.
+        ///
+        /// This is a *sampled* span, not a proof of continuous observability:
+        /// polling establishes only that the width matched at each sample, and
+        /// says nothing about the gaps between them. It also understates the true
+        /// hold, since the width may have been set before the first sighting and
+        /// persisted after the last. The understatement has no fixed bound —
+        /// `Task.sleep` and the cross-actor `await` each guarantee a *minimum*
+        /// delay, so a descheduled poller can miss an arbitrary stretch. Only the
+        /// direction is guaranteed, which is what the assertion relies on: a
+        /// measured span can be too short but never too long, so a passing
+        /// `heldFor >= minimumHold` is trustworthy.
+        case held(heldFor: TimeInterval)
+        /// Polling ran to its deadline with the PTY reporting this width instead.
+        case neverObserved(lastSeen: UInt16)
+        /// The master fd is closed, so there was no size to sample. Says nothing
+        /// about `forceRepaint`.
+        case ptyUnavailable
+    }
+
+    /// Polls until `cols` appears, then keeps polling until it goes away, and
+    /// reports how long it remained.
+    ///
+    /// Distinct from `waitForCols`, which returns on first sighting: a single
+    /// sighting shows the size changed but not that it stayed long enough for a
+    /// process handling WINCH a few ms late to see it. That short-hold mode is
+    /// hypothetical — the regression that actually shipped was a bare same-size
+    /// SIGWINCH, which changes the width at no point and so fails on
+    /// `neverObserved` alone. `minimumHold` guards the adjacent failure a single
+    /// observation would miss; its headroom came from mutation testing, not from
+    /// a bug seen in the wild.
+    ///
+    /// Cancellation is rethrown rather than swallowed, for the reason given on
+    /// `waitForCols`.
+    private func measureHold(
+        of cols: UInt16,
+        in session: PTYSession,
+        timeout: TimeInterval
+    ) async throws -> HoldObservation {
+        let deadline = Date().addingTimeInterval(timeout)
+        var firstSeen: Date?
+        var lastSeen: Date?
+        var last: UInt16?
+
+        while Date() < deadline {
+            last = await session._testOnly_kernelWindowSize()?.cols
+            if last == cols {
+                let now = Date()
+                if firstSeen == nil { firstSeen = now }
+                lastSeen = now
+            } else if firstSeen != nil {
+                break   // it was held and has now been restored
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+
+        if let first = firstSeen, let final = lastSeen {
+            return .held(heldFor: final.timeIntervalSince(first))
+        }
+        guard let last else { return .ptyUnavailable }
+        return .neverObserved(lastSeen: last)
     }
 
     func testForceRepaintDeliversRealSizeChangeAndRestores() async throws {
@@ -46,50 +179,43 @@ final class PTYForceRepaintTests: XCTestCase {
             scrollbackSize: 64 * 1024
         )
         pty = session
-
-        let collector = OutputCollector()
-        await session.setOutputHandler { data in
-            Task { await collector.append(data) }
-        }
         await session.startReading()
 
-        // Install a WINCH trap that reports the size the shell observes.
-        // `zsh` updates COLUMNS from TIOCGWINSZ on WINCH, so each real size
-        // change prints one WINCH:<cols> line. A same-size SIGWINCH (the old
-        // broken behavior) prints WINCH:120 twice or nothing useful — the
-        // assertion below requires the *intermediate* width to be observed.
-        await session.write(Data("trap 'echo WINCH:$COLUMNS' WINCH; echo TRAP_READY\n".utf8))
-        let readyText = await waitForOutput(containing: "TRAP_READY", in: collector, timeout: 5.0)
-        // Shell may not have come up (e.g. sandboxed CI without login) — skip
-        // rather than fail on environmental issues.
-        try XCTSkipIf(!readyText.contains("TRAP_READY"), "shell did not initialize in time")
-        await collector.reset()
+        let initial = try await kernelSize(of: session)
+        XCTAssertEqual(initial.cols, 120, "PTY did not start at the requested width")
 
-        // The wiggle must surface the intermediate width (119) to the child —
-        // that observation is exactly what Node keys its redraw on. Retry a
-        // few times: under full-suite CPU load the shell can be scheduled too
-        // late to see the intermediate size within one wiggle (a user would
-        // tap again). A regression back to bare same-size SIGWINCH fails
-        // deterministically — no attempt can ever produce WINCH:119 because
-        // the size never changes.
-        var text = ""
-        for _ in 0..<5 {
-            await session.forceRepaint()
-            text = await waitForOutput(containing: "WINCH:119", in: collector, timeout: 2.0)
-            if text.contains("WINCH:119") { break }
+        // Run the wiggle concurrently with polling: the intermediate width (119)
+        // is exactly what Node keys its redraw on, and it must be *held* for a
+        // sustained window rather than flickering, or a foreground process that
+        // handles WINCH a few ms later observes only the restored size and skips
+        // the redraw. Measuring the hold (not just sighting it once) is what
+        // makes the duration part of the contract enforceable. A regression back
+        // to a bare same-size SIGWINCH never changes the kernel winsize at all,
+        // so `observed` goes false and this fails deterministically.
+        async let repaint: Void = session.forceRepaint()
+        let hold = try await measureHold(of: 119, in: session, timeout: 2.0)
+        await repaint
+
+        switch hold {
+        case .held(let heldFor):
+            XCTAssertGreaterThanOrEqual(
+                heldFor,
+                Self.minimumHold,
+                "the intermediate size flickered (held \(heldFor)s) — a process handling WINCH late sees only the restored size"
+            )
+        case .neverObserved(let lastSeen):
+            XCTFail("""
+                the intermediate size was never observable (PTY stayed at \(lastSeen)) \
+                — a repaint would be skipped by Node/Ink apps
+                """)
+        case .ptyUnavailable:
+            throw XCTSkip("the PTY's master fd closed during the wiggle — the child shell died, not a forceRepaint defect")
         }
-        XCTAssertTrue(
-            text.contains("WINCH:119"),
-            "foreground process never observed the intermediate size — repaint would be skipped by Node/Ink apps. Output: \(text)"
-        )
 
         // And the size must be restored afterwards.
-        await session.write(Data("echo FINAL:$COLUMNS\n".utf8))
-        let finalText = await waitForOutput(containing: "FINAL:120", in: collector, timeout: 5.0)
-        XCTAssertTrue(
-            finalText.contains("FINAL:120"),
-            "size was not restored after the wiggle. Output: \(finalText)"
-        )
+        let restored = try await kernelSize(of: session)
+        XCTAssertEqual(restored.cols, 120, "size was not restored after the wiggle")
+        XCTAssertEqual(restored.rows, 40, "rows must be untouched by the wiggle")
     }
 
     func testForceRepaintRestoresToNewestSizeWhenResizedMidWiggle() async throws {
@@ -100,47 +226,45 @@ final class PTYForceRepaintTests: XCTestCase {
             scrollbackSize: 64 * 1024
         )
         pty = session
-
-        let collector = OutputCollector()
-        await session.setOutputHandler { data in
-            Task { await collector.append(data) }
-        }
         await session.startReading()
 
-        await session.write(Data("echo SHELL_READY\n".utf8))
-        let readyText = await waitForOutput(containing: "SHELL_READY", in: collector, timeout: 5.0)
-        try XCTSkipIf(!readyText.contains("SHELL_READY"), "shell did not initialize in time")
-        await collector.reset()
-
-        // Race a client resize against the wiggle's 50 ms sleep. Whatever the
-        // interleaving, the actor serializes the calls and forceRepaint's
-        // restore must use the NEWEST size (90), never stomp it back to 120.
+        // Land a client resize strictly *inside* the wiggle, then assert the
+        // restore honours it. forceRepaint re-reads currentCols/currentRows
+        // after its sleep precisely so a mid-flight resize wins.
+        //
+        // The interleaving is synchronized on observable state, not on task
+        // start order: `async let` only creates the child task, it does not
+        // guarantee it runs before the next statement. Simply calling
+        // `resize(90)` on the following line therefore usually won the race and
+        // landed *before* the wiggle began — at which point a stale-restore
+        // implementation and a correct one both end at 90 and the test asserts
+        // nothing. Verified: it passed against a deliberately stale restore.
+        // Waiting for the kernel to actually hold 119 proves the wiggle is
+        // mid-flight before the resize is issued.
+        //
+        // The resize changes BOTH dimensions, and both are asserted. Rows are
+        // not incidental: with rows held at 40 throughout, a restore that reused
+        // a stale pre-await `currentRows` while re-reading `currentCols` passed
+        // both tests (verified by mutation). Device rotation changes rows and
+        // cols together, so that is the realistic trigger, not a contrived one.
         async let repaint: Void = session.forceRepaint()
-        await session.resize(cols: 90, rows: 40)
-        _ = await repaint
+        let midWiggle = try await waitForCols(119, in: session, timeout: 2.0)
+        switch midWiggle {
+        case .matched:
+            break
+        case .mismatched(let lastSeen):
+            await repaint
+            XCTFail("wiggle never started (PTY stayed at \(lastSeen)) — the race below would be vacuous")
+            return
+        case .ptyUnavailable:
+            await repaint
+            throw XCTSkip("the PTY's master fd closed before the wiggle was observable — the child shell died")
+        }
+        await session.resize(cols: 90, rows: 25)
+        await repaint
 
-        await session.write(Data("echo FINAL:$COLUMNS\n".utf8))
-        let finalText = await waitForOutput(containing: "FINAL:90", in: collector, timeout: 5.0)
-        XCTAssertTrue(
-            finalText.contains("FINAL:90"),
-            "mid-wiggle resize was stomped by forceRepaint's restore. Output: \(finalText)"
-        )
-    }
-}
-
-/// Actor that accumulates PTY output for assertions.
-private actor OutputCollector {
-    private var buffer = Data()
-
-    var text: String {
-        String(bytes: buffer, encoding: .utf8) ?? ""
-    }
-
-    func append(_ data: Data) {
-        buffer.append(data)
-    }
-
-    func reset() {
-        buffer.removeAll()
+        let final = try await kernelSize(of: session)
+        XCTAssertEqual(final.cols, 90, "mid-wiggle resize was stomped by forceRepaint's restore")
+        XCTAssertEqual(final.rows, 25, "mid-wiggle resize's ROWS were stomped by a stale restore")
     }
 }
