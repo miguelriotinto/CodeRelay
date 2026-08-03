@@ -8,14 +8,20 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ### Fixed
 
-- **`swift test` no longer hangs on GitHub's `macos-15` runner.**
-  `GitRootResolver` walked up to the git root by calling
+- **Workspace grouping can no longer wedge the foreground poll.**
+  `GitRootResolver` resolves each session's cwd to its enclosing repo so sessions
+  group by repo; it runs on the per-session foreground poll via
+  `SessionManager.handleWorkingDir`. For any cwd with no `.git` ancestor the walk
+  could fail to terminate, spinning a filesystem probe per iteration inside the
+  actor — on a host whose Foundation exhibits the divergence below, that stalls
+  workspace grouping and push rollups for the affected session. `GitRootResolver`
+  walked up to the git root by calling
   `URL.deletingLastPathComponent()` until the parent equalled the current path.
   Foundation does not document that such a fixed point exists, and the
   `NSURL`-backed implementation instead maps `"/"` to `"/.."`, then `"/../.."`,
-  accumulating without ever converging — so the guard never fired and the walk
-  spun with a filesystem probe per iteration. That killed the `swift-test` job
-  for a month while the same code converged locally; `sample` on the runner put
+  accumulating without ever converging — so the guard never fired. It surfaced as
+  a hung `swift-test` job on GitHub's `macos-15` runner, which it killed for a
+  month while the same code converged locally; `sample` on the runner put
   all 2235 samples inside `-[NSURL URLByAppendingPathComponent:]`, i.e. a
   spinning loop rather than a parked `await`. No single factor selects the
   behaviour: varying only the linked SDK on one machine flips it, yet CI's binary
@@ -25,21 +31,22 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
   finite by construction under every implementation, and splits Unicode scalars
   rather than `Character`s so a component beginning with a combining mark can't
   fuse onto the preceding separator and silently drop an ancestor level. The
-  `.git` search is a static function taking the existence check as a parameter,
+  resolution step is a static function taking the existence check as a parameter,
   so a test can assert *which* paths it probes: with no `.git` anywhere the
   returned root is the input however the search got there, and when one is found
   the search stops well below `"/"`, so nothing about the return value — and no
   wall-clock bound, on a platform where the old walk happens to converge — could
-  observe the defect.
-- **PTY window-size reads can no longer return another session's size.** The
-  master fd's liveness flag was checked, the lock released, and only then the
-  `TIOCGWINSZ` ioctl issued, so the read source's cancel handler could close the
-  fd in the gap. An ioctl on a closed fd number whose slot the kernel has since
-  recycled does not merely fail — it can *succeed*, returning an unrelated PTY's
-  size. The check and the ioctl are now one critical section. Test-side, a closed
-  fd is reported as its own outcome rather than collapsing into "unexpected
-  width", so a child shell that died is no longer attributed to a `forceRepaint`
-  regression.
+  observe the defect. The seam is the whole normalize-then-search step rather
+  than just the search, so the assertions can't be satisfied by a helper that
+  production has stopped calling.
+- **`forceRepaint()`'s size wiggle is now asserted against the kernel's own
+  `winsize`.** The tests previously read the size back through a shell echoing
+  `$COLUMNS`, which requires the shell to be scheduled before the assertion runs —
+  on GitHub's `macos-15` runner it wasn't, so both tests failed there while passing
+  locally. They now read the master fd directly (a new `relay_get_winsize` shim
+  call behind a `_testOnly_` hook), which is the same `struct winsize` a Node/Ink
+  app compares against its cache. No change to shipped behaviour; the repaint fix
+  itself landed in 0.3.9.
 - **Resumed sessions no longer poll at the slow cadence.** `SessionManager.resumeSession`
   reached `.activeAttached` without restoring `PTYSession.attachedPollCadence`, so the
   foreground-process poll stayed at the 5 s detached cadence. Same-device tab switches

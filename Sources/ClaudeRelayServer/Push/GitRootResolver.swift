@@ -9,14 +9,53 @@ import Foundation
 /// path when no repo is found. Results are LRU-cached (bounded) so the
 /// server's foreground poll doesn't re-walk the tree every tick.
 public actor GitRootResolver {
+    /// Answers "is there something at this path?" — `FileManager` in production.
+    public typealias ExistenceCheck = @Sendable (String) -> Bool
+
     private let maxCacheEntries: Int
+    private let exists: ExistenceCheck
     private var cache: [String: String] = [:]
     private var order: [String] = []   // simple LRU: most-recent at the end
 
     public init(maxCacheEntries: Int = 256) {
+        self.init(maxCacheEntries: maxCacheEntries) { path in
+            FileManager.default.fileExists(atPath: path)
+        }
+    }
+
+    /// Injects the existence check so a test can observe *which* paths a resolution
+    /// probes while still calling `root(for:)` — the one entry point production uses.
+    ///
+    /// Driving a static helper instead observes a *sibling* of production: `root(for:)`
+    /// reaches the filesystem through private hops, so a test calling a hop below the
+    /// top leaves a rewrite of an upper hop unobserved. An earlier version of this
+    /// seam was a static `computeRoot(for:exists:)` and had exactly that hole —
+    /// restoring the pre-fix `deletingLastPathComponent()` walk in the private
+    /// instance method above it left all eight tests green.
+    ///
+    /// **This closes the routing hole, not the platform one.** With probes now
+    /// observed through `root(for:)`, that same mutant *still* survives on this
+    /// machine, and no probe assertion can change that: for every input production
+    /// can supply, the pre-fix walk probes a byte-identical trail here (verified —
+    /// `/a/b/c`, `/`, and the normalized forms of `/a/../b` and `/a//b` all match).
+    /// The two implementations are observationally identical on a Foundation whose
+    /// `deletingLastPathComponent()` reaches its fixed point immediately; they differ
+    /// only on inputs like `///a`, which `resolvingSymlinksInPath()` removes before
+    /// the search sees them. What this seam buys is that a *routing* change — some
+    /// future rewrite that stops calling `gitRoot(of:exists:)` — now fails a test.
+    /// Termination itself is pinned structurally by
+    /// `testAncestorWalkIsFiniteAndEndsAtRoot`, which is platform-independent
+    /// because it asserts on the list rather than on a walk's behaviour.
+    ///
+    /// This is deliberately not on the public `init`: the seam exists for a test, so
+    /// it should not appear at production construction sites. The cost is a stored
+    /// property the actor would not otherwise need, which is the price of the
+    /// routing boundary actually being closed rather than moved up a level.
+    init(maxCacheEntries: Int = 256, exists: @escaping ExistenceCheck) {
         // Clamp: a non-positive cap would let `store`'s eviction loop call
         // removeFirst() on an empty order array.
         self.maxCacheEntries = max(1, maxCacheEntries)
+        self.exists = exists
     }
 
     /// The git root for `path`, or a normalized fallback. Empty/whitespace →
@@ -35,10 +74,20 @@ public actor GitRootResolver {
         return resolved
     }
 
+    /// Normalizes `path`, then searches its ancestors — the whole resolution step.
+    ///
+    /// Reached only from `root(for:)`, and it probes through the injected `exists`,
+    /// so a test driving `root(for:)` sees every probe this makes. There is no
+    /// separate static twin to drive instead: one existed and was the defect the
+    /// injected check replaced — see `init(maxCacheEntries:exists:)`.
+    ///
+    /// The return value cannot substitute for observing the probes.
+    /// `resolvingSymlinksInPath()` collapses exactly the inputs (`..`, `//`) on which
+    /// a divergent walk would return something different, so past this point the two
+    /// implementations are distinguishable only by which paths they touch.
     private func computeRoot(for path: String) -> String {
         let normalized = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        let fileManager = FileManager.default
-        return Self.gitRoot(of: normalized) { fileManager.fileExists(atPath: $0) }
+        return Self.gitRoot(of: normalized, exists: exists)
     }
 
     /// The nearest ancestor of `normalized` (inclusive) holding a `.git` entry, or
@@ -52,11 +101,25 @@ public actor GitRootResolver {
     /// therefore left the whole suite green (verified by mutation) — the defect was
     /// unobservable through this type's surface, not merely unobserved.
     ///
-    /// `testProbesExactlyTheFiniteAncestorList` closes that gap by pinning the probe
-    /// sequence, which composes with `testAncestorWalkIsFiniteAndEndsAtRoot` into the
-    /// termination guarantee neither test gives alone: the list is finite, and the
-    /// search probes exactly that list and nothing else. A correct helper that
-    /// nothing called would now fail the first of those two.
+    /// `testProbesExactlyTheFiniteAncestorList` narrows that gap without closing it,
+    /// and the distinction matters enough to state plainly: it pins the probe sequence
+    /// through `root(for:)` (via the `exists` injected on
+    /// `init(maxCacheEntries:exists:)`), so it fails if production stops routing
+    /// through this function, or probes a path outside the ancestor list. It does
+    /// *not* fail against the old walk on this machine, because there the walk probes
+    /// the identical sequence for every normalized input — the mutation survives, and
+    /// the test's own doc comment says so.
+    ///
+    /// Termination is therefore pinned by `testAncestorWalkIsFiniteAndEndsAtRoot`
+    /// asserting on the list itself, which holds on any Foundation. The probe test
+    /// contributes the other half — that this search consults that list and nothing
+    /// else — and either way a divergence fails by name rather than parking the suite.
+    /// Which of its two bounds catches that depends on where the divergence is, and
+    /// they are not interchangeable: a loop that probes each iteration trips
+    /// `probeLimit`, while one that spins building the ancestor list issues no probe
+    /// at all and is caught only by the wall-clock deadline the helper resolves
+    /// through. Verified by mutation — a spin inserted at the top of `ancestorPaths`
+    /// failed the test in 2.6 s.
     static func gitRoot(of normalized: String, exists: (String) -> Bool) -> String {
         // Over a list that is finite by construction — see `ancestorPaths` for why
         // this is not a `deletingLastPathComponent()` loop.
@@ -95,10 +158,25 @@ public actor GitRootResolver {
     /// with a combining mark, which grapheme-cluster splitting fuses onto the
     /// preceding `"/"` — the separator then isn't equal to `"/"` any more, so it
     /// is missed and an ancestor level is silently dropped. `U+002F` is a single
-    /// scalar that never participates in a larger one, so splitting the scalar
-    /// view matches the kernel's own notion of a path component for any path a
-    /// `String` can hold (the kernel splits the UTF-8 byte 0x2F, and UTF-8 is
-    /// self-synchronizing).
+    /// scalar that never participates in a larger one, so splitting the scalar view
+    /// finds every separator the kernel would (it splits the UTF-8 byte 0x2F, and
+    /// UTF-8 is self-synchronizing).
+    ///
+    /// Component *semantics* match only for the paths this actually receives.
+    /// Dropping empty subsequences collapses `//` the way the kernel does, but that
+    /// also rewrites the input, so `ancestorPaths(of: "/tmp//x")` starts at
+    /// `"/tmp/x"`; and `.` / `..` are returned as ordinary components rather than
+    /// interpreted.
+    ///
+    /// In practice neither reaches here, because `computeRoot` normalizes first —
+    /// `testProbesExactlyTheFiniteAncestorList` asserts that for the inputs it
+    /// covers. Note what that does and does not establish: it is a claim about
+    /// `resolvingSymlinksInPath()` stripping `..`/`.`/`//`, which is observed on the
+    /// inputs tried, not documented for all of them — the same species of assumption
+    /// as the `deletingLastPathComponent()` fixed point this file exists to avoid
+    /// trusting. Relying on it is acceptable only because nothing here depends on it
+    /// for termination: `ancestorPaths` is finite by construction whatever it is
+    /// handed, so an unnormalized input yields a slightly odd group, never a hang.
     static func ancestorPaths(of path: String) -> [String] {
         var components = path.unicodeScalars
             .split(separator: "/")
