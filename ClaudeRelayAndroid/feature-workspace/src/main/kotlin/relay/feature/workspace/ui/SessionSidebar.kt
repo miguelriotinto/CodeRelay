@@ -197,7 +197,7 @@ fun SessionSidebar(
                                 )
                             }
                         }
-                        item(key = "gap-${group.id}") { Spacer(Modifier.height(10.dp)) }
+                        item(key = "gap-${group.id}") { Spacer(Modifier.height(TileGap)) }
                     }
                 }
             }
@@ -225,7 +225,13 @@ private data class RenameTarget(val id: UUID, val name: String)
  */
 internal enum class TileEdge { ONLY, TOP, MIDDLE, BOTTOM }
 
-private val TileCornerRadius = 10.dp
+/**
+ * Matched to the Swift `WorkspaceTileMetrics.cornerRadius` / `tileGap`, which are
+ * in turn matched to the iOS system inset-grouped card above the tiles. Keep the
+ * two platforms' values in step.
+ */
+private val TileCornerRadius = 18.dp
+internal val TileGap = 4.dp
 
 /** Corner shape for a tile row at [edge]. */
 internal fun TileEdge.shape(): RoundedCornerShape {
@@ -350,20 +356,41 @@ private fun SessionRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             val dotColor = sessionStatusDotColor(session.state)
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(dotColor ?: Color.Transparent),
-            )
 
-            Text(
-                text = name,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
+            // Name first, dot immediately after it — parity with the Swift
+            // `SessionRow`. A shared leading dot column put the group's dot and
+            // its sessions' dots in one line and flattened the hierarchy.
+            //
+            // Nested in its own weighted row so the pair stays left-aligned while
+            // the trailing agent cluster stays right-aligned. Weighting the name
+            // directly in the outer row instead would cap it at its share of the
+            // width, ellipsizing long names with empty space beside them.
+            Row(
                 modifier = Modifier.weight(1f),
-            )
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    // Normal against the header's bold: the weight is what marks
+                    // the group/session relationship.
+                    fontWeight = FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    // `fill = false` so the name takes only the width it needs and
+                    // the dot sits against it; a long name ellipsizes rather than
+                    // pushing the dot out of the row.
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(dotColor ?: Color.Transparent),
+                )
+            }
 
             // Trailing agent cluster: sparkle micro-icon + state pill. Parity
             // with iOS/macOS `SessionRow`. The agent's *name* is deliberately
@@ -480,19 +507,26 @@ private fun RollupHeader(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Title then dot (parity with the Swift `WorkspaceTileHeader`): a leading
+        // dot shared a column with the session rows' dots and read as a peer
+        // rather than as their parent.
+        Text(
+            text = group.title,
+            style = MaterialTheme.typography.titleSmall,
+            // Bold, against the session rows' normal weight.
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            // Yields so a long folder name ellipsizes instead of displacing the
+            // dot and chevron.
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Spacer(Modifier.width(8.dp))
         Box(
             modifier = Modifier
                 .size(8.dp)
                 .clip(CircleShape)
                 .background(group.state.badgeColor()),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = group.title,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.weight(1f))
         if (group.attentionCount > 0) {

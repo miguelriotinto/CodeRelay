@@ -147,7 +147,7 @@ struct SessionSidebarView: View {
         WorkspaceTileHeader(
             group: group,
             isCollapsed: isCollapsed,
-            titleFont: .caption.weight(.semibold)
+            titleFont: .caption.weight(.bold)
         ) {
             collapse.toggle(group.id)
             coordinator.saveCollapsedGroups(collapse.collapsedGroupIds)  // F3
@@ -172,8 +172,14 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // Dot trails the name, and the name stays unbolded against the tile
+            // header's bold — parity with iOS, same reasoning.
+            Text(name)
+                .font(.body.weight(.regular))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(-1)
             SessionStatusDot(state: state, size: 6)
-            Text(name).font(.body).lineLimit(1).truncationMode(.tail)
             Spacer(minLength: 4)
             // Agent *name* omitted for parity with iOS: dot + name + sparkle +
             // agent name + pill left no room for the session name in a narrow

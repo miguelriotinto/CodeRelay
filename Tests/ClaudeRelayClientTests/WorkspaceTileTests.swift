@@ -31,10 +31,34 @@ final class WorkspaceTileTests: XCTestCase {
         XCTAssertTrue(WorkspaceTileEdge.only.roundsBottom)
     }
 
+    func testTileGapIsTightEnoughToReadAsAStackOfPeers() {
+        // 4pt, not the ~35pt SwiftUI section default: the tiles are peers in one
+        // list, and a wide gutter made them read as unrelated sections. On iOS
+        // this value only bites when applied as `.listSectionSpacing` — the row
+        // insets can't influence inter-section spacing.
+        XCTAssertEqual(WorkspaceTileMetrics.tileGap, 4)
+    }
+
+    #if os(iOS)
+    func testRowInsetsCarryNoTileGapOrOuterInsetOnIOS() {
+        // On iOS the system inset-grouped section owns the tile's outer inset,
+        // corner radius, and inter-tile spacing (it clips the row background to
+        // its own shape). Re-adding either here would double-inset the content
+        // against the actions card above and double the section spacing.
+        for edge in [WorkspaceTileEdge.only, .top, .middle, .bottom] {
+            let insets = WorkspaceTileMetrics.rowInsets(for: edge)
+            XCTAssertEqual(insets.leading, WorkspaceTileMetrics.contentPadding, "\(edge)")
+            XCTAssertEqual(insets.trailing, WorkspaceTileMetrics.contentPadding, "\(edge)")
+            XCTAssertEqual(insets.bottom, WorkspaceTileMetrics.rowPadding, "\(edge)")
+        }
+    }
+    #else
     func testTileGapIsAppliedOncePerTileNotPerRow() {
-        // The inter-tile gap lives in the *last* row's bottom inset. If a middle
-        // row also carried it, every session would be visually detached from the
-        // next and the group would stop reading as one tile.
+        // macOS draws the tile shape itself (`.listStyle(.sidebar)` does no
+        // section clipping), so the inter-tile gap lives in the *last* row's
+        // bottom inset. If a middle row also carried it, every session would be
+        // visually detached from the next and the group would stop reading as one
+        // tile.
         let middle = WorkspaceTileMetrics.rowInsets(for: .middle)
         let bottom = WorkspaceTileMetrics.rowInsets(for: .bottom)
         XCTAssertEqual(middle.bottom, WorkspaceTileMetrics.rowPadding)
@@ -42,6 +66,7 @@ final class WorkspaceTileTests: XCTestCase {
         XCTAssertEqual(WorkspaceTileMetrics.rowInsets(for: .top).bottom, WorkspaceTileMetrics.rowPadding)
         XCTAssertEqual(WorkspaceTileMetrics.rowInsets(for: .only).bottom, bottom.bottom)
     }
+    #endif
 
     func testAllRowsShareTheSameHorizontalInsets() {
         // Any divergence here would step the tile's left or right edge in or out
@@ -50,7 +75,12 @@ final class WorkspaceTileTests: XCTestCase {
             .map { WorkspaceTileMetrics.rowInsets(for: $0) }
         XCTAssertEqual(Set(insets.map(\.leading)).count, 1)
         XCTAssertEqual(Set(insets.map(\.trailing)).count, 1)
+        #if os(iOS)
+        // The system section supplies the outer inset; the row only pads content.
+        XCTAssertEqual(insets[0].leading, WorkspaceTileMetrics.contentPadding)
+        #else
         XCTAssertEqual(insets[0].leading,
                        WorkspaceTileMetrics.horizontalInset + WorkspaceTileMetrics.contentPadding)
+        #endif
     }
 }

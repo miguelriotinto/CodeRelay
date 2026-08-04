@@ -32,6 +32,9 @@ struct SessionSidebarView: View {
                 }
                 .disabled(isLoadingAttachable)
             }
+            // Keeps the actions card visually separate from the tiles below, now
+            // that the List-level spacing is collapsed to the tile gap.
+            .listSectionSpacing(20)
 
             if coordinator.activeSessions.isEmpty && !coordinator.isLoading {
                 ContentUnavailableView(
@@ -62,6 +65,10 @@ struct SessionSidebarView: View {
                 }
             }
         }
+        // Each workspace group is its own `Section`, so SwiftUI's default
+        // inter-section spacing (~35pt) — not the row insets — is what separates
+        // the tiles. This is where `tileGap` has to be applied to take effect.
+        .listSectionSpacing(WorkspaceTileMetrics.tileGap)
         .navigationTitle("Sessions")
         .onAppear {
             // F3: seed collapse layout from persistence once per appear.
@@ -164,12 +171,20 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            SessionStatusDot(state: session.state, size: 8)
-
+            // Regular weight against the header's bold: at the same size, the
+            // old medium-vs-semibold pairing was too fine a distinction to mark
+            // the group/session hierarchy, so every line read as a peer.
             Text(name)
-                .font(.system(.subheadline, design: .rounded, weight: .medium))
+                .font(.system(.subheadline, design: .rounded, weight: .regular))
                 .lineLimit(1)
                 .truncationMode(.tail)
+                // Yields to the dot so a long name truncates rather than pushing
+                // the status dot out of the row.
+                .layoutPriority(-1)
+
+            // Trails the name for the same reason as the tile header's dot: a
+            // shared leading dot column flattened the hierarchy.
+            SessionStatusDot(state: session.state, size: 8)
 
             Spacer(minLength: 4)
 
