@@ -48,15 +48,20 @@ public enum WorkspaceTileMetrics {
     public static let tileGap: CGFloat = 4
     /// Corner radius for the platforms that have to draw the tile shape by hand.
     ///
-    /// iOS does **not** use this: there the inset-grouped `List` clips a row
-    /// background to its own section shape, so the tile inherits the exact radius
-    /// of the `New Session` / `Attach Session` card above it for free (verified on
-    /// device: a plain `Rectangle()` row background comes out rounded, and a
-    /// multi-row section rounds only its outer corners). Hard-coding a measured
-    /// radius there could only ever approximate a value Apple is free to change.
+    /// iOS does **not** use this: an *inset-grouped* `List` clips a row background
+    /// to its own section shape, so the tile inherits the exact radius of the
+    /// `New Session` / `Attach Session` card above it (verified on device: a plain
+    /// `Rectangle()` row background comes out rounded, and a multi-row section
+    /// rounds only its outer corners). Hard-coding a measured radius there could
+    /// only ever approximate a value Apple is free to change.
     ///
-    /// macOS uses `.listStyle(.sidebar)`, which does no such clipping, so it draws
-    /// the shape itself with this radius.
+    /// That inheritance is **conditional on the list style**, which is why the iOS
+    /// sidebar pins `.listStyle(.insetGrouped)` rather than taking the default: as
+    /// a `NavigationSplitView` sidebar column on iPad the implicit style is
+    /// `.sidebar`, which does no clipping, and the tiles came out square.
+    ///
+    /// macOS uses `.listStyle(.sidebar)` deliberately, so it draws the shape itself
+    /// with this radius.
     public static let cornerRadius: CGFloat = 10
 
     /// Row content insets for a row at `edge`. The trailing gap is added below
@@ -96,13 +101,18 @@ public struct WorkspaceTileBackground: View {
 
     public var body: some View {
         #if os(iOS)
-        // A plain fill, deliberately: the inset-grouped `List` clips a row
+        // A plain fill, deliberately: an inset-grouped `List` clips a row
         // background to its section's shape, so the group inherits the system
         // card's exact corner radius and inset — including rounding only the
         // section's *outer* corners, which is precisely what `edge` encodes.
         // Drawing our own `UnevenRoundedRectangle` here would sit inside that clip
         // and could only approximate the card above it. `edge` is still consumed
         // on macOS, and still drives `rowInsets`.
+        //
+        // This depends on the host `List` actually being inset-grouped — the iOS
+        // sidebar pins that style for exactly this reason. Under `.sidebar` (the
+        // iPad split-view column default) there is no clip and this fill renders
+        // square.
         Color.clear.background(.fill.tertiary)
         #else
         let radius = WorkspaceTileMetrics.cornerRadius

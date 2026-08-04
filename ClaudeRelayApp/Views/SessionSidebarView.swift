@@ -65,6 +65,15 @@ struct SessionSidebarView: View {
                 }
             }
         }
+        // Pinned, not inherited: the tiles get their rounded corners from the
+        // inset-grouped section shape this style clips row backgrounds to (see
+        // `WorkspaceTileBackground`). That style is only the *implicit* default in
+        // the iPhone sheet. On iPad this same view is the sidebar column of a
+        // `NavigationSplitView`, where the implicit style is `.sidebar` — which
+        // does no such clipping, so every tile rendered square-cornered and the
+        // actions rows lost their card entirely. Stating the style makes the
+        // assumption the tile background depends on true on both idioms.
+        .listStyle(.insetGrouped)
         // Each workspace group is its own `Section`, so SwiftUI's default
         // inter-section spacing (~35pt) — not the row insets — is what separates
         // the tiles. This is where `tileGap` has to be applied to take effect.
