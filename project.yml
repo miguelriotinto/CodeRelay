@@ -76,6 +76,9 @@ targets:
       - target: ClaudeRelayApp
       - package: ClaudeRelayClient
         product: ClaudeRelaySpeech
+      # The terminal scroll tests drive SwiftTerm's own scrolling API against a
+      # real RelayTerminalView, so the test bundle needs the module too.
+      - package: SwiftTerm
     settings:
       base:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/ClaudeRelayApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ClaudeRelayApp"

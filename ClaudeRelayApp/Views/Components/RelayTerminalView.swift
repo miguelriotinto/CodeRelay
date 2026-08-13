@@ -104,6 +104,39 @@ class RelayTerminalView: TerminalView {
         NotificationCenter.default.post(name: .toggleSpeechRecording, object: nil)
     }
 
+    // MARK: - Output
+
+    /// Parser state for [feedTrackingScrollbackClear]. Lives on the view because a
+    /// `CSI 3 J` can straddle two output frames.
+    private var scrollbackClearScanner = ScrollbackClearScanner()
+
+    /// Feeds output to the emulator and repairs the scroll geometry if the chunk
+    /// cleared the scrollback.
+    ///
+    /// `CSI 3 J` trims the buffer's history and lowers `yBase`/`yDisp` *silently*
+    /// — SwiftTerm's `cmdEraseInDisplay` case 3 notifies nobody — so afterwards
+    /// `contentSize`/`contentOffset` still describe lines that no longer exist.
+    /// `changeScrollback` is the public door to SwiftTerm's own `updateScroller()`;
+    /// passing the CURRENT scrollback makes the buffer change a no-op (the
+    /// underlying `changeHistorySize` returns early when the max length is
+    /// unchanged), leaving a pure resync.
+    ///
+    /// Do NOT instead "fix" the geometry here by writing `contentSize` /
+    /// `contentOffset` directly. The app cannot tell stale geometry from a scroll
+    /// in flight: SwiftTerm syncs `yDisp` from the offset only while the finger is
+    /// down (`isTracking`), so during a downward fling — or any coast after the
+    /// lift — the offset legitimately runs ahead of `yDisp`. Reading that gap as
+    /// staleness truncated `contentSize` to the lift point, which deleted the
+    /// content below it and left the user able to scroll up but never back down to
+    /// the prompt.
+    func feedTrackingScrollbackClear(_ bytes: ArraySlice<UInt8>) {
+        let didClearScrollback = scrollbackClearScanner.scan(bytes)
+        feed(byteArray: bytes)
+        if didClearScrollback {
+            changeScrollback(getTerminal().options.scrollback)
+        }
+    }
+
     var onPasteImage: ((Data) -> Void)?
 
     override func paste(_ sender: Any?) {
@@ -195,24 +228,7 @@ struct TerminalHostView: UIViewRepresentable {
         cached.delegate.viewModel = viewModel
         viewModel.onTerminalOutput = { [weak view = cached.view] data in
             guard let view else { return }
-            let bytes = ArraySlice([UInt8](data))
-            view.feed(byteArray: bytes)
-
-            // Sync UIScrollView after buffer changes that bypass the scrolled delegate.
-            // \033[3J (clear scrollback) trims lines and adjusts yDisp without
-            // notifying the view, leaving contentOffset/contentSize stale.
-            let term = view.getTerminal()
-            let rows = term.rows
-            if rows > 0 {
-                let cellHeight = view.bounds.height / CGFloat(rows)
-                let yDisp = CGFloat(term.buffer.yDisp)
-                let expectedOffsetY = yDisp * cellHeight
-                if view.contentOffset.y - expectedOffsetY > cellHeight * 2 {
-                    view.contentSize.height = max(view.bounds.height,
-                                                  (yDisp + CGFloat(rows)) * cellHeight)
-                    view.contentOffset.y = expectedOffsetY
-                }
-            }
+            view.feedTrackingScrollbackClear(ArraySlice([UInt8](data)))
         }
         viewModel.onReplayFlushed = { [weak view = cached.view] in
             DispatchQueue.main.async {
