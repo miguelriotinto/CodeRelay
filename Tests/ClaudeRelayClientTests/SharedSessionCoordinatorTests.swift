@@ -157,6 +157,32 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.name(for: sessionId), "Rhaegar")
     }
 
+    func testSetNameTrimsSurroundingWhitespace() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+
+        let sessionId = UUID()
+        coordinator.setName("  Rhaegar\n", for: sessionId)
+        XCTAssertEqual(coordinator.name(for: sessionId), "Rhaegar")
+    }
+
+    /// A blank rename is dropped rather than stored. `name(for:)` only falls back
+    /// to the short id when there is *no* entry, so storing "" would leave the
+    /// session with an unrecoverable blank name in every list.
+    func testSetNameIgnoresBlankName() {
+        let connection = RelayConnection()
+        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+
+        let sessionId = UUID()
+        coordinator.setName("Rhaegar", for: sessionId)
+        coordinator.setName("   ", for: sessionId)
+        XCTAssertEqual(coordinator.name(for: sessionId), "Rhaegar", "a blank rename must not overwrite a good name")
+
+        let untouched = UUID()
+        coordinator.setName("", for: untouched)
+        XCTAssertEqual(coordinator.name(for: untouched), String(untouched.uuidString.prefix(8)))
+    }
+
     // MARK: - Active Sessions Filter
 
     /// The pane renders the server's token-scoped `sessions` directly, minus

@@ -233,6 +233,7 @@ private struct SessionRow: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .selectAllOnBeginEditing(while: showRenameAlert)
     }
 }
 

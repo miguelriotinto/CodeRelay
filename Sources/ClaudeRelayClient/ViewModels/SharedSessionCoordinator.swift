@@ -326,11 +326,21 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         sessionNames[id] ?? id.uuidString.prefix(8).description
     }
 
+    /// Renames a session, trimming the name and ignoring a blank one.
+    ///
+    /// The guard lives here rather than in each rename dialog because there are
+    /// four call sites across two apps and they had already drifted — the macOS
+    /// sidebar passed its field through untrimmed, so a whitespace-only rename
+    /// stuck. A stored blank is not recoverable from the UI either: `name(for:)`
+    /// only falls back to the short id when there is *no* entry, so an empty
+    /// string renders as an empty row rather than as the id.
     public func setName(_ name: String, for id: UUID) {
-        sessionNames[id] = name
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        sessionNames[id] = trimmed
         ownershipStore.saveNames(sessionNames)
         Task {
-            try? await sessionController?.renameSession(id: id, name: name)
+            try? await sessionController?.renameSession(id: id, name: trimmed)
         }
     }
 

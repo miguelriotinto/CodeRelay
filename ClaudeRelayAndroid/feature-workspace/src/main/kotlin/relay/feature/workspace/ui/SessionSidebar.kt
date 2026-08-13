@@ -47,6 +47,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,12 +56,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import relay.feature.workspace.sanitizedSessionName
 import relay.protocol.ActivityState
 import relay.protocol.SessionInfo
 import java.util.UUID
@@ -425,20 +431,39 @@ private fun RenameDialog(
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var text by remember { mutableStateOf(initialName) }
+    // TextFieldValue rather than a bare String so the initial *selection* can
+    // span the whole name: the first keystroke then replaces it instead of
+    // appending. Compose keeps a field's selection across gaining focus, so
+    // seeding it here survives the focus request below.
+    var value by remember {
+        mutableStateOf(TextFieldValue(initialName, TextRange(0, initialName.length)))
+    }
+    val focusRequester = remember { FocusRequester() }
+    // Compose does not focus a dialog's field on its own, and an unfocused
+    // field renders no selection highlight — so the pre-selection is only
+    // visible (and only replaceable) once focus is taken.
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    // Null while the entry is blank. Pre-selecting the name (above) makes
+    // "select-all, then confirm" a two-tap path to an empty name, so the button
+    // has to refuse it rather than dismiss as though it renamed something.
+    val sanitized = sanitizedSessionName(value.text)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Rename Session") },
         text = {
             TextField(
-                value = text,
-                onValueChange = { text = it },
+                value = value,
+                onValueChange = { value = it },
                 singleLine = true,
                 label = { Text("Name") },
+                modifier = Modifier.focusRequester(focusRequester),
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(text) }) { Text("Rename") }
+            TextButton(
+                onClick = { sanitized?.let(onConfirm) },
+                enabled = sanitized != null,
+            ) { Text("Rename") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

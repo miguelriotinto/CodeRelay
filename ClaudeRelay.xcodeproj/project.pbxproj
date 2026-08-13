@@ -11,6 +11,7 @@
 		0717D69490BE19F05FCF66E6 /* MenuBarActivityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30EC88C3C7486A906F4D35E7 /* MenuBarActivityTests.swift */; };
 		0877BB8EA417A60F1F577800 /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB4DA40B47A6CE46CC9797F /* SessionSidebarView.swift */; };
 		08F925B0F2FCF5B7E66B746D /* ServerListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36C86DE341C6B0EC9ED1F8BB /* ServerListView.swift */; };
+		0BC726CB1515AC218BF04893 /* SelectAllOnBeginEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = F59B444752D6EB38F5BEE432 /* SelectAllOnBeginEditing.swift */; };
 		0C5F93F50E30A58EF58F5E5F /* SessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BA4095B6DFC9164DB8C74D /* SessionCoordinator.swift */; };
 		0D5C609EB39AC81E2A65632B /* QRCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3D21FADD27700A6E040337F /* QRCodeSheet.swift */; };
 		0DDD25DF810479BC88176F81 /* ClaudeRelayClient in Frameworks */ = {isa = PBXBuildFile; productRef = 1306E716950146DD761EE8DC /* ClaudeRelayClient */; };
@@ -40,6 +41,7 @@
 		6428BE79BBFA9B0F1E74AC1E /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7615D1873F507B37D13B528 /* TerminalPalette.swift */; };
 		6529F1CAC9948761A14893E9 /* AddEditServerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 338CD3ED0482F3AB64117CF9 /* AddEditServerViewModel.swift */; };
 		6D09056ADDB5D682689F7DDF /* ServerListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1481B919F081FD62AD2BBD9A /* ServerListViewModel.swift */; };
+		788DFE6458E2C729502AAB0E /* AlertFieldSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 457C2FF4E2CEE1A18E3FAE5B /* AlertFieldSelectionTests.swift */; };
 		7C1BDD714B65C5AEFBCD74D6 /* QRCodeComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3014236A9153620618B1A7 /* QRCodeComponents.swift */; };
 		7E9F091C0D22BC8F83E18092 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68A6EA1094483278ADD0146F /* WorkspaceView.swift */; };
 		8102CB9311F239F2CE8D238E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7FCEC509175BD571CE89C2 /* SettingsView.swift */; };
@@ -118,6 +120,7 @@
 		338CD3ED0482F3AB64117CF9 /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
 		36C86DE341C6B0EC9ED1F8BB /* ServerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListView.swift; sourceTree = "<group>"; };
 		42FCDD4B9EDF313C4B8EC47F /* ClaudeRelayMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeRelayMacApp.swift; sourceTree = "<group>"; };
+		457C2FF4E2CEE1A18E3FAE5B /* AlertFieldSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertFieldSelectionTests.swift; sourceTree = "<group>"; };
 		45DC656CAA02FE345E387335 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		4A53E6CE8384FD9002F533E1 /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		508D7CD8DCA41375E993CDA2 /* MicButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicButton.swift; sourceTree = "<group>"; };
@@ -171,6 +174,7 @@
 		EE15BB470918FEC539F58286 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		F3D21FADD27700A6E040337F /* QRCodeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeSheet.swift; sourceTree = "<group>"; };
 		F590C080D494FF31C908F29F /* SessionNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionNavigationTests.swift; sourceTree = "<group>"; };
+		F59B444752D6EB38F5BEE432 /* SelectAllOnBeginEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectAllOnBeginEditing.swift; sourceTree = "<group>"; };
 		FEC86DF2DE21C02D9CA12851 /* AddEditServerViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModelTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -352,6 +356,7 @@
 				508D7CD8DCA41375E993CDA2 /* MicButton.swift */,
 				CB3014236A9153620618B1A7 /* QRCodeComponents.swift */,
 				9AE2628EFBF436099BE3C66E /* RelayTerminalView.swift */,
+				F59B444752D6EB38F5BEE432 /* SelectAllOnBeginEditing.swift */,
 				B7615D1873F507B37D13B528 /* TerminalPalette.swift */,
 			);
 			path = Components;
@@ -360,6 +365,7 @@
 		FADB8ECCEC3717C13790030F /* ClaudeRelayAppTests */ = {
 			isa = PBXGroup;
 			children = (
+				457C2FF4E2CEE1A18E3FAE5B /* AlertFieldSelectionTests.swift */,
 				AD4048D36660C870B9573724 /* AppSettingsBedrockTests.swift */,
 				BFA0F04426C58852C4530707 /* AppSettingsContinuousTests.swift */,
 				C3126D30262A416EE37DCA6E /* MockSpeechComponents.swift */,
@@ -607,6 +613,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				788DFE6458E2C729502AAB0E /* AlertFieldSelectionTests.swift in Sources */,
 				1B1622962D01C4FA694625F2 /* AppSettingsBedrockTests.swift in Sources */,
 				8D0F21B7F585FDF16CF11CB7 /* AppSettingsContinuousTests.swift in Sources */,
 				D5D85EABC55C071F8597AA44 /* MockSpeechComponents.swift in Sources */,
@@ -635,6 +642,7 @@
 				0D5C609EB39AC81E2A65632B /* QRCodeSheet.swift in Sources */,
 				83B690BF3E8237A28F8D11A2 /* QRScannerView.swift in Sources */,
 				4CCC681584E50D630A55D3A7 /* RelayTerminalView.swift in Sources */,
+				0BC726CB1515AC218BF04893 /* SelectAllOnBeginEditing.swift in Sources */,
 				08F925B0F2FCF5B7E66B746D /* ServerListView.swift in Sources */,
 				BB36A7F84B4D5BD57244E8AF /* ServerListViewModel.swift in Sources */,
 				9BC5C1857B9B1DF31D6652D2 /* SessionCoordinator.swift in Sources */,
