@@ -130,17 +130,63 @@ class TerminalSessionVmInputPromptTest {
         assertFalse(vm.awaitingInput, "re-arming for replay must cancel the silence timer")
     }
 
-    // Refresh flicker: the server's width-wiggle repaint emits two frames
-    // ~150 ms apart. beginRefreshCoalesce() holds output and flushes the whole
-    // burst as ONE delivery so the intermediate narrow frame never renders.
+    // Session-name tap: the server's copy REPLACES the local one, so the replay
+    // must arrive as a single RIS-prefixed blob. RIS alone would blank the pane
+    // for the round trip; no RIS at all would append fresh below stale.
     @Test
-    fun refreshCoalescesRepaintBurstIntoSingleDelivery() = runTest {
+    fun serverReloadClearsScreenAndRendersReplayAsOneBlob() = runTest {
         val vm = TerminalSessionVm(scope = backgroundScope)
         val received = mutableListOf<ByteArray>()
         vm.onTerminalOutput = { received.add(it) }
         vm.terminalReady()
 
-        vm.beginRefreshCoalesce()
+        vm.beginServerReload()
+        vm.receiveOutput(byteArrayOf(0x41))
+        vm.receiveOutput(byteArrayOf(0x42))
+        assertTrue(received.isEmpty(), "replay must be held, not painted incrementally")
+
+        vm.endReplay()
+        assertEquals(1, received.size, "clear + fresh copy must land in one display pass")
+        assertEquals(
+            ReplayProtocol.RIS.toList() + listOf<Byte>(0x41, 0x42),
+            received[0].toList()
+        )
+    }
+
+    // Output buffered before the tap describes the screen being discarded, so it
+    // must not be replayed after the clear.
+    @Test
+    fun serverReloadDropsOutputBufferedBeforeTheTap() = runTest {
+        val vm = TerminalSessionVm(scope = backgroundScope)
+        val received = mutableListOf<ByteArray>()
+        vm.onTerminalOutput = { received.add(it) }
+        // No terminalReady() yet → this chunk sits in the pending buffer.
+        vm.receiveOutput(byteArrayOf(0x41))
+
+        vm.beginServerReload()
+        vm.terminalReady()                    // wires up; emits the clear itself
+        vm.receiveOutput(byteArrayOf(0x42))
+        vm.endReplay()
+
+        assertEquals(2, received.size)
+        assertEquals(ReplayProtocol.RIS.toList(), received[0].toList())
+        assertEquals("B", received[1].toString(ascii))
+    }
+
+    // Repaint flicker: the server width-wiggles the PTY after every replay,
+    // emitting two frames ~150 ms apart. Those land AFTER replay_complete, so the
+    // reload arms coalescing on the way out and the burst renders once.
+    @Test
+    fun serverReloadCoalescesPostReplayRepaintBurst() = runTest {
+        val vm = TerminalSessionVm(scope = backgroundScope)
+        val received = mutableListOf<ByteArray>()
+        vm.onTerminalOutput = { received.add(it) }
+        vm.terminalReady()
+
+        vm.beginServerReload()
+        vm.endReplay()
+        received.clear()                      // drop the replay blob
+
         vm.receiveOutput(byteArrayOf(0x41))   // narrow-width frame
         advanceTimeBy(80); runCurrent()
         vm.receiveOutput(byteArrayOf(0x42))   // full-width frame
@@ -148,13 +194,66 @@ class TerminalSessionVmInputPromptTest {
 
         // Quiet window (220 ms) elapses after the last chunk → single flush.
         advanceTimeBy(230); runCurrent()
-        assertEquals(1, received.size, "coalesced refresh delivers exactly once")
+        assertEquals(1, received.size, "coalesced burst delivers exactly once")
         assertEquals("AB", received[0].toString(ascii))
 
         // Live output resumes immediately after the flush.
         vm.receiveOutput(byteArrayOf(0x43))
         assertEquals(2, received.size)
         assertEquals("C", received[1].toString(ascii))
+    }
+
+    // The coordinator reads this to drop a re-tap, so it must stay true for the
+    // whole in-flight window — the RPC returns just BEFORE replay_complete.
+    @Test
+    fun isReloadingFromServerTracksTheInFlightWindow() = runTest {
+        val vm = TerminalSessionVm(scope = backgroundScope)
+        vm.onTerminalOutput = { }
+        vm.terminalReady()
+
+        assertFalse(vm.isReloadingFromServer)
+        vm.beginServerReload()
+        assertTrue(vm.isReloadingFromServer, "reload must be in flight until the replay lands")
+        vm.endReplay()
+        assertFalse(vm.isReloadingFromServer, "a landed replay must release the guard")
+    }
+
+    // A reload whose resume never reached the server must leave the pane showing
+    // what it had — cancelling drops the pending clear.
+    @Test
+    fun cancelServerReloadKeepsTheExistingScreen() = runTest {
+        val vm = TerminalSessionVm(scope = backgroundScope)
+        val received = mutableListOf<ByteArray>()
+        vm.onTerminalOutput = { received.add(it) }
+        vm.terminalReady()
+
+        vm.beginServerReload()
+        vm.cancelServerReload()
+        assertTrue(received.isEmpty(), "cancelled reload must not emit RIS")
+
+        vm.receiveOutput(byteArrayOf(0x43))
+        assertEquals(1, received.size, "buffering must be released")
+        assertEquals("C", received[0].toString(ascii))
+    }
+
+    // The backstop keeps a lost replay_complete from wedging the pane in
+    // buffering mode with the clear still pending.
+    @Test
+    fun serverReloadBackstopFlushesWhenReplayCompleteNeverArrives() = runTest {
+        val vm = TerminalSessionVm(scope = backgroundScope)
+        val received = mutableListOf<ByteArray>()
+        vm.onTerminalOutput = { received.add(it) }
+        vm.terminalReady()
+
+        vm.beginServerReload()
+        vm.receiveOutput(byteArrayOf(0x41))
+        advanceTimeBy(TerminalSessionVm.RELOAD_BACKSTOP_MS + 1); runCurrent()
+
+        assertEquals(1, received.size, "backstop must flush what arrived")
+        assertEquals(
+            ReplayProtocol.RIS.toList() + listOf<Byte>(0x41),
+            received[0].toList()
+        )
     }
 
     // Plan case: onAwaitingInputChanged fires on transitions only (deduped),

@@ -172,6 +172,36 @@ class SessionCoordinatorTest {
     }
 
     // -------------------------------------------------------------------------
+    // RELOAD (session-name tap) → re-resume WITH the ring-buffer replay. The
+    // replay is the whole point: it's the server's authoritative copy of the
+    // screen, which the VM then paints over the discarded local one (the
+    // clear-then-render half is pinned in TerminalSessionVm's own tests).
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `reloadTerminalFromServer resumes without skipping the replay`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        log.entries.clear()
+        surface.lastResumeSkipReplay = null
+
+        coord.reloadTerminalFromServer(target)
+        advanceUntilIdle()
+
+        assertTrue("rpc:session_resume" in log, "the name tap must re-resume so the server replays")
+        assertEquals(false, surface.lastResumeSkipReplay,
+            "a reload that skipped the replay would return no fresh copy at all")
+    }
+
+    // -------------------------------------------------------------------------
     // ATTACH failure → rollback: resume(previousId) + re-wire(previousId).
     // -------------------------------------------------------------------------
 

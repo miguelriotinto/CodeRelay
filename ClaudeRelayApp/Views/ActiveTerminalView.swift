@@ -168,22 +168,19 @@ struct ActiveTerminalView: View {
                         .background(Color.white.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .layoutPriority(1)
-                        // Tap → ask the server to SIGWINCH the session's foreground
-                        // process group so the running app re-emits its screen (the
-                        // same replay the keyboard toggle triggers via resize — fresh
-                        // bytes, not a repaint of the possibly-corrupt local grid).
-                        // We deliberately do NOT also post `.terminalForceRedraw`:
-                        // a local repaint paints the current (stale) buffer at once,
-                        // then the SIGWINCH reply repaints with fresh bytes a
-                        // round-trip later — two slightly-different paints that read
-                        // as a flicker. The SIGWINCH re-emit is authoritative alone.
-                        // Long-press → rename. The tap gesture is declared first so
-                        // it doesn't swallow the long-press.
+                        // Tap → discard the locally cached terminal text and render
+                        // the server's scrollback instead. We deliberately do NOT
+                        // also post `.terminalForceRedraw`: a local repaint paints
+                        // the current (stale) buffer at once, then the server's copy
+                        // lands a round-trip later — two slightly-different paints
+                        // that read as a flicker. The server's copy is authoritative
+                        // alone. Long-press → rename. The tap gesture is declared
+                        // first so it doesn't swallow the long-press.
                         .onTapGesture {
                             if settings.hapticFeedbackEnabled {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             }
-                            coordinator.viewModel(for: id)?.sendRefresh()
+                            Task { await coordinator.reloadTerminalFromServer(id: id) }
                             flashRefreshFeedback()
                         }
                         .onLongPressGesture {
@@ -238,6 +235,7 @@ struct ActiveTerminalView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .selectAllOnBeginEditing(while: showRenameAlert)
         .task(id: optionsHash) {
             continuousEngine.onUtteranceReady = { text in
                 guard let id = coordinator.activeSessionId,

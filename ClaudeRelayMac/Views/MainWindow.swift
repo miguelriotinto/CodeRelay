@@ -365,7 +365,7 @@ private struct WorkspaceView: View {
             .background(badged ? Color.white.opacity(0.12) : Color.clear)
             .clipShape(Capsule())
             .onTapGesture {
-                coordinator.viewModel(for: id)?.sendRefresh()
+                Task { await coordinator.reloadTerminalFromServer(id: id) }
                 flashRefreshFeedback()
             }
             .contextMenu {
@@ -374,7 +374,7 @@ private struct WorkspaceView: View {
                     showRenameAlert = true
                 }
             }
-            .help("Click to refresh · right-click to rename")
+            .help("Click to reload from server · right-click to rename")
     }
 }
 

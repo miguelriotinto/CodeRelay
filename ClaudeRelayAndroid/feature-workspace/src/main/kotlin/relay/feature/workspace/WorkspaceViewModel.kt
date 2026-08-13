@@ -120,22 +120,18 @@ class WorkspaceViewModel(
     }
 
     /**
-     * Tap-to-redraw: asks the server to SIGWINCH the attached session's
-     * foreground process group, making the running full-screen app (Claude
-     * Code, vim, …) re-emit its whole screen. That server-side replay is what
-     * the keyboard show/hide toggle achieves as a side effect of resizing —
-     * fresh authoritative bytes, not a repaint of the local (possibly corrupt)
-     * grid. Fire-and-forget; the repaint bytes are the response.
+     * Tap-to-reload: discards the locally cached terminal text and re-renders the
+     * active session from the server's scrollback ring buffer — the authoritative
+     * copy — instead of asking the foreground process to redraw over whatever the
+     * local grid happens to hold. See
+     * `SessionCoordinator.reloadTerminalFromServer`.
      */
-    fun sendRefresh() {
+    fun reloadTerminal() {
         viewModelScope.launch {
             if (coordinator.sendsSuppressed) return@launch
-            // Coalesce the server's two-frame width-wiggle repaint into one
-            // render so the intermediate narrow frame never flashes.
             coordinator.activeSessionId.value?.let { id ->
-                coordinator.terminalCache.view(id)?.beginRefreshCoalesce()
+                coordinator.reloadTerminalFromServer(id)
             }
-            runCatching { coordinator.connection.send(ClientMessage.Refresh) }
         }
     }
 

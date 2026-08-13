@@ -78,8 +78,8 @@ public final class TerminalViewModel: ObservableObject {
     /// reused view's stale glyphs (the session-switch garble).
     private var replayComplete = false
 
-    /// True while output is being held to coalesce a manual refresh into a
-    /// single render. The server's `forceRepaint` wiggles the PTY width
+    /// True while output is being held to coalesce a repaint burst into a single
+    /// render. The server wiggles the PTY width after every replay
     /// (cols → cols−1 → 150 ms → cols), which makes a full-screen app repaint
     /// TWICE: once reflowed to the narrow width, then again at full width.
     /// Feeding both frames live shows the intermediate (narrow) frame for
@@ -88,12 +88,23 @@ public final class TerminalViewModel: ObservableObject {
     /// display pass, so only the final frame is ever seen.
     private var isCoalescingRefresh = false
     private var refreshCoalesceTask: Task<Void, Never>?
+    /// True when the in-flight replay must be preceded by a RIS clear because
+    /// the terminal view is staying put. `terminalReady()` normally emits that
+    /// clear, but it fires only on a view's FIRST layout — a reload in place has
+    /// no new layout, so the clear has to ride in front of the flush instead.
+    private var clearOnReplayFlush = false
+    /// Backstop for `beginServerReload()`: a lost `replay_complete` (or a socket
+    /// that dies mid-replay) must not leave output buffered forever.
+    private var reloadBackstopTask: Task<Void, Never>?
     /// Flush once output stays quiet for this long. Must exceed the server's
     /// 150 ms width-wiggle gap so the two repaint frames land in one batch.
     private static let refreshQuietWindow: Duration = .milliseconds(220)
     /// Hard cap so a continuously-streaming session (refreshed mid-output)
     /// can't buffer forever — flush no later than this after the tap.
     private static let refreshMaxWindow: Duration = .milliseconds(1200)
+    /// Give the replay this long to arrive before flushing whatever we have.
+    /// Generous: the server streams the whole ring buffer in 64 KB frames.
+    private static let reloadBackstop: Duration = .seconds(5)
 
     // MARK: - Dependencies
 
@@ -186,6 +197,7 @@ public final class TerminalViewModel: ObservableObject {
         // Replay still streaming in: clear the reused view now so old glyphs are
         // gone before the buffered scrollback flushes in `endReplay()`.
         if isReplaying {
+            clearOnReplayFlush = false   // this layout emits the clear instead
             handler(Data([0x1B, 0x63]))
             return
         }
@@ -197,6 +209,7 @@ public final class TerminalViewModel: ObservableObject {
         let completedReplay = replayComplete
         if completedReplay {
             replayComplete = false
+            clearOnReplayFlush = false
             combined.append(contentsOf: [0x1B, 0x63])
         }
         combined.append(contentsOf: pendingOutput.reduce(into: Data()) { $0.append($1) })
@@ -217,18 +230,32 @@ public final class TerminalViewModel: ObservableObject {
     public func endReplay() {
         guard isReplaying else { return }
         isReplaying = false
+        reloadBackstopTask?.cancel()
+        reloadBackstopTask = nil
         echoDiag.info(
             "endReplay session=\(self.sessionId.uuidString.prefix(8), privacy: .public) terminalSized=\(self.terminalSized, privacy: .public) onTerminalOutput=\(self.onTerminalOutput != nil, privacy: .public) pendingBytes=\(self.pendingOutputBytes, privacy: .public)"
         )
         if terminalSized, let handler = onTerminalOutput {
             // View already laid out → RIS was emitted by `terminalReady()` while
-            // replaying; just flush the buffered scrollback.
-            let combined = pendingOutput.reduce(into: Data()) { $0.append($1) }
+            // replaying; just flush the buffered scrollback. The exception is a
+            // reload in place (`beginServerReload`), where no layout happened and
+            // the clear rides in front of this flush.
+            let isReload = clearOnReplayFlush
+            clearOnReplayFlush = false
+            var combined = isReload ? Data([0x1B, 0x63]) : Data()
+            combined.append(contentsOf: pendingOutput.reduce(into: Data()) { $0.append($1) })
             pendingOutput.removeAll()
             pendingOutputBytes = 0
             didLogPendingCap = false
             if !combined.isEmpty { handler(combined) }
             onReplayFlushed?()
+            // The server resize-wiggles after every replay (`repaintAfter`), so a
+            // full-screen app is about to repaint TWICE ~150 ms apart. Coalesce
+            // that burst too, or the reload ends on a flash of the narrow frame.
+            if isReload {
+                isCoalescingRefresh = true
+                armRefreshQuietTimer(hardCap: true)
+            }
         } else {
             // View not laid out yet (macOS: `updateNSView` runs after the
             // `activeSessionId` publish, so `replay_complete` wins the race).
@@ -260,6 +287,9 @@ public final class TerminalViewModel: ObservableObject {
         isCoalescingRefresh = false
         refreshCoalesceTask?.cancel()
         refreshCoalesceTask = nil
+        clearOnReplayFlush = false
+        reloadBackstopTask?.cancel()
+        reloadBackstopTask = nil
         pendingOutput.removeAll()
         pendingOutputBytes = 0
         didLogPendingCap = false
@@ -282,6 +312,9 @@ public final class TerminalViewModel: ObservableObject {
         isCoalescingRefresh = false
         refreshCoalesceTask?.cancel()
         refreshCoalesceTask = nil
+        clearOnReplayFlush = false
+        reloadBackstopTask?.cancel()
+        reloadBackstopTask = nil
         pendingOutput.removeAll()
         pendingOutputBytes = 0
         didLogPendingCap = false
@@ -312,21 +345,45 @@ public final class TerminalViewModel: ObservableObject {
         Task { try? await connection.sendResize(cols: cols, rows: rows) }
     }
 
-    /// Tap-to-redraw: asks the server to force the foreground process to
-    /// re-emit its whole screen (via a PTY width wiggle). That wiggle produces
-    /// TWO repaint frames (narrow, then full width) ~150 ms apart; to avoid
-    /// showing the intermediate narrow frame, we hold incoming output and flush
-    /// it as a single blob once it goes quiet (see `receiveOutput` /
-    /// `flushCoalescedRefresh`). Only meaningful when the view is live
-    /// (`terminalSized`, not replaying); otherwise the existing buffering paths
-    /// already batch output, so we skip coalescing to avoid interfering.
-    public func sendRefresh() {
-        guard !isSendingSuppressed else { return }
-        if terminalSized, !isReplaying, onTerminalOutput != nil {
-            isCoalescingRefresh = true
-            armRefreshQuietTimer(hardCap: true)
+    /// True from `beginServerReload()` until the replay lands (or is cancelled).
+    /// The coordinator drops a second tap while this holds: two overlapping
+    /// replays paint the screen twice, the second appended below the first.
+    public var isReloadingFromServer: Bool { clearOnReplayFlush }
+
+    /// Tap-to-reload, client half: throws away the locally cached terminal text
+    /// and buffers whatever arrives next so it can REPLACE the screen instead of
+    /// appending to it. `SharedSessionCoordinator.reloadTerminalFromServer` owns
+    /// the other half — the resume that makes the server replay its ring buffer.
+    ///
+    /// The RIS clear is deferred to the flush in `endReplay()` rather than
+    /// emitted now: blanking up front would leave the pane empty for the whole
+    /// round trip, whereas one RIS-prefixed blob swaps old screen for new in a
+    /// single display pass.
+    public func beginServerReload() {
+        isCoalescingRefresh = false
+        refreshCoalesceTask?.cancel()
+        refreshCoalesceTask = nil
+        // Anything already buffered belongs to the screen we're discarding —
+        // keeping it would paint stale bytes after the RIS.
+        pendingOutput.removeAll()
+        pendingOutputBytes = 0
+        clearOnReplayFlush = true
+        beginReplay()
+        reloadBackstopTask?.cancel()
+        reloadBackstopTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.reloadBackstop)
+            guard !Task.isCancelled else { return }
+            self?.endReplay()
         }
-        Task { try? await connection.sendRefresh() }
+    }
+
+    /// Aborts a `beginServerReload()` whose resume never made it to the server.
+    /// Drops the pending clear so the pane keeps the copy it already has — a
+    /// failed reload must not blank the terminal.
+    public func cancelServerReload() {
+        guard isReplaying, clearOnReplayFlush else { return }
+        clearOnReplayFlush = false
+        endReplay()
     }
 
     /// (Re)arms the quiet-window timer that ends refresh coalescing. Each new

@@ -59,8 +59,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -284,10 +288,11 @@ fun WorkspaceScreen(
                 onInput = { bytes -> vm.sendInput(bytes) },
                 onResize = { cols, rows -> vm.sendResize(cols, rows) },
                 onShareQr = { id -> haptics.lightTap(); onShareQr(id) },
-                // Tap → server-side refresh (SIGWINCH → the running app re-emits
-                // its screen — the same replay the keyboard toggle triggers via
-                // resize) plus a local damage repaint as belt-and-suspenders.
-                onNameTap = { haptics.lightTap(); vm.sendRefresh(); redrawToken++ },
+                // Tap → discard the local terminal text and re-render it from the
+                // server's scrollback. The token bump drives the sweep animation
+                // (and a local damage repaint of the grid we're about to replace,
+                // which is a no-op to the eye).
+                onNameTap = { haptics.lightTap(); vm.reloadTerminal(); redrawToken++ },
                 onNameLongPress = { renameActive = true },
                 onKeyHaptic = { haptics.lightTap() },
                 nameFor = ::nameFor,
@@ -769,19 +774,34 @@ private fun WorkspaceRenameDialog(
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var text by remember { mutableStateOf(initialName) }
+    // Pre-selects the whole name so the first keystroke replaces it. See the
+    // twin dialog in ui/SessionSidebar.kt for why this needs both a
+    // TextFieldValue and an explicit focus request.
+    var value by remember {
+        mutableStateOf(TextFieldValue(initialName, TextRange(0, initialName.length)))
+    }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    // Null while blank — see the twin dialog in ui/SessionSidebar.kt.
+    val sanitized = sanitizedSessionName(value.text)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Rename Session") },
         text = {
             TextField(
-                value = text,
-                onValueChange = { text = it },
+                value = value,
+                onValueChange = { value = it },
                 singleLine = true,
                 label = { Text("Name") },
+                modifier = Modifier.focusRequester(focusRequester),
             )
         },
-        confirmButton = { TextButton(onClick = { onConfirm(text) }) { Text("Rename") } },
+        confirmButton = {
+            TextButton(
+                onClick = { sanitized?.let(onConfirm) },
+                enabled = sanitized != null,
+            ) { Text("Rename") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

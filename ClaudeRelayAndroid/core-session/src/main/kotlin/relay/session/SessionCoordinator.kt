@@ -799,6 +799,39 @@ class SessionCoordinator(
         }
     }
 
+    // MARK: - Terminal Reload
+
+    /**
+     * Discards the locally rendered terminal for [id] and re-renders it from the
+     * server's scrollback ring buffer. This is the session-name tap.
+     *
+     * It resumes the session with `skipReplay = false` — the same replay a fresh
+     * attach performs — because that ring buffer is the only authoritative copy of
+     * the screen. The previous behaviour sent `Refresh`, which width-wiggles the
+     * PTY to make the FOREGROUND process redraw: that appends to a local buffer
+     * which may already be wrong, and yields nothing at all at a plain shell
+     * prompt. Re-resuming the already-attached session is the same call recovery
+     * makes ([resumeActiveForRecovery]), so the server path is well-trodden; the
+     * client half just clears before rendering. Mirrors Swift
+     * `SharedSessionCoordinator.reloadTerminalFromServer`.
+     */
+    suspend fun reloadTerminalFromServer(id: UUID) {
+        if (recoveryController.isRecovering.value) return
+        val vm = terminalCache.view(id) ?: return
+        // Drop a re-tap while the previous replay is still in flight: two
+        // overlapping replays paint the screen twice, one below the other.
+        if (vm.isReloadingFromServer) return
+        vm.beginServerReload()
+        try {
+            authCoordinator.withAuth { sessionController.resumeSession(id, skipReplay = false) }
+        } catch (e: Throwable) {
+            // No replay is coming: release the buffering WITHOUT the clear, so the
+            // pane keeps what it was showing rather than going blank.
+            vm.cancelServerReload()
+            presentError(e.message ?: "Failed to reload terminal")
+        }
+    }
+
     // MARK: - Attach (SharedSessionCoordinator.swift:462-561)
 
     /** Lists sessions running on the server (across all tokens) that aren't

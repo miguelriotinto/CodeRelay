@@ -103,18 +103,28 @@ class TerminalSessionVm(
     private var didLogPendingCap = false
 
     /**
-     * True while output is held to coalesce a manual refresh into a single
-     * render. The server's refresh wiggles the PTY width (cols → cols−1 →
-     * 150 ms → cols), so a full-screen app repaints TWICE — once at the narrow
-     * width, then again at full width. Feeding both frames live flashes the
-     * intermediate narrow frame for ~150 ms (the flicker). Holding output for a
-     * short quiet window and flushing it as one blob lets the terminal engine
+     * True while output is held to coalesce a repaint burst into a single
+     * render. The server wiggles the PTY width after every replay (cols →
+     * cols−1 → 150 ms → cols), so a full-screen app repaints TWICE — once at the
+     * narrow width, then again at full width. Feeding both frames live flashes
+     * the intermediate narrow frame for ~150 ms (the flicker). Holding output for
+     * a short quiet window and flushing it as one blob lets the terminal engine
      * apply both reflows in a single display pass, so only the final frame
      * shows. Mirrors Swift `TerminalViewModel.isCoalescingRefresh`.
      */
     private var isCoalescingRefresh = false
     private var refreshCoalesceJob: Job? = null
     private var refreshHardCapJob: Job? = null
+
+    /**
+     * True when the in-flight replay must be preceded by a RIS clear because the
+     * terminal view is staying put. [terminalReady] normally emits that clear,
+     * but it fires only on a view's FIRST layout — a reload in place has no new
+     * layout, so the clear has to ride in front of the flush instead. Mirrors
+     * Swift `TerminalViewModel.clearOnReplayFlush`.
+     */
+    private var clearOnReplayFlush = false
+    private var reloadBackstopJob: Job? = null
 
     companion object {
         /** 4 MB. Matches Swift `TerminalViewModel.pendingOutputByteLimit`. */
@@ -125,18 +135,57 @@ class TerminalSessionVm(
         /** Backstop so a continuously-streaming session still flushes. Matches
          *  Swift `refreshMaxWindow`. */
         const val REFRESH_MAX_WINDOW_MS: Long = 1200
+        /** Give a reload's replay this long to arrive before flushing whatever we
+         *  have. Generous: the server streams the whole ring buffer in 64 KB
+         *  frames. Matches Swift `reloadBackstop`. */
+        const val RELOAD_BACKSTOP_MS: Long = 5_000
     }
 
     /**
-     * Begins coalescing the manual-refresh repaint burst. Called on the active
-     * session's VM right before the `refresh` message is sent. Only meaningful
-     * when the view is live (not replaying / not still laying out); otherwise
-     * the existing buffering paths already batch output.
+     * True from [beginServerReload] until the replay lands (or is cancelled). The
+     * coordinator drops a second tap while this holds: two overlapping replays
+     * paint the screen twice, the second appended below the first. Mirrors Swift
+     * `TerminalViewModel.isReloadingFromServer`.
      */
-    fun beginRefreshCoalesce() {
-        if (!terminalSized || isReplaying || onTerminalOutput == null) return
-        isCoalescingRefresh = true
-        armRefreshQuietTimer(hardCap = true)
+    val isReloadingFromServer: Boolean get() = clearOnReplayFlush
+
+    /**
+     * Tap-to-reload, client half: throws away the locally cached terminal text
+     * and buffers whatever arrives next so it can REPLACE the screen instead of
+     * appending to it. `SessionCoordinator.reloadTerminalFromServer` owns the
+     * other half — the resume that makes the server replay its ring buffer.
+     *
+     * The RIS clear is deferred to the flush in [endReplay] rather than emitted
+     * now: blanking up front would leave the pane empty for the whole round trip,
+     * whereas one RIS-prefixed blob swaps old screen for new in a single display
+     * pass. Mirrors Swift `TerminalViewModel.beginServerReload`.
+     */
+    fun beginServerReload() {
+        isCoalescingRefresh = false
+        refreshCoalesceJob?.cancel(); refreshCoalesceJob = null
+        refreshHardCapJob?.cancel(); refreshHardCapJob = null
+        // Anything already buffered belongs to the screen we're discarding —
+        // keeping it would paint stale bytes after the RIS.
+        pendingOutput.clear()
+        pendingOutputBytes = 0
+        clearOnReplayFlush = true
+        beginReplay()
+        reloadBackstopJob?.cancel()
+        reloadBackstopJob = scope.launch {
+            delay(RELOAD_BACKSTOP_MS)
+            if (isActive) endReplay()
+        }
+    }
+
+    /**
+     * Aborts a [beginServerReload] whose resume never made it to the server.
+     * Drops the pending clear so the pane keeps the copy it already has — a
+     * failed reload must not blank the terminal.
+     */
+    fun cancelServerReload() {
+        if (!isReplaying || !clearOnReplayFlush) return
+        clearOnReplayFlush = false
+        endReplay()
     }
 
     private fun armRefreshQuietTimer(hardCap: Boolean = false) {
@@ -207,11 +256,13 @@ class TerminalSessionVm(
         terminalSized = true
         didLogPendingCap = false
         if (isReplaying) {
+            clearOnReplayFlush = false   // this layout emits the clear instead
             onTerminalOutput?.invoke(ReplayProtocol.RIS)
             return
         }
         val completedReplay = replayComplete
         replayComplete = false
+        if (completedReplay) clearOnReplayFlush = false
         flushPending(prefix = if (completedReplay) ReplayProtocol.RIS else ByteArray(0))
         if (completedReplay) onReplayFlushed?.invoke()
     }
@@ -229,9 +280,22 @@ class TerminalSessionVm(
     fun endReplay() {
         if (!isReplaying) return
         isReplaying = false
+        reloadBackstopJob?.cancel(); reloadBackstopJob = null
         if (terminalSized) {
-            flushPending()
+            // RIS was already emitted by [terminalReady] while replaying — except
+            // after [beginServerReload], where no layout happened and the clear
+            // rides in front of this flush.
+            val isReload = clearOnReplayFlush
+            clearOnReplayFlush = false
+            flushPending(prefix = if (isReload) ReplayProtocol.RIS else ByteArray(0))
             onReplayFlushed?.invoke()
+            // The server resize-wiggles after every replay, so a full-screen app
+            // is about to repaint TWICE ~150 ms apart. Coalesce that burst too, or
+            // the reload ends on a flash of the narrow frame.
+            if (isReload) {
+                isCoalescingRefresh = true
+                armRefreshQuietTimer(hardCap = true)
+            }
         } else {
             replayComplete = true
         }
@@ -350,6 +414,9 @@ class TerminalSessionVm(
         refreshCoalesceJob = null
         refreshHardCapJob?.cancel()
         refreshHardCapJob = null
+        clearOnReplayFlush = false
+        reloadBackstopJob?.cancel()
+        reloadBackstopJob = null
         pendingOutput.clear()
         pendingOutputBytes = 0
         didLogPendingCap = false
