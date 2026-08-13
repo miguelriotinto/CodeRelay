@@ -1,6 +1,7 @@
 import XCTest
 import ClaudeRelayKit
-@testable import ClaudeDock
+// Module is c99-sanitized from PRODUCT_NAME "Code[Relay]" — see project.yml.
+@testable import Code_Relay_
 
 @MainActor
 final class MenuBarActivityTests: XCTestCase {
@@ -90,53 +91,38 @@ final class MenuBarActivityTests: XCTestCase {
         XCTAssertTrue(ids.isEmpty)
     }
 
-    // MARK: - Ownership filter
+    // MARK: - Visibility filter
     //
-    // The menu bar dropdown must only list sessions this device owns. The
-    // server-side list (and `SharedSessionCoordinator.sessions`) returns every
-    // session under the auth token regardless of which device owns it; the
-    // sidebar filters to owned-and-non-terminal via `coordinator.activeSessions`.
-    // The menu bar previously skipped that filter and leaked cross-device
-    // sessions into the dropdown. These tests pin the corrected behaviour.
+    // The dropdown drops terminal sessions and nothing else. These tests used to
+    // pin a `filterOwned(sessions:owned:)` that also applied a local owned-set
+    // filter; that was removed once the server's token-scoped list became the
+    // ownership boundary, so an owned-set argument no longer exists to pass.
+    // Cross-device sessions reaching the dropdown is now the server's call, not
+    // this helper's — asserting otherwise here would re-pin deleted behaviour.
 
-    func testFilterOwnedKeepsOwnedNonTerminalSessions() {
-        let owned = makeSession(id: UUID(), state: .activeAttached)
-        let foreign = makeSession(id: UUID(), state: .activeDetached)
-        let result = MenuBarViewModel.filterOwned(
-            sessions: [owned, foreign],
-            owned: [owned.id]
-        )
-        XCTAssertEqual(result.map { $0.id }, [owned.id])
+    func testVisibleSessionsKeepsNonTerminalSessions() {
+        let attached = makeSession(id: UUID(), state: .activeAttached)
+        let detached = makeSession(id: UUID(), state: .activeDetached)
+        let result = MenuBarViewModel.visibleSessions([attached, detached])
+        XCTAssertEqual(result.map { $0.id }, [attached.id, detached.id])
     }
 
-    func testFilterOwnedDropsTerminalEvenIfOwned() {
+    func testVisibleSessionsDropsTerminal() {
         let live = makeSession(id: UUID(), state: .activeAttached)
         let exited = makeSession(id: UUID(), state: .exited)
-        let result = MenuBarViewModel.filterOwned(
-            sessions: [live, exited],
-            owned: [live.id, exited.id]
-        )
+        let result = MenuBarViewModel.visibleSessions([live, exited])
         XCTAssertEqual(result.map { $0.id }, [live.id])
     }
 
-    func testFilterOwnedReturnsEmptyWhenNoneOwned() {
-        let a = makeSession()
-        let b = makeSession()
-        let result = MenuBarViewModel.filterOwned(
-            sessions: [a, b],
-            owned: []
-        )
-        XCTAssertTrue(result.isEmpty)
+    func testVisibleSessionsReturnsEmptyForNoSessions() {
+        XCTAssertTrue(MenuBarViewModel.visibleSessions([]).isEmpty)
     }
 
-    func testFilterOwnedPreservesInputOrder() {
+    func testVisibleSessionsPreservesInputOrder() {
         let first  = makeSession()
         let second = makeSession()
         let third  = makeSession()
-        let result = MenuBarViewModel.filterOwned(
-            sessions: [first, second, third],
-            owned: [first.id, second.id, third.id]
-        )
+        let result = MenuBarViewModel.visibleSessions([first, second, third])
         XCTAssertEqual(result.map { $0.id }, [first.id, second.id, third.id])
     }
 }

@@ -1,5 +1,7 @@
 import XCTest
-@testable import ClaudeDock
+// Not the target name: the Mac app's module is c99-sanitized from
+// PRODUCT_NAME "Code[Relay]". Was "ClaudeDock" before the product was renamed.
+@testable import Code_Relay_
 
 @MainActor
 final class AddEditServerViewModelTests: XCTestCase {

@@ -1,5 +1,6 @@
 import XCTest
-@testable import ClaudeDock
+// Module is c99-sanitized from PRODUCT_NAME "Code[Relay]" — see project.yml.
+@testable import Code_Relay_
 
 @MainActor
 final class SessionNavigationTests: XCTestCase {
