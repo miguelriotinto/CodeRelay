@@ -39,8 +39,20 @@ since their last release tag and confirm the skip list with the user.
 
 - **iOS**: `xcodebuild archive` (scheme ClaudeRelayApp) →
   `xcodebuild -exportArchive` with `build/ExportOptions.plist`
-  (destination=upload → goes straight to App Store Connect).
-- **macOS**: same flow with scheme ClaudeRelayMac.
+  (destination=upload → goes straight to App Store Connect). Two flags the CLI
+  needs and Xcode.app does not:
+  - `-skipMacroValidation` on the **archive**, or it fails with `Macro
+    “LLMMacrosImplementation” from package “LLM” … must be enabled` — a macro
+    approval that only exists in the GUI's trust store.
+  - API-key auth on the **export**, or it fails `Failed to Use Accounts` /
+    `Failed to find an account with App Store Connect access for team`
+    (the Xcode account session isn't usable headlessly):
+    `-authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_H8WJXYB4M3.p8
+    -authenticationKeyID H8WJXYB4M3
+    -authenticationKeyIssuerID 69a6de76-f499-47e3-e053-5b8c7c11a4d1`
+- **macOS**: same flow — including both flags — with scheme ClaudeRelayMac. Note
+  its distribution log dir is named `ClaudeRelayMac_*`, after the *scheme*, not
+  after `PRODUCT_NAME` ("Code[Relay]").
 - **Android**: `./gradlew :app:assembleRelease`, copy to
   `/tmp/CodeRelay-<versionName>.apk`,
   `gh release create android-v<versionName> <apk> --prerelease` with title
