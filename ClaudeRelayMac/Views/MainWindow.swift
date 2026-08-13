@@ -117,10 +117,10 @@ private struct WorkspaceView: View {
     @State private var showQRPopover = false
     @State private var showRenameAlert = false
     @State private var renameText = ""
-    /// Drives the swipe-flash sweep when the session-name button triggers a
-    /// refresh. 0 parks the band offscreen above, 1 offscreen below — so the
-    /// effect is invisible at both endpoints and needs no visibility flag.
-    @State private var refreshSweepProgress: CGFloat = 0
+    /// Blackout opacity for the session-name reload: 0 shows the terminal, 1
+    /// hides it behind opaque black while the server's copy is swapped in.
+    /// Driven by `TerminalReloadFade`.
+    @State private var reloadCover: Double = 0
 
     private var optionsHash: String {
         let s = settings
@@ -143,28 +143,10 @@ private struct WorkspaceView: View {
                     // terminal's SwiftTerm scrollback survives the swap.
                     TerminalContainerView(coordinator: coordinator, fontSize: CGFloat(settings.terminalFontSize))
                         .padding(.leading, 6)
-                        // Swipe flash: a soft white band sweeping top → bottom
-                        // across the terminal (~1 s) confirming the session-name
-                        // refresh fired. Purely decorative, so it never intercepts
-                        // clicks meant for the terminal underneath.
-                        .overlay {
-                            GeometryReader { geo in
-                                let bandHeight = geo.size.height * 0.45
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: .clear, location: 0),
-                                        .init(color: .white.opacity(0.30), location: 0.5),
-                                        .init(color: .clear, location: 1),
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                                .frame(height: bandHeight)
-                                // progress 0 → offscreen above, 1 → offscreen below.
-                                .offset(y: -bandHeight + (geo.size.height + 2 * bandHeight) * refreshSweepProgress)
-                            }
-                            .allowsHitTesting(false)
-                        }
+                        // Covers only the terminal, not the toolbar or the status
+                        // bar: the session name has to stay visible, since it's
+                        // the control the user just clicked.
+                        .terminalReloadCover(reloadCover)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "terminal")
@@ -290,16 +272,6 @@ private struct WorkspaceView: View {
         }
     }
 
-    /// Sweep the flash band across the terminal over ~1 s. Progress is snapped
-    /// back to 0 (offscreen above) without animation first, so rapid re-clicks
-    /// restart the sweep cleanly instead of reversing mid-flight.
-    private func flashRefreshFeedback() {
-        var restart = Transaction()
-        restart.disablesAnimations = true
-        withTransaction(restart) { refreshSweepProgress = 0 }
-        withAnimation(.easeInOut(duration: 1.0)) { refreshSweepProgress = 1 }
-    }
-
     // MARK: - Toolbar Item Contents
 
     private var serversToolbarButton: some View {
@@ -365,8 +337,10 @@ private struct WorkspaceView: View {
             .background(badged ? Color.white.opacity(0.12) : Color.clear)
             .clipShape(Capsule())
             .onTapGesture {
-                Task { await coordinator.reloadTerminalFromServer(id: id) }
-                flashRefreshFeedback()
+                Task {
+                    await TerminalReloadFade.run(
+                        coordinator: coordinator, id: id, cover: $reloadCover)
+                }
             }
             .contextMenu {
                 Button("Rename Session…") {

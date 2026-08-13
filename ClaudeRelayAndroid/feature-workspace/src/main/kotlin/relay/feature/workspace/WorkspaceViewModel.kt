@@ -125,13 +125,16 @@ class WorkspaceViewModel(
      * copy — instead of asking the foreground process to redraw over whatever the
      * local grid happens to hold. See
      * `SessionCoordinator.reloadTerminalFromServer`.
+     *
+     * `suspend` rather than launching into [viewModelScope]: the caller is the
+     * fade-through-black effect, which has to know when the reload is done to
+     * lift the cover. Returning here still leaves the replay in flight — the
+     * flush is signalled separately by `TerminalSessionVm.isReloadingFromServer`.
      */
-    fun reloadTerminal() {
-        viewModelScope.launch {
-            if (coordinator.sendsSuppressed) return@launch
-            coordinator.activeSessionId.value?.let { id ->
-                coordinator.reloadTerminalFromServer(id)
-            }
+    suspend fun reloadTerminal() {
+        if (coordinator.sendsSuppressed) return
+        coordinator.activeSessionId.value?.let { id ->
+            coordinator.reloadTerminalFromServer(id)
         }
     }
 

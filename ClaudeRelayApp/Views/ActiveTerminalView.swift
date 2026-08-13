@@ -15,10 +15,10 @@ struct ActiveTerminalView: View {
     @State private var showQROverlay = false
     @State private var showRenameAlert = false
     @State private var renameText = ""
-    /// Drives the swipe-flash sweep when the session-name button triggers a
-    /// refresh. 0 parks the band offscreen above, 1 offscreen below — so the
-    /// effect is invisible at both endpoints and needs no visibility flag.
-    @State private var refreshSweepProgress: CGFloat = 0
+    /// Blackout opacity for the session-name reload: 0 shows the terminal, 1
+    /// hides it behind opaque black while the server's copy is swapped in.
+    /// Driven by `TerminalReloadFade`.
+    @State private var reloadCover: Double = 0
     @StateObject private var speechEngine = OnDeviceSpeechEngine()
     @StateObject private var continuousEngine = ContinuousListeningEngine.makeDefault(
         options: AppSettings.shared.currentSpeechOptions()
@@ -38,6 +38,10 @@ struct ActiveTerminalView: View {
                         fontSize: CGFloat(settings.terminalFontSize),
                         isKeyboardVisible: $isKeyboardVisible
                     )
+                    // Covers only the terminal, not the toolbar or the key bar:
+                    // the session name has to stay visible, since it's the
+                    // control the user just tapped.
+                    .terminalReloadCover(reloadCover)
 
                     if showKeyBar {
                         KeyboardAccessory { data in
@@ -97,29 +101,6 @@ struct ActiveTerminalView: View {
                 .padding(.bottom, 12)
             }
         }
-        // Swipe flash: a soft white band sweeping top → bottom across the
-        // terminal (~1 s) that confirms the session-name refresh fired — the
-        // motion reads as "the screen is being rewritten". Purely decorative,
-        // so it never intercepts touches meant for the terminal underneath.
-        .overlay {
-            GeometryReader { geo in
-                let bandHeight = geo.size.height * 0.45
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0),
-                        .init(color: .white.opacity(0.30), location: 0.5),
-                        .init(color: .clear, location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: bandHeight)
-                // progress 0 → fully offscreen above, 1 → fully offscreen below.
-                .offset(y: -bandHeight + (geo.size.height + 2 * bandHeight) * refreshSweepProgress)
-            }
-            .allowsHitTesting(false)
-            .ignoresSafeArea()
-        }
         .safeAreaInset(edge: .top) {
             HStack(spacing: 6) {
                 ToolbarIconButton(icon: "sidebar.left") {
@@ -169,19 +150,22 @@ struct ActiveTerminalView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .layoutPriority(1)
                         // Tap → discard the locally cached terminal text and render
-                        // the server's scrollback instead. We deliberately do NOT
-                        // also post `.terminalForceRedraw`: a local repaint paints
-                        // the current (stale) buffer at once, then the server's copy
-                        // lands a round-trip later — two slightly-different paints
-                        // that read as a flicker. The server's copy is authoritative
-                        // alone. Long-press → rename. The tap gesture is declared
-                        // first so it doesn't swallow the long-press.
+                        // the server's scrollback instead, behind a fade through
+                        // black. We deliberately do NOT also post
+                        // `.terminalForceRedraw`: a local repaint paints the current
+                        // (stale) buffer at once, then the server's copy lands a
+                        // round-trip later — two slightly-different paints that read
+                        // as a flicker. The server's copy is authoritative alone.
+                        // Long-press → rename. The tap gesture is declared first so
+                        // it doesn't swallow the long-press.
                         .onTapGesture {
                             if settings.hapticFeedbackEnabled {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             }
-                            Task { await coordinator.reloadTerminalFromServer(id: id) }
-                            flashRefreshFeedback()
+                            Task {
+                                await TerminalReloadFade.run(
+                                    coordinator: coordinator, id: id, cover: $reloadCover)
+                            }
                         }
                         .onLongPressGesture {
                             renameText = coordinator.name(for: id)
@@ -258,16 +242,6 @@ struct ActiveTerminalView: View {
                 )
             }
         }
-    }
-
-    /// Sweep the flash band across the terminal over ~1 s. Progress is snapped
-    /// back to 0 (offscreen left) without animation first, so rapid re-taps
-    /// restart the sweep cleanly instead of reversing mid-flight.
-    private func flashRefreshFeedback() {
-        var restart = Transaction()
-        restart.disablesAnimations = true
-        withTransaction(restart) { refreshSweepProgress = 0 }
-        withAnimation(.easeInOut(duration: 1.0)) { refreshSweepProgress = 1 }
     }
 
     private var optionsHash: String {

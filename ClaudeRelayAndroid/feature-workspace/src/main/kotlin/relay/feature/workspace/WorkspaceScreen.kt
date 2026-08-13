@@ -2,7 +2,6 @@ package relay.feature.workspace
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -52,13 +51,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.TextRange
@@ -68,7 +63,9 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import relay.feature.workspace.ui.ConnectionQualityDot
 import relay.feature.workspace.ui.SessionSidebar
 import relay.feature.workspace.ui.SessionTabs
@@ -85,6 +82,16 @@ private val EXPANDED_WIDTH_BREAKPOINT = 840.dp
 // Per-event leftward drag (px) on the two-pane sidebar that triggers a hide. Small
 // so a deliberate swipe-left closes the pane promptly, but above stray jitter.
 private const val SWIPE_CLOSE_THRESHOLD_PX = 8f
+
+// Session-name reload, fade through black. Matches Swift `TerminalReloadFade`:
+// quick out (the user just tapped, so the black needs no easing-in to read as a
+// response), slower back in so the fresh screen resolves instead of snapping.
+// The hold between them is the reload, not a duration — MAX_HOLD only guards a
+// cover that would otherwise never lift, which the vm's 5 s reload backstop
+// already prevents.
+private const val RELOAD_FADE_OUT_MS = 160
+private const val RELOAD_FADE_IN_MS = 220
+private const val RELOAD_COVER_MAX_HOLD_MS = 8_000L
 
 // Top-toolbar controls share the SessionTab "1" chip footprint so they're uniform
 // with the tab: 26x22dp min, 6dp corners, ~14dp icon. (The default IconButton 48dp
@@ -289,10 +296,12 @@ fun WorkspaceScreen(
                 onResize = { cols, rows -> vm.sendResize(cols, rows) },
                 onShareQr = { id -> haptics.lightTap(); onShareQr(id) },
                 // Tap → discard the local terminal text and re-render it from the
-                // server's scrollback. The token bump drives the sweep animation
-                // (and a local damage repaint of the grid we're about to replace,
-                // which is a no-op to the eye).
-                onNameTap = { haptics.lightTap(); vm.reloadTerminal(); redrawToken++ },
+                // server's scrollback. The bump is the whole trigger: the reload
+                // itself is issued by the fade-through-black effect keyed on this
+                // token (it has to sit between the two fades), and the token also
+                // drives a local damage repaint of the grid we're about to
+                // replace, which is a no-op to the eye.
+                onNameTap = { haptics.lightTap(); redrawToken++ },
                 onNameLongPress = { renameActive = true },
                 onKeyHaptic = { haptics.lightTap() },
                 nameFor = ::nameFor,
@@ -602,20 +611,34 @@ private fun TerminalColumn(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val activeVm = activeSessionId?.let { vm.coordinator.terminalCache.view(it) }
 
-            // Swipe flash (iOS ActiveTerminalView `refreshSweepProgress`
-            // parity): a soft white band sweeping top → bottom across the
-            // terminal (~1 s) confirming the session-name refresh fired — the
-            // motion reads as "the screen is being rewritten". Keyed off
-            // redrawToken — the same bump that drives the local repaint — so
-            // feedback and refresh can't drift apart. Progress 0 parks the band
-            // offscreen above, 1 offscreen below; snapTo(0) first so rapid
-            // re-taps restart the sweep instead of reversing mid-flight.
-            val sweepProgress = remember { Animatable(0f) }
+            // Fade through black on the session-name tap (iOS/macOS
+            // `TerminalReloadFade` parity): fade the pane out, reload it from the
+            // server's scrollback behind the black, fade back in once the fresh
+            // screen has painted. Keyed off redrawToken — the same bump that
+            // drives the local repaint — so cover and reload can't drift apart,
+            // and a re-tap restarts the sequence from wherever the cover is.
+            //
+            // The hold between the two fades is the reload ITSELF, not a
+            // duration: an opaque cover promises the swap happened behind it, so
+            // it can only lift on the repaint. That's what the white band it
+            // replaced could not do — a fixed 1 s sweep either finished before
+            // the replay landed or was still going after.
+            val cover = remember { Animatable(0f) }
             LaunchedEffect(redrawToken) {
-                if (redrawToken > 0) {
-                    sweepProgress.snapTo(0f)
-                    sweepProgress.animateTo(1f, tween(1000, easing = FastOutSlowInEasing))
+                if (redrawToken == 0) return@LaunchedEffect
+                cover.animateTo(1f, tween(RELOAD_FADE_OUT_MS))
+                vm.reloadTerminal()
+                // That returns when the resume RPC does; the fresh screen paints a
+                // moment later, when `replay_complete` flushes the buffered blob.
+                // A reload the coordinator dropped (recovery in flight, or a
+                // re-tap over a replay still landing) leaves the flag already
+                // false, so this returns at once and the cover just blinks. The
+                // timeout is belt as well as braces — the vm's 5 s reload backstop
+                // already releases the flag.
+                withTimeoutOrNull(RELOAD_COVER_MAX_HOLD_MS) {
+                    activeVm?.isReloadingFromServer?.first { !it }
                 }
+                cover.animateTo(0f, tween(RELOAD_FADE_IN_MS))
             }
             if (activeSessionId != null && activeVm != null) {
                 TerminalHost(
@@ -634,6 +657,20 @@ private fun TerminalColumn(
                 }
             }
 
+            // The cover itself. Declared before the mic button so the button stays
+            // visible over the black (iOS keeps its floating controls in the outer
+            // ZStack, above the cover), and drawn only when it would be visible.
+            // A plain background never intercepts touches — parity with iOS
+            // `.allowsHitTesting(false)`.
+            val coverAlpha = cover.value
+            if (coverAlpha > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = coverAlpha)),
+                )
+            }
+
             // Floating mic button, bottom-right over the terminal (iOS
             // ActiveTerminalView floating buttons: 16dp end / 12dp bottom). Always
             // present so the user can enable/disable continuous listening or kick
@@ -646,34 +683,6 @@ private fun TerminalColumn(
                 micButton()
             }
 
-            // The sweep band itself, drawn only mid-flight (invisible at both
-            // endpoints). drawWithContent paints a clear→white→clear gradient
-            // band at the current progress — no layout node moves, so there is
-            // zero layout shift, and a plain draw overlay never intercepts
-            // touches (iOS `.allowsHitTesting(false)`).
-            val progress = sweepProgress.value
-            if (progress > 0f && progress < 1f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .drawWithContent {
-                            val bandHeight = size.height * 0.45f
-                            // 0 → band fully offscreen above, 1 → fully offscreen below.
-                            val bandStart = -bandHeight + (size.height + 2f * bandHeight) * progress
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    0f to Color.Transparent,
-                                    0.5f to Color.White.copy(alpha = 0.30f),
-                                    1f to Color.Transparent,
-                                    startY = bandStart,
-                                    endY = bandStart + bandHeight,
-                                ),
-                                topLeft = Offset(0f, bandStart),
-                                size = Size(size.width, bandHeight),
-                            )
-                        },
-                )
-            }
         }
 
         if (showKeyBar && activeSessionId != null) {

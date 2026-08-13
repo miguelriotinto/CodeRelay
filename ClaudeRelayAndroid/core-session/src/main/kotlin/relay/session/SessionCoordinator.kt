@@ -820,7 +820,7 @@ class SessionCoordinator(
         val vm = terminalCache.view(id) ?: return
         // Drop a re-tap while the previous replay is still in flight: two
         // overlapping replays paint the screen twice, one below the other.
-        if (vm.isReloadingFromServer) return
+        if (vm.isReloadingFromServer.value) return
         vm.beginServerReload()
         try {
             authCoordinator.withAuth { sessionController.resumeSession(id, skipReplay = false) }

@@ -88,11 +88,19 @@ public final class TerminalViewModel: ObservableObject {
     /// display pass, so only the final frame is ever seen.
     private var isCoalescingRefresh = false
     private var refreshCoalesceTask: Task<Void, Never>?
-    /// True when the in-flight replay must be preceded by a RIS clear because
-    /// the terminal view is staying put. `terminalReady()` normally emits that
-    /// clear, but it fires only on a view's FIRST layout — a reload in place has
-    /// no new layout, so the clear has to ride in front of the flush instead.
-    private var clearOnReplayFlush = false
+    /// True from `beginServerReload()` until that reload's replay lands (or is
+    /// cancelled) — i.e. exactly when the in-flight replay must be preceded by a
+    /// RIS clear because the terminal view is staying put. `terminalReady()`
+    /// normally emits that clear, but it fires only on a view's FIRST layout, and
+    /// a reload in place has no new layout, so the clear rides in front of the
+    /// flush instead.
+    ///
+    /// Two readers outside this type:
+    /// - the coordinator drops a second tap while this holds (two overlapping
+    ///   replays paint the screen twice, the second appended below the first);
+    /// - the views hold their fade-through-black cover up while it holds, so the
+    ///   black lifts on the repaint rather than on a fixed timer.
+    @Published public private(set) var isReloadingFromServer = false
     /// Backstop for `beginServerReload()`: a lost `replay_complete` (or a socket
     /// that dies mid-replay) must not leave output buffered forever.
     private var reloadBackstopTask: Task<Void, Never>?
@@ -197,7 +205,7 @@ public final class TerminalViewModel: ObservableObject {
         // Replay still streaming in: clear the reused view now so old glyphs are
         // gone before the buffered scrollback flushes in `endReplay()`.
         if isReplaying {
-            clearOnReplayFlush = false   // this layout emits the clear instead
+            isReloadingFromServer = false   // this layout emits the clear instead
             handler(Data([0x1B, 0x63]))
             return
         }
@@ -209,7 +217,7 @@ public final class TerminalViewModel: ObservableObject {
         let completedReplay = replayComplete
         if completedReplay {
             replayComplete = false
-            clearOnReplayFlush = false
+            isReloadingFromServer = false
             combined.append(contentsOf: [0x1B, 0x63])
         }
         combined.append(contentsOf: pendingOutput.reduce(into: Data()) { $0.append($1) })
@@ -240,8 +248,8 @@ public final class TerminalViewModel: ObservableObject {
             // replaying; just flush the buffered scrollback. The exception is a
             // reload in place (`beginServerReload`), where no layout happened and
             // the clear rides in front of this flush.
-            let isReload = clearOnReplayFlush
-            clearOnReplayFlush = false
+            let isReload = isReloadingFromServer
+            isReloadingFromServer = false
             var combined = isReload ? Data([0x1B, 0x63]) : Data()
             combined.append(contentsOf: pendingOutput.reduce(into: Data()) { $0.append($1) })
             pendingOutput.removeAll()
@@ -287,7 +295,7 @@ public final class TerminalViewModel: ObservableObject {
         isCoalescingRefresh = false
         refreshCoalesceTask?.cancel()
         refreshCoalesceTask = nil
-        clearOnReplayFlush = false
+        isReloadingFromServer = false
         reloadBackstopTask?.cancel()
         reloadBackstopTask = nil
         pendingOutput.removeAll()
@@ -312,7 +320,7 @@ public final class TerminalViewModel: ObservableObject {
         isCoalescingRefresh = false
         refreshCoalesceTask?.cancel()
         refreshCoalesceTask = nil
-        clearOnReplayFlush = false
+        isReloadingFromServer = false
         reloadBackstopTask?.cancel()
         reloadBackstopTask = nil
         pendingOutput.removeAll()
@@ -345,11 +353,6 @@ public final class TerminalViewModel: ObservableObject {
         Task { try? await connection.sendResize(cols: cols, rows: rows) }
     }
 
-    /// True from `beginServerReload()` until the replay lands (or is cancelled).
-    /// The coordinator drops a second tap while this holds: two overlapping
-    /// replays paint the screen twice, the second appended below the first.
-    public var isReloadingFromServer: Bool { clearOnReplayFlush }
-
     /// Tap-to-reload, client half: throws away the locally cached terminal text
     /// and buffers whatever arrives next so it can REPLACE the screen instead of
     /// appending to it. `SharedSessionCoordinator.reloadTerminalFromServer` owns
@@ -367,7 +370,7 @@ public final class TerminalViewModel: ObservableObject {
         // keeping it would paint stale bytes after the RIS.
         pendingOutput.removeAll()
         pendingOutputBytes = 0
-        clearOnReplayFlush = true
+        isReloadingFromServer = true
         beginReplay()
         reloadBackstopTask?.cancel()
         reloadBackstopTask = Task { [weak self] in
@@ -381,8 +384,8 @@ public final class TerminalViewModel: ObservableObject {
     /// Drops the pending clear so the pane keeps the copy it already has — a
     /// failed reload must not blank the terminal.
     public func cancelServerReload() {
-        guard isReplaying, clearOnReplayFlush else { return }
-        clearOnReplayFlush = false
+        guard isReplaying, isReloadingFromServer else { return }
+        isReloadingFromServer = false
         endReplay()
     }
 

@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import ClaudeRelayClient
 
@@ -289,6 +290,32 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertTrue(vm.isReloadingFromServer)
         vm.endReplay()
         XCTAssertFalse(vm.isReloadingFromServer)
+    }
+
+    /// The fade-through-black cover is held up by observing this flag, so it has
+    /// to PUBLISH, not merely read true: as a plain computed property (what it
+    /// was) the views get no notification and the pane stays black until their
+    /// timeout. Pins the whole edge sequence a subscriber sees.
+    func testIsReloadingFromServerPublishesEachEdge() async {
+        let vm = makeVM()
+        var paints = [Data]()
+        vm.onTerminalOutput = { paints.append($0) }
+        vm.terminalReady()
+
+        var emitted = [Bool]()
+        let subscription = vm.$isReloadingFromServer.sink { emitted.append($0) }
+        defer { subscription.cancel() }
+
+        vm.beginServerReload()
+        vm.receiveOutput(Data([0x41]))
+        vm.endReplay()
+
+        // Current value on subscribe, then the tap, then the landed replay.
+        XCTAssertEqual(emitted, [false, true, false])
+        // And the screen the cover lifts on is the replayed one: `endReplay` has
+        // already flushed RIS + the buffered blob by the time it returns, which is
+        // strictly before an awaiting task can resume on this actor.
+        XCTAssertEqual(paints, [Data([0x1B, 0x63, 0x41])])
     }
 
     /// A reload whose resume never reached the server must leave the pane

@@ -4,6 +4,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -116,14 +119,7 @@ class TerminalSessionVm(
     private var refreshCoalesceJob: Job? = null
     private var refreshHardCapJob: Job? = null
 
-    /**
-     * True when the in-flight replay must be preceded by a RIS clear because the
-     * terminal view is staying put. [terminalReady] normally emits that clear,
-     * but it fires only on a view's FIRST layout — a reload in place has no new
-     * layout, so the clear has to ride in front of the flush instead. Mirrors
-     * Swift `TerminalViewModel.clearOnReplayFlush`.
-     */
-    private var clearOnReplayFlush = false
+    private val _isReloadingFromServer = MutableStateFlow(false)
     private var reloadBackstopJob: Job? = null
 
     companion object {
@@ -142,12 +138,22 @@ class TerminalSessionVm(
     }
 
     /**
-     * True from [beginServerReload] until the replay lands (or is cancelled). The
-     * coordinator drops a second tap while this holds: two overlapping replays
-     * paint the screen twice, the second appended below the first. Mirrors Swift
-     * `TerminalViewModel.isReloadingFromServer`.
+     * True from [beginServerReload] until that reload's replay lands (or is
+     * cancelled) — i.e. exactly when the in-flight replay must be preceded by a
+     * RIS clear because the terminal view is staying put. [terminalReady] normally
+     * emits that clear, but it fires only on a view's FIRST layout, and a reload in
+     * place has no new layout, so the clear rides in front of the flush instead.
+     *
+     * Two readers outside this class:
+     *  - the coordinator drops a second tap while this holds (two overlapping
+     *    replays paint the screen twice, the second appended below the first);
+     *  - the UI holds its fade-through-black cover up while it holds, so the black
+     *    lifts on the repaint rather than on a fixed timer.
+     *
+     * A [StateFlow] because that second reader is a composable. Mirrors Swift
+     * `TerminalViewModel.isReloadingFromServer` (`@Published`).
      */
-    val isReloadingFromServer: Boolean get() = clearOnReplayFlush
+    val isReloadingFromServer: StateFlow<Boolean> = _isReloadingFromServer.asStateFlow()
 
     /**
      * Tap-to-reload, client half: throws away the locally cached terminal text
@@ -168,7 +174,7 @@ class TerminalSessionVm(
         // keeping it would paint stale bytes after the RIS.
         pendingOutput.clear()
         pendingOutputBytes = 0
-        clearOnReplayFlush = true
+        _isReloadingFromServer.value = true
         beginReplay()
         reloadBackstopJob?.cancel()
         reloadBackstopJob = scope.launch {
@@ -183,8 +189,8 @@ class TerminalSessionVm(
      * failed reload must not blank the terminal.
      */
     fun cancelServerReload() {
-        if (!isReplaying || !clearOnReplayFlush) return
-        clearOnReplayFlush = false
+        if (!isReplaying || !_isReloadingFromServer.value) return
+        _isReloadingFromServer.value = false
         endReplay()
     }
 
@@ -256,13 +262,13 @@ class TerminalSessionVm(
         terminalSized = true
         didLogPendingCap = false
         if (isReplaying) {
-            clearOnReplayFlush = false   // this layout emits the clear instead
+            _isReloadingFromServer.value = false   // this layout emits the clear instead
             onTerminalOutput?.invoke(ReplayProtocol.RIS)
             return
         }
         val completedReplay = replayComplete
         replayComplete = false
-        if (completedReplay) clearOnReplayFlush = false
+        if (completedReplay) _isReloadingFromServer.value = false
         flushPending(prefix = if (completedReplay) ReplayProtocol.RIS else ByteArray(0))
         if (completedReplay) onReplayFlushed?.invoke()
     }
@@ -285,8 +291,8 @@ class TerminalSessionVm(
             // RIS was already emitted by [terminalReady] while replaying — except
             // after [beginServerReload], where no layout happened and the clear
             // rides in front of this flush.
-            val isReload = clearOnReplayFlush
-            clearOnReplayFlush = false
+            val isReload = _isReloadingFromServer.value
+            _isReloadingFromServer.value = false
             flushPending(prefix = if (isReload) ReplayProtocol.RIS else ByteArray(0))
             onReplayFlushed?.invoke()
             // The server resize-wiggles after every replay, so a full-screen app
@@ -414,7 +420,7 @@ class TerminalSessionVm(
         refreshCoalesceJob = null
         refreshHardCapJob?.cancel()
         refreshHardCapJob = null
-        clearOnReplayFlush = false
+        _isReloadingFromServer.value = false
         reloadBackstopJob?.cancel()
         reloadBackstopJob = null
         pendingOutput.clear()

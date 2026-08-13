@@ -1,5 +1,7 @@
 package relay.terminal
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -211,11 +213,31 @@ class TerminalSessionVmInputPromptTest {
         vm.onTerminalOutput = { }
         vm.terminalReady()
 
-        assertFalse(vm.isReloadingFromServer)
+        assertFalse(vm.isReloadingFromServer.value)
         vm.beginServerReload()
-        assertTrue(vm.isReloadingFromServer, "reload must be in flight until the replay lands")
+        assertTrue(vm.isReloadingFromServer.value, "reload must be in flight until the replay lands")
         vm.endReplay()
-        assertFalse(vm.isReloadingFromServer, "a landed replay must release the guard")
+        assertFalse(vm.isReloadingFromServer.value, "a landed replay must release the guard")
+    }
+
+    // The fade-through-black cover waits on this flow, so a COLLECTOR has to see
+    // the landing — as a plain Boolean (what this was) the UI can't observe it at
+    // all and the pane stays black until its timeout. Pins both halves of that
+    // contract: the cover stays up while the reload is in flight, and lifts when
+    // the replay lands.
+    @Test
+    fun isReloadingFromServerLandsForACollector() = runTest {
+        val vm = TerminalSessionVm(scope = backgroundScope)
+        vm.onTerminalOutput = { }
+        vm.terminalReady()
+        vm.beginServerReload()
+
+        val landed = async { vm.isReloadingFromServer.first { !it } }
+        runCurrent()
+        assertTrue(landed.isActive, "the cover must stay up while the reload is in flight")
+
+        vm.endReplay()
+        assertFalse(landed.await(), "a landed replay must lift the cover")
     }
 
     // A reload whose resume never reached the server must leave the pane showing
