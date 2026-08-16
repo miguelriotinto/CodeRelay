@@ -24,9 +24,18 @@ final class TerminalScreenModel {
     private final class Delegate: NSObject, TerminalDelegate {
         var oscTitle = ""
         var oscProgress = ""
+        /// Answers this emulator produced during the current `feed`, drained by
+        /// it. Capped so a stream packed with queries (a binary file `cat`ed to
+        /// the tty) can't turn one read into an unbounded PTY write.
+        var pendingResponse = [UInt8]()
 
         func send(source: Terminal, data: ArraySlice<UInt8>) {
-            // Detection is read-only: the emulator never needs to reply upstream.
+            // NOT read-only any more: these are the answers to terminal queries
+            // in the PTY stream (cursor position, device attributes, colours).
+            // The server owes them to the program that asked — see
+            // `TerminalQueryFilter` for why the device must not answer instead.
+            guard pendingResponse.count + data.count <= TerminalScreenModel.maxResponseBytesPerFeed else { return }
+            pendingResponse.append(contentsOf: data)
         }
 
         func setTerminalTitle(source: Terminal, title: String) {
@@ -49,6 +58,12 @@ final class TerminalScreenModel {
         }
     }
 
+    /// Ceiling on the answers one `feed` may generate. 4 KB is far above any
+    /// legitimate burst (the longest single answer is a few dozen bytes) and far
+    /// below the PTY's 4 MB write queue, so a flood is dropped here rather than
+    /// evicting a user's real keystrokes from that queue.
+    static let maxResponseBytesPerFeed = 4096
+
     private let delegate = Delegate()
     private let terminal: Terminal
 
@@ -60,9 +75,18 @@ final class TerminalScreenModel {
         terminal = Terminal(delegate: delegate, options: options)
     }
 
-    /// Feed a chunk of raw PTY output into the emulator.
-    func feed(_ data: Data) {
+    /// Feed a chunk of raw PTY output into the emulator, returning whatever the
+    /// emulator wants to answer upstream (empty for the vast majority of chunks).
+    ///
+    /// Deliberately NOT `@discardableResult`: silently dropping these answers is
+    /// the defect this returns them to fix — a query then goes unanswered here
+    /// and is answered a round trip later by the device, landing as typed text at
+    /// the user's prompt. Every caller must decide where they go.
+    func feed(_ data: Data) -> Data {
+        delegate.pendingResponse.removeAll(keepingCapacity: true)
         terminal.feed(byteArray: [UInt8](data))
+        guard !delegate.pendingResponse.isEmpty else { return Data() }
+        return Data(delegate.pendingResponse)
     }
 
     /// Resize the emulated grid to match a client resize.

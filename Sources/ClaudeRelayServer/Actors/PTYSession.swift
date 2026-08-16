@@ -527,16 +527,35 @@ public actor PTYSession: PTYSessionProtocol {
     /// Always writes to the ring buffer (for resume history) and
     /// additionally forwards to the live output handler if attached.
     private func handleOutput(_ data: Data) {
-        ringBuffer.write(data)
-        screenModel.feed(data)
+        // Answer terminal queries HERE rather than letting them reach the device.
+        // The emulator we already feed for detection produces the same answer the
+        // device's SwiftTerm would, minus the WebSocket round trip that makes the
+        // device's answer arrive after the asking program stopped reading — at
+        // which point the shell echoes it as typed text (the reported
+        // `11;rgb:0000/0000/0000`). This is what tmux does, and it also means a
+        // DETACHED session's queries get answered instead of rotting in the ring
+        // buffer until some client reattaches and answers them.
+        //
+        // No loop: an answer written back may be echoed into this stream, but an
+        // answer is never itself a query, so it generates nothing further.
+        let queryAnswers = screenModel.feed(data)
+        if !queryAnswers.isEmpty {
+            write(queryAnswers)
+        }
+        // Everything client-bound — the live forward AND the replayable history —
+        // gets the queries stripped, so neither path can provoke a late answer.
+        // Detection and the OSC 52 scanner keep seeing the raw bytes.
+        let clientBound = TerminalQueryFilter.strip(data)
+
+        ringBuffer.write(clientBound)
         activityMonitor.processOutput(data)
-        outputHandler?(data)
-        // F11: surface OSC 52 clipboard writes (terminal copy → device). The
-        // raw bytes still flow through outputHandler unchanged — OSC 52 is
-        // invisible to the emulator, so the terminal render is unaffected. The
-        // parser is stateful: a sequence split across reads completes on a
-        // later chunk. Always feed (even with no handler) so parser state
-        // doesn't desync across attach/detach.
+        outputHandler?(clientBound)
+        // F11: surface OSC 52 clipboard writes (terminal copy → device). Fed the
+        // raw stream, not `clientBound`, so parser state can't be broken by the
+        // query filter — though only OSC 52 *reads* are stripped and those are
+        // ignored here anyway. The parser is stateful: a sequence split across
+        // reads completes on a later chunk. Always feed (even with no handler) so
+        // parser state doesn't desync across attach/detach.
         //
         // Coalesce to the LAST write in the chunk: each OSC 52 write REPLACES
         // the clipboard, so only the final one matters. This also bounds a
@@ -792,6 +811,17 @@ public actor PTYSession: PTYSessionProtocol {
 
     /// The terminal session `terminate()` sweeps.
     var _testOnly_childSessionID: pid_t { childSessionID }
+
+    /// Drive the output path exactly as the read source does, so a test can
+    /// assert what a client is handed for a given chunk of PTY output.
+    ///
+    /// The production trigger is unreachable from a test: output comes only from
+    /// the child, and under a test harness `login -fp` echoes commands without
+    /// running them (see the reap notes in this directory's `CLAUDE.md`) — so
+    /// making the shell `printf` a query proves nothing about the code path.
+    func _testOnly_handleOutput(_ data: Data) {
+        handleOutput(data)
+    }
 
     /// Why a window-size read produced no size.
     ///

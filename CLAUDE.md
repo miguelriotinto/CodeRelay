@@ -80,6 +80,14 @@ ancestor-path walk, and the **session**-wide reap in `PTYSessionReap.swift`
 (`pid ⊂ group ⊂ session`; a group kill misses zsh's job-control groups). See
 `Sources/ClaudeRelayServer/CLAUDE.md` before touching any of it.
 
+### Terminal Queries (answered server-side)
+
+Terminal queries in the PTY stream are answered by the server's own
+`TerminalScreenModel` and stripped from everything client-bound
+(`TerminalQueryFilter`), so no device ever answers one a WebSocket round trip
+late and lands the reply as typed text at the prompt. See
+`Sources/ClaudeRelayServer/CLAUDE.md`.
+
 ### NIO ↔ Swift Concurrency Bridge
 
 `ChannelHandlerContext` is not `Sendable`. To use it inside `Task` blocks, wrap it in `UnsafeTransfer` (defined in `UnsafeTransfer.swift`) and only access `ctx.value` inside `eventLoop.execute { }`. Both `RelayMessageHandler` and `AdminHTTPHandler` use this pattern.
@@ -142,6 +150,7 @@ Named caps across the stack:
 - `RelayMessageHandler.maxTextFrameSize` / `maxBinaryFrameSize` — 10 MB each (images are base64-in-JSON)
 - `RingBuffer` — `scrollbackSize` bytes (config, default 512 KB)
 - `PTYSession` pending-write queue — 4 MB
+- `TerminalScreenModel.maxResponseBytesPerFeed` — 4 KB of terminal-query answers per PTY read (so a query flood can't evict real keystrokes from the queue above)
 - `RateLimiter.maxTrackedIPs` — 10 k (LRU-evicts oldest 10 % on overflow)
 - `LogStore` — compacts at 5 % overshoot above `maxEntries` (not +1000)
 - `AdminHTTPServer.maxRequestBodyBytes` — 64 KB (returns 413)

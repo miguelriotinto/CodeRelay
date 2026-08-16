@@ -165,6 +165,44 @@ a month. Enumerate ancestors by dropping components off the path *string*
 Unicode **scalars** rather than `Character`s so a component starting with a
 combining mark can't fuse onto the preceding `/` and drop an ancestor level.
 
+## Terminal Queries Are Answered Here, Not By The Device
+
+A terminal *query* in the PTY stream (`ESC ] 11 ; ? BEL` background colour,
+`ESC [ 6 n` cursor position, DA/DECRQM/XTGETTCAP/XTWINOPS reports) must never
+reach a client. Across the relay the answer costs a WebSocket round trip, so it
+arrives after the asking program stopped reading — the shell's line editor then
+takes it as keystrokes and echoes the payload at the prompt. The reported
+symptom was a literal `11;rgb:0000/0000/0000` sitting unexecuted at a bash
+prompt; the all-zero colour is the fingerprint of our own client, whose
+`nativeBackgroundColor` is forced to black.
+
+`handleOutput` therefore does two things at that seam, and both halves are
+required:
+
+- **Answer locally.** `TerminalScreenModel.feed` now *returns* whatever the
+  emulator wants to send upstream, and `handleOutput` writes it back to the PTY.
+  Zero latency, and because both ends run the same SwiftTerm it is byte-identical
+  to the answer the device would have given. This is the tmux/mosh model. It also
+  fixes **detached** sessions, whose queries previously rotted in the ring buffer
+  until some client reattached and answered them. `feed` is deliberately not
+  `@discardableResult` — silently dropping these answers is the defect.
+- **Strip from both client-bound copies.** `TerminalQueryFilter.strip` runs over
+  the bytes that go to `ringBuffer.write` *and* `outputHandler`, so neither the
+  live forward nor a later replay can provoke a late answer. Detection
+  (`screenModel`, `activityMonitor`) and `osc52Parser` keep the raw stream —
+  stripping before the emulator would leave the query unanswered by anyone.
+
+Only sequences that are unambiguously queries *and* render nothing are stripped;
+commands sharing a final byte (SCORC `CSI u`, DECSTR `CSI !p`, title-stack
+`CSI 22t`) pass through byte-exact. Two accepted residuals: the filter is
+stateless, so a query split across two PTY reads reaches the device (pre-fix
+behaviour, never worse), and a truncated tail at the end of a chunk is forwarded
+rather than held back — withholding it would stall the render.
+
+`EscapeResponseFilter` (which strips stale *replies* out of a replay) is the same
+root cause treated at the symptom, from the other end. It stays as defence in
+depth for ring buffers recorded before this fix.
+
 ## Server-Side Activity Monitoring
 
 The server monitors all PTY output continuously (even for detached sessions) via `SessionActivityMonitor`. It detects coding agent entry/exit and output silence, maintaining an `ActivityState` per session. Agents are identified via the `CodingAgent` registry (process-name matching + OSC title keywords); currently ships with Claude Code, Codex, opencode, Copilot CLI, Cursor Agent, and Droid (see `CodingAgent.all`, each with a bundled manifest under `Sources/ClaudeRelayServer/Resources/Agents/`). State changes are pushed to clients via `sessionActivity` WebSocket messages. This ensures background tabs correctly reflect agent running/idle state even when the client is attached to a different session.
