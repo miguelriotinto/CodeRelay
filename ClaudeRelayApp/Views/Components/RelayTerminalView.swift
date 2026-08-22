@@ -137,6 +137,36 @@ class RelayTerminalView: TerminalView {
         }
     }
 
+    // MARK: - A swipe scrolls; it is never a mouse drag
+
+    /// Deliberately empty — **not** a call to `super`, and deliberately not
+    /// `allowMouseReporting = false` either.
+    ///
+    /// When a program turns mouse tracking on (`CSI ? 1000 h`, which Claude Code
+    /// sends at startup) SwiftTerm's own implementation installs a one-finger
+    /// `UIPanGestureRecognizer` and reports the drag to that program as mouse
+    /// press → motion → release. On a pointer device that is right. On a phone the
+    /// one-finger drag is the *only* way to scroll, so this hands scrolling to the
+    /// remote app and the user can't move the viewport.
+    ///
+    /// It turned visibly destructive in the SwiftTerm 1.13 → 1.15 bump: upstream
+    /// #586 changed iOS taps/drags from button 1 (middle) to button 0 (left), so
+    /// an inert middle-button drag became a left-button drag — a selection. A
+    /// swipe then highlighted a block of terminal text and Claude Code copied it
+    /// ("copied 393 chars to clipboard") instead of scrolling.
+    ///
+    /// Muting `allowMouseReporting` instead would also kill the *tap* path:
+    /// `singleTap`/`doubleTap`/`tripleTap` each consult that flag independently,
+    /// and a tap is a click the user does want reported — it is how an agent's
+    /// clickable UI works. Dropping only the pan keeps clicks, returns the swipe
+    /// to the `UIScrollView`, and leaves long-press / double-tap driving
+    /// SwiftTerm's own selection (`panSelectionHandler`) for selecting text.
+    ///
+    /// Nothing here needs to *remove* a gesture: `enableMousePanGesture()` is
+    /// reached only from the implementation being overridden, so with this in
+    /// place the recognizer is never created in the first place.
+    override func mouseModeChanged(source: Terminal) {}
+
     var onPasteImage: ((Data) -> Void)?
 
     override func paste(_ sender: Any?) {

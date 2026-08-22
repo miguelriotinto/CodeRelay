@@ -117,6 +117,19 @@ The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments
 
 Both apps share `SharedSessionCoordinator` (in ClaudeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (e.g., macOS registers `SleepWakeObserver`; iOS uses `scenePhase`).
 
+**iOS: the one-finger swipe belongs to the scroll view, not to mouse reporting.**
+`RelayTerminalView.mouseModeChanged(source:)` overrides SwiftTerm with an empty
+body: upstream's only action there is installing a one-finger
+`UIPanGestureRecognizer` that reports drags upstream as mouse press/motion/release,
+which on a phone steals the sole means of scrolling. SwiftTerm 1.15's #586 (iOS
+taps/drags switched from button 1 to button 0) turned that from inert into a
+selection drag, so a swipe highlighted text and the agent copied it. Do **not**
+"simplify" this to `allowMouseReporting = false` — the tap handlers consult that
+flag separately and a tap is a click the user wants sent. macOS keeps real mouse
+reporting (its scrolling is a wheel event, so nothing competes); Android's termlib
+engine takes input only from the keyboard and has no mouse path at all. Guarded by
+`ClaudeRelayAppTests/TerminalSwipeScrollTests`.
+
 ### Connection Health & Quality Monitoring
 
 `RelayConnection` maintains connection health via application-level ping/pong (`ClientMessage.ping` → `ServerMessage.pong`) on a 10-second interval. This exercises the full JSON message path rather than relying on WebSocket-level pings (opcode 0x9), which are silently dropped by some network configurations.

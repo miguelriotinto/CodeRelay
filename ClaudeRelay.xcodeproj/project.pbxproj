@@ -65,6 +65,7 @@
 		A9D94F9D30CF4FC923A8C6AB /* ClaudeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = 6E1855478A9ACA3614582EA5 /* ClaudeRelaySpeech */; };
 		AE20EB3A429DA20B6284117C /* TerminalContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5B785672A5F0D293AC7BF84 /* TerminalContainerView.swift */; };
 		AE54E51AD13B1D63E09B1D41 /* QRCodePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94688372C735D9B8D283F7BE /* QRCodePopover.swift */; };
+		AF4632565EE34DA682001FBA /* TerminalSwipeScrollTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DAE78D1127AB2083084048C /* TerminalSwipeScrollTests.swift */; };
 		B2BE4071D173540937E6CAF5 /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A53E6CE8384FD9002F533E1 /* PairWithHostSheet.swift */; };
 		B5928FFA4B1500FD2062C36C /* SplashScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79A7D6C757F3F4D55DDE13B0 /* SplashScreenView.swift */; };
 		B86A8371A657E020A7E507C4 /* ActiveTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BA9F1A3D0A1C24B057EF633 /* ActiveTerminalView.swift */; };
@@ -110,6 +111,7 @@
 		09EC62BA9D637188AC22F1FC /* ClaudeRelayMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeRelayMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0BA9F1A3D0A1C24B057EF633 /* ActiveTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveTerminalView.swift; sourceTree = "<group>"; };
 		0CE8732910310E2EB40DAF34 /* ModifierFlagsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModifierFlagsTests.swift; sourceTree = "<group>"; };
+		0DAE78D1127AB2083084048C /* TerminalSwipeScrollTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSwipeScrollTests.swift; sourceTree = "<group>"; };
 		1070882CC08139377A3E6C5B /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		1481B919F081FD62AD2BBD9A /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
 		1604B543C9F9EFA0D4C37EE5 /* CodeRelayIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CodeRelayIcon.icns; sourceTree = "<group>"; };
@@ -379,6 +381,7 @@
 				D056FB2ADC91419A5B818866 /* OnDeviceSpeechEngineTests.swift */,
 				322C4BBCAB06B016D16AFE7F /* SpeechEngineStateTests.swift */,
 				6727AF8242E472AFCFF8765D /* TerminalScrollSyncTests.swift */,
+				0DAE78D1127AB2083084048C /* TerminalSwipeScrollTests.swift */,
 				C6782154FCD1AA4FC355A0B9 /* TextCleanerStaticTests.swift */,
 				73B3DBEA35055556AD1BCA31 /* WhisperHallucinationTests.swift */,
 			);
@@ -629,6 +632,7 @@
 				938D018C46C19AA652D25CBC /* OnDeviceSpeechEngineTests.swift in Sources */,
 				C2D144F0C636F110F135601F /* SpeechEngineStateTests.swift in Sources */,
 				9276B5AFFE5AE4679E55DAFA /* TerminalScrollSyncTests.swift in Sources */,
+				AF4632565EE34DA682001FBA /* TerminalSwipeScrollTests.swift in Sources */,
 				33CB2A7296D4D8959C1C8A3C /* TextCleanerStaticTests.swift in Sources */,
 				20A4769EBD9A6D1D8634B31D /* WhisperHallucinationTests.swift in Sources */,
 			);
