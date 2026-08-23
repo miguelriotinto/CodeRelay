@@ -117,18 +117,41 @@ The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments
 
 Both apps share `SharedSessionCoordinator` (in ClaudeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (e.g., macOS registers `SleepWakeObserver`; iOS uses `scenePhase`).
 
-**iOS: the one-finger swipe belongs to the scroll view, not to mouse reporting.**
-`RelayTerminalView.mouseModeChanged(source:)` overrides SwiftTerm with an empty
-body: upstream's only action there is installing a one-finger
-`UIPanGestureRecognizer` that reports drags upstream as mouse press/motion/release,
-which on a phone steals the sole means of scrolling. SwiftTerm 1.15's #586 (iOS
-taps/drags switched from button 1 to button 0) turned that from inert into a
-selection drag, so a swipe highlighted text and the agent copied it. Do **not**
-"simplify" this to `allowMouseReporting = false` — the tap handlers consult that
-flag separately and a tap is a click the user wants sent. macOS keeps real mouse
-reporting (its scrolling is a wheel event, so nothing competes); Android's termlib
-engine takes input only from the keyboard and has no mouse path at all. Guarded by
-`ClaudeRelayAppTests/TerminalSwipeScrollTests`.
+**iOS: a one-finger swipe is a wheel report while a program tracks the mouse, and
+the scroll view's own gesture otherwise.** `RelayTerminalView.mouseModeChanged`
+overrides SwiftTerm's (never calling `super`) and swaps its pan for ours. Three
+facts make that the fix rather than a preference:
+
+1. Claude Code runs in the **alternate screen buffer** (`CSI ?1049h`), which has
+   no scrollback by definition. `contentSize.height` is then `rows * cellHeight`,
+   so the `UIScrollView` a `TerminalView` *is* has nothing to scroll and a swipe
+   only rubber-bands. The viewport was never the thing that moves — the agent's
+   own transcript is.
+2. What the agent listens for is a **wheel report** (buttons 4/5, SGR-encoded
+   under `CSI ?1006h`). macOS's `scrollWheel` already sends these, which is why
+   the Mac app scrolls the same session fine; iOS has no wheel event source, so
+   nothing ever sent one. Verified against a live `claude` in a probe PTY: SGR
+   wheel moves the transcript, X10 encoding / PageUp / shift+PageUp do not.
+3. SwiftTerm's own `mouseModeChanged` installs a pan reporting the drag as
+   press → motion → release. #586 (in the 1.13 → 1.15 bump) changed iOS drags
+   from button 1 to button 0, turning that into a *selection* drag — a swipe
+   highlighted text and the agent answered "copied 393 characters to clipboard".
+
+So `sendWheel(travel:at:)` banks sub-row finger travel and emits whole notches at
+the cell under the finger, and the pan is armed **only** while `mouseMode != .off`
+— a disabled recognizer never enters the gesture graph, so in a plain shell the
+`require(toFail:)` costs the real local scrollback nothing. Two traps: do not
+"simplify" this to `allowMouseReporting = false` (the tap handlers consult that
+flag separately and a tap is a click the user wants sent), and do not port macOS's
+alt-buffer arrow-key fallback using a "nothing to scroll locally" proxy — that
+predicate is also true for an empty *normal* buffer, where it would send arrow
+keys to zsh and recall shell history.
+
+`gestureRecognizerShouldBegin` is `UIView`'s hook, not the delegate's; the two
+share a selector and `UIScrollView` implements it for its own pan, so every other
+recognizer must fall through to `super`. Android's termlib engine takes input only
+from the keyboard and has no mouse path at all, so it still has gap (1). Guarded
+by `ClaudeRelayAppTests/TerminalSwipeScrollTests`.
 
 ### Connection Health & Quality Monitoring
 

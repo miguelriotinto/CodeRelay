@@ -137,35 +137,139 @@ class RelayTerminalView: TerminalView {
         }
     }
 
-    // MARK: - A swipe scrolls; it is never a mouse drag
+    // MARK: - A swipe is a wheel event, not a mouse drag
 
-    /// Deliberately empty — **not** a call to `super`, and deliberately not
-    /// `allowMouseReporting = false` either.
+    /// Turns a one-finger swipe into mouse-wheel reports while the program is
+    /// tracking the mouse, and does **not** call `super`.
     ///
-    /// When a program turns mouse tracking on (`CSI ? 1000 h`, which Claude Code
-    /// sends at startup) SwiftTerm's own implementation installs a one-finger
-    /// `UIPanGestureRecognizer` and reports the drag to that program as mouse
-    /// press → motion → release. On a pointer device that is right. On a phone the
-    /// one-finger drag is the *only* way to scroll, so this hands scrolling to the
-    /// remote app and the user can't move the viewport.
+    /// Three facts decide this, and the fix needs all three:
     ///
-    /// It turned visibly destructive in the SwiftTerm 1.13 → 1.15 bump: upstream
-    /// #586 changed iOS taps/drags from button 1 (middle) to button 0 (left), so
-    /// an inert middle-button drag became a left-button drag — a selection. A
-    /// swipe then highlighted a block of terminal text and Claude Code copied it
-    /// ("copied 393 chars to clipboard") instead of scrolling.
+    /// 1. Claude Code runs in the **alternate screen buffer** (`CSI ? 1049 h`),
+    ///    which has no scrollback by definition. `contentSize.height` is then
+    ///    `rows * cellHeight`, so the `UIScrollView` this view *is* has nothing
+    ///    to scroll and a swipe only rubber-bands. The viewport is not what
+    ///    moves — the agent's own transcript is.
+    /// 2. What the agent listens for is a **wheel report** (buttons 4/5, SGR
+    ///    encoding under `CSI ? 1006 h`). macOS already does this in
+    ///    `scrollWheel`, which is why the Mac app scrolls the same session fine.
+    ///    iOS has no wheel event source at all, so nothing ever sent one.
+    /// 3. SwiftTerm's own `mouseModeChanged` installs a pan that reports the
+    ///    drag as press → motion → release. Upstream #586 (in the 1.13 → 1.15
+    ///    bump) changed iOS drags from button 1 to button 0, turning that into a
+    ///    *selection* drag: a swipe highlighted terminal text and Claude Code
+    ///    answered "copied 393 characters to clipboard".
     ///
-    /// Muting `allowMouseReporting` instead would also kill the *tap* path:
-    /// `singleTap`/`doubleTap`/`tripleTap` each consult that flag independently,
-    /// and a tap is a click the user does want reported — it is how an agent's
-    /// clickable UI works. Dropping only the pan keeps clicks, returns the swipe
-    /// to the `UIScrollView`, and leaves long-press / double-tap driving
-    /// SwiftTerm's own selection (`panSelectionHandler`) for selecting text.
+    /// So the pan stays, but it carries wheel notches instead of a button drag.
+    /// `allowMouseReporting` is deliberately left alone: `singleTap` /
+    /// `doubleTap` / `tripleTap` consult it independently, and a tap is a click
+    /// the user does want reported — it is how an agent's clickable UI works.
+    override func mouseModeChanged(source: Terminal) {
+        installedWheelPan().isEnabled = source.mouseMode != .off
+    }
+
+    /// The gesture that carries the swipe, created on first mouse-mode change.
+    private var wheelPanGesture: UIPanGestureRecognizer?
+
+    /// Finger travel not yet worth a whole wheel notch, in points. Keeping the
+    /// remainder is what makes a slow drag scroll smoothly instead of dropping
+    /// every sub-row movement.
+    private var wheelTravel: CGFloat = 0
+
+    /// Installs the wheel pan once and gives it priority over the scroll view's
+    /// own pan.
     ///
-    /// Nothing here needs to *remove* a gesture: `enableMousePanGesture()` is
-    /// reached only from the implementation being overridden, so with this in
-    /// place the recognizer is never created in the first place.
-    override func mouseModeChanged(source: Terminal) {}
+    /// `require(toFail:)` is safe to leave in place permanently: a *disabled*
+    /// recognizer never participates in the gesture graph, so while mouse
+    /// reporting is off this costs native scrolling — the right behaviour in a
+    /// plain shell, where the scrollback really is local — exactly nothing.
+    private func installedWheelPan() -> UIPanGestureRecognizer {
+        if let existing = wheelPanGesture { return existing }
+        let gesture = UIPanGestureRecognizer(target: self, action: #selector(handleWheelPan))
+        gesture.maximumNumberOfTouches = 1
+        gesture.isEnabled = false
+        addGestureRecognizer(gesture)
+        panGestureRecognizer.require(toFail: gesture)
+        wheelPanGesture = gesture
+        return gesture
+    }
+
+    /// Stands the wheel pan down while a selection is live, so long-press → drag
+    /// still extends it via SwiftTerm's own `panSelectionHandler`.
+    ///
+    /// This is `UIView`'s hook, not `UIGestureRecognizerDelegate`'s — the two
+    /// share a selector, and `UIScrollView` already implements it to arbitrate
+    /// its *own* pan. So every other recognizer must go to `super`: answering
+    /// `true` here on the scroll view's behalf would discard that logic and is
+    /// the one way this method can break native scrolling.
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === wheelPanGesture { return !hasActiveSelection }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
+    @objc private func handleWheelPan(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            wheelTravel = 0
+        case .changed:
+            // Read the translation incrementally: take it, then zero it, so the
+            // accumulator below sees finger *movement* rather than a distance
+            // from the touch-down point that would re-send old notches.
+            let travel = gesture.translation(in: self).y
+            gesture.setTranslation(.zero, in: self)
+            sendWheel(travel: travel, at: gesture.location(in: self))
+        default:
+            break
+        }
+    }
+
+    /// Converts `travel` points of finger movement into whole wheel notches and
+    /// reports them. Returns the number sent (negative for wheel-down), which is
+    /// what the tests assert against.
+    ///
+    /// Not private, and split from the gesture handler, because a
+    /// `UIPanGestureRecognizer` cannot be driven from a unit test — a real touch
+    /// sequence is the only thing that moves one. This is the seam the tests
+    /// drive instead.
+    @discardableResult
+    func sendWheel(travel: CGFloat, at point: CGPoint) -> Int {
+        let terminal = getTerminal()
+        guard allowMouseReporting, terminal.mouseMode != .off else { return 0 }
+
+        let rowHeight = wheelRowHeight
+        wheelTravel += travel
+        let notches = Int(wheelTravel / rowHeight)
+        guard notches != 0 else { return 0 }
+        wheelTravel -= CGFloat(notches) * rowHeight
+
+        // Dragging down (positive travel) pulls earlier lines into view, which
+        // is a wheel-*up* report — the same mapping as a trackpad with natural
+        // scrolling, and the direction `scrollWheel` uses on macOS.
+        let button = notches > 0 ? 4 : 5
+        let flags = terminal.encodeButton(button: button, release: false,
+                                          shift: false, meta: false, control: false)
+        let col = max(0, min(terminal.cols - 1, Int(point.x / wheelColumnWidth)))
+        let row = max(0, min(terminal.rows - 1, Int(point.y / rowHeight)))
+        for _ in 0..<abs(notches) {
+            terminal.sendEvent(buttonFlags: flags, x: col, y: row,
+                               pixelX: Int(point.x), pixelY: Int(point.y))
+        }
+        return notches
+    }
+
+    /// One row's height in points. SwiftTerm's own `cellDimension` is internal to
+    /// that module, so this derives the same number from the grid the emulator
+    /// reports — self-correcting across font-size changes and rotation. The
+    /// fallback only matters before first layout, when `bounds` is empty.
+    var wheelRowHeight: CGFloat {
+        let height = bounds.height / CGFloat(max(1, getTerminal().rows))
+        return height >= 1 ? height : 16
+    }
+
+    /// One column's width in points; see `wheelRowHeight`.
+    var wheelColumnWidth: CGFloat {
+        let width = bounds.width / CGFloat(max(1, getTerminal().cols))
+        return width >= 1 ? width : 8
+    }
 
     var onPasteImage: ((Data) -> Void)?
 
