@@ -412,10 +412,16 @@ final class RelayMessageHandlerTests: XCTestCase {
         // rate limit, not incidentally because the token was wrong.
         let (plaintext, _) = try await fixture.tokenStore.create(label: "valid")
 
-        await limiter.recordFailure(ip: "127.0.0.1")
-        await limiter.recordFailure(ip: "127.0.0.1")
-        let blocked = await limiter.isBlocked(ip: "127.0.0.1")
-        XCTAssertTrue(blocked, "precondition: the fixture's IP must be blocked")
+        // Read the key off the handler rather than assuming "127.0.0.1":
+        // NIOAsyncTestingChannel does not necessarily report the sentinel
+        // address it was connected to, and blocking the wrong key silently
+        // makes this test pass for the wrong reason (nothing is blocked, auth
+        // succeeds, and the assertions below would be the only signal).
+        let ip = fixture.handler.remoteIP
+        await limiter.recordFailure(ip: ip)
+        await limiter.recordFailure(ip: ip)
+        let blocked = await limiter.isBlocked(ip: ip)
+        XCTAssertTrue(blocked, "precondition: the fixture's IP (\(ip)) must be blocked")
 
         try await send(textFrame("""
         {"type":"auth_request","payload":{"token":"\(plaintext)","protocolVersion":1}}
@@ -443,10 +449,12 @@ final class RelayMessageHandlerTests: XCTestCase {
 
         let (plaintext, _) = try await fixture.tokenStore.create(label: "valid")
 
-        // Two fumbled attempts, still under the cap.
-        await limiter.recordFailure(ip: "127.0.0.1")
-        await limiter.recordFailure(ip: "127.0.0.1")
-        let before = await limiter._testOnly_retainedFailureCount(ip: "127.0.0.1")
+        // Two fumbled attempts, still under the cap. Keyed off the handler's
+        // own remoteIP — see the note in the test above.
+        let ip = fixture.handler.remoteIP
+        await limiter.recordFailure(ip: ip)
+        await limiter.recordFailure(ip: ip)
+        let before = await limiter._testOnly_retainedFailureCount(ip: ip)
         XCTAssertEqual(before, 2, "precondition: two failures recorded")
 
         try await send(textFrame("""
@@ -455,7 +463,7 @@ final class RelayMessageHandlerTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(60))
 
         XCTAssertTrue(fixture.handler.isAuthenticated, "valid token must authenticate")
-        let after = await limiter._testOnly_retainedFailureCount(ip: "127.0.0.1")
+        let after = await limiter._testOnly_retainedFailureCount(ip: ip)
         XCTAssertEqual(after, 0, "a successful auth must clear the IP's failure budget")
     }
 }

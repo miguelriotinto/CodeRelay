@@ -68,8 +68,18 @@ jobs:
       - name: Linux platform seam tests
         run: ./gradlew :linux-storage:test :linux-platform:test --no-daemon
 
-      - name: Build the native terminal (libvterm via termlib's upstream CMake)
-        run: ./gradlew :linux-terminal:buildNativeTerminal --no-daemon
+      # Builds libjni_cb_term.so from termlib's upstream CMake (its non-Android
+      # `find_package(JNI)` branch) with our mouse-dispatch patch applied, then
+      # drives the REAL libvterm: ANSI parsing, cursor addressing, alt-screen,
+      # wheel reporting. Nothing here is mocked.
+      - name: Terminal tests (real libvterm through JNI)
+        run: ./gradlew :linux-terminal:test --no-daemon
 
-      - name: Assemble everything (verifies the full module graph links)
-        run: ./gradlew assemble --no-daemon
+      - name: Feature and app tests
+        run: ./gradlew :feature-settings:test :feature-servers:test :feature-workspace:test :app:test --no-daemon
+
+      # `build` runs every module's tests and assembles them, so it is the
+      # backstop that catches a module added later without a step of its own.
+      # The steps above exist to fail fast with a clear name.
+      - name: Build everything (all modules, all tests)
+        run: ./gradlew build -x :app:createDistributable --no-daemon

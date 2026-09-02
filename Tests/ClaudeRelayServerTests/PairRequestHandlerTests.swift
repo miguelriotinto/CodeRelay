@@ -333,10 +333,15 @@ final class PairRequestHandlerTests: XCTestCase {
 
         let grant = await store.mint(label: "Real iPhone")
 
-        await limiter.recordFailure(ip: "127.0.0.1")
-        await limiter.recordFailure(ip: "127.0.0.1")
-        let blocked = await limiter.isBlocked(ip: "127.0.0.1")
-        XCTAssertTrue(blocked, "precondition: the fixture's IP must be blocked")
+        // Key off the handler's own remoteIP, as `testBadCodeRecordsRateLimiterFailure`
+        // already does — NIOAsyncTestingChannel does not necessarily report the
+        // sentinel address, and blocking the wrong key would let this test pass
+        // while the gate did nothing.
+        let ip = fixture.handler.remoteIP
+        await limiter.recordFailure(ip: ip)
+        await limiter.recordFailure(ip: ip)
+        let blocked = await limiter.isBlocked(ip: ip)
+        XCTAssertTrue(blocked, "precondition: the fixture's IP (\(ip)) must be blocked")
 
         // A VALID code — the rejection must come from the rate limit.
         try await send(pairFrame(code: grant.code), on: fixture)
