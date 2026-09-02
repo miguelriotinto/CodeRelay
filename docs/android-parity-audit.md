@@ -33,7 +33,7 @@ the real Termux terminal, JNI model inference, and the Play Console release), no
 | `SessionSidebarView` | `SessionSidebar.kt` | **PASS** | new/attach, state badges + ActivityDot, rename dialog, swipe-delete, long-press menu (rename / share QR), pull-to-refresh |
 | `SettingsView` | `SettingsScreen.kt` | **PASS** | all 6 sections (§2) |
 | `SplashScreenView` | `SplashScreen.kt` | **PASS** | 3-phase scale/fade animation matches iOS; preload hook on dismiss |
-| `QRCodeSheet` | `QrShareSheet.kt` | **PASS** | ZXing QR of `clauderelay://session/{uuid}` + selectable deeplink |
+| `QRCodeSheet` | `QrShareSheet.kt` | **PASS** | ZXing QR of `coderelay://session/{uuid}` + selectable deeplink |
 | `QRScannerView` | `QrScannerScreen.kt` | **PASS** (camera runtime DEFERRED) | CameraX + ML Kit barcode → DeepLinks.parseSessionId → attach; runtime needs a device |
 
 **Shared UI atoms:** `ConnectionQualityDot`, `ActivityDot`, `AgentColorPalette` (claude=orange,
@@ -78,7 +78,7 @@ read-back-confirm). Bedrock token correctly in EncryptedSharedPreferences, not D
 
 | Feature | Status | Android location |
 |---|---|---|
-| Deep links `clauderelay://session/{uuid}` | **PASS** | DeepLinks.kt + manifest intent-filter + cold/warm pendingSessionId |
+| Deep links `coderelay://session/{uuid}` | **PASS** | DeepLinks.kt + manifest intent-filter + cold/warm pendingSessionId |
 | Connection quality (app-level ping/pong) | **PASS** | RelayConnection (10s/5s/6-window/3-fail) |
 | Recovery state machine | **PASS** | RecoveryController (9-behavior parity rewrite) |
 | Session ownership / naming | **PASS** | SessionOwnershipStore (device-scoped) + SessionNaming (random + fallbackIndex) |

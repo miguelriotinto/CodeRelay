@@ -1,13 +1,21 @@
 import Foundation
 
-/// The `clauderelay://pair?host=&port=&tls=&code=` deep link produced by
+/// The `coderelay://pair?host=&port=&tls=&code=` deep link produced by
 /// `claude-relay setup` and consumed by the apps.
 ///
 /// Parsing and validation live here, in the shared kit, so the server-side
 /// producer and all three clients agree on exactly what a valid pairing link
 /// is — and so hostile input is rejected in one tested place.
 public struct PairingURL: Equatable, Sendable {
-    public static let scheme = "clauderelay"
+    /// The URL scheme, renamed from `clauderelay` with the ClaudeRelay →
+    /// CodeRelay rebrand.
+    ///
+    /// Deliberately a hard cutover, not a dual-scheme deprecation: a pairing
+    /// code lives five minutes and a session link is generated on demand, so
+    /// there is no persisted corpus of old URLs to honour. The cost is that
+    /// server and clients must be updated together — a QR from an older
+    /// `claude-relay setup` will not open in a client built after this change.
+    public static let scheme = "coderelay"
     public static let host = "pair"
 
     public let host: String

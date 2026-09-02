@@ -31,7 +31,7 @@
 | File | Responsibility |
 | --- | --- |
 | `Sources/ClaudeRelayKit/Security/PairingCode.swift` (new) | Code alphabet, generation, normalization, formatting. Pure. |
-| `Sources/ClaudeRelayKit/Protocol/PairingURL.swift` (new) | Build + parse/validate `clauderelay://pair?…`. Pure. Shared with Plan 1b. |
+| `Sources/ClaudeRelayKit/Protocol/PairingURL.swift` (new) | Build + parse/validate `coderelay://pair?…`. Pure. Shared with Plan 1b. |
 | `Sources/ClaudeRelayKit/Protocol/ClientMessage.swift` | Add `.pairRequest`. |
 | `Sources/ClaudeRelayKit/Protocol/ServerMessage.swift` | Add `.pairSuccess`. |
 | `Sources/ClaudeRelayServer/Actors/PairingCodeStore.swift` (new) | Pending-code lifecycle: mint, redeem, expiry sweep, cap eviction. |
@@ -238,56 +238,56 @@ final class PairingURLTests: XCTestCase {
     func testURLStringShape() {
         let url = PairingURL(host: "silverwing.local", port: 9200, useTLS: false, code: "K7QP2M4X")
         XCTAssertEqual(url.urlString,
-            "clauderelay://pair?host=silverwing.local&port=9200&tls=0&code=K7QP2M4X")
+            "coderelay://pair?host=silverwing.local&port=9200&tls=0&code=K7QP2M4X")
     }
 
     func testTLSFlagParsesBothWays() throws {
         let secure = try XCTUnwrap(PairingURL(string:
-            "clauderelay://pair?host=example.com&port=443&tls=1&code=K7QP2M4X"))
+            "coderelay://pair?host=example.com&port=443&tls=1&code=K7QP2M4X"))
         XCTAssertTrue(secure.useTLS)
         let plain = try XCTUnwrap(PairingURL(string:
-            "clauderelay://pair?host=example.com&port=443&tls=0&code=K7QP2M4X"))
+            "coderelay://pair?host=example.com&port=443&tls=0&code=K7QP2M4X"))
         XCTAssertFalse(plain.useTLS)
     }
 
     func testNormalizesHyphenatedAndLowercaseCode() throws {
         let parsed = try XCTUnwrap(PairingURL(string:
-            "clauderelay://pair?host=a.local&port=9200&tls=0&code=k7qp-2m4x"))
+            "coderelay://pair?host=a.local&port=9200&tls=0&code=k7qp-2m4x"))
         XCTAssertEqual(parsed.code, "K7QP2M4X")
     }
 
     func testRejectsWrongSchemeOrAction() {
         XCTAssertNil(PairingURL(string: "https://pair?host=a.local&port=9200&tls=0&code=K7QP2M4X"))
         // The session deep link must not parse as a pairing link.
-        XCTAssertNil(PairingURL(string: "clauderelay://session/\(UUID().uuidString)"))
+        XCTAssertNil(PairingURL(string: "coderelay://session/\(UUID().uuidString)"))
     }
 
     func testRejectsMissingParameters() {
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?port=9200&tls=0&code=K7QP2M4X"))
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a.local&tls=0&code=K7QP2M4X"))
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a.local&port=9200&tls=0"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?port=9200&tls=0&code=K7QP2M4X"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=a.local&tls=0&code=K7QP2M4X"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=a.local&port=9200&tls=0"))
     }
 
     func testRejectsOutOfRangeOrNonNumericPort() {
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a.local&port=0&tls=0&code=K7QP2M4X"))
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a.local&port=70000&tls=0&code=K7QP2M4X"))
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a.local&port=abc&tls=0&code=K7QP2M4X"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=a.local&port=0&tls=0&code=K7QP2M4X"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=a.local&port=70000&tls=0&code=K7QP2M4X"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=a.local&port=abc&tls=0&code=K7QP2M4X"))
     }
 
     func testRejectsBadCode() {
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a.local&port=9200&tls=0&code=SHORT"))
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a.local&port=9200&tls=0&code=K7QP2M4%21"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=a.local&port=9200&tls=0&code=SHORT"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=a.local&port=9200&tls=0&code=K7QP2M4%21"))
     }
 
     func testRejectsEmptyOrWhitespaceHost() {
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=&port=9200&tls=0&code=K7QP2M4X"))
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=%20&port=9200&tls=0&code=K7QP2M4X"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=&port=9200&tls=0&code=K7QP2M4X"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=%20&port=9200&tls=0&code=K7QP2M4X"))
     }
 
     func testRejectsHostThatCannotFormAWebSocketURL() {
         // A host with a space or a slash would produce an invalid ws:// URL.
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a%20b&port=9200&tls=0&code=K7QP2M4X"))
-        XCTAssertNil(PairingURL(string: "clauderelay://pair?host=a%2Fb&port=9200&tls=0&code=K7QP2M4X"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=a%20b&port=9200&tls=0&code=K7QP2M4X"))
+        XCTAssertNil(PairingURL(string: "coderelay://pair?host=a%2Fb&port=9200&tls=0&code=K7QP2M4X"))
     }
 }
 ```
@@ -302,7 +302,7 @@ Expected: FAIL — "cannot find 'PairingURL' in scope".
 ```swift
 import Foundation
 
-/// The `clauderelay://pair?host=&port=&tls=&code=` deep link produced by
+/// The `coderelay://pair?host=&port=&tls=&code=` deep link produced by
 /// `claude-relay setup` and consumed by the apps.
 ///
 /// Parsing and validation live here, in the shared kit, so the server-side
@@ -390,7 +390,7 @@ Expected: PASS (10 tests).
 
 ```bash
 git add Sources/ClaudeRelayKit/Protocol/PairingURL.swift Tests/ClaudeRelayKitTests/PairingURLTests.swift
-git commit -m "feat(kit): PairingURL — parse/build the clauderelay://pair deep link"
+git commit -m "feat(kit): PairingURL — parse/build the coderelay://pair deep link"
 ```
 
 ---
@@ -1789,7 +1789,7 @@ import XCTest
 
 final class TerminalQRRendererTests: XCTestCase {
 
-    private let payload = "clauderelay://pair?host=silverwing.local&port=9200&tls=0&code=K7QP2M4X"
+    private let payload = "coderelay://pair?host=silverwing.local&port=9200&tls=0&code=K7QP2M4X"
 
     func testMatrixIsSquareAndIncludesQuietZone() throws {
         let renderer = TerminalQRRenderer(quietZone: 2)
@@ -2464,10 +2464,10 @@ Expected: PASS (8 tests).
 The service is already running on this machine, so `setup` should skip straight to minting.
 
 Run: `swift run claude-relay setup --no-qr`
-Expected: prints the chosen host, the `clauderelay://pair?…` URL, a grouped code, and an expiry countdown. No token anywhere in the output.
+Expected: prints the chosen host, the `coderelay://pair?…` URL, a grouped code, and an expiry countdown. No token anywhere in the output.
 
 Run: `swift run claude-relay setup`
-Expected: the same, with a QR drawn above it. Scan it with a phone camera — it should resolve to the `clauderelay://pair?…` URL (no app needed yet; Plan 1b adds the handler).
+Expected: the same, with a QR drawn above it. Scan it with a phone camera — it should resolve to the `coderelay://pair?…` URL (no app needed yet; Plan 1b adds the handler).
 
 Run: `swift run claude-relay setup --json`
 Expected: valid JSON containing `code`, `expiresAt`, `host`, `port`, `tls`, `url`.
@@ -2902,7 +2902,7 @@ Add after the "Configuration" section:
 `claude-relay setup` mints a **single-use pairing code** (8 chars Crockford
 Base32 = 40 bits, 5-minute TTL) via `POST /pair/create` on the localhost-only
 admin API, and renders it as a terminal QR encoding
-`clauderelay://pair?host=&port=&tls=&code=`.
+`coderelay://pair?host=&port=&tls=&code=`.
 
 The device redeems it **pre-auth** over the WebSocket: `pair_request` →
 `pair_success{token,tokenId,label}` → then the normal `auth_request` with the

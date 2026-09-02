@@ -4,13 +4,13 @@
 
 **Goal:** Let a phone or Mac redeem a `claude-relay setup` pairing code — by scanning its QR or typing host+code — so a server is added, authenticated, and listed with no hand-typed token, on iOS, macOS, and Android.
 
-**Architecture:** A pre-auth redeem flow: dial the host from the pairing artifact with a token-less WebSocket connect, send `pair_request`, await `pair_success`, then persist a `ConnectionConfig` + the minted token exactly the way the existing "Add Server" flow does, and hand off to the normal connect+auth path. The redeem logic is a small `PairingController` (one per platform: Swift in `ClaudeRelayClient`, Kotlin in `core-session`) that mirrors `AddEditServerViewModel.save()`. UI is thin: a QR scanner (reusing the existing session-QR scanner infrastructure) and a manual "Pair with a host" sheet (Host + Port + TLS + Code fields, mirroring the Add Server sheet with Code swapping in for Token). A new `clauderelay://pair` deep-link route feeds the same redeem path.
+**Architecture:** A pre-auth redeem flow: dial the host from the pairing artifact with a token-less WebSocket connect, send `pair_request`, await `pair_success`, then persist a `ConnectionConfig` + the minted token exactly the way the existing "Add Server" flow does, and hand off to the normal connect+auth path. The redeem logic is a small `PairingController` (one per platform: Swift in `ClaudeRelayClient`, Kotlin in `core-session`) that mirrors `AddEditServerViewModel.save()`. UI is thin: a QR scanner (reusing the existing session-QR scanner infrastructure) and a manual "Pair with a host" sheet (Host + Port + TLS + Code fields, mirroring the Add Server sheet with Code swapping in for Token). A new `coderelay://pair` deep-link route feeds the same redeem path.
 
 **Tech Stack:** Swift 6 (strict concurrency), SwiftUI, `ClaudeRelayKit`/`ClaudeRelayClient` SPM libraries, XCTest; Kotlin, Jetpack Compose, CameraX + ML Kit (already declared), JUnit 5.
 
 ## Global Constraints
 
-- **Manual entry captures host+port+tls+code, not a bare code.** An 8-char pairing code carries no network coordinates; `PairingURL` bundles `host`/`port`/`useTLS`/`code`. The manual sheet therefore has Host, Port, TLS, and Code fields (Code replaces the Token field of the Add Server sheet). The QR-scan path carries the full `clauderelay://pair?host=&port=&tls=&code=` URL and needs no extra fields. *(User decision, 2026-08-01.)*
+- **Manual entry captures host+port+tls+code, not a bare code.** An 8-char pairing code carries no network coordinates; `PairingURL` bundles `host`/`port`/`useTLS`/`code`. The manual sheet therefore has Host, Port, TLS, and Code fields (Code replaces the Token field of the Add Server sheet). The QR-scan path carries the full `coderelay://pair?host=&port=&tls=&code=` URL and needs no extra fields. *(User decision, 2026-08-01.)*
 - **One authenticated path only.** Pairing never sets `isAuthenticated`. After `pair_success`, the client persists the token and authenticates with it through the *existing* connect+auth path — there is exactly one way to reach an authenticated connection (mirrors the 1a server-side property).
 - **Redeem is a strictly sequential, single-socket RPC.** No request-id correlation exists on the wire; only one RPC may be in flight per connection. `pair_request` → `pair_success` must not overlap any other send (see #44, `connect→auth→list` is one uninterruptible handshake). Replicate `SessionController.awaitResponse`'s pattern: install the subscriber *before* sending, match `expected ∪ {"error"}`, 10 s timeout.
 - **Persistence mirrors the existing Add Server flow, does not fork it.** Success path = build `ConnectionConfig(host,port,useTLS from the PairingURL; name from pair_success.label)` → `savedConnections.add(config)` → `AuthManager.shared.saveToken(pair_success.token, for: config.id)`. iOS uses `ClaudeRelayApp.savedConnections`; macOS uses `ClaudeRelayMacApp.savedConnections`; Android uses `SavedConnectionStore` + `TokenStore`.
@@ -18,7 +18,7 @@
 - **Error surfaces are distinct and actionable:** invalid/expired code (401), rate-limited (429), host unreachable (transport), and TLS-required (CGNAT/public host over `ws://`) each get their own message. Do not collapse them into one "pairing failed."
 - **Hostile QR input is rejected in one tested place.** All parsing goes through `PairingURL(url:)` / `PairingURL(string:)` (Swift, shipped in 1a) and its Kotlin port. UI layers never re-parse.
 - **macOS gets no camera scanner** — typed-code (Host+Code) sheet only. iOS and Android get both a scanner and the manual sheet.
-- **Deep-link scheme is `clauderelay`, pair host is `pair`.** `PairingURL.scheme == "clauderelay"`, `PairingURL.host == "pair"`. The Android manifest already routes `clauderelay://` broadly — no manifest change needed.
+- **Deep-link scheme is `clauderelay`, pair host is `pair`.** `PairingURL.scheme == "clauderelay"`, `PairingURL.host == "pair"`. The Android manifest already routes `coderelay://` broadly — no manifest change needed.
 - **Known pre-existing CI failure:** `swift test` hangs deterministically at `GitRootResolver` case 313 and has not passed since 22 Jul; the app-build jobs gate TestFlight. Verify Swift work with `swift build` + `swift test --filter <SuiteName>`; verify Android with `./gradlew :<module>:testDebugUnitTest`. Report this limitation honestly rather than claiming a full green run.
 
 ---
@@ -545,7 +545,7 @@ git commit -m "feat(pairing): iOS Pair-with-host sheet + view model"
 
 **Interfaces:**
 - Consumes: `QRScannerView` (callback `(String) -> Void`), `PairingURL(string:)`, `PairWithHostSheet` (Task 2), the existing `viewModel.startConnect(to:)` in `ServerListView`'s view model (research: `ServerListView.swift:28`).
-- Produces: a "Pair" menu on the server list with two actions; a `pendingPairing: PairingURL?` state on the app that presents the scanner-prefilled sheet when a `clauderelay://pair` link arrives.
+- Produces: a "Pair" menu on the server list with two actions; a `pendingPairing: PairingURL?` state on the app that presents the scanner-prefilled sheet when a `coderelay://pair` link arrives.
 
 - [ ] **Step 1: Add the `pair` route to `handleDeepLink`**
 
@@ -628,7 +628,7 @@ Rebuild the iOS app in Xcode. Manual smoke (document result in the report, do no
 
 ```bash
 git add ClaudeRelayApp/Views/ServerListView.swift ClaudeRelayApp/ClaudeRelayApp.swift
-git commit -m "feat(pairing): iOS scan + manual pairing entry and clauderelay://pair route"
+git commit -m "feat(pairing): iOS scan + manual pairing entry and coderelay://pair route"
 ```
 
 ---
@@ -901,7 +901,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 
 class PairingUrlTest {
     @Test fun `parses a valid pair url`() {
-        val u = PairingURL.parse("clauderelay://pair?host=silverwing.local&port=9200&tls=0&code=K7QP2M4X")!!
+        val u = PairingURL.parse("coderelay://pair?host=silverwing.local&port=9200&tls=0&code=K7QP2M4X")!!
         assertEquals("silverwing.local", u.host)
         assertEquals(9200, u.port)
         assertFalse(u.useTLS)
@@ -909,31 +909,31 @@ class PairingUrlTest {
         assertEquals("ws://silverwing.local:9200", u.wsUrl)
     }
     @Test fun `tls=1 yields wss`() {
-        val u = PairingURL.parse("clauderelay://pair?host=h.example.com&port=443&tls=1&code=K7QP2M4X")!!
+        val u = PairingURL.parse("coderelay://pair?host=h.example.com&port=443&tls=1&code=K7QP2M4X")!!
         assertTrue(u.useTLS)
         assertEquals("wss://h.example.com:443", u.wsUrl)
     }
     @Test fun `normalizes a hyphenated lowercase code`() {
-        assertEquals("K7QP2M4X", PairingURL.parse("clauderelay://pair?host=h.local&port=9200&tls=0&code=k7qp-2m4x")!!.code)
+        assertEquals("K7QP2M4X", PairingURL.parse("coderelay://pair?host=h.local&port=9200&tls=0&code=k7qp-2m4x")!!.code)
     }
     @Test fun `wrong scheme is null`() {
         assertNull(PairingURL.parse("https://pair?host=h&port=9200&tls=0&code=K7QP2M4X"))
     }
     @Test fun `wrong host is null`() {
-        assertNull(PairingURL.parse("clauderelay://session/123?code=K7QP2M4X"))
+        assertNull(PairingURL.parse("coderelay://session/123?code=K7QP2M4X"))
     }
     @Test fun `missing code is null`() {
-        assertNull(PairingURL.parse("clauderelay://pair?host=h.local&port=9200&tls=0"))
+        assertNull(PairingURL.parse("coderelay://pair?host=h.local&port=9200&tls=0"))
     }
     @Test fun `bad port is null`() {
-        assertNull(PairingURL.parse("clauderelay://pair?host=h.local&port=0&tls=0&code=K7QP2M4X"))
-        assertNull(PairingURL.parse("clauderelay://pair?host=h.local&port=99999&tls=0&code=K7QP2M4X"))
+        assertNull(PairingURL.parse("coderelay://pair?host=h.local&port=0&tls=0&code=K7QP2M4X"))
+        assertNull(PairingURL.parse("coderelay://pair?host=h.local&port=99999&tls=0&code=K7QP2M4X"))
     }
     @Test fun `bad code charset is null`() {
-        assertNull(PairingURL.parse("clauderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4!"))
+        assertNull(PairingURL.parse("coderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4!"))
     }
     @Test fun `empty host is null`() {
-        assertNull(PairingURL.parse("clauderelay://pair?host=&port=9200&tls=0&code=K7QP2M4X"))
+        assertNull(PairingURL.parse("coderelay://pair?host=&port=9200&tls=0&code=K7QP2M4X"))
     }
 }
 ```
@@ -963,7 +963,7 @@ data class PairingURL(
         fun parse(input: String): PairingURL? {
             val uri = try { URI(input) } catch (_: Exception) { return null }
             if (uri.scheme?.lowercase() != SCHEME) return null
-            // URI puts "pair" in authority/host for clauderelay://pair?...
+            // URI puts "pair" in authority/host for coderelay://pair?...
             val authority = (uri.host ?: uri.authority)?.lowercase()
             if (authority != HOST) return null
             val query = uri.rawQuery ?: return null
@@ -1219,11 +1219,11 @@ git commit -m "feat(pairing): Android PairingController — redeem + persist"
 
 ```kotlin
 @Test fun `parsePairingUrl parses a valid pair link`() {
-    val u = DeepLinks.parsePairingUrl("clauderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4X")
+    val u = DeepLinks.parsePairingUrl("coderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4X")
     assertEquals("h.local", u?.host)
 }
 @Test fun `parsePairingUrl rejects a session link`() {
-    assertNull(DeepLinks.parsePairingUrl("clauderelay://session/${java.util.UUID.randomUUID()}"))
+    assertNull(DeepLinks.parsePairingUrl("coderelay://session/${java.util.UUID.randomUUID()}"))
 }
 ```
 
@@ -1262,7 +1262,7 @@ In the nav graph, on the **Servers** route, collect `pendingPairing` and, when n
 Run: `./gradlew :feature-workspace:testDebugUnitTest :app:compileDebugKotlin`
 ```bash
 git add ClaudeRelayAndroid/feature-workspace/ ClaudeRelayAndroid/app/
-git commit -m "feat(pairing): Android clauderelay://pair deep-link route"
+git commit -m "feat(pairing): Android coderelay://pair deep-link route"
 ```
 
 ---

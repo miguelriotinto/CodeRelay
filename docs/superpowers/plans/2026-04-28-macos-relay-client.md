@@ -4502,7 +4502,7 @@ git commit -m "feat(mac): drag-and-drop image paste onto terminal"
 - Create: `ClaudeRelayMac/Views/QRCodePopover.swift`
 - Modify: `ClaudeRelayMac/Views/MainWindow.swift` (add toolbar button to show the popover)
 
-**Context:** Renders the current session's attach URL as a QR code. Format: `clauderelay://session/<uuid>`. Uses CoreImage `CIQRCodeGenerator` filter. Displayed in a popover anchored to a toolbar button.
+**Context:** Renders the current session's attach URL as a QR code. Format: `coderelay://session/<uuid>`. Uses CoreImage `CIQRCodeGenerator` filter. Displayed in a popover anchored to a toolbar button.
 
 - [ ] **Step 1: Write the popover view**
 
@@ -4531,7 +4531,7 @@ struct QRCodePopover: View {
                 Text("Failed to generate QR code")
                     .foregroundStyle(.red)
             }
-            Text("clauderelay://session/\(sessionId.uuidString)")
+            Text("coderelay://session/\(sessionId.uuidString)")
                 .font(.caption)
                 .monospaced()
                 .foregroundStyle(.secondary)
@@ -4544,7 +4544,7 @@ struct QRCodePopover: View {
     }
 
     private func generateQRCode() -> NSImage? {
-        let urlString = "clauderelay://session/\(sessionId.uuidString)"
+        let urlString = "coderelay://session/\(sessionId.uuidString)"
         guard let data = urlString.data(using: .utf8) else { return nil }
 
         let filter = CIFilter.qrCodeGenerator()
@@ -4618,10 +4618,10 @@ git commit -m "feat(mac): QR code popover for sharing sessions to mobile"
 
 **Files:**
 - Create: `ClaudeRelayMac/Views/QRScannerView.swift`
-- Modify: `ClaudeRelayMac/ClaudeRelayMacApp.swift` (handle `clauderelay://` deep link)
+- Modify: `ClaudeRelayMac/ClaudeRelayMacApp.swift` (handle `coderelay://` deep link)
 - Modify: `ClaudeRelayMac/Helpers/AppCommands.swift` (add Scan QR menu item)
 
-**Context:** Uses `AVCaptureSession` with `AVCaptureMetadataOutput` for QR detection. Wrapped in `NSViewRepresentable`. On scan, parses the `clauderelay://session/<uuid>` URL and triggers attach via the coordinator.
+**Context:** Uses `AVCaptureSession` with `AVCaptureMetadataOutput` for QR detection. Wrapped in `NSViewRepresentable`. On scan, parses the `coderelay://session/<uuid>` URL and triggers attach via the coordinator.
 
 - [ ] **Step 1: Write the scanner**
 
@@ -5747,7 +5747,7 @@ Add at the top (under the `# Changelog` header):
   - QR code: generation for sharing, camera scanning for attach
   - On-device speech engine: WhisperKit (CoreML/ANE) + LLM.swift (Metal) + optional Anthropic Haiku enhancement
   - Session naming themes shared with iOS
-  - `clauderelay://session/<uuid>` deep link support
+  - `coderelay://session/<uuid>` deep link support
 
 ### Shared Library Changes
 - `SessionCoordinating` protocol added to `ClaudeRelayClient` (conformed by iOS and Mac)

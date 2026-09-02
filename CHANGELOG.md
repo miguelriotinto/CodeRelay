@@ -123,7 +123,7 @@ Ships the F11 device-pairing feature across all four targets (herdr F11, 1a/1b/1
 - **`claude-relay setup`** mints a single-use pairing code (8 chars Crockford
   Base32 = 40 bits, 5-minute TTL) via `POST /pair/create` on the localhost-only
   admin API and renders it as a terminal QR encoding
-  `clauderelay://pair?host=&port=&tls=&code=`. `setup` also starts the service
+  `coderelay://pair?host=&port=&tls=&code=`. `setup` also starts the service
   using whichever manager owns it.
 - **Pre-auth redemption** — the device sends `pair_request` and receives
   `pair_success{token, tokenId, label}`, then performs the normal
@@ -697,7 +697,7 @@ A 59-task sweep resolving 98 findings (26 HIGH, 46 MEDIUM, 26 LOW) from a full-c
   - QR code: generation for sharing sessions to mobile, camera scanning for inbound attach
   - On-device speech engine: WhisperKit (CoreML/ANE) + LLM.swift (Metal) + optional Anthropic Haiku enhancement via AWS Bedrock
   - Session naming themes shared with iOS (Game of Thrones, Viking, Star Wars, Dune, Lord of the Rings)
-  - `clauderelay://session/<uuid>` deep link support
+  - `coderelay://session/<uuid>` deep link support
   - TLS toggle per saved server
 
 ### Shared Library Changes
@@ -764,7 +764,7 @@ A 59-task sweep resolving 98 findings (26 HIGH, 46 MEDIUM, 26 LOW) from a full-c
 - QR code overlay on terminal view for session sharing
 - QR code scanner via AVFoundation camera for session attach
 - "Scan QR Code" button in attach session sheet
-- Deep link handler for `clauderelay://` URL scheme
+- Deep link handler for `coderelay://` URL scheme
 - Session name sync with server (renames broadcast to all clients)
 - Configurable keyboard shortcut for speech recording
 - Live key capture UI (replaced shortcut pickers with `KeyCaptureView`)

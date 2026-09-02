@@ -368,7 +368,7 @@ Material 3 `WindowSizeClass` via `currentWindowAdaptiveInfo()`:
 | `SessionSidebarView` | `SessionSidebar` | New/Attach, session list with state badges, rename dialog, swipe-delete, long-press context menu (rename / share QR), attach sheet + scanner |
 | `SettingsView` | `SettingsScreen` | Full settings (below) |
 | `SplashScreenView` | `SplashScreen` | Animated logo via `Animatable`/`LaunchedEffect`; preloads speech models on dismiss |
-| `QRCodeSheet` | `QrShareSheet` | ZXing QR of `clauderelay://session/{UUID}` + selectable deeplink |
+| `QRCodeSheet` | `QrShareSheet` | ZXing QR of `coderelay://session/{UUID}` + selectable deeplink |
 | `QRScannerView` | `QrScannerScreen` | CameraX + ML Kit barcode; haptic on detect; parse → attach |
 
 ### Settings parity (14 `@AppStorage` keys → DataStore; Bedrock token → EncryptedSharedPreferences = 15 persisted prefs)
@@ -398,7 +398,7 @@ Material 3 `WindowSizeClass` via `currentWindowAdaptiveInfo()`:
 
 ### Cross-cutting platform integration
 
-- **Deep links:** `clauderelay://session/{UUID}` → `intent-filter`
+- **Deep links:** `coderelay://session/{UUID}` → `intent-filter`
   (`VIEW`/`BROWSABLE`); handle cold-start (`onCreate`) and warm (`onNewIntent`)
   → `pendingSessionId`, consumed on workspace entry.
 - **Lifecycle:** `scenePhase` → `Lifecycle` events; recovery on `ON_RESUME`,

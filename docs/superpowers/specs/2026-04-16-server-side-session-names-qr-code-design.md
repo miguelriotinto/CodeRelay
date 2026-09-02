@@ -115,13 +115,13 @@ Session rows now display server-side names instead of raw UUIDs.
 
 ### URL Scheme
 
-Register `clauderelay://` URL scheme in `project.yml`:
+Register `coderelay://` URL scheme in `project.yml`:
 
 ```
-clauderelay://session/<full-UUID>
+coderelay://session/<full-UUID>
 ```
 
-Example: `clauderelay://session/FF2EF38A-1234-5678-ABCD-1234567890AB`
+Example: `coderelay://session/FF2EF38A-1234-5678-ABCD-1234567890AB`
 
 Camera permission added:
 
@@ -147,7 +147,7 @@ Full-screen overlay on `ActiveTerminalView`:
 
 - Black dimmed background at ~60% opacity
 - QR code (200x200pt) centered, generated via CoreImage `CIQRCodeGenerator`
-- Content: `clauderelay://session/<full-UUID>` of the active session
+- Content: `coderelay://session/<full-UUID>` of the active session
 - Session name label below QR code for visual confirmation
 - Tap anywhere on overlay to dismiss (no explicit close button)
 - Interaction feels ephemeral — flash, scan, dismiss
@@ -176,7 +176,7 @@ Tapping "Scan QR Code" opens a camera sheet:
 
 - `AVCaptureSession` with `AVCaptureMetadataOutput` for `.qr` metadata type
 - Camera preview fills sheet, centered viewfinder overlay
-- On successful scan of `clauderelay://session/<UUID>`:
+- On successful scan of `coderelay://session/<UUID>`:
   - Parses UUID from URL
   - Dismisses camera sheet
   - Dismisses attach sheet
@@ -188,7 +188,7 @@ Tapping "Scan QR Code" opens a camera sheet:
 
 In `ClaudeRelayApp.swift`, handle `onOpenURL`:
 
-- Parse `clauderelay://session/<UUID>`
+- Parse `coderelay://session/<UUID>`
 - If app is connected to a server: attach to session
 - If not connected: store pending session ID, attach after connection
 
@@ -219,7 +219,7 @@ In `ClaudeRelayApp.swift`, handle `onOpenURL`:
 - Message handler — route `sessionRenamed` callback
 
 ### ClaudeRelayApp (iOS)
-- `project.yml` — add `clauderelay://` URL scheme, add camera permission
+- `project.yml` — add `coderelay://` URL scheme, add camera permission
 - `SessionCoordinator.swift` — sync names with server, handle rename broadcast
 - `ActiveTerminalView.swift` — add QR button to toolbar, add QR overlay
 - `SessionSidebarView.swift` — display server names in attach sheet, add Scan QR Code button

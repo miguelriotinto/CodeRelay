@@ -167,7 +167,7 @@ implementations must satisfy exactly — the shared modules call them by these n
 | `AndroidConnectivitySource` | 84 | `LinuxConnectivitySource` — NetworkManager over D-Bus, polling fallback | Implements the existing `ConnectivitySource` interface; `NetworkObserver` is already pure |
 | `RelayFirebaseMessagingService` + `FcmTokenBridge` + `PushSync` | 183 | **Deleted.** `ActivityNotifier` over `org.freedesktop.Notifications` | See AD-4 |
 | `Haptics.kt` | 120 | **Deleted.** No-op | No haptics on desktop |
-| `QrScannerScreen` (CameraX + ML Kit, `AndroidView`) | 332 | `PairWithHostSheet` — typed 8-char code + paste `clauderelay://pair` URL | `PairingCode.normalize` already accepts hyphens/lowercase. Webcam scanning deferred |
+| `QrScannerScreen` (CameraX + ML Kit, `AndroidView`) | 332 | `PairWithHostSheet` — typed 8-char code + paste `coderelay://pair` URL | `PairingCode.normalize` already accepts hyphens/lowercase. Webcam scanning deferred |
 | `MainActivity` / `RelayApplication` / nav graph | ~700 | Compose Desktop `Window`, tray icon, menu bar, `NavHost` (CMP navigation) | |
 | `ContinuousListeningService` (FG service) | 176 | **Deleted.** No foreground-service concept | Speech is out of scope (§1.1) |
 
@@ -338,7 +338,7 @@ log once, never crash.
 
 - `.desktop` entry in `$XDG_DATA_HOME/applications/`, with a stable
   `StartupWMClass` so Hyprland window rules can match it.
-- Registers the `clauderelay://` scheme (`x-scheme-handler/clauderelay`) so
+- Registers the `coderelay://` scheme (`x-scheme-handler/clauderelay`) so
   `session/<uuid>` deep links and pairing URLs resolve. Deep-link parsing already exists
   in shared code (`DeepLinks.kt`).
 - Suggested keybinding for `~/.config/hypr/bindings.lua` documented in the README, not
@@ -363,7 +363,7 @@ be the one client showing a different name.
 | AUR package | `coderelay-bin` | Arch convention: `-bin` marks a prebuilt |
 | Desktop file | `coderelay.desktop` | |
 | WM class | `relay-app-CodeRelay` | Measured, pinned by `@file:JvmName("CodeRelay")` |
-| URL scheme | `clauderelay://` (unchanged) | Wire compatibility — `claude-relay setup` emits it in QR codes |
+| URL scheme | `coderelay://` (unchanged) | Wire compatibility — `claude-relay setup` emits it in QR codes |
 
 The scheme is deliberately **not** renamed. It is part of the wire contract with a
 server that may be older than the client, and every existing QR code and pairing URL
@@ -388,7 +388,7 @@ Rejected, with reasons:
 |---|---|
 | **Source-built AUR** (`coderelay`) | The build clones termlib from the network at a pinned commit and patches it. AUR expects every input in `source=()` with a checksum; network access in `build()` breaks reproducibility and offline builds. Viable once the mouse patch is upstreamed — add it then, alongside `-bin`. |
 | **Flatpak** | Decisive: the platform layer shells out to `secret-tool` and `notify-send`, host binaries absent from the sandbox. Worse, libsecret inside Flatpak uses **per-app encrypted local storage via the Secret portal, not the host keyring** — tokens would silently land somewhere the user does not expect. Supporting it means rewriting `linux-platform` against D-Bus portals. |
-| **AppImage** | No `.desktop` registration by default, so `clauderelay://` deep links and Hyprland `StartupWMClass` rules do not work. Deep links are a shipped feature. |
+| **AppImage** | No `.desktop` registration by default, so `coderelay://` deep links and Hyprland `StartupWMClass` rules do not work. Deep links are a shipped feature. |
 | **Tarball only** | Fine as the artifact; not as the only channel — no upgrade path and no way to declare the libsecret/libnotify runtime dependencies. |
 
 Automation mirrors the existing Homebrew tap job: on a release tag, `build-linux`
@@ -412,7 +412,7 @@ cleanly when their secrets are absent, so a dry-run tag push is harmless.
 | Connection quality (ping/pong, RTT) | **Full** | Shared `core-net` |
 | Activity monitoring, agent detection, tab colours | **Full** | Shared |
 | Workspace rollups by git root | **Full** | Shared |
-| Deep links `clauderelay://session/<uuid>` | **Full** | Scheme handler |
+| Deep links `coderelay://session/<uuid>` | **Full** | Scheme handler |
 | Notifications on agent finished / needs input | **Full**, different transport | D-Bus, not FCM (AD-4) |
 | Clipboard bridging (OSC 52 host→device) | **Not in Android** | The Kotlin protocol has no `clipboard_update` variant at all — this is an iOS/macOS-only feature. Out of parity scope; see §8.1 |
 | Image paste (device→host) | **Not in Android** | `PasteImage`/`PasteImageResult` exist in `core-net`, but nothing in the Android UI calls them. Out of parity scope; see §8.1 |

@@ -60,8 +60,8 @@ package() {
   install -dm755 "$pkgdir/usr/bin"
   ln -s "/usr/lib/$_pkgname/bin/$_pkgname" "$pkgdir/usr/bin/$_pkgname"
 
-  # Registers the launcher entry AND the clauderelay:// scheme handler, which
-  # is what makes `clauderelay://session/<uuid>` deep links and pairing URLs
+  # Registers the launcher entry AND the coderelay:// scheme handler, which
+  # is what makes `coderelay://session/<uuid>` deep links and pairing URLs
   # open the app. Its StartupWMClass must match the class the window actually
   # reports (relay-app-CodeRelay) or Hyprland window rules will not match.
   install -Dm644 "$_pkgname.desktop" \

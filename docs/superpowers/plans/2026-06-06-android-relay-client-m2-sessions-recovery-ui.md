@@ -582,20 +582,20 @@ class AuthCoordinator(
 
 **Files:** `feature-workspace/.../QrShareSheet.kt`, `QrScannerScreen.kt`; `app/.../DeepLinks.kt` + manifest intent-filter
 
-> Port of `QRCodeSheet`/`QRScannerView`. **ZXing** generates the QR of `clauderelay://session/{UUID}`; **CameraX + ML Kit barcode** scans. Deep link via `intent-filter` (`VIEW`/`BROWSABLE`, scheme `clauderelay`); handle cold-start (`onCreate`) + warm (`onNewIntent`) → `pendingSessionId`, consumed on workspace entry → `attachRemote(id)`.
+> Port of `QRCodeSheet`/`QRScannerView`. **ZXing** generates the QR of `coderelay://session/{UUID}`; **CameraX + ML Kit barcode** scans. Deep link via `intent-filter` (`VIEW`/`BROWSABLE`, scheme `clauderelay`); handle cold-start (`onCreate`) + warm (`onNewIntent`) → `pendingSessionId`, consumed on workspace entry → `attachRemote(id)`.
 
 - [ ] **Step 1: Test the deep-link parser (pure JVM):**
 
 ```kotlin
 @Test fun `parses session deep link`() {
     assertEquals(UUID.fromString("550e8400-e29b-41d4-a716-446655440000"),
-        DeepLinks.parseSessionId("clauderelay://session/550e8400-e29b-41d4-a716-446655440000"))
-    assertNull(DeepLinks.parseSessionId("clauderelay://nonsense"))
+        DeepLinks.parseSessionId("coderelay://session/550e8400-e29b-41d4-a716-446655440000"))
+    assertNull(DeepLinks.parseSessionId("coderelay://nonsense"))
 }
 ```
 
 - [ ] **Step 2–4:** implement `DeepLinks.parseSessionId`, the QR sheet (ZXing `Bitmap`), the scanner (CameraX preview + ML Kit analyzer → parse → attach), haptic on detect.
-- [ ] **Step 5: Manual verify** — share a session QR from one device, scan from another → attach succeeds; tap a `clauderelay://session/<uuid>` link cold + warm → attaches.
+- [ ] **Step 5: Manual verify** — share a session QR from one device, scan from another → attach succeeds; tap a `coderelay://session/<uuid>` link cold + warm → attaches.
 - [ ] **Step 6: Commit** `feat(workspace): QR share/scan + deep links`
 
 ---

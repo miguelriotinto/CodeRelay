@@ -76,7 +76,7 @@ import relay.session.ServerStatus
  * the URL (deep link from `claude-relay setup` QR scan, OR a QR scanned via
  * [onScanPair]). Both entry points converge on this one flow. The caller must
  * clear it via [clearPendingPairing] after consumption.
- * @param onScanPair opens the camera QR scanner. A scanned `clauderelay://pair`
+ * @param onScanPair opens the camera QR scanner. A scanned `coderelay://pair`
  * QR is parsed by the host and delivered back through [pendingPairingUrl], so the
  * scan and deep-link paths share the same prefilled-sheet consumption. The camera
  * lives in the app/workspace module, so the Servers screen only asks for it.

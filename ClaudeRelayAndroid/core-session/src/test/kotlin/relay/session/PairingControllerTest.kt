@@ -42,7 +42,7 @@ class PairingControllerTest {
             timeoutMs = 10_000L
         )
 
-        val url = PairingURL.parse("clauderelay://pair?host=test.local&port=9200&tls=0&code=ABC12345")!!
+        val url = PairingURL.parse("coderelay://pair?host=test.local&port=9200&tls=0&code=ABC12345")!!
         val config = controller.pair(url)
 
         // Assert exactly one PairRequest sent
@@ -98,7 +98,7 @@ class PairingControllerTest {
             timeoutMs = 10_000L
         )
 
-        val url = PairingURL.parse("clauderelay://pair?host=test.local&port=9200&tls=0&code=BAD12345")!!
+        val url = PairingURL.parse("coderelay://pair?host=test.local&port=9200&tls=0&code=BAD12345")!!
 
         assertThrows(PairingError.InvalidCode::class.java) {
             kotlinx.coroutines.runBlocking {
@@ -133,7 +133,7 @@ class PairingControllerTest {
             timeoutMs = 10_000L
         )
 
-        val url = PairingURL.parse("clauderelay://pair?host=test.local&port=9200&tls=0&code=RATE1234")!!
+        val url = PairingURL.parse("coderelay://pair?host=test.local&port=9200&tls=0&code=RATE1234")!!
 
         assertThrows(PairingError.RateLimited::class.java) {
             kotlinx.coroutines.runBlocking {
@@ -168,7 +168,7 @@ class PairingControllerTest {
             timeoutMs = 100L // Short timeout for fast test
         )
 
-        val url = PairingURL.parse("clauderelay://pair?host=test.local&port=9200&tls=0&code=DEAD1234")!!
+        val url = PairingURL.parse("coderelay://pair?host=test.local&port=9200&tls=0&code=DEAD1234")!!
 
         assertThrows(PairingError.TimedOut::class.java) {
             kotlinx.coroutines.runBlocking {
@@ -203,7 +203,7 @@ class PairingControllerTest {
             timeoutMs = 10_000L
         )
 
-        val url = PairingURL.parse("clauderelay://pair?host=public.example.com&port=9200&tls=0&code=TLS12345")!!
+        val url = PairingURL.parse("coderelay://pair?host=public.example.com&port=9200&tls=0&code=TLS12345")!!
 
         assertThrows(PairingError.TlsRequired::class.java) {
             kotlinx.coroutines.runBlocking {
@@ -235,7 +235,7 @@ class PairingControllerTest {
             timeoutMs = 10_000L // Long timeout so we control cancellation timing
         )
 
-        val url = PairingURL.parse("clauderelay://pair?host=test.local&port=9200&tls=0&code=CANCEL12")!!
+        val url = PairingURL.parse("coderelay://pair?host=test.local&port=9200&tls=0&code=CANCEL12")!!
 
         // Launch pair() in a child coroutine
         val job = launch {

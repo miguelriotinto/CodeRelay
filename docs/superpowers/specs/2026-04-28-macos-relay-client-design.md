@@ -238,7 +238,7 @@ Two input methods on Mac:
 
 **Generation (Mac → mobile)**:
 - Toolbar button or `Session` → "Share via QR Code".
-- Encodes `clauderelay://<host>:<port>/attach?session=<id>&token=<token>` as a QR code.
+- Encodes `coderelay://<host>:<port>/attach?session=<id>&token=<token>` as a QR code.
 - Rendered via `CIFilter("CIQRCodeGenerator")` + `CIContext` (same as iOS).
 - Displayed as a popover anchored to the toolbar button.
 - Dismisses on click outside or session change.
@@ -247,7 +247,7 @@ Two input methods on Mac:
 - `Session` → "Scan QR Code" or toolbar button.
 - Opens a sheet/popover with `AVCaptureSession` + `AVCaptureMetadataOutput` for QR detection.
 - Wrapped in `NSViewRepresentable` (same pattern as iOS `UIViewRepresentable`).
-- Parses `clauderelay://` deep link, triggers session attach.
+- Parses `coderelay://` deep link, triggers session attach.
 - Requires camera permission (`NSCameraUsageDescription`).
 
 ### 5.6 On-Device Speech
@@ -410,8 +410,8 @@ New `ClaudeRelayMac` target added to the existing `project.yml`:
 | 4.1 | Create ImagePasteHandler | `Helpers/ImagePasteHandler.swift` | Utility that inspects `NSPasteboard.general` for image data. `static func extractImage() -> Data?`: checks for PNG, TIFF, JPEG types, converts to PNG `Data`. Used by both clipboard paste and drag-and-drop paths. |
 | 4.2 | Implement clipboard image paste | `Views/TerminalContainerView.swift`, `ViewModels/TerminalViewModel.swift` | Override paste handling in the terminal view's coordinator. On `Cmd+V`: check `ImagePasteHandler.extractImage()`. If image found: base64-encode, call `connection.sendPasteImage(base64Data:)`. If no image: let SwiftTerm handle the paste as text. |
 | 4.3 | Implement drag-and-drop image paste | `Views/TerminalContainerView.swift` | Register terminal view for drop of `UTType.image` and `UTType.fileURL` (with image extensions). On drop: read image data via `NSItemProvider`, convert to PNG, base64-encode, send via `pasteImage`. Show brief visual feedback (border flash or drop indicator). |
-| 4.4 | Create QRCodePopover | `Views/QRCodePopover.swift` | Generate QR code for `clauderelay://<host>:<port>/attach?session=<id>&token=<token>`. Use `CIFilter("CIQRCodeGenerator")` + `CIContext` to render `NSImage`. Display in a popover anchored to toolbar button. Dismiss on click outside or session change. |
-| 4.5 | Create QRScannerView | `Views/QRScannerView.swift` | `NSViewRepresentable` wrapping `AVCaptureSession` with `AVCaptureMetadataOutput` for QR code detection. Camera preview in a sheet. On scan: parse `clauderelay://` URL, extract session ID and connection info, trigger session attach via `SessionCoordinator`. Requires `NSCameraUsageDescription`. |
+| 4.4 | Create QRCodePopover | `Views/QRCodePopover.swift` | Generate QR code for `coderelay://<host>:<port>/attach?session=<id>&token=<token>`. Use `CIFilter("CIQRCodeGenerator")` + `CIContext` to render `NSImage`. Display in a popover anchored to toolbar button. Dismiss on click outside or session change. |
+| 4.5 | Create QRScannerView | `Views/QRScannerView.swift` | `NSViewRepresentable` wrapping `AVCaptureSession` with `AVCaptureMetadataOutput` for QR code detection. Camera preview in a sheet. On scan: parse `coderelay://` URL, extract session ID and connection info, trigger session attach via `SessionCoordinator`. Requires `NSCameraUsageDescription`. |
 | 4.6 | Create SpeechEngineState | `Speech/SpeechEngineState.swift` | Enum: `.idle`, `.loading`, `.recording`, `.transcribing`, `.cleaning`, `.enhancing`, `.inserting`, `.error(String)`. Same as iOS. |
 | 4.7 | Create TextCleaner | `Speech/TextCleaner.swift` | Regex-based text normalization. Port from iOS — pure Foundation string processing, no platform dependencies. Removes filler words, normalizes whitespace, fixes common transcription artifacts. |
 | 4.8 | Create AudioCaptureSession | `Speech/AudioCaptureSession.swift` | AVAudioEngine wrapper. Configures input node for 16kHz mono Float32 samples. `start()` / `stop()` control recording. Publishes audio buffer chunks. macOS-specific: may need to select input device if multiple mics available (use default input). |

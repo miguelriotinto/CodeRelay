@@ -86,7 +86,7 @@ can be revoked individually.
 Scan it from the app's server list: iOS and Android open a camera scanner. On
 macOS, use the **Pair** button in the server list and type the host and code by
 hand (port defaults to 9200) — the Mac's `Cmd+Shift+Q` scanner reads
-session-attach QRs only, not pairing QRs. A `clauderelay://pair?…` deep link
+session-attach QRs only, not pairing QRs. A `coderelay://pair?…` deep link
 does fill in every field.
 
 > **Prefer to connect manually?** Mint a token instead and paste it into the

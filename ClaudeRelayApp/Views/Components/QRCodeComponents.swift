@@ -37,7 +37,7 @@ struct QRCodeOverlay: View {
 
             VStack(spacing: 16) {
                 if let image = QRCodeGenerator.generate(
-                    from: "clauderelay://session/\(sessionId.uuidString)",
+                    from: "coderelay://session/\(sessionId.uuidString)",
                     size: 200
                 ) {
                     Image(uiImage: image)

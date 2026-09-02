@@ -27,7 +27,7 @@
 			<string>com.claude.relay.mac</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>clauderelay</string>
+				<string>coderelay</string>
 			</array>
 		</dict>
 	</array>

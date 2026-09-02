@@ -23,10 +23,10 @@ Keywords=terminal;relay;claude;agent;ssh;
 StartupWMClass=relay-app-CodeRelay
 StartupNotify=true
 
-# Registers the clauderelay:// scheme so `clauderelay://session/<uuid>` deep
+# Registers the coderelay:// scheme so `coderelay://session/<uuid>` deep
 # links and pairing URLs from `claude-relay setup` open in the app. The shared
 # DeepLinks parser handles both forms.
-MimeType=x-scheme-handler/clauderelay;
+MimeType=x-scheme-handler/coderelay;
 
 Actions=NewSession;
 

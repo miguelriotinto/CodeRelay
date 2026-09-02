@@ -7,7 +7,7 @@ struct QRCodeSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     private var deepLink: String {
-        "clauderelay://session/\(sessionId.uuidString)"
+        "coderelay://session/\(sessionId.uuidString)"
     }
 
     var body: some View {

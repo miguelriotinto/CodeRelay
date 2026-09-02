@@ -5,12 +5,12 @@ import java.net.URI
 import java.util.UUID
 
 /**
- * Parses the `clauderelay://` URLs the app is registered to handle.
+ * Parses the `coderelay://` URLs the app is registered to handle.
  *
  * Two forms exist, both produced by tooling the user already has:
  *
- *  - `clauderelay://session/<uuid>` — from the session QR / share sheet.
- *  - `clauderelay://pair?host=&port=&tls=&code=` — from `claude-relay setup`.
+ *  - `coderelay://session/<uuid>` — from the session QR / share sheet.
+ *  - `coderelay://pair?host=&port=&tls=&code=` — from `claude-relay setup`.
  *
  * Pairing URLs are handed to the shared [PairingURL] parser rather than being
  * re-parsed here: that validation is the one tested place for hostile QR input,
@@ -33,12 +33,16 @@ sealed interface DeepLink {
 
 object DeepLinks {
 
-    const val SCHEME = "clauderelay"
+    /**
+     * The URL scheme, renamed from `clauderelay` with the ClaudeRelay →
+     * CodeRelay rebrand. Hard cutover — server and clients update together.
+     */
+    const val SCHEME = "coderelay"
 
     /**
      * Resolves [raw] to a [DeepLink].
      *
-     * Accepts both `clauderelay://session/<uuid>` and a bare `<uuid>`, because
+     * Accepts both `coderelay://session/<uuid>` and a bare `<uuid>`, because
      * the share sheet shows the full URL but users paste either.
      */
     fun parse(raw: String?): DeepLink {
@@ -53,7 +57,7 @@ object DeepLinks {
 
         return when (uri.host?.lowercase()) {
             "session" -> {
-                // URI.path is "/<uuid>" for clauderelay://session/<uuid>.
+                // URI.path is "/<uuid>" for coderelay://session/<uuid>.
                 val id = parseUuid(uri.path?.removePrefix("/").orEmpty())
                 if (id != null) DeepLink.Session(id) else DeepLink.Unhandled
             }

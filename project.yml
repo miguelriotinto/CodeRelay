@@ -66,7 +66,7 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: "com.claude.relay"
             CFBundleURLSchemes:
-              - clauderelay
+              - coderelay
   ClaudeRelayAppTests:
     type: bundle.unit-test
     platform: iOS
@@ -150,7 +150,7 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: "com.claude.relay.mac"
             CFBundleURLSchemes:
-              - clauderelay
+              - coderelay
   ClaudeRelayMacTests:
     type: bundle.unit-test
     platform: macOS

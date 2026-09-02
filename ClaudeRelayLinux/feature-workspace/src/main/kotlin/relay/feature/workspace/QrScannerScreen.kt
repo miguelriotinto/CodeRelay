@@ -17,7 +17,7 @@ import java.util.UUID
 /**
  * Desktop stand-in for the camera QR scanner.
  *
- * Android scans a `clauderelay://session/<uuid>` code with CameraX + ML Kit.
+ * Android scans a `coderelay://session/<uuid>` code with CameraX + ML Kit.
  * A desktop has no guaranteed camera, and — more to the point — the QR code is
  * being displayed *on another screen the user is already sitting at*, so
  * pasting the link is both simpler and more reliable than pointing a webcam at
@@ -45,7 +45,7 @@ fun QrScannerScreen(
             textAlign = TextAlign.Center,
         )
         Text(
-            "Open the clauderelay:// link directly, or attach the session from the list.",
+            "Open the coderelay:// link directly, or attach the session from the list.",
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
         )
