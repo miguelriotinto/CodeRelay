@@ -44,6 +44,28 @@ public actor RateLimiter {
     public func recordFailure(ip: String) -> Bool {
         cleanup(ip: ip)
         var entry = attempts[ip] ?? Entry(timestamps: [], lastAccess: Date())
+        // Retain only the `maxAttempts` most recent failures. Every decision
+        // this type makes is `count >= maxAttempts`, so a further timestamp
+        // carries no information — but an unbounded array does carry cost:
+        // `maxTrackedIPs` bounds how many IPs we track, not how many failures
+        // each one accumulates, and `cleanup`'s `removeFirst()` loop is O(n²)
+        // in that length. A single IP failing in a tight loop would otherwise
+        // grow this array for the whole window, on an actor that serializes
+        // every other caller behind it.
+        //
+        // Dropping the OLDEST (not refusing the newest) is what preserves the
+        // semantics: the window keeps sliding forward with the attack, so a
+        // sustained attacker stays blocked. Refusing to append once full would
+        // instead let the block lapse `windowSeconds` after the first burst
+        // no matter how long the attack continued.
+        //
+        // `max(1, …)` keeps the arithmetic below in range for a degenerate
+        // `maxAttempts: 0`, where `count - 0 + 1` would ask an empty array to
+        // drop one element and trap.
+        let retain = max(1, maxAttempts)
+        if entry.timestamps.count >= retain {
+            entry.timestamps.removeFirst(entry.timestamps.count - retain + 1)
+        }
         entry.timestamps.append(Date())
         entry.lastAccess = Date()
         attempts[ip] = entry
@@ -103,4 +125,12 @@ public actor RateLimiter {
 
     /// Exposed only for tests. Do not call from production code.
     public var _testOnly_trackedIPCount: Int { attempts.count }
+
+    /// Exposed only for tests. Number of failure timestamps retained for an IP,
+    /// so the `maxAttempts` retention bound in `recordFailure` can be asserted
+    /// directly rather than inferred from blocking behaviour.
+    /// Do not call from production code.
+    public func _testOnly_retainedFailureCount(ip: String) -> Int {
+        attempts[ip]?.timestamps.count ?? 0
+    }
 }

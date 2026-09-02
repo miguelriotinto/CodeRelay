@@ -388,6 +388,76 @@ final class RelayMessageHandlerTests: XCTestCase {
 
         try? FileManager.default.removeItem(at: fixture.tempDir)
     }
+
+    // MARK: - Rate-limit gate
+
+    /// The rate-limit verdict must be enforced where the credential is
+    /// checked, not only once at `handlerAdded`.
+    ///
+    /// The eager gate in `handlerAdded` suspends on `await isBlocked` before
+    /// it can close the channel, so a client that pipelines `auth_request`
+    /// behind the HTTP upgrade gets that frame delivered to `channelRead`
+    /// first — one free credential check per connection, on a surface where
+    /// connections are free.
+    ///
+    /// Blocking the IP *after* connect is the deterministic way to express
+    /// the same invariant: it puts the frame on a connection whose eager gate
+    /// has already passed, which is exactly the state the race produces.
+    func testRateLimitedIPCannotAuthenticateEvenWithValidToken() async throws {
+        let limiter = RateLimiter(maxAttempts: 2, windowSeconds: 60)
+        let fixture = try await makeFixture(rateLimiter: limiter)
+        defer { Task { await cleanup(fixture) } }
+
+        // A genuinely valid credential — this test must fail closed on the
+        // rate limit, not incidentally because the token was wrong.
+        let (plaintext, _) = try await fixture.tokenStore.create(label: "valid")
+
+        await limiter.recordFailure(ip: "127.0.0.1")
+        await limiter.recordFailure(ip: "127.0.0.1")
+        let blocked = await limiter.isBlocked(ip: "127.0.0.1")
+        XCTAssertTrue(blocked, "precondition: the fixture's IP must be blocked")
+
+        try await send(textFrame("""
+        {"type":"auth_request","payload":{"token":"\(plaintext)","protocolVersion":1}}
+        """), on: fixture)
+        try await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertFalse(fixture.handler.isAuthenticated,
+            "A blocked IP must not authenticate, even holding a valid token")
+
+        let frames = try await drainOutboundFrames(fixture.channel)
+        let errors = frames.compactMap { try? decodeServer($0) }.compactMap { msg -> Int? in
+            if case .error(let code, _) = msg { return code }
+            return nil
+        }
+        XCTAssertTrue(errors.contains(429), "expected a 429, got codes \(errors)")
+    }
+
+    /// A successful auth clears the IP's failure budget. Before this was
+    /// wired, `RateLimiter.reset(ip:)` had no production caller and failures
+    /// outlived the successful auth for the rest of the window.
+    func testSuccessfulAuthClearsRateLimitBudget() async throws {
+        let limiter = RateLimiter(maxAttempts: 5, windowSeconds: 60)
+        let fixture = try await makeFixture(rateLimiter: limiter)
+        defer { Task { await cleanup(fixture) } }
+
+        let (plaintext, _) = try await fixture.tokenStore.create(label: "valid")
+
+        // Two fumbled attempts, still under the cap.
+        await limiter.recordFailure(ip: "127.0.0.1")
+        await limiter.recordFailure(ip: "127.0.0.1")
+        let before = await limiter._testOnly_retainedFailureCount(ip: "127.0.0.1")
+        XCTAssertEqual(before, 2, "precondition: two failures recorded")
+
+        try await send(textFrame("""
+        {"type":"auth_request","payload":{"token":"\(plaintext)","protocolVersion":1}}
+        """), on: fixture)
+        try await Task.sleep(for: .milliseconds(60))
+
+        XCTAssertTrue(fixture.handler.isAuthenticated, "valid token must authenticate")
+        let after = await limiter._testOnly_retainedFailureCount(ip: "127.0.0.1")
+        XCTAssertEqual(after, 0, "a successful auth must clear the IP's failure budget")
+    }
 }
 
 // MARK: - Test doubles

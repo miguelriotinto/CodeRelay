@@ -137,8 +137,23 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
             let config = self.config
             let rateLimiter = self.rateLimiter
 
-            // Extract client IP for rate limiting
-            let remoteIP = context.remoteAddress?.description ?? "unknown"
+            // Extract client IP for rate limiting.
+            //
+            // MUST be `ipAddress`, not `description`: the latter includes the
+            // ephemeral source port, and `writeResponse` sets
+            // `Connection: close`, so every admin request arrives on a fresh
+            // connection with a fresh port. Keying on `description` therefore
+            // minted a new bucket per request — `recordFailure` below wrote a
+            // key that `isBlocked` above could never read again, so the limit
+            // could not accumulate and never blocked anything. It also churned
+            // the shared limiter's LRU with single-use keys, evicting the
+            // WebSocket path's real entries.
+            //
+            // Matches the keying (and the reasoning) in
+            // `RelayMessageHandler.handlerAdded`.
+            let remoteIP = context.remoteAddress?.ipAddress
+                ?? context.remoteAddress?.description
+                ?? "unknown"
             let ctx = UnsafeTransfer(context)
 
             Task { [weak self] in
