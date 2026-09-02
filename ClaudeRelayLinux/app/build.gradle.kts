@@ -55,7 +55,7 @@ dependencies {
 
 compose.desktop {
     application {
-        mainClass = "relay.app.MainKt"
+        mainClass = "relay.app.CodeRelay"
 
         nativeDistributions {
             targetFormats(TargetFormat.AppImage, TargetFormat.Deb)

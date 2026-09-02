@@ -1,3 +1,5 @@
+@file:JvmName("CodeRelay")
+
 package relay.app
 
 import androidx.compose.foundation.layout.Box
@@ -54,6 +56,11 @@ fun main(args: Array<String>) {
 /**
  * The WM class this window actually reports, measured with `hyprctl clients`.
  *
+ * Pinned by the `@file:JvmName("CodeRelay")` at the top of this file. Without
+ * it the class is derived from the FILE name (`MainKt`), so renaming Main.kt
+ * would silently change the WM class and break every window rule a user had
+ * written. JvmName makes it an intentional, stable identifier.
+ *
  * Compose Desktop's skiko backend creates the window itself and derives the
  * class from the main class name; it does **not** honour `awt.appClassName`.
  * That was verified both by setting the property in `main()` and by passing
@@ -65,7 +72,16 @@ fun main(args: Array<String>) {
  * be re-measured if the main class is ever renamed, and re-checked against the
  * jpackage launcher, which may report a different class again.
  */
-const val WM_CLASS = "relay-app-MainKt"
+/**
+ * The user-visible product name.
+ *
+ * `Code[Relay]` with the brackets, matching `CFBundleDisplayName` on iOS and
+ * macOS and `app_name` on Android exactly. The brackets are the brand; dropping
+ * them here would make Linux the only client showing a different name.
+ */
+const val DISPLAY_NAME = "Code[Relay]"
+
+const val WM_CLASS = "relay-app-CodeRelay"
 
 private fun runApp(initialLink: DeepLink) = application {
     val environment = remember { AppEnvironment.create() }
@@ -97,7 +113,7 @@ private fun runApp(initialLink: DeepLink) = application {
         icon = remember(environment.theme) {
             TrayIconPainter(environment.theme?.let { Color(it.foreground) } ?: Color.White)
         },
-        tooltip = session?.let { "CodeRelay — ${it.config.name}" } ?: "CodeRelay",
+        tooltip = session?.let { "$DISPLAY_NAME — ${it.config.name}" } ?: DISPLAY_NAME,
         onAction = { windowVisible = true },
         menu = {
             Item(if (windowVisible) "Hide window" else "Show window") {
@@ -110,7 +126,7 @@ private fun runApp(initialLink: DeepLink) = application {
                 }
             }
             Separator()
-            Item("Quit CodeRelay") {
+            Item("Quit $DISPLAY_NAME") {
                 session?.close()
                 environment.close()
                 exitApplication()
@@ -125,7 +141,7 @@ private fun runApp(initialLink: DeepLink) = application {
             windowVisible = false
         },
         state = windowState,
-        title = session?.let { "CodeRelay — ${it.config.name}" } ?: "CodeRelay",
+        title = session?.let { "$DISPLAY_NAME — ${it.config.name}" } ?: DISPLAY_NAME,
     ) {
         RelayTheme(environment) {
             Surface(modifier = Modifier.fillMaxSize()) {

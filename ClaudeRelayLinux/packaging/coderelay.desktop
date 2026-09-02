@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=CodeRelay
+Name=Code[Relay]
 GenericName=Remote Terminal Relay
 Comment=Attach to coding-agent terminal sessions on a remote machine
 Exec=coderelay %u
@@ -12,15 +12,15 @@ Keywords=terminal;relay;claude;agent;ssh;
 # Hyprland (and every other WM) matches rules against this class.
 #
 # This is the class the window ACTUALLY reports, measured with `hyprctl clients`
-# — not the package name. Compose Desktop's skiko backend derives the class from
-# the main class and ignores `awt.appClassName`; passing
-# -Dawt.appClassName=coderelay on the JVM command line was tried and had no
-# effect. Guessing "coderelay" here would make every user-written window rule
-# silently fail to match.
+# on BOTH `./gradlew :app:run` and the packaged jpackage launcher — not the
+# package name. Compose Desktop's skiko backend derives the class from the Kotlin
+# main class and ignores `awt.appClassName` (tried in main(), as a Gradle jvmArg,
+# and as -D on a raw `java -cp` launch; no effect in any of them).
 #
-# Re-measure if relay.app.MainKt is renamed, and re-check against the jpackage
-# launcher before shipping the AUR package.
-StartupWMClass=relay-app-MainKt
+# The class is pinned by `@file:JvmName("CodeRelay")` in Main.kt, so it does not
+# change if that file is renamed. Guessing "coderelay" here would make every
+# user-written window rule silently fail to match.
+StartupWMClass=relay-app-CodeRelay
 StartupNotify=true
 
 # Registers the clauderelay:// scheme so `clauderelay://session/<uuid>` deep
