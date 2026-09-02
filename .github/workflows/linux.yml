@@ -1,0 +1,75 @@
+name: Linux CI
+
+on:
+  pull_request:
+    paths:
+      # The Linux client itself...
+      - 'ClaudeRelayLinux/**'
+      - '.github/workflows/linux.yml'
+      # ...AND the Android modules whose SOURCE it compiles. The two builds share
+      # one copy of core-protocol / core-net / core-session / terminal on disk
+      # (docs/linux-client-spec.md AD-2), so an Android-side edit can break the
+      # Linux build without touching a single file under ClaudeRelayLinux/.
+      - 'ClaudeRelayAndroid/core-protocol/**'
+      - 'ClaudeRelayAndroid/core-net/**'
+      - 'ClaudeRelayAndroid/core-session/**'
+      - 'ClaudeRelayAndroid/terminal/**'
+      - 'ClaudeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
+  push:
+    branches: [main]
+    paths:
+      - 'ClaudeRelayLinux/**'
+      - '.github/workflows/linux.yml'
+      - 'ClaudeRelayAndroid/core-protocol/**'
+      - 'ClaudeRelayAndroid/core-net/**'
+      - 'ClaudeRelayAndroid/core-session/**'
+      - 'ClaudeRelayAndroid/terminal/**'
+      - 'ClaudeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
+
+concurrency:
+  group: linux-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ClaudeRelayLinux
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # cmake + a C++17 compiler build termlib's libvterm JNI bridge; libsecret
+      # and libnotify supply secret-tool / notify-send, which the storage and
+      # notification seams shell out to.
+      - name: Install native build and runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libsecret-tools libnotify-bin
+
+      # The primary correctness gate. These 34 test files (~6,800 lines) are the
+      # Android client's own suite, compiled from the SAME source files. If they
+      # pass here, the shared modules really are platform-free — which is the
+      # entire premise of this client.
+      - name: Shared-module tests (Android's suite, unmodified, on the desktop JVM)
+        run: ./gradlew :shared-protocol:test :shared-net:test :shared-session:test :shared-terminal:test --no-daemon
+
+      - name: Linux platform seam tests
+        run: ./gradlew :linux-storage:test :linux-platform:test --no-daemon
+
+      - name: Build the native terminal (libvterm via termlib's upstream CMake)
+        run: ./gradlew :linux-terminal:buildNativeTerminal --no-daemon
+
+      - name: Assemble everything (verifies the full module graph links)
+        run: ./gradlew assemble --no-daemon

@@ -187,7 +187,7 @@ Named caps across the stack:
 - `RingBuffer` — `scrollbackSize` bytes (config, default 512 KB)
 - `PTYSession` pending-write queue — 4 MB
 - `TerminalScreenModel.maxResponseBytesPerFeed` — 4 KB of terminal-query answers per PTY read (so a query flood can't evict real keystrokes from the queue above)
-- `RateLimiter.maxTrackedIPs` — 10 k (LRU-evicts oldest 10 % on overflow)
+- `RateLimiter.maxTrackedIPs` — 10 k (LRU-evicts oldest 10 % on overflow). Bounds how many IPs are tracked; `recordFailure` separately retains only the `maxAttempts` most recent timestamps **per** IP, dropping the oldest so the window still slides forward with a sustained attack. Without that second bound one IP failing in a loop grows its array for the whole window, and `cleanup`'s `removeFirst()` is O(n²) in that length — on an actor every other caller serializes behind
 - `LogStore` — compacts at 5 % overshoot above `maxEntries` (not +1000)
 - `AdminHTTPServer.maxRequestBodyBytes` — 64 KB (returns 413)
 - `TerminalViewModel.pendingOutputByteLimit` — 4 MB client-side (logs once-per-session on first drop)
@@ -273,6 +273,18 @@ received, so there is exactly one path to an authenticated connection.
 - A bad code is a `RateLimiter.recordFailure(ip:)`, identical to a bad token
   (10 attempts / 60 s as `main.swift` configures it), plus a per-connection cap
   of 3 mirroring `maxAuthAttempts`.
+- **The block is checked twice, and the second one is the gate — don't "dedupe"
+  it.** `handlerAdded`'s check is only a fast path: `await isBlocked` is a
+  suspension point, so a client that pipelines its first frame behind the HTTP
+  upgrade has it delivered to `channelRead` before that check can close the
+  channel — which handed a blocked IP one free credential check *per
+  connection*, on a surface where connections cost nothing. The authoritative
+  checks therefore live inside `handleAuth` and `handlePairRequest`, in the same
+  async context that validates the credential, with no suspension between the
+  verdict and its use. Pairing's runs **before** `redeem` so a blocked caller
+  cannot burn a pending single-use code the real device still needs. A
+  successful auth calls `reset(ip:)`, clearing the budget. Guarded by
+  `RelayMessageHandlerTests` and `PairRequestHandlerTests`.
 - The minted token is labeled `"<device> (paired)"` so it is revocable per device,
   unless the operator passed `setup --label`, in which case that label is used
   verbatim. Either way the label is sanitised identically on both paths

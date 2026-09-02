@@ -1,0 +1,35 @@
+[Desktop Entry]
+Type=Application
+Name=CodeRelay
+GenericName=Remote Terminal Relay
+Comment=Attach to coding-agent terminal sessions on a remote machine
+Exec=coderelay %u
+Icon=coderelay
+Terminal=false
+Categories=Development;
+Keywords=terminal;relay;claude;agent;ssh;
+
+# Hyprland (and every other WM) matches rules against this class.
+#
+# This is the class the window ACTUALLY reports, measured with `hyprctl clients`
+# — not the package name. Compose Desktop's skiko backend derives the class from
+# the main class and ignores `awt.appClassName`; passing
+# -Dawt.appClassName=coderelay on the JVM command line was tried and had no
+# effect. Guessing "coderelay" here would make every user-written window rule
+# silently fail to match.
+#
+# Re-measure if relay.app.MainKt is renamed, and re-check against the jpackage
+# launcher before shipping the AUR package.
+StartupWMClass=relay-app-MainKt
+StartupNotify=true
+
+# Registers the clauderelay:// scheme so `clauderelay://session/<uuid>` deep
+# links and pairing URLs from `claude-relay setup` open in the app. The shared
+# DeepLinks parser handles both forms.
+MimeType=x-scheme-handler/clauderelay;
+
+Actions=NewSession;
+
+[Desktop Action NewSession]
+Name=New Session
+Exec=coderelay --new-session
