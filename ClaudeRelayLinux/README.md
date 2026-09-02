@@ -26,6 +26,20 @@ JVM, the shared modules really are platform-free.
 
 Nothing under `ClaudeRelayAndroid/` is modified by this build.
 
+## Install
+
+```bash
+omarchy pkg aur add coderelay-bin
+```
+
+Or download `coderelay-<version>-linux-x86_64.tar.gz` from
+[Releases](https://github.com/miguelriotinto/CodeRelay/releases) and run
+`coderelay/bin/coderelay`.
+
+The package bundles a trimmed JRE, so it needs no system Java. It does need
+`libsecret` (token storage — there is no plaintext fallback) and `libnotify`
+(agent notifications); both are declared as package dependencies.
+
 ## Requirements
 
 Build:

@@ -1,85 +1,72 @@
 # Maintainer: Miguel Rio-Tinto <miguel.rio.tinto@gmail.com>
 #
-# CodeRelay Linux desktop client. Builds from the repository with Gradle +
-# Compose Desktop's jpackage integration, which bundles a trimmed JRE — so this
-# package deliberately does NOT depend on a system JDK at runtime.
+# Code[Relay] Linux desktop client — prebuilt.
+#
+# This is a `-bin` package by deliberate choice, not laziness. A source-built
+# AUR package is not currently possible: the build clones ConnectBot's termlib
+# at a pinned commit and patches it (see linux-terminal/patches/), and AUR
+# expects every input declared in source=() with a checksum — network access
+# inside build() breaks reproducibility and offline builds. Once the mouse
+# patch is upstreamed and we can depend on a released termlib artifact, a
+# source package becomes viable and should be added alongside this one.
+#
+# The tarball is produced by .github/workflows/release.yml, which gates it on
+# the full test suite, so what is packaged here is what CI verified.
 
-pkgname=coderelay
+pkgname=coderelay-bin
+_pkgname=coderelay
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Remote terminal relay client for coding agents (Claude Code, Codex, opencode)"
+pkgdesc="Remote terminal client for coding agents (Claude Code, Codex, opencode)"
 arch=('x86_64')
 url="https://github.com/miguelriotinto/CodeRelay"
 license=('MIT')
 
-# Runtime dependencies are the small CLI tools the platform seams shell out to,
-# rather than a JVM D-Bus binding. Each is load-bearing:
-#   libsecret   — secret-tool, where relay and Bedrock tokens are stored. There
-#                 is no plaintext fallback, so this is a hard dependency.
-#   libnotify   — notify-send, for agent-finished / needs-input notifications.
-#   hicolor-icon-theme — icon cache directory ownership.
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+
+# Runtime dependencies are the small CLI tools the platform layer shells out
+# to. Both are load-bearing rather than optional niceties:
+#   libsecret  — secret-tool, the ONLY place relay and Bedrock tokens are
+#                stored. There is deliberately no plaintext fallback, so
+#                without this the app cannot save a token at all.
+#   libnotify  — notify-send, for agent-finished / needs-input notifications.
+#
+# No java dependency: the tarball bundles a trimmed JRE, so the package imposes
+# no system JDK and cannot break when the user's default Java changes.
 depends=('libsecret' 'libnotify' 'hicolor-icon-theme')
 
-# wl-clipboard is optional today (clipboard bridging is post-parity work, see
-# docs/linux-client-spec.md §8.1) but is what the Wayland clipboard path will use.
-optdepends=('wl-clipboard: clipboard integration under Wayland'
-            'gnome-keyring: Secret Service provider, if not already running'
-            'ttf-jetbrains-mono-nerd: recommended terminal font')
+optdepends=(
+  'gnome-keyring: Secret Service provider, if your desktop does not already run one'
+  'wl-clipboard: clipboard integration under Wayland'
+  'ttf-jetbrains-mono-nerd: recommended terminal font'
+)
 
-# jdk21-openjdk and cmake are BUILD-only: jpackage bundles the runtime, and
-# cmake builds libjni_cb_term.so (libvterm + termlib's JNI bridge).
-makedepends=('jdk21-openjdk' 'cmake' 'gcc' 'git')
+options=('!strip')  # The bundled JRE is already stripped; re-stripping breaks jlink images.
 
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/linux-v$pkgver.tar.gz")
-sha256sums=('SKIP')  # replaced by the release workflow with the real digest
-
-build() {
-  cd "$srcdir/CodeRelay-linux-v$pkgver/ClaudeRelayLinux"
-
-  export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
-  # Gradle must not write into the packaging sandbox's home.
-  export GRADLE_USER_HOME="$srcdir/.gradle"
-
-  # The native terminal first: a failure here is clearer on its own than buried
-  # in the packaging task.
-  ./gradlew --no-daemon :linux-terminal:buildNativeTerminal
-
-  ./gradlew --no-daemon :app:createDistributable
-}
-
-check() {
-  cd "$srcdir/CodeRelay-linux-v$pkgver/ClaudeRelayLinux"
-  export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
-  export GRADLE_USER_HOME="$srcdir/.gradle"
-
-  # The shared modules' tests are the Android client's own suite, compiled from
-  # the same sources. If they pass, the shared layer really is platform-free.
-  ./gradlew --no-daemon \
-    :shared-protocol:test :shared-net:test :shared-session:test :shared-terminal:test \
-    :linux-storage:test :linux-platform:test :linux-terminal:test :app:test
-}
+source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$_pkgname-v$pkgver-linux-x86_64.tar.gz")
+# Replaced by the release workflow with the real digest of the artifact it built.
+sha256sums=('SKIP')
 
 package() {
-  cd "$srcdir/CodeRelay-linux-v$pkgver/ClaudeRelayLinux"
+  cd "$srcdir"
 
-  local _image="app/build/compose/binaries/main/app/$pkgname"
-
-  install -dm755 "$pkgdir/usr/lib/$pkgname"
-  cp -a "$_image/." "$pkgdir/usr/lib/$pkgname/"
+  # The image is self-contained: launcher, jars, the libvterm JNI library, and
+  # a trimmed JRE. It goes to /usr/lib rather than /opt because it is a
+  # distro-packaged application, not a third-party blob drop.
+  install -dm755 "$pkgdir/usr/lib/$_pkgname"
+  cp -a "$_pkgname/." "$pkgdir/usr/lib/$_pkgname/"
 
   install -dm755 "$pkgdir/usr/bin"
-  ln -s "/usr/lib/$pkgname/bin/$pkgname" "$pkgdir/usr/bin/$pkgname"
+  ln -s "/usr/lib/$_pkgname/bin/$_pkgname" "$pkgdir/usr/bin/$_pkgname"
 
-  install -Dm644 packaging/coderelay.desktop \
-    "$pkgdir/usr/share/applications/$pkgname.desktop"
+  # Registers the launcher entry AND the clauderelay:// scheme handler, which
+  # is what makes `clauderelay://session/<uuid>` deep links and pairing URLs
+  # open the app. Its StartupWMClass must match the class the window actually
+  # reports (relay-app-CodeRelay) or Hyprland window rules will not match.
+  install -Dm644 "$_pkgname.desktop" \
+    "$pkgdir/usr/share/applications/$_pkgname.desktop"
 
-  install -Dm644 ../AppIcons/coderelay-256.png \
-    "$pkgdir/usr/share/icons/hicolor/256x256/apps/$pkgname.png"
-
-  install -Dm644 ../LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-
-  # termlib and libvterm ship inside the bundled native library; their licences
-  # travel with the binary.
-  install -Dm644 "linux-terminal/build/termlib-src/LICENSE" \
-    "$pkgdir/usr/share/licenses/$pkgname/LICENSE.termlib" 2>/dev/null || true
+  install -Dm644 "$_pkgname/lib/$_pkgname.png" \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/$_pkgname.png" 2>/dev/null || true
 }

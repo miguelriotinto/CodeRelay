@@ -107,13 +107,86 @@ jobs:
           name: claude-relay-${{ matrix.arch }}
           path: dist/*.tar.gz
 
+
+  # ── Build the Linux desktop client ──────────────────────────────────────
+  # Produces a self-contained image: the app, its jars, the libvterm JNI
+  # library built from termlib's pinned source, and a trimmed JRE. The AUR
+  # `coderelay-bin` package consumes exactly this tarball, which is also what a
+  # user downloads for a manual install (the same route the Android APK takes).
+
+  build-linux:
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-version.outputs.tag }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # cmake + a C++17 compiler build libjni_cb_term.so from termlib's
+      # upstream CMake. These are BUILD-time only; the shipped package depends
+      # on libsecret and libnotify at runtime, nothing else.
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      # Gate the release on the tests, so a broken build cannot be published.
+      - name: Test
+        working-directory: ClaudeRelayLinux
+        run: ./gradlew build -x :app:createDistributable --no-daemon
+
+      - name: Build the distributable image
+        working-directory: ClaudeRelayLinux
+        run: ./gradlew :app:createDistributable --no-daemon
+
+      - name: Package
+        working-directory: ClaudeRelayLinux
+        env:
+          TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
+        run: |
+          IMAGE=app/build/compose/binaries/main/app/coderelay
+          test -d "$IMAGE" || { echo "distributable image missing at $IMAGE"; exit 1; }
+
+          # The native library ships inside the module jar as a resource and is
+          # extracted at first use; assert it is there rather than discovering
+          # at runtime that the terminal cannot start.
+          if ! find "$IMAGE" -name '*.jar' -exec unzip -l {} \; 2>/dev/null | grep -q 'libjni_cb_term.so'; then
+            echo "libjni_cb_term.so is not packaged — the terminal would fail to load"
+            exit 1
+          fi
+
+          # Ship the desktop entry alongside the image so the AUR package (and a
+          # manual installer) has one canonical copy.
+          install -Dm644 packaging/coderelay.desktop "$IMAGE/../coderelay.desktop"
+
+          mkdir -p dist
+          tar czf "dist/coderelay-${TAG_NAME}-linux-x86_64.tar.gz" \
+            -C app/build/compose/binaries/main/app coderelay coderelay.desktop
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coderelay-linux-x86_64
+          path: ClaudeRelayLinux/dist/*.tar.gz
+
   # ── Create GitHub Release + publish artifacts ───────────────────────────
 
   release:
-    needs: [resolve-version, build]
+    needs: [resolve-version, build, build-linux]
     runs-on: ubuntu-latest
     outputs:
       source_sha256: ${{ steps.sha.outputs.source_sha256 }}
+      linux_sha256: ${{ steps.sha.outputs.linux_sha256 }}
 
     steps:
       - uses: actions/checkout@v4
@@ -141,6 +214,18 @@ jobs:
           SOURCE_SHA=$(curl -sL "https://github.com/${REPO}/archive/refs/tags/${TAG_NAME}.tar.gz" | sha256sum | awk '{print $1}')
           echo "Source tarball SHA256: $SOURCE_SHA"
           echo "source_sha256=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+          # The Linux tarball's checksum goes into the AUR PKGBUILD. Taken from
+          # the artifact we just built rather than re-downloading the published
+          # asset, so the value cannot drift from what is actually shipped.
+          LINUX_TARBALL="artifacts/coderelay-${TAG_NAME}-linux-x86_64.tar.gz"
+          if [ -f "$LINUX_TARBALL" ]; then
+            LINUX_SHA=$(sha256sum "$LINUX_TARBALL" | awk '{print $1}')
+            echo "Linux tarball SHA256: $LINUX_SHA"
+            echo "linux_sha256=$LINUX_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "Linux tarball not found; the AUR job will skip."
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -227,4 +312,110 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/clauderelay.rb
           git commit -m "clauderelay ${TAG_NAME}" -m "Automated bump from ClaudeRelay release workflow."
+          git push
+
+  # ── Push PKGBUILD update to the AUR ─────────────────────────────────────
+  # Needs two secrets:
+  #   AUR_SSH_KEY   — private key of an SSH keypair registered on the AUR
+  #                   account that owns `coderelay-bin`
+  #   AUR_USERNAME  — the AUR account name (for the commit author)
+  # If either is missing the job skips, so a dry-run tag push is harmless.
+  #
+  # Mirrors the homebrew job above. The AUR is a plain git remote, so this is
+  # a checkout, a sed of pkgver + sha256, and a push — .SRCINFO regenerated
+  # from the PKGBUILD, which the AUR requires to match.
+
+  aur:
+    needs: [resolve-version, release]
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.release.outputs.linux_sha256 != '' }}
+    steps:
+      - name: Check AUR credentials are configured
+        id: check_key
+        env:
+          KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "AUR_SSH_KEY secret is not set; skipping AUR update."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.check_key.outputs.skip == 'false'
+        with:
+          ref: ${{ needs.resolve-version.outputs.tag }}
+
+      - name: Configure SSH for aur.archlinux.org
+        if: steps.check_key.outputs.skip == 'false'
+        env:
+          KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          # Pin the host key rather than disabling verification: this pushes a
+          # package thousands of people install, so an unverified host is not
+          # an acceptable shortcut.
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          EOF
+
+      - name: Clone the AUR package
+        if: steps.check_key.outputs.skip == 'false'
+        run: git clone ssh://aur@aur.archlinux.org/coderelay-bin.git aur
+
+      - name: Update pkgver + sha256
+        if: steps.check_key.outputs.skip == 'false'
+        env:
+          TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
+          LINUX_SHA: ${{ needs.release.outputs.linux_sha256 }}
+        run: |
+          # The AUR pkgver has no leading "v"; the release tag does.
+          PKGVER="${TAG_NAME#v}"
+
+          cp ClaudeRelayLinux/packaging/PKGBUILD aur/PKGBUILD
+          cd aur
+
+          sed -i -E "s|^pkgver=.*|pkgver=${PKGVER}|" PKGBUILD
+          sed -i -E "s|^pkgrel=.*|pkgrel=1|" PKGBUILD
+          sed -i -E "s|^sha256sums=\(.*\)$|sha256sums=('${LINUX_SHA}')|" PKGBUILD
+
+          echo "=== PKGBUILD diff ==="
+          git --no-pager diff PKGBUILD || true
+
+          if git diff --quiet PKGBUILD; then
+            echo "PKGBUILD unchanged (already at ${PKGVER}?). Nothing to push."
+            exit 0
+          fi
+
+      # .SRCINFO is generated metadata the AUR validates against the PKGBUILD;
+      # a mismatch is rejected on push. Generated in an Arch container because
+      # makepkg is not available on the runner.
+      - name: Regenerate .SRCINFO
+        if: steps.check_key.outputs.skip == 'false'
+        run: |
+          docker run --rm -v "$PWD/aur:/pkg" -w /pkg archlinux:base-devel \
+            bash -c 'useradd -m build && chown -R build /pkg && su build -c "makepkg --printsrcinfo" > .SRCINFO'
+          head -20 aur/.SRCINFO
+
+      - name: Commit + push
+        if: steps.check_key.outputs.skip == 'false'
+        env:
+          TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
+          AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
+        run: |
+          cd aur
+          if git diff --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "${AUR_USERNAME:-github-actions}"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "coderelay-bin ${TAG_NAME#v}" -m "Automated bump from the CodeRelay release workflow."
           git push

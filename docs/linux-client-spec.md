@@ -350,12 +350,51 @@ log once, never crash.
   is taken. **Window rules are not shipped** — Hyprland's rule syntax changes between
   versions and must be written against the current wiki.
 
-### 7.3 Packaging
+### 7.3 Naming
 
-`PKGBUILD` for the AUR (`coderelay-bin`), installable via `omarchy pkg aur add`. Ships a
-`jlink`/`jpackage` runtime image so the package imposes no system JDK. The existing
-`Formula/` (Homebrew, Mac server) is the precedent for release automation; `/coderelay-deploy`
-and `/coderelay-health` gain a `linux` target.
+The user-visible name is **`Code[Relay]`**, brackets included — matching
+`CFBundleDisplayName` on iOS/macOS and `app_name` on Android exactly. Linux must not
+be the one client showing a different name.
+
+| Facet | Value | Rationale |
+|---|---|---|
+| Display name | `Code[Relay]` | Identical to the other three clients |
+| Binary / command | `coderelay` | Brackets are shell glob characters; a bracketed binary name would need quoting everywhere |
+| AUR package | `coderelay-bin` | Arch convention: `-bin` marks a prebuilt |
+| Desktop file | `coderelay.desktop` | |
+| WM class | `relay-app-CodeRelay` | Measured, pinned by `@file:JvmName("CodeRelay")` |
+| URL scheme | `clauderelay://` (unchanged) | Wire compatibility — `claude-relay setup` emits it in QR codes |
+
+The scheme is deliberately **not** renamed. It is part of the wire contract with a
+server that may be older than the client, and every existing QR code and pairing URL
+carries it.
+
+### 7.4 Distribution
+
+**AUR `coderelay-bin`, consuming a tarball published to GitHub Releases.**
+
+One artifact serves both channels: the release workflow builds and publishes
+`coderelay-<tag>-linux-x86_64.tar.gz` (also the manual-download route, matching how
+the Android APK is already distributed), and the AUR package downloads and installs
+exactly that file. Install is `omarchy pkg aur add coderelay-bin`.
+
+Measured size: 202 MB unpacked, **118 MB compressed**, of which 91 MB is the bundled
+JRE. Large, but in the same range as an Electron app, and it buys independence from
+whatever Java the user has installed.
+
+Rejected, with reasons:
+
+| Option | Why not |
+|---|---|
+| **Source-built AUR** (`coderelay`) | The build clones termlib from the network at a pinned commit and patches it. AUR expects every input in `source=()` with a checksum; network access in `build()` breaks reproducibility and offline builds. Viable once the mouse patch is upstreamed — add it then, alongside `-bin`. |
+| **Flatpak** | Decisive: the platform layer shells out to `secret-tool` and `notify-send`, host binaries absent from the sandbox. Worse, libsecret inside Flatpak uses **per-app encrypted local storage via the Secret portal, not the host keyring** — tokens would silently land somewhere the user does not expect. Supporting it means rewriting `linux-platform` against D-Bus portals. |
+| **AppImage** | No `.desktop` registration by default, so `clauderelay://` deep links and Hyprland `StartupWMClass` rules do not work. Deep links are a shipped feature. |
+| **Tarball only** | Fine as the artifact; not as the only channel — no upgrade path and no way to declare the libsecret/libnotify runtime dependencies. |
+
+Automation mirrors the existing Homebrew tap job: on a release tag, `build-linux`
+produces and test-gates the tarball, `release` publishes it and computes its SHA256,
+and `aur` pushes a bumped `PKGBUILD` + regenerated `.SRCINFO`. Both bump jobs skip
+cleanly when their secrets are absent, so a dry-run tag push is harmless.
 
 ---
 
