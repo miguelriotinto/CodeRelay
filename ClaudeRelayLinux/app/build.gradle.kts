@@ -56,12 +56,14 @@ dependencies {
 // ---------------------------------------------------------------------------
 // Version and build info.
 //
-// One constant feeds jpackage's packageVersion, the PKGBUILD (bumped by the
-// release workflow) and the About section, so the three can never disagree.
-// The build string is the short commit the binary was built from — the thing
-// a bug report actually needs — with "dev" when there is no git.
+// The version is the release TAG, passed by release.yml as -PappVersion so the
+// jpackage metadata, the About section, the tarball name and the AUR pkgver can
+// never disagree (the Linux client is versioned with the server: v0.3.x). A
+// local build without the property is a dev build and says so. The build
+// string is the short commit the binary was built from — the thing a bug
+// report actually needs — with "dev" when there is no git.
 // ---------------------------------------------------------------------------
-val appVersion = "0.2.0"
+val appVersion: String = (findProperty("appVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.0.0-dev"
 
 val gitSha: String = runCatching {
     providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }

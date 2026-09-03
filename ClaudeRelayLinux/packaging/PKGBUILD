@@ -15,7 +15,7 @@
 
 pkgname=coderelay-bin
 _pkgname=coderelay
-pkgver=0.2.0
+pkgver=0.3.23
 pkgrel=1
 pkgdesc="Remote terminal client for coding agents (Claude Code, Codex, opencode)"
 arch=('x86_64')
@@ -45,7 +45,8 @@ optdepends=(
 options=('!strip')  # The bundled JRE is already stripped; re-stripping breaks jlink images.
 
 source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$_pkgname-v$pkgver-linux-x86_64.tar.gz")
-# Replaced by the release workflow with the real digest of the artifact it built.
+# pkgver and this digest are rewritten by the release workflow (aur job) from
+# the tag and the tarball it built; the values here are the last release's.
 sha256sums=('SKIP')
 
 package() {

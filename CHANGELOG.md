@@ -6,7 +6,34 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
-### Linux client 0.2.0 — desktop parity
+## [0.3.23] - 2026-09-03 — Linux client, server rate limiter
+
+The Linux client is versioned with the server from here on: one `vX.Y.Z` tag
+builds the server binaries, the Linux tarball (`coderelay-vX.Y.Z-linux-x86_64.tar.gz`)
+and the AUR `coderelay-bin` bump.
+
+### Server
+
+#### Fixed
+
+- **The admin rate limit accumulates.** `RateLimiter.recordFailure` was
+  resetting instead of counting, so the 10-attempts-per-60-s budget never
+  closed. Now counted per IP with the window sliding forward.
+- **Terminal queries are answered by the server**, not the device: cursor
+  position, device attributes and colour queries get their reply from the
+  server's own `TerminalScreenModel` and are stripped from the client-bound
+  stream, so a reply can no longer land as typed text at the prompt a
+  WebSocket round trip late.
+
+#### Changed
+
+- **URL scheme renamed `clauderelay://` → `coderelay://`** (hard cutover;
+  clients and server update together). Pairing QR codes from `claude-relay
+  setup` and session share links use the new scheme.
+- Session-name tap reloads the terminal from the server's scrollback with a
+  fade through black; rename pre-selects the name and refuses a blank one.
+
+### Linux client — desktop parity
 
 The Arch/Omarchy client (`ClaudeRelayLinux/`) reaches the parity scope of
 `docs/linux-client-spec.md`, plus the desktop features that spec deferred.

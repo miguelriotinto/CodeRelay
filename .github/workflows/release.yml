@@ -55,7 +55,14 @@ jobs:
 
   build:
     needs: resolve-version
+    # Best-effort. The macOS server binaries are not what ships: the server is
+    # installed with `brew` from HEAD on the Mac, and this build has failed on
+    # the runner toolchain for the last three tags, which also blocked the
+    # release job and, with it, the Linux tarball. A failure here is surfaced
+    # as an annotation, not a blocked release.
+    continue-on-error: true
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-14
@@ -141,13 +148,19 @@ jobs:
           sudo apt-get install -y cmake build-essential
 
       # Gate the release on the tests, so a broken build cannot be published.
+      # The tag is the version everywhere: the jpackage metadata, the About
+      # screen, the tarball name and the AUR pkgver all derive from it.
       - name: Test
         working-directory: ClaudeRelayLinux
-        run: ./gradlew build -x :app:createDistributable --no-daemon
+        env:
+          TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
+        run: ./gradlew build -x :app:createDistributable -PappVersion="${TAG_NAME#v}" --no-daemon
 
       - name: Build the distributable image
         working-directory: ClaudeRelayLinux
-        run: ./gradlew :app:createDistributable --no-daemon
+        env:
+          TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
+        run: ./gradlew :app:createDistributable -PappVersion="${TAG_NAME#v}" --no-daemon
 
       - name: Package
         working-directory: ClaudeRelayLinux
@@ -188,6 +201,9 @@ jobs:
 
   release:
     needs: [resolve-version, build, build-linux]
+    # The Linux tarball is the artifact this release exists to publish; the
+    # macOS build above is best-effort (see its comment).
+    if: ${{ !cancelled() && needs.resolve-version.result == 'success' && needs.build-linux.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       source_sha256: ${{ steps.sha.outputs.source_sha256 }}
