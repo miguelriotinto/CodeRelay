@@ -218,7 +218,11 @@ class LinuxTerminalEmulator(
         }
 
         override fun onKeyboardInput(data: ByteArray): Int {
-            inputSink?.invoke(data)
+            // During a paste libvterm emits one callback per code point; those
+            // are collected and sent as one frame by pasteText, not one
+            // WebSocket message (and one coroutine) per character.
+            val batch = pasteBatch
+            if (batch != null) batch.write(data) else inputSink?.invoke(data)
             return 1
         }
 
@@ -292,17 +296,29 @@ class LinuxTerminalEmulator(
         val cleaned = sanitizePaste(text)
         if (cleaned.isEmpty()) return
         scrollToBottom()
-        synchronized(this) {
-            native.dispatchPasteStart()
-            var i = 0
-            while (i < cleaned.length) {
-                val cp = cleaned.codePointAt(i)
-                native.dispatchCharacter(0, cp)
-                i += Character.charCount(cp)
+        val frame: ByteArray = synchronized(this) {
+            val batch = java.io.ByteArrayOutputStream(cleaned.length + 16)
+            pasteBatch = batch
+            try {
+                native.dispatchPasteStart()
+                var i = 0
+                while (i < cleaned.length) {
+                    val cp = cleaned.codePointAt(i)
+                    native.dispatchCharacter(0, cp)
+                    i += Character.charCount(cp)
+                }
+                native.dispatchPasteEnd()
+            } finally {
+                pasteBatch = null
             }
-            native.dispatchPasteEnd()
+            batch.toByteArray()
         }
+        if (frame.isNotEmpty()) inputSink?.invoke(frame)
     }
+
+    /** Non-null only inside [pasteText]; see [TerminalCallbacks.onKeyboardInput]. */
+    @Volatile
+    private var pasteBatch: java.io.ByteArrayOutputStream? = null
 
     /**
      * Reports a wheel notch at the given cell.
@@ -426,15 +442,24 @@ class LinuxTerminalEmulator(
         if (_viewportOffset.value > scrollback.size) _viewportOffset.value = scrollback.size
     }
 
-    /** The view: scrollback tail + live top when scrolled, else the live screen. */
+    /**
+     * The view: scrollback tail + live top when scrolled, else the live screen.
+     *
+     * The offset may exceed the screen height (a long history scrolled far up),
+     * in which case the view is entirely scrollback and no live row shows — so
+     * the rows are taken from the concatenation, never `rows - offset` of the
+     * live screen, which would go negative.
+     */
     private fun readView(): TerminalGrid {
         val live = readGrid()
-        val offset = _viewportOffset.value.coerceAtMost(scrollback.size)
+        val offset = _viewportOffset.value.coerceIn(0, scrollback.size)
         if (offset == 0) return live
         val lines = ArrayList<GridLine>(live.rows)
         val start = scrollback.size - offset
-        for (i in start until scrollback.size) lines += scrollback[i]
-        lines += live.lines.take(live.rows - lines.size)
+        var i = start
+        while (lines.size < live.rows && i < scrollback.size) lines += scrollback[i++]
+        var j = 0
+        while (lines.size < live.rows && j < live.lines.size) lines += live.lines[j++]
         return live.copy(lines = lines, cursor = live.cursor.copy(visible = false), viewportOffset = offset)
     }
 

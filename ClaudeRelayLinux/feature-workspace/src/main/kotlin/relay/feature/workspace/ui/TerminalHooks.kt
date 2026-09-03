@@ -1,6 +1,6 @@
 package relay.feature.workspace.ui
 
-import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.compositionLocalOf
 
 /**
  * What the desktop terminal host needs from the app that the shared
@@ -40,7 +40,15 @@ data class TerminalHooks(
     val copyRequest: Int = 0,
     /** Reports the terminal's current selection text (null = none) for the copy chord. */
     val onSelectionCopied: (text: String) -> Unit = {},
+    /** The system clipboard; one instance shared by the app and every host. */
+    val clipboard: relay.platform.DesktopClipboard = relay.platform.DesktopClipboard(),
 )
 
-/** Ambient desktop hooks; `:app` provides the real ones. */
-val LocalTerminalHooks = staticCompositionLocalOf { TerminalHooks() }
+/**
+ * Ambient desktop hooks; `:app` provides the real ones.
+ *
+ * A dynamic (not static) local on purpose: the paste/copy counters change on
+ * every chord, and a static local would recompose every reader below the
+ * provider — the whole workspace — instead of only the terminal host.
+ */
+val LocalTerminalHooks = compositionLocalOf { TerminalHooks() }

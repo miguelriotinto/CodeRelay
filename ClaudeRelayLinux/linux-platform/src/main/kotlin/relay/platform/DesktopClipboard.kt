@@ -90,20 +90,34 @@ class DesktopClipboard(
 
     private fun awt() = Toolkit.getDefaultToolkit().systemClipboard
 
-    /** Runs real processes with a short bound; the clipboard must never hang the UI. */
+    /**
+     * Runs real processes with a hard bound. Callers already keep this off the
+     * UI thread; the bound is for a selection owner that never answers
+     * (`wl-paste` blocks until the owning client serves the request), which
+     * would otherwise pin the calling coroutine forever.
+     *
+     * stdout is drained on its own thread so the timeout applies to the whole
+     * exchange — a `readBytes()` before `waitFor` would only start the clock
+     * after EOF, i.e. after the hang.
+     */
     object ProcessCommandRunner : CommandRunner {
         override fun run(command: List<String>, stdin: ByteArray?): ByteArray? = runCatching {
             val process = ProcessBuilder(command)
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
                 .start()
-            process.outputStream.use { if (stdin != null) it.write(stdin) }
-            val output = process.inputStream.use { it.readBytes() }
-            if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                process.destroy()
+            val output = java.io.ByteArrayOutputStream()
+            val reader = Thread({ runCatching { process.inputStream.use { it.copyTo(output) } } }, "coderelay-clip-read")
+                .apply { isDaemon = true; start() }
+            runCatching { process.outputStream.use { if (stdin != null) it.write(stdin) } }
+            if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
                 return null
             }
-            if (process.exitValue() != 0) null else output
+            reader.join(1_000)
+            if (process.exitValue() != 0) null else output.toByteArray()
         }.getOrNull()
+
+        private const val TIMEOUT_SECONDS = 5L
 
         override fun exists(binary: String): Boolean =
             System.getenv("PATH").orEmpty().split(':').any { java.io.File(it, binary).canExecute() }

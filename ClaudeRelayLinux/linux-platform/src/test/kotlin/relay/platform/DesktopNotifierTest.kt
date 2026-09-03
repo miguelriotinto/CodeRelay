@@ -14,7 +14,7 @@ class DesktopNotifierTest {
 
     @Test
     fun `the command carries the app name, urgency, replace hint and an Open action`() {
-        val n = DesktopNotifier(appName = "CodeRelay", exec = { null })
+        val n = DesktopNotifier(appName = "CodeRelay", exec = { null }, supportsActions = true)
         val cmd = n.command("api", "Finished", session, urgent = false)
         assertEquals("notify-send", cmd.first())
         assertTrue("--app-name=CodeRelay" in cmd)
@@ -22,6 +22,20 @@ class DesktopNotifierTest {
         assertTrue("--hint=string:x-canonical-private-synchronous:coderelay-$session" in cmd)
         assertTrue("--action=default=Open" in cmd)
         assertEquals(listOf("--", "api", "Finished"), cmd.takeLast(3))
+    }
+
+    @Test
+    fun `without action support the flag is omitted so the notification still shows`() {
+        val n = DesktopNotifier(exec = { null }, supportsActions = false)
+        assertFalse(n.command("t", "b", session, urgent = false).any { it.startsWith("--action") })
+    }
+
+    @Test
+    fun `action support is read from the libnotify version`() {
+        assertTrue(DesktopNotifier.supportsActions("notify-send 0.8.3"))
+        assertTrue(DesktopNotifier.supportsActions("notify-send 0.7.10"))
+        assertFalse(DesktopNotifier.supportsActions("notify-send 0.7.9"))
+        assertFalse(DesktopNotifier.supportsActions(null))
     }
 
     @Test

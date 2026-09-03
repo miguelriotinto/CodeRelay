@@ -89,6 +89,17 @@ class BracketedPasteTest {
         }
     }
 
+    @Test
+    fun `a paste reaches the relay as ONE frame, not one per character`() {
+        withEmulator { e, out ->
+            e.feedOutput("\u001b[?2004h".toByteArray())
+            out.clear()
+            e.pasteText("hello world, quite a few characters here")
+            assertEquals(1, out.size, "one WebSocket frame per paste; got ${out.size}")
+            assertEquals("\u001b[200~hello world, quite a few characters here\u001b[201~", out.text())
+        }
+    }
+
     // ---- the pure sanitiser ----
 
     @Test

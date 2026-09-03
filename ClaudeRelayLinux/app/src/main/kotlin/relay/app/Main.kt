@@ -46,7 +46,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.feature.servers.PastePairingLinkDialog
 import relay.feature.servers.ServersScreen
@@ -240,12 +239,6 @@ private fun runApp(
             return
         }
         connecting = true
-        // Switching servers from the overlay: drop the old connection first.
-        session?.let { old ->
-            environment.notifier.reset()
-            old.close()
-            session = null
-        }
         val candidate = ConnectionSession.create(
             config = config,
             token = token,
@@ -255,6 +248,13 @@ private fun runApp(
         candidate.scope.launch {
             val failure = runCatching { candidate.coordinator.connect() }.exceptionOrNull()
             if (failure == null) {
+                // Switching servers from the overlay: the old connection is
+                // dropped only once the new one is up, so a failed switch
+                // leaves the working session untouched.
+                session?.let { old ->
+                    environment.notifier.reset()
+                    old.close()
+                }
                 session = candidate
                 showServers = false
                 terminalTitle = null
@@ -296,6 +296,21 @@ private fun runApp(
         raiseWindow()
     }
 
+    /**
+     * Attach: fetch the token's attachable sessions, THEN present the sheet, so
+     * it opens populated (the order the Android nav graph and iOS both use).
+     * Gated so a double click fires one fetch.
+     */
+    fun fetchAttachable(active: ConnectionSession) {
+        if (loadingAttachable) return
+        loadingAttachable = true
+        active.scope.launch {
+            attachableSessions = runCatching { active.coordinator.fetchAttachableSessions() }
+                .getOrDefault(emptyList())
+            loadingAttachable = false
+        }
+    }
+
     fun disconnect() {
         environment.notifier.reset()
         session?.close()
@@ -305,13 +320,17 @@ private fun runApp(
 
     fun quit() {
         environment.notifier.reset()
-        // Bounded: detach the active session cleanly, but never hang quit on a
-        // socket that has already gone away.
-        session?.let { runBlocking { withTimeoutOrNull(1_500) { it.close().join() } } }
+        val closing = session
         session = null
-        instance.release()
-        environment.close()
-        exitApplication()
+        // Bounded, and NOT runBlocking: teardown hops to the relay-net dispatcher
+        // and resumes on the AWT thread, so blocking that thread here would
+        // deadlock until the timeout on every quit. Wait as a coroutine instead.
+        uiScope.launch {
+            closing?.let { withTimeoutOrNull(1_500) { it.close().join() } }
+            instance.release()
+            environment.close()
+            exitApplication()
+        }
     }
 
     /** Window-level accelerators; see [AppShortcut] for the Ctrl+Shift/Ctrl+Alt rule. */
@@ -357,10 +376,17 @@ private fun runApp(
         val server = instanceServer ?: return@LaunchedEffect
         val thread = Thread({
             while (server.isOpen) {
-                val args = runCatching { SingleInstance.readLaunch(server.accept()) }.getOrNull() ?: continue
-                val launch = LaunchArgs.parse(args)
-                if (!launch.isEmpty) environment.forwarded.tryEmit(launch)
-                else environment.forwarded.tryEmit(LaunchArgs()) // bare relaunch: just raise the window
+                val accepted = runCatching { server.accept() }.getOrNull()
+                if (accepted == null) {
+                    // EMFILE or a transient error: never spin the thread hot.
+                    Thread.sleep(200)
+                    continue
+                }
+                // readLaunch closes the channel and is deadline-bounded, so one
+                // peer that never finishes cannot hold the accept loop.
+                val args = runCatching { SingleInstance.readLaunch(accepted) }.getOrDefault(emptyList())
+                // An empty launch is a bare relaunch: just raise the window.
+                environment.forwarded.tryEmit(LaunchArgs.parse(args))
             }
         }, "coderelay-instance").apply { isDaemon = true }
         thread.start()
@@ -425,14 +451,7 @@ private fun runApp(
                 }
                 Item("Attach session…") {
                     raiseWindow()
-                    if (!loadingAttachable) {
-                        loadingAttachable = true
-                        active.scope.launch {
-                            attachableSessions = runCatching { active.coordinator.fetchAttachableSessions() }
-                                .getOrDefault(emptyList())
-                            loadingAttachable = false
-                        }
-                    }
+                    fetchAttachable(active)
                 }
                 Item("Servers…") { raiseWindow(); showServers = true }
                 Item("Disconnect") { disconnect() }
@@ -475,8 +494,10 @@ private fun runApp(
                 // Active session only: this host exists only for the active
                 // pane, so a background session's copy cannot reach here — the
                 // same rule the server applies to clipboard_update.
-                onClipboardCopy = { text -> environment.clipboard.setText(text) },
-                onTitleChange = { terminalTitle = it },
+                // Fired on the relay-net thread from feedOutput: the clipboard
+                // spawns wl-copy (IO), and the title is Compose state (UI).
+                onClipboardCopy = { text -> environment.scope.launch { environment.clipboard.setText(text) } },
+                onTitleChange = { title -> uiScope.launch { terminalTitle = title } },
                 onBell = { runCatching { java.awt.Toolkit.getDefaultToolkit().beep() } },
                 sendPasteImage = { png ->
                     val s = session ?: return@TerminalHooks
@@ -488,9 +509,8 @@ private fun runApp(
                 fontPointsOverride = if (fontSizeIsSet) fontSize.toFloat() else null,
                 pasteRequest = pasteRequest,
                 copyRequest = copyRequest,
-                onSelectionCopied = { text ->
-                    environment.clipboard.setText(text)
-                },
+                onSelectionCopied = { text -> environment.scope.launch { environment.clipboard.setText(text) } },
+                clipboard = environment.clipboard,
             )
         }
 
@@ -498,7 +518,7 @@ private fun runApp(
             CompositionLocalProvider(LocalTerminalHooks provides hooks) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val active = session
-                    if (active == null || showServers) {
+                    if (active == null) {
                         ServerList(
                             viewModel = serversViewModel,
                             connecting = connecting,
@@ -507,7 +527,7 @@ private fun runApp(
                             onConnect = ::connectTo,
                             onOpenSettings = { showSettings = true },
                             onScanPair = { showPasteLink = true },
-                            onBack = if (active != null) ({ showServers = false }) else null,
+                            onBack = null,
                         )
                     } else {
                         // Network restored → user recovery, the same edge the Android
@@ -527,6 +547,11 @@ private fun runApp(
                             pendingNewSession = false
                             runCatching { active.coordinator.createNewSession() }
                         }
+                        // The OSC title belongs to one session; a switch or detach
+                        // must not leave the previous session's title in the frame.
+                        LaunchedEffect(active) {
+                            active.coordinator.activeSessionId.collect { terminalTitle = null }
+                        }
                         // Desktop notifications from the activity stream the
                         // coordinator already receives (AD-4: no push provider).
                         LaunchedEffect(active) {
@@ -536,6 +561,10 @@ private fun runApp(
                                 }
                             }
                         }
+                        // The workspace stays composed underneath the servers
+                        // overlay: un-composing it disposed the live emulator (a
+                        // blank pane on return, no replay) and cancelled the
+                        // notification and recovery effects while it was open.
                         WorkspaceScreen(
                             vm = active.workspaceViewModel,
                             onDisconnect = ::disconnect,
@@ -543,22 +572,25 @@ private fun runApp(
                             // present the sheet, so it opens populated (the order
                             // the Android nav graph and iOS both use). Gated on
                             // `loadingAttachable` so a double click fires one fetch.
-                            onAttach = {
-                                if (!loadingAttachable) {
-                                    loadingAttachable = true
-                                    active.scope.launch {
-                                        attachableSessions =
-                                            runCatching { active.coordinator.fetchAttachableSessions() }
-                                                .getOrDefault(emptyList())
-                                        loadingAttachable = false
-                                    }
-                                }
-                            },
+                            onAttach = { fetchAttachable(active) },
                             onShareQr = { id -> shareSessionId = id },
                             // Haptics are a no-op on desktop; passed for API parity.
                             hapticsEnabled = false,
                             sidebarToggleRequests = sidebarToggles,
                         )
+
+                        if (showServers) {
+                            ServerList(
+                                viewModel = serversViewModel,
+                                connecting = connecting,
+                                pendingPairing = pendingPairing,
+                                clearPendingPairing = { pendingPairing = null },
+                                onConnect = ::connectTo,
+                                onOpenSettings = { showSettings = true },
+                                onScanPair = { showPasteLink = true },
+                                onBack = { showServers = false },
+                            )
+                        }
 
                         shareSessionId?.let { id ->
                             QrShareSheet(
@@ -585,7 +617,6 @@ private fun runApp(
                             )
                         }
                     }
-
                     if (showSettings) {
                         SettingsScreen(
                             settings = settings,

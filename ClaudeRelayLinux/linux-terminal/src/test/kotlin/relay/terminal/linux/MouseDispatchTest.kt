@@ -103,8 +103,9 @@ class MouseDispatchTest {
             e.dispatchWheel(down = true, row = 7, col = 12)
 
             val s = out.text()
-            // libvterm reports 1-based coordinates.
-            assertTrue(s.contains("13") || s.contains("12"), "expected the column in the report, got: $s")
+            // Cells are passed 0-based; libvterm's encoder adds the +1 the wire
+            // wants, so (row 7, col 12) is reported as col 13, row 8.
+            assertTrue(s.contains(";13;8"), "expected col 13 / row 8 in the report, got: $s")
         }
     }
 

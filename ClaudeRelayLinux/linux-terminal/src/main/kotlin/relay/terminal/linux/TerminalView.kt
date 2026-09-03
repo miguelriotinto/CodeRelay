@@ -180,9 +180,13 @@ fun TerminalView(
         }
     }
 
-    // Copy accelerator: hand the selection over, if there is one.
+    // Copy accelerator: hand the selection over, if there is one. The counter
+    // seen at mount is the baseline — a host re-entered later (session switch,
+    // detach) must not replay a chord pressed before it existed.
+    val copyBaseline = remember { mutableStateOf(copyRequest) }
     LaunchedEffect(copyRequest) {
-        if (copyRequest == 0) return@LaunchedEffect
+        if (copyRequest == copyBaseline.value) return@LaunchedEffect
+        copyBaseline.value = copyRequest
         selection.text(emulator)?.let { currentOnCopy(it) }
     }
 
@@ -299,8 +303,8 @@ fun TerminalView(
                     val toProgram = mouseMode != 0 && !event.keyboardModifiers.pointerShiftPressed
                     if (toProgram) {
                         repeat(abs(notches)) {
-                            // libvterm takes 1-based cells.
-                            emulator.dispatchWheel(down = notches > 0, row = row + 1, col = col + 1)
+                            // 0-based: libvterm's encoder adds the +1 the wire wants.
+                            emulator.dispatchWheel(down = notches > 0, row = row, col = col)
                         }
                     } else {
                         emulator.scrollViewport(-notches * WHEEL_LINES_PER_NOTCH)
@@ -314,7 +318,7 @@ fun TerminalView(
                     val button = buttonOf(event)
                     if (mouseMode != 0 && !shift) {
                         pointer.reportedButton = button
-                        emulator.dispatchMouseMove(row + 1, col + 1, modifiersOf(event))
+                        emulator.dispatchMouseMove(row, col, modifiersOf(event))
                         emulator.dispatchMouseButton(button, true, modifiersOf(event))
                         return@onPointerEvent
                     }
@@ -339,7 +343,7 @@ fun TerminalView(
                     if (reported != null) {
                         // Drag reports (button-event tracking, mode 1002) —
                         // libvterm only emits them when the program asked.
-                        emulator.dispatchMouseMove(row + 1, col + 1, modifiersOf(event))
+                        emulator.dispatchMouseMove(row, col, modifiersOf(event))
                         return@onPointerEvent
                     }
                     if (pointer.selecting && event.buttons.isPrimaryPressed) {
@@ -351,7 +355,7 @@ fun TerminalView(
                     val (row, col) = cellAt(change.position)
                     pointer.reportedButton?.let { button ->
                         pointer.reportedButton = null
-                        emulator.dispatchMouseMove(row + 1, col + 1, modifiersOf(event))
+                        emulator.dispatchMouseMove(row, col, modifiersOf(event))
                         emulator.dispatchMouseButton(button, false, modifiersOf(event))
                         return@onPointerEvent
                     }

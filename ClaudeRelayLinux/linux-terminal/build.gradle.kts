@@ -55,7 +55,18 @@ abstract class GitCheckoutTask : DefaultTask() {
 
     @get:Input abstract val repoUrl: Property<String>
     @get:Input abstract val commit: Property<String>
-    @get:OutputDirectory abstract val destination: DirectoryProperty
+    @get:Internal abstract val destination: DirectoryProperty
+
+    /**
+     * The up-to-date marker. The checkout directory itself is NOT declared as
+     * an output: the patch tasks edit three files inside it, and two tasks with
+     * overlapping outputs made Gradle re-fetch (and re-patch) on every build.
+     * A marker named after the commit re-runs the fetch exactly when the pin
+     * moves or the tree is gone.
+     */
+    @get:OutputFile
+    val marker: Provider<File>
+        get() = destination.zip(commit) { dir, sha -> dir.file(".checkout-$sha").asFile }
 
     @TaskAction
     fun checkout() {
@@ -78,6 +89,7 @@ abstract class GitCheckoutTask : DefaultTask() {
             workingDir = dir
             commandLine("git", "checkout", "--quiet", "--force", commit.get())
         }
+        marker.get().writeText(commit.get())
     }
 }
 

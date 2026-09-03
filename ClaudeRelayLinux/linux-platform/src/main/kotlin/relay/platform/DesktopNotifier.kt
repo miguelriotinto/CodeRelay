@@ -32,6 +32,12 @@ class DesktopNotifier(
     private val appName: String = "CodeRelay",
     private val onActivated: (UUID) -> Unit = {},
     private val exec: (List<String>) -> String? = ::runAndReadAction,
+    /**
+     * Whether `notify-send` accepts `--action` (libnotify ≥ 0.7.10). On an
+     * older libnotify the flag is an error and the notification is not shown at
+     * all, so it is omitted rather than risked. Probed once by default.
+     */
+    private val supportsActions: Boolean = detectActionSupport(),
 ) : ActivityNotifier.Sender {
 
     private val pool = Executors.newCachedThreadPool { runnable ->
@@ -57,7 +63,7 @@ class DesktopNotifier(
             add("--hint=string:x-canonical-private-synchronous:coderelay-$sessionId")
             add("--icon=utilities-terminal")
             // The click target. Printed back on stdout when chosen.
-            add("--action=$ACTION_OPEN=Open")
+            if (supportsActions) add("--action=$ACTION_OPEN=Open")
             // `--` so a title or session name beginning with '-' is not parsed
             // as an option. Session names are user-supplied.
             add("--")
@@ -68,6 +74,31 @@ class DesktopNotifier(
     companion object {
         /** The action key `notify-send` prints when the notification is clicked. */
         const val ACTION_OPEN = "default"
+
+        /** `--action` arrived in libnotify 0.7.10. */
+        internal fun supportsActions(versionOutput: String?): Boolean {
+            val m = Regex("""(\d+)\.(\d+)(?:\.(\d+))?""").find(versionOutput.orEmpty()) ?: return false
+            val (a, b, c) = m.destructured
+            val v = listOf(a.toInt(), b.toInt(), c.toIntOrNull() ?: 0)
+            return compareVersions(v, listOf(0, 7, 10)) >= 0
+        }
+
+        private fun compareVersions(a: List<Int>, b: List<Int>): Int {
+            for (i in 0 until maxOf(a.size, b.size)) {
+                val d = (a.getOrNull(i) ?: 0) - (b.getOrNull(i) ?: 0)
+                if (d != 0) return d
+            }
+            return 0
+        }
+
+        private fun detectActionSupport(): Boolean = runCatching {
+            val process = ProcessBuilder("notify-send", "--version")
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start()
+            val out = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor(2, TimeUnit.SECONDS)
+            supportsActions(out)
+        }.getOrDefault(false)
 
         /**
          * Runs the command and returns the first line of stdout, or null.

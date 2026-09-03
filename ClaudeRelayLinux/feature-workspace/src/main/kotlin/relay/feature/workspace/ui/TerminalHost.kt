@@ -6,12 +6,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import relay.terminal.RelayTerminalController
 import relay.terminal.TerminalSessionVm
 import relay.terminal.linux.DesktopTerminalFont
@@ -157,16 +162,25 @@ fun TerminalHost(
     // Paste from the app's accelerator: an image on the clipboard goes to the
     // host as `paste_image` (the macOS Cmd+V behaviour); otherwise the text is
     // typed through libvterm, bracketed when the program asked for it.
-    val clipboard = remember { relay.platform.DesktopClipboard() }
+    //
+    // The counter value seen when this host mounts is the baseline: a host
+    // re-entered later (session switch, detach, the servers overlay) must not
+    // replay a chord pressed before it existed — that typed the clipboard into
+    // a freshly attached shell with no keypress. Clipboard reads spawn
+    // `wl-paste`, so they run on IO, never on the UI thread.
+    val clipboard = hooks.clipboard
+    val pasteBaseline = remember { mutableStateOf(hooks.pasteRequest) }
     LaunchedEffect(hooks.pasteRequest) {
-        if (hooks.pasteRequest == 0) return@LaunchedEffect
-        val png = clipboard.getImagePng()
+        if (hooks.pasteRequest == pasteBaseline.value) return@LaunchedEffect
+        pasteBaseline.value = hooks.pasteRequest
+        val png = withContext(Dispatchers.IO) { clipboard.getImagePng() }
         if (png != null) {
             hooks.sendPasteImage(png)
         } else {
-            clipboard.getText()?.let { emulator.pasteText(it) }
+            withContext(Dispatchers.IO) { clipboard.getText() }?.let { emulator.pasteText(it) }
         }
     }
+    val hostScope = rememberCoroutineScope()
 
     // Match the size and face the user's other terminals are rendering at —
     // read once per host, from the same Foot/Alacritty config those windows use —
@@ -189,8 +203,13 @@ fun TerminalHost(
             padding = font.padDp.dp,
             copyRequest = hooks.copyRequest,
             onCopy = { text -> currentHooks.onSelectionCopied(text) },
-            onPrimarySelection = { text -> clipboard.setPrimary(text) },
-            onPastePrimary = { clipboard.getText(primary = true)?.let { emulator.pasteText(it) } },
+            // Both spawn wl-clipboard processes: off the UI thread.
+            onPrimarySelection = { text -> hostScope.launch(Dispatchers.IO) { clipboard.setPrimary(text) } },
+            onPastePrimary = {
+                hostScope.launch {
+                    withContext(Dispatchers.IO) { clipboard.getText(primary = true) }?.let { emulator.pasteText(it) }
+                }
+            },
             // MUST go through the controller, not straight to `onResize`.
             // `reportSize` does three things: resizes the engine, forwards the
             // geometry to the relay, and — on the FIRST report — calls

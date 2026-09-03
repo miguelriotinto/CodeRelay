@@ -51,6 +51,19 @@ class ScrollbackTest {
     }
 
     @Test
+    fun `scrolling further than one screen shows only history and keeps rendering`() {
+        emulator(rows = 3, cols = 20).use { e ->
+            e.feedLines(12) // 12 lines + prompt row on 3 rows: 10 in scrollback
+            assertEquals(10, e.scrollbackSize.value)
+            e.scrollViewport(8) // more than the 3-row screen
+            e.refreshIfDirty() // used to throw: take(rows - offset) with a negative count
+            assertEquals(8, e.viewportOffset.value)
+            assertEquals(listOf("line3", "line4", "line5"), (0..2).map { e.rowText(it) })
+            assertEquals(3, e.grid.value.lines.size)
+        }
+    }
+
+    @Test
     fun `the viewport is clamped to what exists`() {
         emulator().use { e ->
             e.feedLines(8)
