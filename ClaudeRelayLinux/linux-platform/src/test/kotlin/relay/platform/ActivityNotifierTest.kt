@@ -25,6 +25,30 @@ class ActivityNotifierTest {
         focused: () -> UUID? = { null },
     ) = ActivityNotifier(sender, focused)
 
+    // ---- the coordinator's map form ----
+
+    @Test
+    fun `onAgentStates diffs the whole snapshot per session`() {
+        val s = FakeSender()
+        val n = notifier(s)
+        val names = mapOf(session to "api", other to "web")
+        n.onAgentStates(mapOf(session to AgentDetectedState.WORKING, other to AgentDetectedState.WORKING)) { names[it] }
+        assertTrue(s.sent.isEmpty(), "first sighting never notifies")
+        n.onAgentStates(mapOf(session to AgentDetectedState.IDLE, other to AgentDetectedState.WORKING)) { names[it] }
+        assertEquals(listOf("api"), s.sent.map { it.title })
+        assertEquals("Finished", s.sent.single().body)
+    }
+
+    @Test
+    fun `a session missing from the snapshot is forgotten so its return is a first sighting`() {
+        val s = FakeSender()
+        val n = notifier(s)
+        n.onAgentStates(mapOf(session to AgentDetectedState.WORKING)) { "api" }
+        n.onAgentStates(emptyMap()) { "api" }
+        n.onAgentStates(mapOf(session to AgentDetectedState.IDLE)) { "api" }
+        assertTrue(s.sent.isEmpty(), "WORKING was forgotten in between, so IDLE is a first sighting")
+    }
+
     // ---- the two transitions that notify ----
 
     @Test

@@ -2,6 +2,7 @@ package relay.app
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -63,12 +64,14 @@ class ConnectionSession private constructor(
      * the socket closes. The scope is cancelled only after teardown completes,
      * or cancelling would abort the very coroutine doing the cleanup.
      */
-    fun close() {
-        scope.launch {
+    fun close(): Job {
+        val job = scope.launch {
             runCatching { coordinator.tearDown() }
-        }.invokeOnCompletion {
+        }
+        job.invokeOnCompletion {
             runCatching { scope.cancel() }
         }
+        return job
     }
 
     companion object {

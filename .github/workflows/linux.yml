@@ -95,3 +95,13 @@ jobs:
       # The steps above exist to fail fast with a clear name.
       - name: Build everything (all modules, all tests)
         run: ./gradlew build -x :app:createDistributable --no-daemon
+
+      # The jpackage image the release workflow tars up. Running it here means a
+      # packaging regression (a missing icon, the native library not staged onto
+      # java.library.path) fails the PR, not the release.
+      - name: Package the distributable image
+        run: |
+          ./gradlew :app:createDistributable --no-daemon
+          IMAGE=app/build/compose/binaries/main/app/coderelay
+          find "$IMAGE" -name 'libjni_cb_term.so' | grep -q . || { echo "libjni_cb_term.so missing from image"; exit 1; }
+          test -f "$IMAGE/lib/coderelay.png" || { echo "app icon missing from image"; exit 1; }

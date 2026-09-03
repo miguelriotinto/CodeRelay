@@ -85,6 +85,29 @@ object KeyMapping {
     }
 
     /**
+     * A *typed* character event (AWT `KEY_TYPED`, which Compose Desktop surfaces
+     * with [KeyEventType.Unknown]) — the only way a dead-key or Compose-key
+     * sequence (`´` then `e` → `é`, Compose+`o`+`c` → `©`) ever produces text:
+     * the presses themselves arrive with `CHAR_UNDEFINED` and map to nothing.
+     *
+     * The guard against double input: an ordinary key already dispatched on
+     * its KeyDown, and its KEY_TYPED must be dropped. So a typed character is
+     * dispatched only when the key-down that preceded it was [Action.Unhandled]
+     * — which is exactly the dead-key case. Controls and modified chords never
+     * come this way (they were handled on KeyDown or belong to the app).
+     */
+    fun typed(event: KeyEvent, lastKeyDownHandled: Boolean): Action =
+        decideTyped(event.utf16CodePoint, lastKeyDownHandled, modifiersOf(event))
+
+    /** Pure form of [typed]; see [decide]. */
+    internal fun decideTyped(codepoint: Int, lastKeyDownHandled: Boolean, mods: Int): Action {
+        if (lastKeyDownHandled) return Action.Unhandled
+        if (mods and (VTermMod.CTRL or VTermMod.ALT) != 0) return Action.Unhandled
+        if (codepoint < 0x20 || codepoint == 0x7F || codepoint == CHAR_UNDEFINED) return Action.Unhandled
+        return Action.Character(codepoint, VTermMod.NONE)
+    }
+
+    /**
      * AWT's `KeyEvent.CHAR_UNDEFINED`, which Compose Desktop passes straight
      * through as [KeyEvent.utf16CodePoint] for any key that carries no
      * character. It is `0xFFFF`, not `0`, which is exactly why the old

@@ -25,6 +25,12 @@ data class TerminalTheme(
     val ansi: IntArray,
     val foreground: Int,
     val background: Int,
+    /**
+     * Selection highlight, packed ARGB. Omarchy themes carry one (`selection`);
+     * null means "derive from the foreground", which the renderer does with a
+     * translucent fill so it reads on any background.
+     */
+    val selection: Int? = null,
 ) {
     // IntArray has identity equals; a data class holding one needs both written
     // out or `remember(theme)` would re-fire on every recomposition.
@@ -33,11 +39,12 @@ data class TerminalTheme(
         if (other !is TerminalTheme) return false
         return foreground == other.foreground &&
             background == other.background &&
+            selection == other.selection &&
             ansi.contentEquals(other.ansi)
     }
 
     override fun hashCode(): Int =
-        (ansi.contentHashCode() * 31 + foreground) * 31 + background
+        ((ansi.contentHashCode() * 31 + foreground) * 31 + background) * 31 + (selection ?: 0)
 
     companion object {
         /** The built-in scheme, used wherever no desktop theme is published. */

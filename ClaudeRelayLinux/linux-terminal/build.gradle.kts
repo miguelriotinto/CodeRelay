@@ -103,6 +103,24 @@ abstract class PatchTermlibTask : DefaultTask() {
     @get:InputFile abstract val script: RegularFileProperty
     @get:Internal abstract val checkout: DirectoryProperty
 
+    /**
+     * The files the script edits, declared as outputs so Gradle's file-system
+     * watching learns they changed. Without this the edit is invisible to the
+     * downstream Sync (the python process is not a Gradle task output), which
+     * then reports itself up-to-date and compiles a stale TerminalNative.kt —
+     * the symptom is "Unresolved reference: dispatchPasteStart" right after a
+     * build that printed "paste patch: ... TerminalNative.kt".
+     */
+    @get:OutputFiles
+    val patched: Provider<List<File>>
+        get() = checkout.map { dir ->
+            listOf(
+                dir.file("lib/src/main/cpp/Terminal.h").asFile,
+                dir.file("lib/src/main/cpp/Terminal.cpp").asFile,
+                dir.file("lib/src/main/java/org/connectbot/terminal/TerminalNative.kt").asFile,
+            )
+        }
+
     @TaskAction
     fun apply() {
         execOps.exec {
@@ -114,6 +132,17 @@ abstract class PatchTermlibTask : DefaultTask() {
 val patchTermlibMouse by tasks.registering(PatchTermlibTask::class) {
     dependsOn(fetchTermlib)
     script.set(layout.projectDirectory.file("patches/apply-mouse-patch.py"))
+    checkout.set(layout.buildDirectory.dir("termlib-src"))
+}
+
+/**
+ * Bracketed paste (`vterm_keyboard_start_paste` / `end_paste`), which termlib
+ * likewise never exposed. Applied after the mouse patch because its Kotlin
+ * anchor is the mouse wrapper. See patches/0002-bracketed-paste.md.
+ */
+val patchTermlibPaste by tasks.registering(PatchTermlibTask::class) {
+    dependsOn(patchTermlibMouse)
+    script.set(layout.projectDirectory.file("patches/apply-paste-patch.py"))
     checkout.set(layout.buildDirectory.dir("termlib-src"))
 }
 
@@ -165,7 +194,7 @@ abstract class BuildNativeTerminalTask : DefaultTask() {
 }
 
 val buildNativeTerminal by tasks.registering(BuildNativeTerminalTask::class) {
-    dependsOn(patchTermlibMouse)
+    dependsOn(patchTermlibPaste)
     cppSource.set(layout.buildDirectory.dir("termlib-src/lib/src/main/cpp"))
     cmakeBuildDir.set(layout.buildDirectory.dir("native"))
     outputDir.set(layout.buildDirectory.dir("native-libs"))
@@ -199,9 +228,9 @@ val buildNativeTerminal by tasks.registering(BuildNativeTerminalTask::class) {
  *   key and pointer events — and is rewritten for Compose Desktop in :app.
  */
 val syncTermlibKotlin by tasks.registering(Sync::class) {
-    // The patch adds the mouse declarations to TerminalNative.kt, so it must run
-    // before the sync copies that file out.
-    dependsOn(patchTermlibMouse)
+    // The patches add the mouse and paste declarations to TerminalNative.kt, so
+    // they must run before the sync copies that file out.
+    dependsOn(patchTermlibPaste)
     from(layout.buildDirectory.dir("termlib-src/lib/src/main/java/org/connectbot/terminal")) {
         include(
             "TerminalNative.kt",

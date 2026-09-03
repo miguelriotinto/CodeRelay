@@ -90,6 +90,8 @@ dependencies {
     api(project(":shared-terminal"))
     api(project(":linux-terminal"))
     api(project(":linux-storage"))
+    // DesktopClipboard, for paste and the PRIMARY selection in TerminalHost.
+    api(project(":linux-platform"))
     implementation(libs.kotlinx.coroutines.core)
 
     implementation(compose.runtime)

@@ -15,7 +15,7 @@
 
 pkgname=coderelay-bin
 _pkgname=coderelay
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Remote terminal client for coding agents (Claude Code, Codex, opencode)"
 arch=('x86_64')
@@ -67,6 +67,11 @@ package() {
   install -Dm644 "$_pkgname.desktop" \
     "$pkgdir/usr/share/applications/$_pkgname.desktop"
 
+  # The icon jpackage embedded from packaging/coderelay.png (512 px), plus the
+  # scalable source shipped next to the desktop entry. `Icon=coderelay` in the
+  # desktop file resolves through hicolor, so both paths must exist.
   install -Dm644 "$_pkgname/lib/$_pkgname.png" \
-    "$pkgdir/usr/share/icons/hicolor/512x512/apps/$_pkgname.png" 2>/dev/null || true
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/$_pkgname.png"
+  install -Dm644 "$_pkgname.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_pkgname.svg"
 }

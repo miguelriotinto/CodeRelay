@@ -5,12 +5,10 @@ connecting to a CodeRelay server on a Mac.
 
 Full specification and implementation plan: **[`docs/linux-client-spec.md`](../docs/linux-client-spec.md)**.
 
-> **Status: builds and runs against a live server.** 446 tests pass on the
-> desktop JVM, including the Android client's own 312-test suite compiled from
-> the same sources. Verified end to end against a production relay: connect,
-> authenticate, list sessions, create a session, drive a real PTY, and read the
-> shell's output back. The workspace UI and the native terminal build are not
-> yet complete — see [Current state](#current-state).
+> **Status: complete for the parity scope.** 702 tests pass on the desktop JVM,
+> including the Android client's own suite compiled from the same sources, and
+> the terminal is driven end to end against real libvterm. See
+> [Current state](#current-state) for what the client does.
 
 ## Why this exists as a fork of the Android client
 
@@ -57,7 +55,7 @@ Runtime (present on a stock Omarchy install):
 |---|---|---|
 | `secret-tool` | `libsecret` | Relay + Bedrock tokens in the keyring |
 | `notify-send` | `libnotify` | Agent-finished / needs-input notifications |
-| `wl-copy` / `wl-paste` | `wl-clipboard` | Clipboard (post-parity, see spec §8.1) |
+| `wl-copy` / `wl-paste` | `wl-clipboard` | Clipboard and PRIMARY selection (AWT fallback on X11) |
 
 ## Build
 
@@ -135,58 +133,69 @@ between versions and should be written against the current wiki.
 
 ## Current state
 
-Verified working (446 tests, 0 failures, on JDK 21):
+Verified working (702 tests, 0 failures, on JDK 21):
 
 | Module | Tests | Notes |
 |---|---|---|
 | `shared-protocol` | 87 | Android's own suite, unmodified |
 | `shared-net` | 42 | Android's own suite, unmodified |
 | `shared-terminal` | 50 | Android's own suite, unmodified |
-| `shared-session` | 133 | Android's own suite, unmodified |
+| `shared-session` | 135 | Android's own suite, plus `detachActiveSession` |
 | `linux-storage` | 60 | XDG paths, stores, Secret Service |
-| `linux-platform` | 48 | Omarchy theme, notifier, connectivity |
+| `linux-platform` | 69 | Omarchy theme + watcher, notifier, clipboard, connectivity |
 | `feature-settings` | 15 | + shared `SettingsScreen` compiles on CMP |
-| `feature-servers` | 11 | + shared `ServersScreen` compiles on CMP |
-| `linux-terminal` | 34 | **real libvterm** via the JNI bridge, incl. wheel reporting |
-| `feature-workspace` | 61 | shared `WorkspaceScreen`/`SessionSidebar` on CMP |
-| `app` | 29 | shortcuts, deep links |
+| `feature-servers` | 16 | + shared `ServersScreen`, pairing-link paste |
+| `linux-terminal` | 113 | **real libvterm** via the JNI bridge: wheel, paste, scrollback, cursor |
+| `feature-workspace` | 63 | shared `WorkspaceScreen`/`SessionSidebar` on CMP |
+| `app` | 52 | shortcuts, deep links, single instance, tray model |
 
-**The 312 shared tests passing is the proof of the whole approach**: those files
+**The shared tests passing is the proof of the whole approach**: those files
 live under `ClaudeRelayAndroid/` and are compiled here unchanged.
 
-Verified against a live relay (`LiveServerIntegrationTest`, `LivePtyIntegrationTest`
-— skipped unless `CODERELAY_TEST_HOST`/`PORT`/`TOKEN` are set):
+Verified against a live relay (`LiveServerIntegrationTest`, `LivePtyIntegrationTest`,
+`LiveConnectFlowTest`, `LivePaneTransitionsTest`, `LiveTerminalRenderTest` — skipped
+unless `CODERELAY_TEST_HOST`/`PORT`/`TOKEN` are set):
 
 - connect over a real WebSocket, authenticate with a real token
 - `session_list` RPC round-trip decoding into shared types
 - application ping/pong RTT measurement
 - create a session, attach, send `echo`, read the shell's output back over the
   binary frame channel, then terminate cleanly
+- the pane transitions that had each shipped blank: second session, switch back,
+  name-tap reload
 
-The terminal is real, not a stub. `libjni_cb_term.so` is built from termlib's
-upstream CMake (its `else()` branch, `find_package(JNI)` against the build JDK)
-and exports exactly the 12 symbols `TerminalNative.kt` declares. Verified
-against it: ANSI colour parsing, bold/underline, cursor addressing, alternate
-screen buffer entry/exit, mouse-mode reporting, resize, clear, UTF-8 runes,
-escape sequences split across feeds, and key encoding (Ctrl+C → 0x03, arrows →
-escape sequences).
+### What the desktop client does
 
-Implemented but not yet compiled:
+- **Terminal.** libvterm through termlib's JNI bridge, with two small patches
+  (`patches/`): mouse dispatch and bracketed paste. Wheel reports reach a program
+  that asked for them (an agent transcript scrolls); a plain shell gets local
+  scrollback instead (`terminalScrollbackLines`, Shift+PageUp/PageDown). Mouse
+  clicks and drags are reported while a program tracks the mouse; Shift+drag
+  always selects locally. Selection copies to PRIMARY on release and to the
+  clipboard on Ctrl+Shift+C; middle click pastes PRIMARY; Ctrl+Shift+V pastes
+  the clipboard — bracketed when the program enabled DECSET 2004 — or sends an
+  image on the clipboard to the host as `paste_image`. OSC 52 writes land on
+  the device clipboard; OSC titles reach the window title; DECSCUSR cursor
+  shapes and blink are honoured, with a hollow cursor when unfocused.
+- **Keyboard.** Every accelerator is Ctrl+Shift or Ctrl+Alt so bare Ctrl chords
+  reach the terminal: new session, detach, terminate, next/previous, session
+  1–9, sidebar, settings, zoom (Ctrl+Shift+= / - / 0), copy, paste. Handled at
+  the window, so they work with the sidebar focused too.
+- **Desktop shell.** Close-to-tray with a per-session rollup (state glyphs,
+  attention count, quick switch, new/attach/servers/settings/quit). One instance
+  per user session: a second `coderelay://` click or the "New Session" desktop
+  action is forwarded over a socket in `$XDG_RUNTIME_DIR`. Notifications on
+  agent finished / needs input via `notify-send`, with click-to-focus through
+  `--action`, suppressed for the session on screen. Auto-connect to the last
+  server, and a session link with nothing connected opens that server. Pairing
+  from a `coderelay://pair` link, or by pasting the line `claude-relay setup`
+  prints. Window size is remembered.
+- **Omarchy.** The palette is followed live (a two-second stat of
+  `colors.toml`), and the terminal font, size and padding come from the user's
+  Foot or Alacritty config unless a size is chosen in Settings.
 
-- `app` — window, environment wiring, theme, shortcuts
-
-Wheel scrolling works, which Android cannot do at all. termlib exposes no mouse
-function, so `patches/0001-mouse-dispatch.md` adds one (applied to the pinned
-checkout by the build, idempotently, and written to be upstreamed). libvterm owns
-the encoding, so a plain shell — where no program has enabled reporting — receives
-nothing and is unaffected.
-
-Not yet built:
-
-- Interactive verification of the full connect → attach → type flow through the
-  GUI. Every layer beneath it is tested, including a live PTY round-trip, but
-  nobody has driven the UI itself.
-- Speech (inherited deferral, §9 of the spec)
+Not built, by design (spec §1.1, §9): speech, camera QR scanning, push
+notifications, Flatpak.
 
 ### Building without a system JDK
 

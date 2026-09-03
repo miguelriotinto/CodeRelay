@@ -29,6 +29,15 @@ enum class AppShortcut {
     NEXT_SESSION,
     PREVIOUS_SESSION,
     TOGGLE_SIDEBAR,
+    /** Ctrl+Shift+, — the Ctrl+, every desktop app uses, shifted per the rule above. */
+    OPEN_SETTINGS,
+    /** Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+Shift+0: terminal font zoom. */
+    ZOOM_IN,
+    ZOOM_OUT,
+    ZOOM_RESET,
+    /** Ctrl+Shift+C / Ctrl+Shift+V: the terminal-world copy and paste chords. */
+    COPY,
+    PASTE,
     ;
 
     companion object {
@@ -70,6 +79,14 @@ enum class AppShortcut {
                     // `KeyMapping.isApplicationShortcut`, which requires Shift
                     // or Alt alongside Ctrl.
                     Key.B -> TOGGLE_SIDEBAR
+                    Key.Comma -> OPEN_SETTINGS
+                    // Shift+= is '+' on a US layout, which is what the user
+                    // thinks they are pressing; both keys are accepted.
+                    Key.Equals, Key.Plus -> ZOOM_IN
+                    Key.Minus -> ZOOM_OUT
+                    Key.Zero -> ZOOM_RESET
+                    Key.C -> COPY
+                    Key.V -> PASTE
                     else -> null
                 }
             }

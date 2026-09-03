@@ -157,21 +157,26 @@ jobs:
           IMAGE=app/build/compose/binaries/main/app/coderelay
           test -d "$IMAGE" || { echo "distributable image missing at $IMAGE"; exit 1; }
 
-          # The native library ships inside the module jar as a resource and is
-          # extracted at first use; assert it is there rather than discovering
-          # at runtime that the terminal cannot start.
-          if ! find "$IMAGE" -name '*.jar' -exec unzip -l {} \; 2>/dev/null | grep -q 'libjni_cb_term.so'; then
+          # The native library is staged into the image's resources directory
+          # (app/build.gradle.kts `stageNativeTerminal`), which the launcher puts
+          # on java.library.path; assert it is there rather than discovering at
+          # runtime that the terminal cannot start.
+          if ! find "$IMAGE" -name 'libjni_cb_term.so' | grep -q .; then
             echo "libjni_cb_term.so is not packaged — the terminal would fail to load"
             exit 1
           fi
+          # jpackage embeds packaging/coderelay.png as lib/coderelay.png; the
+          # PKGBUILD installs it into hicolor, so its absence is a release bug.
+          test -f "$IMAGE/lib/coderelay.png" || { echo "app icon missing from image"; exit 1; }
 
-          # Ship the desktop entry alongside the image so the AUR package (and a
-          # manual installer) has one canonical copy.
+          # Ship the desktop entry and the scalable icon alongside the image so
+          # the AUR package (and a manual installer) has one canonical copy.
           install -Dm644 packaging/coderelay.desktop "$IMAGE/../coderelay.desktop"
+          install -Dm644 packaging/coderelay.svg "$IMAGE/../coderelay.svg"
 
           mkdir -p dist
           tar czf "dist/coderelay-${TAG_NAME}-linux-x86_64.tar.gz" \
-            -C app/build/compose/binaries/main/app coderelay coderelay.desktop
+            -C app/build/compose/binaries/main/app coderelay coderelay.desktop coderelay.svg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

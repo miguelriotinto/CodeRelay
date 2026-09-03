@@ -80,6 +80,19 @@ class ActivityNotifier(
         }
     }
 
+    /**
+     * Feeds a whole `agentStates` snapshot in — the shape the shared
+     * coordinator publishes (`SessionCoordinator.agentStates`, a map keyed by
+     * session). Each entry goes through [onActivity], so the edge rules above
+     * apply per session; sessions that dropped out of the map are forgotten so
+     * a session recreated with the same id starts as a first sighting.
+     */
+    fun onAgentStates(states: Map<UUID, AgentDetectedState>, nameFor: (UUID) -> String?) {
+        for ((id, state) in states) onActivity(id, nameFor(id), state)
+        val gone = lastState.keys.filter { it !in states }
+        gone.forEach(::forget)
+    }
+
     /** Drops a session's remembered state, e.g. when it is terminated or stolen. */
     fun forget(sessionId: UUID) {
         lastState.remove(sessionId)

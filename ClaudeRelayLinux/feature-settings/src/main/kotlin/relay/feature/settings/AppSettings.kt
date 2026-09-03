@@ -84,6 +84,29 @@ class AppSettings(
     val terminalFontSize: StateFlow<Double> = prefs.doubleFlow(TERMINAL_FONT_SIZE, 12.0)
     fun setTerminalFontSize(value: Double) = prefs.put(TERMINAL_FONT_SIZE, value)
 
+    /**
+     * Whether the user has chosen a terminal font size at all.
+     *
+     * Linux-only. The desktop terminal follows the size in the user's own
+     * Foot/Alacritty config until a size is set here, so that "12 pt" default
+     * must be distinguishable from "12 pt, chosen" — the former means "match
+     * my other terminals", the latter means twelve points. Ctrl+Shift+0 clears
+     * the choice via [clearTerminalFontSize] and the grid goes back to
+     * following the desktop.
+     */
+    val terminalFontSizeIsSet: StateFlow<Boolean> = prefs.mapped(TERMINAL_FONT_SIZE) { it != null }
+    fun clearTerminalFontSize() = prefs.remove(TERMINAL_FONT_SIZE)
+
+    // ---- desktop-only: window geometry ----
+
+    val windowWidth: StateFlow<Int> = prefs.intFlow(WINDOW_WIDTH, 1200)
+    val windowHeight: StateFlow<Int> = prefs.intFlow(WINDOW_HEIGHT, 800)
+    fun setWindowSize(width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        if (width != windowWidth.value) prefs.put(WINDOW_WIDTH, width)
+        if (height != windowHeight.value) prefs.put(WINDOW_HEIGHT, height)
+    }
+
     val terminalScrollbackLines: StateFlow<Int> = prefs.intFlow(TERMINAL_SCROLLBACK_LINES, 5_000)
     fun setTerminalScrollbackLines(value: Int) = prefs.put(TERMINAL_SCROLLBACK_LINES, value)
 
@@ -169,5 +192,9 @@ class AppSettings(
         const val RECORDING_SHORTCUT_KEY = "recordingShortcutKey"
         const val CONTINUOUS_LISTENING = "continuousListeningEnabled"
         const val WAKE_WORD = "wakeWord"
+
+        // Desktop-only keys; no Android counterpart.
+        const val WINDOW_WIDTH = "windowWidth"
+        const val WINDOW_HEIGHT = "windowHeight"
     }
 }

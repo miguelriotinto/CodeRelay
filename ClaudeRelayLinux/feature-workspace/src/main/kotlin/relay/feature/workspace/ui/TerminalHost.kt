@@ -10,14 +10,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import relay.terminal.RelayTerminalController
-import relay.terminal.TerminalSessionVm
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import relay.terminal.RelayTerminalController
+import relay.terminal.TerminalSessionVm
 import relay.terminal.linux.DesktopTerminalFont
-import relay.terminal.linux.LocalTerminalTheme
 import relay.terminal.linux.LinuxTerminalEmulator
 import relay.terminal.linux.LinuxTerminalEngine
+import relay.terminal.linux.LocalTerminalTheme
 import relay.terminal.linux.TerminalView
 
 /**
@@ -32,6 +32,10 @@ import relay.terminal.linux.TerminalView
  *  2. **No soft-keyboard plumbing.** Android's version reaches for
  *     `LocalView` + `WindowInsetsCompat` to raise the IME. A desktop has a
  *     physical keyboard, so that whole path disappears rather than being stubbed.
+ *
+ * Everything a desktop terminal does beyond the shared signature — clipboard,
+ * title, paste, zoom, scrollback size — arrives through [LocalTerminalHooks],
+ * provided once by `:app`.
  *
  * ### Why the engine is remembered per session
  *
@@ -55,7 +59,15 @@ fun TerminalHost(
     background: Color = Color(LocalTerminalTheme.current.background),
     foreground: Color = Color(LocalTerminalTheme.current.foreground),
 ) {
-    // One emulator + engine per session, disposed with it.
+    val hooks = LocalTerminalHooks.current
+    val currentHooks by rememberUpdatedState(hooks)
+    val selectionColor = LocalTerminalTheme.current.selection?.let { Color(it) }
+        ?: foreground.copy(alpha = 0.3f)
+
+    // One emulator + engine per session, disposed with it. The callbacks read
+    // the CURRENT hooks through `rememberUpdatedState`, so a re-provided hooks
+    // value (a new scrollback size, a bumped paste counter) never rebuilds the
+    // emulator and loses the screen.
     val emulator = remember(vm) {
         LinuxTerminalEmulator(
             initialRows = 24,
@@ -63,6 +75,10 @@ fun TerminalHost(
             palette = palette,
             defaultForeground = foreground.toArgbInt(),
             defaultBackground = background.toArgbInt(),
+            scrollbackLines = hooks.scrollbackLines,
+            onBell = { currentHooks.onBell() },
+            onClipboardCopy = { text -> currentHooks.onClipboardCopy(text) },
+            onTitleChange = { title -> currentHooks.onTitleChange(title) },
         )
     }
     val engine = remember(emulator) { LinuxTerminalEngine(emulator) }
@@ -135,10 +151,30 @@ fun TerminalHost(
         palette?.let { emulator.applyPalette(it, foreground.toArgbInt(), background.toArgbInt()) }
     }
 
+    // The scrollback setting is live, like the palette.
+    LaunchedEffect(hooks.scrollbackLines) { emulator.scrollbackLimit = hooks.scrollbackLines }
+
+    // Paste from the app's accelerator: an image on the clipboard goes to the
+    // host as `paste_image` (the macOS Cmd+V behaviour); otherwise the text is
+    // typed through libvterm, bracketed when the program asked for it.
+    val clipboard = remember { relay.platform.DesktopClipboard() }
+    LaunchedEffect(hooks.pasteRequest) {
+        if (hooks.pasteRequest == 0) return@LaunchedEffect
+        val png = clipboard.getImagePng()
+        if (png != null) {
+            hooks.sendPasteImage(png)
+        } else {
+            clipboard.getText()?.let { emulator.pasteText(it) }
+        }
+    }
+
     // Match the size and face the user's other terminals are rendering at —
-    // read once per host, from the same Foot/Alacritty config those windows use.
+    // read once per host, from the same Foot/Alacritty config those windows use —
+    // unless Settings (or the zoom keys) chose a size.
     val font = remember { DesktopTerminalFont.load() }
     val fontFamily = remember(font.family) { DesktopTerminalFont.resolveFamily(font.family) }
+    val points = hooks.fontPointsOverride ?: font.points
+    val sizeDp = points * 96f / 72f
 
     Box(modifier.fillMaxSize()) {
         TerminalView(
@@ -147,9 +183,14 @@ fun TerminalHost(
             modifier = Modifier.fillMaxSize(),
             background = background,
             foreground = foreground,
-            fontSize = font.sizeDp.sp,
+            selectionColor = selectionColor,
+            fontSize = sizeDp.sp,
             fontFamily = fontFamily,
             padding = font.padDp.dp,
+            copyRequest = hooks.copyRequest,
+            onCopy = { text -> currentHooks.onSelectionCopied(text) },
+            onPrimarySelection = { text -> clipboard.setPrimary(text) },
+            onPastePrimary = { clipboard.getText(primary = true)?.let { emulator.pasteText(it) } },
             // MUST go through the controller, not straight to `onResize`.
             // `reportSize` does three things: resizes the engine, forwards the
             // geometry to the relay, and — on the FIRST report — calls

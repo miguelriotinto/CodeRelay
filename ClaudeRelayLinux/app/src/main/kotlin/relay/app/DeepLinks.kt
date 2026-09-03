@@ -75,13 +75,16 @@ object DeepLinks {
      * The `.desktop` entry passes the URL as `%u`, so it arrives as a plain
      * argument. Other arguments (`--new-session` from the desktop action) are
      * ignored here rather than rejected, so adding one never breaks link
-     * handling.
+     * handling; [LaunchArgs.parse] reads them.
      */
     fun fromArgs(args: Array<String>): DeepLink =
         args.asSequence()
             .map(::parse)
             .firstOrNull { it !is DeepLink.Unhandled }
             ?: DeepLink.Unhandled
+
+    /** The `--new-session` flag from the desktop entry's "New Session" action. */
+    const val NEW_SESSION_FLAG = "--new-session"
 
     private fun parseUuid(value: String): UUID? {
         if (value.isEmpty()) return null
@@ -90,5 +93,28 @@ object DeepLinks {
             // (it is lenient about short groups), so a malformed id can never be
             // sent to the server as if it were real.
             ?.takeIf { it.toString().equals(value, ignoreCase = true) }
+    }
+}
+
+/**
+ * Everything a launch (or a forwarded second launch, see [SingleInstance]) can
+ * ask for: at most one deep link, plus the "New Session" desktop action.
+ *
+ * Kept as one value so the running instance handles a forwarded argv exactly
+ * the way `main()` handles its own — one parser, one consumer.
+ */
+data class LaunchArgs(
+    val link: DeepLink = DeepLink.Unhandled,
+    val newSession: Boolean = false,
+) {
+    val isEmpty: Boolean get() = link is DeepLink.Unhandled && !newSession
+
+    companion object {
+        fun parse(args: Array<String>): LaunchArgs = LaunchArgs(
+            link = DeepLinks.fromArgs(args),
+            newSession = args.any { it == DeepLinks.NEW_SESSION_FLAG },
+        )
+
+        fun parse(args: List<String>): LaunchArgs = parse(args.toTypedArray())
     }
 }

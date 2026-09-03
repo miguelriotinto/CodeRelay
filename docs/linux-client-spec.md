@@ -2,7 +2,7 @@
 
 **Target platform:** Arch Linux / Omarchy (Hyprland, Wayland)
 **Parity target:** the Android client (`ClaudeRelayAndroid/`), feature for feature
-**Status:** specification — implementation in progress
+**Status:** implemented — parity scope plus the desktop additions below (2026-09-03)
 **Date:** 2026-09-01
 
 ---
@@ -414,15 +414,17 @@ cleanly when their secrets are absent, so a dry-run tag push is harmless.
 | Workspace rollups by git root | **Full** | Shared |
 | Deep links `coderelay://session/<uuid>` | **Full** | Scheme handler |
 | Notifications on agent finished / needs input | **Full**, different transport | D-Bus, not FCM (AD-4) |
-| Clipboard bridging (OSC 52 host→device) | **Not in Android** | The Kotlin protocol has no `clipboard_update` variant at all — this is an iOS/macOS-only feature. Out of parity scope; see §8.1 |
-| Image paste (device→host) | **Not in Android** | `PasteImage`/`PasteImageResult` exist in `core-net`, but nothing in the Android UI calls them. Out of parity scope; see §8.1 |
+| Clipboard bridging (OSC 52 host→device) | **Exceeds** | Decoded locally from the byte stream (the server passes OSC 52 writes through); active session only |
+| Image paste (device→host) | **Exceeds** | Ctrl+Shift+V with an image on the clipboard sends `paste_image`, as macOS Cmd+V does |
 | Settings: all 14 keys + Bedrock token | **Full** | Secret Service for the token |
 | Scrollback / font size / naming theme | **Full** | |
 | TLS / cleartext scoping | **Full** | AD-5 |
 | Auto-connect | **Full** | |
 | Haptics | **N/A** | No desktop equivalent |
 | On-device speech / wake word | **Deferred** | Inherited from Android (§1.1) |
-| Keyboard shortcuts, tray, close-to-tray | **Exceeds** | §5 — from the macOS client |
+| Keyboard shortcuts, tray rollup, close-to-tray, single instance | **Exceeds** | §5 — from the macOS client; tray mirrors `MenuBarDropdown` |
+| Local scrollback, selection, paste, mouse clicks, cursor shapes | **Exceeds** | Desktop terminal table stakes; real-libvterm tests in `linux-terminal` |
+| Desktop notifications with click-to-focus | **Exceeds** | AD-4; `notify-send --action` |
 | Omarchy theme following | **Exceeds** | §7.1 |
 
 ### 8.1 Clipboard — a gap in the shared Kotlin stack, not just in Linux
@@ -445,6 +447,12 @@ clipboard matters most, and because the fix benefits both non-Apple clients:
    hijack the pasteboard.
 
 Sequenced after parity (post-L6), so it never blocks the milestone chain.
+
+**Outcome (2026-09-03):** both directions shipped on Linux without a shared
+protocol change. The server forwards OSC 52 *writes* in the byte stream (only
+reads are stripped), so `LinuxTerminalEmulator` decodes them locally; a
+`ClipboardUpdate` envelope variant would add nothing for this client. Image
+paste calls the existing `RelayConnection.sendPasteImage`.
 
 ---
 
@@ -484,9 +492,9 @@ an Android-side edit can break the Linux build.
 | **L2** | Platform seams: storage, Secret Service, connectivity, device id | Seam unit tests pass; headless connect+auth against the Mac |
 | **L3** | Terminal renderer: Compose Desktop `Terminal.kt` + mouse dispatch | Interactive session, wheel scroll moves the agent transcript |
 | **L4** | UI retarget: servers, workspace, settings on CMP | Screen-by-screen parity with Android |
-| **L5** | Desktop shell: window, tray, shortcuts, deep links, notifications | §5 + AD-4 complete |
-| **L6** | Omarchy: theme following, `.desktop`, PKGBUILD | Installs from AUR, follows a theme switch live |
-| **L7** | Upstream: contribute desktop target + mouse dispatch to termlib | PR opened; pin moves to upstream commit |
+| **L5** | Desktop shell: window, tray, shortcuts, deep links, notifications | §5 + AD-4 complete — **done** |
+| **L6** | Omarchy: theme following, `.desktop`, PKGBUILD | Installs from AUR, follows a theme switch live — **done** |
+| **L7** | Upstream: contribute mouse dispatch + bracketed paste to termlib | Patches exported to `linux-terminal/patches/upstream/`; PR pending |
 
 L1 is deliberately first after the skeleton: it is the only milestone that can fail in a
 way that invalidates AD-3, and it fails cheaply.

@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Handler/Looper hops, Choreographer frame sync, StateFlow snapshot machinery
  * for a background process, OSC 8 hyperlink tracking, and semantic prompt
  * regions. A relay client needs none of that — it needs bytes in, a grid out,
- * and keystrokes back. Writing the ~300 lines we actually need against the
+ * and keystrokes back. Writing the ~400 lines we actually need against the
  * `TerminalNative` boundary is smaller, testable, and avoids inheriting
  * Android's threading model on a platform that does not have it.
  *
@@ -34,6 +34,19 @@ import java.util.concurrent.atomic.AtomicBoolean
  * same constraint Android solves with Handler+Choreographer; on desktop the
  * renderer's own frame loop drives it instead, which is simpler and has no
  * platform dependency.
+ *
+ * ### Scrollback and the viewport
+ *
+ * The server's `RingBuffer` is the authoritative scrollback and replays on
+ * reattach; what is kept here is the *local* copy every terminal keeps for the
+ * normal screen, so a plain shell can be scrolled with the wheel. Lines
+ * libvterm pushes out of the top ([pushScrollbackLine]) are stored compactly as
+ * [GridLine]s, bounded by [scrollbackLimit]. [grid] is always the *view*: with
+ * [viewportOffset] at zero it is the live screen; scrolled up, it is the last
+ * `offset` scrollback lines followed by the top of the live screen. The
+ * alternate screen has no scrollback by definition, so entering it snaps the
+ * viewport to live and wheel events there are the program's (see
+ * [dispatchWheel]).
  */
 class LinuxTerminalEmulator(
     initialRows: Int = 24,
@@ -41,6 +54,7 @@ class LinuxTerminalEmulator(
     palette: IntArray? = null,
     defaultForeground: Int = 0xFFFFFFFF.toInt(),
     defaultBackground: Int = 0xFF000000.toInt(),
+    scrollbackLines: Int = DEFAULT_SCROLLBACK_LINES,
     /**
      * Emulator → relay. Keystrokes and any escape sequences libvterm generates.
      *
@@ -81,7 +95,7 @@ class LinuxTerminalEmulator(
 
     private val cursor = MutableStateFlow(GridCursor(0, 0, visible = true))
 
-    /** Latest renderable grid. Compose collects this. */
+    /** Latest renderable grid — the VIEW, see the class doc. Compose collects this. */
     private val _grid = MutableStateFlow(TerminalGrid.empty(initialRows, initialCols))
     val grid: StateFlow<TerminalGrid> = _grid.asStateFlow()
 
@@ -97,6 +111,28 @@ class LinuxTerminalEmulator(
     private val _mouseMode = MutableStateFlow(0)
     val mouseMode: StateFlow<Int> = _mouseMode.asStateFlow()
 
+    // ---- local scrollback --------------------------------------------------
+
+    /** Oldest first. Guarded by `synchronized(this)`, like every native call. */
+    private val scrollback = ArrayDeque<GridLine>()
+
+    /** Lines above the live screen the view is scrolled to; 0 = live. */
+    private val _viewportOffset = MutableStateFlow(0)
+    val viewportOffset: StateFlow<Int> = _viewportOffset.asStateFlow()
+
+    /** How many lines of scrollback exist right now. */
+    private val _scrollbackSize = MutableStateFlow(0)
+    val scrollbackSize: StateFlow<Int> = _scrollbackSize.asStateFlow()
+
+    /** Cap on retained scrollback lines; the `terminalScrollbackLines` setting. Live. */
+    @Volatile
+    var scrollbackLimit: Int = scrollbackLines.coerceAtLeast(0)
+        set(value) {
+            field = value.coerceAtLeast(0)
+            synchronized(this) { trimScrollback() }
+            dirty.set(true)
+        }
+
     private val callbacks = object : TerminalCallbacks {
         override fun damage(startRow: Int, endRow: Int, startCol: Int, endCol: Int): Int {
             // MUST NOT touch the native terminal here — see the class doc.
@@ -110,7 +146,7 @@ class LinuxTerminalEmulator(
         }
 
         override fun moveCursor(pos: CursorPosition, oldPos: CursorPosition, visible: Boolean): Int {
-            cursor.value = GridCursor(pos.row, pos.col, visible)
+            cursor.value = cursor.value.copy(row = pos.row, col = pos.col, visible = visible)
             dirty.set(true)
             return 1
         }
@@ -118,10 +154,24 @@ class LinuxTerminalEmulator(
         override fun setTermProp(prop: Int, value: TerminalProperty): Int {
             when (prop) {
                 PROP_TITLE -> (value as? TerminalProperty.StringValue)?.let { onTitleChange?.invoke(it.value) }
-                PROP_ALTSCREEN -> (value as? TerminalProperty.BoolValue)?.let { _altScreen.value = it.value }
+                PROP_ALTSCREEN -> (value as? TerminalProperty.BoolValue)?.let {
+                    _altScreen.value = it.value
+                    // No scrollback in the alternate buffer: the view is the screen.
+                    if (it.value) _viewportOffset.value = 0
+                    dirty.set(true)
+                }
                 PROP_MOUSE -> (value as? TerminalProperty.IntValue)?.let { _mouseMode.value = it.value }
                 PROP_CURSORVISIBLE -> (value as? TerminalProperty.BoolValue)?.let {
                     cursor.value = cursor.value.copy(visible = it.value)
+                    dirty.set(true)
+                }
+                PROP_CURSORBLINK -> (value as? TerminalProperty.BoolValue)?.let {
+                    cursor.value = cursor.value.copy(blink = it.value)
+                    dirty.set(true)
+                }
+                PROP_CURSORSHAPE -> (value as? TerminalProperty.IntValue)?.let {
+                    cursor.value = cursor.value.copy(shape = CursorShape.fromVTerm(it.value))
+                    dirty.set(true)
                 }
             }
             return 1
@@ -132,14 +182,40 @@ class LinuxTerminalEmulator(
             return 1
         }
 
-        // Local scrollback is not retained here: the SERVER's RingBuffer is the
-        // authoritative scrollback and replays on reattach, so keeping a second
-        // copy on the client would only add memory and a chance to disagree.
-        override fun pushScrollbackLine(cols: Int, cells: Array<ScreenCell>, softWrapped: Boolean): Int = 1
+        // Called while the native lock is held, from inside our own
+        // synchronized native call — so the deque is guarded by the same
+        // monitor without taking it again (Kotlin monitors are reentrant anyway).
+        override fun pushScrollbackLine(cols: Int, cells: Array<ScreenCell>, softWrapped: Boolean): Int {
+            if (scrollbackLimit == 0) return 1
+            scrollback.addLast(lineOf(cells, softWrapped))
+            trimScrollback()
+            // Keep the view anchored on the same content while scrolled up:
+            // a new line entering scrollback moves the anchor one further away.
+            val offset = _viewportOffset.value
+            if (offset > 0) _viewportOffset.value = (offset + 1).coerceAtMost(scrollback.size)
+            _scrollbackSize.value = scrollback.size
+            dirty.set(true)
+            return 1
+        }
 
-        override fun popScrollbackLine(cols: Int, cells: Array<ScreenCell>): Int = 0
+        // libvterm asks for a line back when the screen grows. Returning 0 says
+        // "none", and it fills the new row blank instead.
+        override fun popScrollbackLine(cols: Int, cells: Array<ScreenCell>): Int {
+            val line = scrollback.removeLastOrNull() ?: return 0
+            expandInto(line, cells)
+            _scrollbackSize.value = scrollback.size
+            _viewportOffset.value = _viewportOffset.value.coerceAtMost(scrollback.size)
+            dirty.set(true)
+            return 1
+        }
 
-        override fun clearScrollback(): Int = 1
+        override fun clearScrollback(): Int {
+            scrollback.clear()
+            _scrollbackSize.value = 0
+            _viewportOffset.value = 0
+            dirty.set(true)
+            return 1
+        }
 
         override fun onKeyboardInput(data: ByteArray): Int {
             inputSink?.invoke(data)
@@ -191,14 +267,41 @@ class LinuxTerminalEmulator(
         dirty.set(true)
     }
 
-    /** A typed character. [modifiers] is 1=Shift, 2=Alt, 4=Ctrl. */
+    /** A typed character. [modifiers] is 1=Shift, 2=Alt, 4=Ctrl. Typing snaps the view to live. */
     fun dispatchCharacter(codepoint: Int, modifiers: Int = 0) {
+        scrollToBottom()
         synchronized(this) { native.dispatchCharacter(modifiers, codepoint) }
     }
 
-    /** A special key (arrows, Home, F-keys…) as a `VTermKey` value. */
+    /** A special key (arrows, Home, F-keys…) as a `VTermKey` value. Snaps the view to live. */
     fun dispatchKey(key: Int, modifiers: Int = 0) {
+        scrollToBottom()
         synchronized(this) { native.dispatchKey(modifiers, key) }
+    }
+
+    /**
+     * Pastes [text] as if typed, bracketed when the program enabled DECSET 2004.
+     *
+     * libvterm emits the `ESC[200~`/`ESC[201~` brackets only in that mode (see
+     * patches/0002-bracketed-paste.md), so the caller needs no knowledge of the
+     * terminal's state. The text is normalised first: CRLF and LF become CR
+     * (what Enter sends), and every other C0 control and ESC is dropped, so a
+     * clipboard carrying an escape sequence cannot drive the terminal.
+     */
+    fun pasteText(text: String) {
+        val cleaned = sanitizePaste(text)
+        if (cleaned.isEmpty()) return
+        scrollToBottom()
+        synchronized(this) {
+            native.dispatchPasteStart()
+            var i = 0
+            while (i < cleaned.length) {
+                val cp = cleaned.codePointAt(i)
+                native.dispatchCharacter(0, cp)
+                i += Character.charCount(cp)
+            }
+            native.dispatchPasteEnd()
+        }
     }
 
     /**
@@ -240,9 +343,33 @@ class LinuxTerminalEmulator(
         synchronized(this) { native.dispatchMouseMove(row, col, modifiers) }
     }
 
-    /** Reports a press or release of [button] (0 = left, 1 = middle, 2 = right). */
+    /** Reports a press or release of [button], X11-numbered (1 = left, 2 = middle, 3 = right). */
     fun dispatchMouseButton(button: Int, pressed: Boolean, modifiers: Int = 0) {
         synchronized(this) { native.dispatchMouseButton(button, pressed, modifiers) }
+    }
+
+    // ---- viewport -----------------------------------------------------------
+
+    /**
+     * Moves the view by [lines] (positive = older, into scrollback). Clamped
+     * to what exists. No-op in the alternate screen, which has no scrollback.
+     */
+    fun scrollViewport(lines: Int) {
+        if (_altScreen.value) return
+        val max = synchronized(this) { scrollback.size }
+        val next = (_viewportOffset.value + lines).coerceIn(0, max)
+        if (next != _viewportOffset.value) {
+            _viewportOffset.value = next
+            dirty.set(true)
+        }
+    }
+
+    /** Back to the live screen. */
+    fun scrollToBottom() {
+        if (_viewportOffset.value != 0) {
+            _viewportOffset.value = 0
+            dirty.set(true)
+        }
     }
 
     /**
@@ -257,9 +384,58 @@ class LinuxTerminalEmulator(
      */
     fun refreshIfDirty(): Boolean {
         if (!dirty.compareAndSet(true, false)) return false
-        val snapshot = synchronized(this) { readGrid() }
+        val snapshot = synchronized(this) { readView() }
         _grid.value = snapshot
         return true
+    }
+
+    /**
+     * The text in a rectangle of the current VIEW, in view coordinates
+     * (inclusive rows, [startCol] inclusive to [endCol] exclusive on the last
+     * row, whole rows in between — a normal stream selection).
+     *
+     * Trailing blanks are trimmed per row and rows are joined with `\n`, except
+     * across a soft wrap, which is one logical line and joins with nothing.
+     */
+    fun textInRange(startRow: Int, startCol: Int, endRow: Int, endCol: Int): String {
+        val view = _grid.value
+        if (view.lines.isEmpty()) return ""
+        val first = startRow.coerceIn(0, view.lines.lastIndex)
+        val last = endRow.coerceIn(first, view.lines.lastIndex)
+        val out = StringBuilder()
+        for (row in first..last) {
+            val line = view.lines[row]
+            val chars = columnsOf(line, view.cols)
+            val from = if (row == first) startCol.coerceIn(0, chars.size) else 0
+            val to = if (row == last) endCol.coerceIn(from, chars.size) else chars.size
+            var text = chars.subList(from, to).joinToString("")
+            if (row != last || to == chars.size) text = text.trimEnd()
+            out.append(text)
+            // The NEXT row's flag says whether it continues this one.
+            val wrapsIntoNext = view.lines.getOrNull(row + 1)?.continuation == true
+            if (row != last && !wrapsIntoNext) out.append('\n')
+        }
+        return out.toString()
+    }
+
+    // ---- internals ----------------------------------------------------------
+
+    private fun trimScrollback() {
+        while (scrollback.size > scrollbackLimit) scrollback.removeFirst()
+        _scrollbackSize.value = scrollback.size
+        if (_viewportOffset.value > scrollback.size) _viewportOffset.value = scrollback.size
+    }
+
+    /** The view: scrollback tail + live top when scrolled, else the live screen. */
+    private fun readView(): TerminalGrid {
+        val live = readGrid()
+        val offset = _viewportOffset.value.coerceAtMost(scrollback.size)
+        if (offset == 0) return live
+        val lines = ArrayList<GridLine>(live.rows)
+        val start = scrollback.size - offset
+        for (i in start until scrollback.size) lines += scrollback[i]
+        lines += live.lines.take(live.rows - lines.size)
+        return live.copy(lines = lines, cursor = live.cursor.copy(visible = false), viewportOffset = offset)
     }
 
     private fun readGrid(): TerminalGrid {
@@ -325,6 +501,8 @@ class LinuxTerminalEmulator(
     }
 
     companion object {
+        const val DEFAULT_SCROLLBACK_LINES = 5_000
+
         // VTermProp values, transcribed from vterm.h (libvterm 0.3.3). Kept as
         // constants rather than an enum so a future libvterm addition cannot
         // throw on an unknown property.
@@ -337,8 +515,10 @@ class LinuxTerminalEmulator(
         //   1 CURSORVISIBLE   2 CURSORBLINK   3 ALTSCREEN   4 TITLE
         //   5 ICONNAME        6 REVERSE       7 CURSORSHAPE 8 MOUSE
         private const val PROP_CURSORVISIBLE = 1
+        private const val PROP_CURSORBLINK = 2
         private const val PROP_ALTSCREEN = 3
         private const val PROP_TITLE = 4
+        private const val PROP_CURSORSHAPE = 7
         private const val PROP_MOUSE = 8
 
         private const val OSC_CLIPBOARD = 52
@@ -359,11 +539,198 @@ class LinuxTerminalEmulator(
                 String(java.util.Base64.getDecoder().decode(data), Charsets.UTF_8)
             }.getOrNull()
         }
+
+        /**
+         * Paste normalisation: line endings become CR, tabs survive, every
+         * other C0 control, DEL and ESC are dropped. Pure, so it is tested
+         * without a terminal.
+         */
+        internal fun sanitizePaste(text: String): String {
+            val out = StringBuilder(text.length)
+            var i = 0
+            while (i < text.length) {
+                val ch = text[i]
+                when {
+                    ch == '\r' -> {
+                        out.append('\r')
+                        if (i + 1 < text.length && text[i + 1] == '\n') i++
+                    }
+                    ch == '\n' -> out.append('\r')
+                    ch == '\t' -> out.append('\t')
+                    ch.code < 0x20 || ch.code == 0x7F -> Unit
+                    else -> out.append(ch)
+                }
+                i++
+            }
+            return out.toString()
+        }
+
+        /**
+         * Converts a scrollback row from libvterm's per-cell form into the
+         * compact span form the grid uses — the same shape [readGrid] produces,
+         * so scrollback and live rows draw through one path.
+         *
+         * The cell after a wide (width 2) glyph is that glyph's second column;
+         * libvterm hands it over as a placeholder and it is skipped here.
+         */
+        internal fun lineOf(cells: Array<ScreenCell>, softWrapped: Boolean): GridLine {
+            val spans = ArrayList<GridSpan>()
+            var text = StringBuilder()
+            var columns = 0
+            var current: ScreenCell? = null
+            fun flush() {
+                val c = current ?: return
+                spans += GridSpan(
+                    text = text.toString(),
+                    columns = columns,
+                    fg = packRgbStatic(c.fgRed, c.fgGreen, c.fgBlue),
+                    bg = packRgbStatic(c.bgRed, c.bgGreen, c.bgBlue),
+                    bold = c.bold,
+                    italic = c.italic,
+                    underline = c.underline,
+                    reverse = c.reverse,
+                    strike = c.strike,
+                )
+                text = StringBuilder()
+                columns = 0
+            }
+            var skipNext = false
+            for (cell in cells) {
+                if (skipNext) {
+                    skipNext = false
+                    continue
+                }
+                val c = current
+                if (c == null || !sameStyle(c, cell)) {
+                    flush()
+                    current = cell
+                }
+                text.append(if (cell.char == '\u0000') ' ' else cell.char)
+                cell.combiningChars.forEach(text::append)
+                columns += cell.width.coerceAtLeast(1)
+                if (cell.width >= 2) skipNext = true
+            }
+            flush()
+            return GridLine(spans, continuation = softWrapped)
+        }
+
+        private fun sameStyle(a: ScreenCell, b: ScreenCell): Boolean =
+            a.fgRed == b.fgRed && a.fgGreen == b.fgGreen && a.fgBlue == b.fgBlue &&
+                a.bgRed == b.bgRed && a.bgGreen == b.bgGreen && a.bgBlue == b.bgBlue &&
+                a.bold == b.bold && a.italic == b.italic && a.underline == b.underline &&
+                a.reverse == b.reverse && a.strike == b.strike
+
+        /** Inverse of [lineOf], for [TerminalCallbacks.popScrollbackLine]. */
+        internal fun expandInto(line: GridLine, cells: Array<ScreenCell>) {
+            var col = 0
+            for (span in line.spans) {
+                for (grapheme in graphemesOf(span.text)) {
+                    if (col >= cells.size) return
+                    val width = columnWidthOf(grapheme)
+                    cells[col] = ScreenCell(
+                        // ScreenCell carries a Char; a supplementary code point
+                        // keeps its lead surrogate so column accounting stays 1:1.
+                        char = grapheme[0],
+                        combiningChars = grapheme.drop(1).toList(),
+                        fgRed = (span.fg shr 16) and 0xFF, fgGreen = (span.fg shr 8) and 0xFF, fgBlue = span.fg and 0xFF,
+                        bgRed = (span.bg shr 16) and 0xFF, bgGreen = (span.bg shr 8) and 0xFF, bgBlue = span.bg and 0xFF,
+                        bold = span.bold, italic = span.italic, underline = span.underline,
+                        reverse = span.reverse, strike = span.strike,
+                        width = width,
+                    )
+                    col += width
+                }
+            }
+            while (col < cells.size) {
+                cells[col] = BLANK_CELL
+                col++
+            }
+        }
+
+        /**
+         * Columns a grapheme occupies: 2 for East Asian Wide/Fullwidth (CJK,
+         * most emoji), else 1. The same ICU data Android's `android.icu` is.
+         */
+        internal fun columnWidthOf(grapheme: String): Int {
+            if (grapheme.isEmpty()) return 1
+            val cp = grapheme.codePointAt(0)
+            val eaw = com.ibm.icu.lang.UCharacter.getIntPropertyValue(cp, com.ibm.icu.lang.UProperty.EAST_ASIAN_WIDTH)
+            return if (eaw == com.ibm.icu.lang.UCharacter.EastAsianWidth.WIDE ||
+                eaw == com.ibm.icu.lang.UCharacter.EastAsianWidth.FULLWIDTH
+            ) 2 else 1
+        }
+
+        private val BLANK_CELL = ScreenCell(
+            char = ' ',
+            fgRed = 0xFF, fgGreen = 0xFF, fgBlue = 0xFF,
+            bgRed = 0, bgGreen = 0, bgBlue = 0,
+        )
+
+        /**
+         * One entry per column of [line], for selection: a wide glyph fills its
+         * first column and leaves the second empty, so column arithmetic stays
+         * exact while the joined text carries each character once.
+         */
+        internal fun columnsOf(line: GridLine, cols: Int): List<String> {
+            val out = ArrayList<String>(cols)
+            for (span in line.spans) {
+                val start = out.size
+                for (grapheme in graphemesOf(span.text)) {
+                    if (out.size - start >= span.columns) break
+                    out += grapheme
+                    if (columnWidthOf(grapheme) == 2 && out.size - start < span.columns) out += ""
+                }
+                // Cells the run reported beyond its text (a trailing blank run).
+                while (out.size - start < span.columns) out += " "
+            }
+            while (out.size < cols) out += " "
+            return if (out.size > cols) out.subList(0, cols) else out
+        }
+
+        /** Splits into code points, keeping combining marks with their base. */
+        private fun graphemesOf(text: String): List<String> {
+            val out = ArrayList<String>()
+            var i = 0
+            while (i < text.length) {
+                val cp = text.codePointAt(i)
+                val len = Character.charCount(cp)
+                val piece = text.substring(i, i + len)
+                if (out.isNotEmpty() && Character.getType(cp).let { it == Character.NON_SPACING_MARK.toInt() || it == Character.COMBINING_SPACING_MARK.toInt() || it == Character.ENCLOSING_MARK.toInt() }) {
+                    out[out.lastIndex] = out.last() + piece
+                } else {
+                    out += piece
+                }
+                i += len
+            }
+            return out
+        }
+
+        private fun packRgbStatic(r: Int, g: Int, b: Int): Int =
+            (0xFF shl 24) or ((r and 0xFF) shl 16) or ((g and 0xFF) shl 8) or (b and 0xFF)
     }
 }
 
-/** Cursor position and visibility within the grid. */
-data class GridCursor(val row: Int, val col: Int, val visible: Boolean)
+/** How the cursor is drawn; libvterm's `VTermPropCursorShape` values. */
+enum class CursorShape {
+    BLOCK, UNDERLINE, BAR;
+
+    companion object {
+        fun fromVTerm(value: Int): CursorShape = when (value) {
+            2 -> UNDERLINE
+            3 -> BAR
+            else -> BLOCK
+        }
+    }
+}
+
+/** Cursor position, visibility and look within the grid. */
+data class GridCursor(
+    val row: Int,
+    val col: Int,
+    val visible: Boolean,
+    val shape: CursorShape = CursorShape.BLOCK,
+    val blink: Boolean = false,
+)
 
 /** A run of identically-styled cells. Colours are packed opaque ARGB. */
 data class GridSpan(
@@ -382,12 +749,18 @@ data class GridSpan(
 /** One screen row. [continuation] marks a soft-wrapped line. */
 data class GridLine(val spans: List<GridSpan>, val continuation: Boolean = false)
 
-/** An immutable snapshot of the visible screen, safe to hand to Compose. */
+/**
+ * An immutable snapshot of what to draw, safe to hand to Compose.
+ *
+ * [viewportOffset] is how many scrollback lines the view is scrolled up by;
+ * zero means this is the live screen and the cursor is meaningful.
+ */
 data class TerminalGrid(
     val rows: Int,
     val cols: Int,
     val lines: List<GridLine>,
     val cursor: GridCursor,
+    val viewportOffset: Int = 0,
 ) {
     companion object {
         fun empty(rows: Int, cols: Int) = TerminalGrid(

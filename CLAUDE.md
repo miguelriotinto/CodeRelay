@@ -306,6 +306,49 @@ failed outright on a Homebrew install while `status`/`health` worked, because
 only the latter two go through the admin HTTP API.
 
 <!-- code-review-graph MCP tools -->
+## Linux client (`ClaudeRelayLinux/`)
+
+A Compose Desktop (JVM) client for Arch/Omarchy that **compiles the Android
+client's Kotlin sources in place** — `core-protocol`, `core-net`,
+`core-session`, `terminal`, and the three `feature-*` screen modules are read
+from `ClaudeRelayAndroid/` via `srcDirs` (spec AD-2). There is one copy of each
+shared file on disk, so an Android-side edit is a Linux build input:
+`linux.yml` triggers on both trees, and a shared-screen change must keep both
+builds green. Build with `JAVA_HOME` pointing at a JDK 21 (`~/.local/jdk` on
+the dev box; not on `PATH`) and `cmake`:
+
+```bash
+cd ClaudeRelayLinux && ./gradlew test            # 702 tests, real libvterm
+./gradlew :app:run                               # launch against a live relay
+./gradlew :app:createDistributable               # the jpackage image the release tars
+```
+
+Load-bearing details, each documented at its site:
+
+- **Terminal** is libvterm through termlib's JNI bridge, cloned at a pinned
+  commit and patched by `linux-terminal/patches/` (mouse dispatch, bracketed
+  paste). The patch tasks declare the files they edit as outputs; without that
+  the Kotlin sync after them reports up-to-date on a stale `TerminalNative.kt`.
+  `LinuxTerminalEmulator` is a ~400-line emulator, not a port of termlib's
+  Android one; callbacks never call back into the native side (deadlock).
+- **Mouse rule** (xterm's): the program gets the pointer while `mouseMode != 0`
+  unless Shift is held; otherwise clicks select, middle-click pastes PRIMARY,
+  and the wheel scrolls the local scrollback. The alternate screen has no
+  scrollback, so an agent transcript scrolls by wheel report only.
+- **Accelerators are Ctrl+Shift / Ctrl+Alt only** — a bare Ctrl chord is
+  terminal input. Dispatched at the `Window` (`onPreviewKeyEvent`) so they work
+  with the sidebar focused.
+- **Everything the shared `WorkspaceScreen` cannot pass to the terminal host
+  arrives ambiently**: `LocalTerminalTheme` (palette) and `LocalTerminalHooks`
+  (clipboard, title, paste, zoom, scrollback size), provided once by `Main.kt`.
+- **No push provider** (AD-4): notifications come from the coordinator's
+  `agentStates` stream via `notify-send`, off the AWT thread, with
+  click-to-focus through `--action`.
+- **One instance per user session**: `SingleInstance` binds a Unix socket in
+  `$XDG_RUNTIME_DIR`; a second launch forwards argv and exits.
+- **Secrets** go to the Secret Service via `secret-tool` on stdin; there is no
+  plaintext fallback by design.
+
 ## MCP Tools: code-review-graph
 
 **IMPORTANT: This project has a knowledge graph. ALWAYS use the

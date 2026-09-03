@@ -6,6 +6,55 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
+### Linux client 0.2.0 — desktop parity
+
+The Arch/Omarchy client (`ClaudeRelayLinux/`) reaches the parity scope of
+`docs/linux-client-spec.md`, plus the desktop features that spec deferred.
+
+#### Added
+
+- **Terminal.** Local scrollback for the normal screen (bounded by the
+  `terminalScrollbackLines` setting; wheel, Shift+PageUp/PageDown, a history
+  marker while scrolled), text selection (drag, double-click word, triple-click
+  line, Shift+drag while a program tracks the mouse) with PRIMARY and clipboard
+  copy, paste from the clipboard and from PRIMARY (middle click), bracketed when
+  the program enabled DECSET 2004, image paste to the host as `paste_image`,
+  mouse click/drag reporting, high-resolution wheel banking, DECSCUSR cursor
+  shapes and blink, a hollow cursor when the window is unfocused, OSC 52 →
+  device clipboard, OSC title → window title, BEL → system beep.
+- **Keyboard accelerators**, dispatched at the window: new / detach / terminate
+  / next / previous / session 1–9 / sidebar / settings / zoom / copy / paste.
+  `SessionCoordinator.detachActiveSession()` is new in the shared Kotlin
+  session layer, mirroring the macOS "Detach Current".
+- **Desktop shell.** Settings screen (Connection, General, About; the speech,
+  haptics and recording-shortcut sections are hidden on desktop through a new
+  `visibleSections` parameter on the shared `SettingsScreen`), auto-connect,
+  `lastConnectedServerId`, tray session rollup with quick switch and actions,
+  single-instance socket in `$XDG_RUNTIME_DIR` so a second `coderelay://`
+  click or the "New Session" desktop action reaches the running app, desktop
+  notifications fed from the coordinator's activity stream with click-to-focus
+  via `notify-send --action`, pairing from a `coderelay://pair` link or a pasted
+  setup line, live Omarchy theme following, terminal font size from Settings
+  with Ctrl+Shift+= / - / 0, remembered window size, an app icon.
+- **termlib patches** `0001-mouse-dispatch` and `0002-bracketed-paste`, ready
+  to upstream.
+
+#### Changed
+
+- The servers list gains inset row dividers, and tab numbers, the uptime
+  label, the fn toggle and key-bar glyphs no longer force
+  `FontFamily.Monospace` (shared Android screens; validated by `android.yml`).
+- `linux.yml` also triggers on `ClaudeRelayAndroid/feature-*` edits and
+  packages the jpackage image; `release.yml` asserts the native library and
+  icon are in the image and ships `coderelay.svg` in the tarball.
+
+#### Fixed
+
+- `DesktopNotifier` no longer runs `notify-send` on the caller's thread (the
+  coordinator is confined to the AWT event thread; a waiting daemon froze it).
+- The termlib patch tasks declare the files they edit as outputs, so the
+  Kotlin sync after them cannot report itself up-to-date on a stale copy.
+
 ## [0.3.18] - 2026-08-03 — PTY master fd leak
 
 ### Fixed
