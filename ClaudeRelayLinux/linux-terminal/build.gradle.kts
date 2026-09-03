@@ -113,19 +113,29 @@ abstract class PatchTermlibTask : DefaultTask() {
     @get:Inject abstract val execOps: ExecOperations
 
     @get:InputFile abstract val script: RegularFileProperty
+
+    /** The fetch task's marker: a re-fetch (pin change) re-runs every patch. */
+    @get:InputFile abstract val fetchMarker: RegularFileProperty
+
+    /** A symbol the patch introduces; its presence in every edited file means "applied". */
+    @get:Input abstract val symbol: Property<String>
+
     @get:Internal abstract val checkout: DirectoryProperty
 
     /**
-     * The files the script edits, declared as outputs so Gradle's file-system
-     * watching learns they changed. Without this the edit is invisible to the
-     * downstream Sync (the python process is not a Gradle task output), which
-     * then reports itself up-to-date and compiles a stale TerminalNative.kt —
-     * the symptom is "Unresolved reference: dispatchPasteStart" right after a
-     * build that printed "paste patch: ... TerminalNative.kt".
+     * Up-to-date bookkeeping lives OUTSIDE the checkout. The edited files
+     * themselves must not be declared as this task's outputs: with no execution
+     * history (a fresh clone, CI) Gradle deletes pre-existing declared output
+     * files as "stale" before the first run, which removed Terminal.h/.cpp and
+     * TerminalNative.kt from the checkout and failed the patch. Nor may the
+     * whole checkout be an output of the fetch task, or the two overlap and the
+     * tree is re-fetched and re-patched on every build.
      */
-    @get:OutputFiles
-    val patched: Provider<List<File>>
-        get() = checkout.map { dir ->
+    @get:OutputFile abstract val applied: RegularFileProperty
+
+    /** The files the script edits. Not outputs — see [applied]. */
+    private val edited: List<File>
+        get() = checkout.get().let { dir ->
             listOf(
                 dir.file("lib/src/main/cpp/Terminal.h").asFile,
                 dir.file("lib/src/main/cpp/Terminal.cpp").asFile,
@@ -133,18 +143,41 @@ abstract class PatchTermlibTask : DefaultTask() {
             )
         }
 
+    init {
+        // A tree someone reset by hand (or that an older Gradle cleaned) is
+        // patched again even though the marker says otherwise.
+        outputs.upToDateWhen { task ->
+            (task as PatchTermlibTask).edited.all { it.isFile && it.readText().contains(task.symbol.get()) }
+        }
+    }
+
     @TaskAction
     fun apply() {
-        execOps.exec {
-            commandLine("python3", script.get().asFile.absolutePath, checkout.get().asFile.absolutePath)
+        val dir = checkout.get().asFile
+        // Self-heal: restore any edited file that is missing from the tree (the
+        // stale-output cleanup described above did exactly that on CI). Only
+        // missing files are restored, so an earlier patch's edits survive.
+        val missing = edited.filter { !it.isFile }
+        if (missing.isNotEmpty()) {
+            execOps.exec {
+                workingDir = dir
+                commandLine(listOf("git", "checkout", "--quiet", "--") + missing.map { it.relativeTo(dir).path })
+            }
         }
+        execOps.exec {
+            commandLine("python3", script.get().asFile.absolutePath, dir.absolutePath)
+        }
+        applied.get().asFile.apply { parentFile.mkdirs(); writeText(symbol.get()) }
     }
 }
 
 val patchTermlibMouse by tasks.registering(PatchTermlibTask::class) {
     dependsOn(fetchTermlib)
     script.set(layout.projectDirectory.file("patches/apply-mouse-patch.py"))
+    fetchMarker.set(fetchTermlib.flatMap { layout.file(it.marker) })
+    symbol.set("dispatchMouseMove")
     checkout.set(layout.buildDirectory.dir("termlib-src"))
+    applied.set(layout.buildDirectory.file("termlib-patches/mouse.applied"))
 }
 
 /**
@@ -155,7 +188,10 @@ val patchTermlibMouse by tasks.registering(PatchTermlibTask::class) {
 val patchTermlibPaste by tasks.registering(PatchTermlibTask::class) {
     dependsOn(patchTermlibMouse)
     script.set(layout.projectDirectory.file("patches/apply-paste-patch.py"))
+    fetchMarker.set(fetchTermlib.flatMap { layout.file(it.marker) })
+    symbol.set("dispatchPasteStart")
     checkout.set(layout.buildDirectory.dir("termlib-src"))
+    applied.set(layout.buildDirectory.file("termlib-patches/paste.applied"))
 }
 
 /**
