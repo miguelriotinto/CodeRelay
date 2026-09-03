@@ -931,6 +931,36 @@ class SessionCoordinator(
         }
     }
 
+    // MARK: - Detach (ClaudeRelayMac SessionCoordinator.detachSession)
+
+    /**
+     * Detaches the active session without terminating it, leaving the workspace
+     * with no active session. The macOS client's "Detach Current" (⌘W); the
+     * Linux client binds it to Ctrl+Shift+W.
+     *
+     * The session keeps running on the host and stays in the pane as detached,
+     * so it can be re-selected — which resumes it with a replay. The cached
+     * terminal is evicted on purpose: after a detach the server's ring buffer is
+     * the only authoritative screen, and a stale local grid would be shown for a
+     * frame before the replay cleared it.
+     */
+    suspend fun detachActiveSession() {
+        if (recoveryController.isRecovering.value) return
+        val id = _activeSessionId.value ?: return
+        sessionOpsInFlight += 1
+        try {
+            authCoordinator.withAuth { sessionController.detach() }
+            terminalCache.view(id)?.prepareForSwitch()
+            evictTerminal(id)
+            _activeSessionId.value = null
+            fetchSessions(force = true)
+        } catch (e: Throwable) {
+            presentError(e.message ?: "Failed to detach session")
+        } finally {
+            sessionOpsInFlight -= 1
+        }
+    }
+
     // MARK: - Server-message fan-in
 
     private fun handleServerMessage(message: ServerMessage) {

@@ -66,6 +66,12 @@ import relay.protocol.SessionNamingTheme
  *
  * @param appVersion app version name (host passes `BuildConfig.VERSION_NAME`)
  * @param buildNumber app version code (host passes `BuildConfig.VERSION_CODE`)
+ * @param visibleSections which sections to render. Defaults to all six; a host
+ *   without the underlying capability (the Linux desktop client has no speech
+ *   engine and no recording shortcut) hides the sections whose toggles would
+ *   otherwise persist a value nothing reads.
+ * @param hapticFeedbackAvailable whether to show the Haptic Feedback toggle; a
+ *   desktop has no vibrator.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,6 +81,8 @@ fun SettingsScreen(
     buildNumber: String,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    visibleSections: Set<SettingsSection> = SettingsSection.entries.toSet(),
+    hapticFeedbackAvailable: Boolean = true,
 ) {
     val smartCleanup by settings.smartCleanupEnabled.collectAsStateWithLifecycle()
     val promptEnhancement by settings.promptEnhancementEnabled.collectAsStateWithLifecycle()
@@ -127,24 +135,26 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             // 1) Speech to Text
-            SectionHeader("Speech to Text")
-            ToggleRow("Smart Cleanup", smartCleanup, settings::setSmartCleanupEnabled)
-            ToggleRow("Prompt Enhancement", promptEnhancement, settings::setPromptEnhancementEnabled)
-            ToggleRow("Continuous Listening", continuousListening, settings::setContinuousListeningEnabled)
-            if (continuousListening) {
-                ValueRow(
-                    label = "Wake Word",
-                    value = wakeWord.replaceFirstChar { it.uppercase() },
-                    onClick = { editingWakeWord = true },
-                )
-                CaptionText(
-                    "Continuous listening uses on-device AI to detect when you've finished speaking.",
-                )
+            if (SettingsSection.SPEECH in visibleSections) {
+                SectionHeader("Speech to Text")
+                ToggleRow("Smart Cleanup", smartCleanup, settings::setSmartCleanupEnabled)
+                ToggleRow("Prompt Enhancement", promptEnhancement, settings::setPromptEnhancementEnabled)
+                ToggleRow("Continuous Listening", continuousListening, settings::setContinuousListeningEnabled)
+                if (continuousListening) {
+                    ValueRow(
+                        label = "Wake Word",
+                        value = wakeWord.replaceFirstChar { it.uppercase() },
+                        onClick = { editingWakeWord = true },
+                    )
+                    CaptionText(
+                        "Continuous listening uses on-device AI to detect when you've finished speaking.",
+                    )
+                }
+                CaptionText(speechFooterText(promptEnhancement, smartCleanup))
             }
-            CaptionText(speechFooterText(promptEnhancement, smartCleanup))
 
             // 2) AWS Bedrock (only when Prompt Enhancement is on)
-            if (promptEnhancement) {
+            if (SettingsSection.SPEECH in visibleSections && promptEnhancement) {
                 SectionHeader("AWS Bedrock")
                 OutlinedTextField(
                     value = bedrockToken,
@@ -168,35 +178,45 @@ fun SettingsScreen(
             }
 
             // 3) Connection
-            SectionHeader("Connection")
-            ToggleRow("Auto Connect", autoConnect, settings::setAutoConnectEnabled)
-            CaptionText("Automatically reconnect to the last server on launch.")
+            if (SettingsSection.CONNECTION in visibleSections) {
+                SectionHeader("Connection")
+                ToggleRow("Auto Connect", autoConnect, settings::setAutoConnectEnabled)
+                CaptionText("Automatically reconnect to the last server on launch.")
+            }
 
             // 4) General
-            SectionHeader("General")
-            ToggleRow("Haptic Feedback", haptics, settings::setHapticFeedbackEnabled)
-            ThemePickerRow(theme, settings::setSessionNamingTheme)
-            FontSizeStepperRow(fontSize, settings::setTerminalFontSize)
-            ScrollbackPickerRow(scrollback, settings::setTerminalScrollbackLines)
+            if (SettingsSection.GENERAL in visibleSections) {
+                SectionHeader("General")
+                if (hapticFeedbackAvailable) {
+                    ToggleRow("Haptic Feedback", haptics, settings::setHapticFeedbackEnabled)
+                }
+                ThemePickerRow(theme, settings::setSessionNamingTheme)
+                FontSizeStepperRow(fontSize, settings::setTerminalFontSize)
+                ScrollbackPickerRow(scrollback, settings::setTerminalScrollbackLines)
+            }
 
             // 5) Keyboard Shortcuts
-            SectionHeader("Keyboard Shortcuts")
-            ToggleRow("Recording Shortcut", shortcutEnabled, settings::setRecordingShortcutEnabled)
-            if (shortcutEnabled) {
-                ShortcutCaptureRow(
-                    flags = shortcutFlags,
-                    key = shortcutKey,
-                    onCommit = { newFlags, newKey ->
-                        settings.setRecordingShortcutFlags(newFlags)
-                        settings.setRecordingShortcutKey(newKey)
-                    },
-                )
+            if (SettingsSection.KEYBOARD_SHORTCUTS in visibleSections) {
+                SectionHeader("Keyboard Shortcuts")
+                ToggleRow("Recording Shortcut", shortcutEnabled, settings::setRecordingShortcutEnabled)
+                if (shortcutEnabled) {
+                    ShortcutCaptureRow(
+                        flags = shortcutFlags,
+                        key = shortcutKey,
+                        onCommit = { newFlags, newKey ->
+                            settings.setRecordingShortcutFlags(newFlags)
+                            settings.setRecordingShortcutKey(newKey)
+                        },
+                    )
+                }
             }
 
             // 6) About
-            SectionHeader("About")
-            ValueRow(label = "Version", value = appVersion, onClick = null)
-            ValueRow(label = "Build", value = buildNumber, onClick = null)
+            if (SettingsSection.ABOUT in visibleSections) {
+                SectionHeader("About")
+                ValueRow(label = "Version", value = appVersion, onClick = null)
+                ValueRow(label = "Build", value = buildNumber, onClick = null)
+            }
 
             Spacer(Modifier.height(24.dp))
         }
@@ -228,6 +248,13 @@ fun SettingsScreen(
         )
     }
 }
+
+/**
+ * The sections of [SettingsScreen], so a host can hide the ones it has no
+ * backing capability for. The Bedrock section is part of [SPEECH]: it only
+ * ever appears when Prompt Enhancement is on, and that toggle lives there.
+ */
+enum class SettingsSection { SPEECH, CONNECTION, GENERAL, KEYBOARD_SHORTCUTS, ABOUT }
 
 /** Speech footer string, ported from `SettingsView.speechFooterText` (SettingsView.swift:177-185). */
 private fun speechFooterText(promptEnhancement: Boolean, smartCleanup: Boolean): String = when {

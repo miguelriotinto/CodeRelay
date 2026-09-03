@@ -312,6 +312,50 @@ class SessionCoordinatorTest {
     }
 
     // -------------------------------------------------------------------------
+    // DETACH: detach RPC, clear active, evict the terminal, keep the session
+    // in the pane (it is still running on the host).
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `detachActiveSession detaches, clears active, evicts but keeps the session listed`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertEquals(target, coord.activeSessionId.value)
+        assertNotNull(coord.terminalCache.view(target), "terminal cached while active")
+        // The host now reports it as detached.
+        surface.sessionsOnServer = listOf(session(target, "Arya").copy(state = SessionState.ACTIVE_DETACHED))
+        log.entries.clear()
+
+        coord.detachActiveSession()
+        advanceUntilIdle()
+
+        assertTrue("rpc:session_detach" in log, "detach RPC sent")
+        assertNull(coord.activeSessionId.value, "active cleared")
+        assertNull(coord.terminalCache.view(target), "terminal evicted so the replay starts clean")
+        assertTrue(coord.sessions.value.any { it.id == target }, "still listed: detach is not terminate")
+    }
+
+    @Test
+    fun `detachActiveSession with no active session is a no-op`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", FakeOwnershipStore(log), config)
+
+        coord.detachActiveSession()
+        advanceUntilIdle()
+
+        assertFalse("rpc:session_detach" in log, "nothing to detach, nothing sent")
+    }
+
+    // -------------------------------------------------------------------------
     // Ops are no-ops while recovering.
     // -------------------------------------------------------------------------
 
