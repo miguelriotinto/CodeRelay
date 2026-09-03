@@ -191,7 +191,7 @@ fun RelayNavGraph(
         }
 
         composable(Routes.PAIR_SCANNER) {
-            // Camera QR scanner for pairing. A scanned `clauderelay://pair` QR is
+            // Camera QR scanner for pairing. A scanned `coderelay://pair` QR is
             // parsed to a PairingURL and handed to `onPairScanned` (→ the host's
             // pending-pairing flow), then we pop back to Servers, which shows the
             // prefilled sheet — the exact same consumer the deep-link path uses.

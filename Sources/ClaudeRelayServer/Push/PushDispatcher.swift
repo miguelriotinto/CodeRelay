@@ -150,7 +150,7 @@ public actor PushDispatcher {
             let ls = severity(lhs.agentState), rs = severity(rhs.agentState)
             return ls != rs ? ls > rs : lhs.id.uuidString < rhs.id.uuidString
         } ?? triggering
-        let deepLink = "clauderelay://session/\(target.id.uuidString)"
+        let deepLink = "coderelay://session/\(target.id.uuidString)"
         let collapseKey = Self.collapseKey(for: groupId)
 
         let registrations = await tokenProvider(event.tokenId)

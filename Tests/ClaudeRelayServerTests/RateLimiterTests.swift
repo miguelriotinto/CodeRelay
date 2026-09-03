@@ -173,4 +173,61 @@ final class RateLimiterTests: XCTestCase {
         let lastBlocked = await limiter.isBlocked(ip: "10.0.9.1")
         XCTAssertFalse(lastBlocked, "Most recent IP should exist but not be blocked (1 failure)")
     }
+
+    // MARK: - Per-IP retention bound
+
+    /// `maxTrackedIPs` bounds how many IPs are tracked, not how many failures
+    /// each one accumulates. Without a per-IP cap, one IP failing in a tight
+    /// loop grows its timestamp array for the whole window — and `cleanup`'s
+    /// `removeFirst()` loop is O(n²) in that length, on an actor that
+    /// serializes every other caller behind it.
+    func testRetainedFailuresAreBoundedByMaxAttempts() async {
+        let limiter = RateLimiter(maxAttempts: 10, windowSeconds: 60)
+
+        for _ in 0..<5_000 {
+            await limiter.recordFailure(ip: "9.9.9.9")
+        }
+
+        let retained = await limiter._testOnly_retainedFailureCount(ip: "9.9.9.9")
+        XCTAssertEqual(retained, 10,
+            "retention must be capped at maxAttempts, got \(retained) after 5000 failures")
+        let blocked = await limiter.isBlocked(ip: "9.9.9.9")
+        XCTAssertTrue(blocked, "capping retention must not weaken the block")
+    }
+
+    /// The cap drops the OLDEST timestamp rather than refusing the newest, so
+    /// the window slides forward with an ongoing attack and the block persists.
+    /// Refusing to append once full would instead let the block lapse
+    /// `windowSeconds` after the first burst however long the attack ran.
+    func testRetentionCapKeepsWindowSlidingForward() async {
+        let limiter = RateLimiter(maxAttempts: 2, windowSeconds: 60)
+
+        await limiter.recordFailure(ip: "8.8.8.8")
+        await limiter.recordFailure(ip: "8.8.8.8")
+
+        // Keep failing past the cap; the retained timestamps must track the
+        // most recent attempts, so the IP stays blocked rather than aging out
+        // on the basis of the two original ones.
+        for _ in 0..<20 {
+            await limiter.recordFailure(ip: "8.8.8.8")
+        }
+
+        let retained = await limiter._testOnly_retainedFailureCount(ip: "8.8.8.8")
+        XCTAssertEqual(retained, 2, "retention capped at maxAttempts")
+        let blocked = await limiter.isBlocked(ip: "8.8.8.8")
+        XCTAssertTrue(blocked, "a sustained attacker must stay blocked")
+    }
+
+    /// A capped bucket must still unblock once its retained failures age out,
+    /// so the cap cannot turn a rolling window into a permanent ban.
+    func testCappedBucketStillExpiresWithTheWindow() async {
+        let limiter = RateLimiter(maxAttempts: 2, windowSeconds: 0)
+
+        for _ in 0..<50 {
+            await limiter.recordFailure(ip: "7.7.7.7")
+        }
+
+        let blocked = await limiter.isBlocked(ip: "7.7.7.7")
+        XCTAssertFalse(blocked, "a zero-length window must expire even a capped bucket")
+    }
 }

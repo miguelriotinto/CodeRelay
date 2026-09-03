@@ -3,13 +3,13 @@ package relay.feature.workspace
 import java.util.UUID
 
 /**
- * Pure-JVM parser + builder for the `clauderelay://` session deep link, ported
+ * Pure-JVM parser + builder for the `coderelay://` session deep link, ported
  * to match the iOS URL shape EXACTLY.
  *
  * The canonical iOS link (the only one any client produces or consumes) is built
  * in `QRCodeSheet.swift` / `QRCodeComponents.swift` as:
  *
- *     "clauderelay://session/\(sessionId.uuidString)"
+ *     "coderelay://session/\(sessionId.uuidString)"
  *
  * and parsed in `ClaudeRelayApp.swift` / `SessionSidebarView.swift` as:
  *
@@ -26,7 +26,11 @@ import java.util.UUID
  */
 object DeepLinks {
     /** URL scheme — must match the manifest `<data android:scheme>` and iOS. */
-    const val SCHEME = "clauderelay"
+    /**
+     * The URL scheme, renamed from `clauderelay` with the ClaudeRelay →
+     * CodeRelay rebrand. Hard cutover — server and clients update together.
+     */
+    const val SCHEME = "coderelay"
 
     /** Host component — the iOS `url.host`. */
     const val HOST = "session"
@@ -34,7 +38,7 @@ object DeepLinks {
     private const val PREFIX = "$SCHEME://$HOST/"
 
     /**
-     * Parse a `clauderelay://session/<uuid>` link to its session [UUID].
+     * Parse a `coderelay://session/<uuid>` link to its session [UUID].
      *
      * Returns null on any mismatch — wrong scheme, wrong host, missing or
      * malformed UUID segment, or extra path segments. Case-insensitive on the
@@ -49,7 +53,7 @@ object DeepLinks {
             return null
         }
         // Everything after the host slash is the path. Reject any further segment
-        // (or a trailing slash) so `clauderelay://session/<uuid>/extra` is null,
+        // (or a trailing slash) so `coderelay://session/<uuid>/extra` is null,
         // matching iOS taking exactly `pathComponents.dropFirst().first`.
         val segment = trimmed.substring(PREFIX.length)
         if (segment.isEmpty() || segment.contains('/')) return null
@@ -65,7 +69,7 @@ object DeepLinks {
     fun sessionUri(id: UUID): String = "$PREFIX${id.toString().lowercase()}"
 
     /**
-     * Parse a `clauderelay://pair?host=&port=&tls=&code=` pairing link to a
+     * Parse a `coderelay://pair?host=&port=&tls=&code=` pairing link to a
      * [relay.protocol.PairingURL].
      *
      * Returns null on any mismatch — wrong scheme, wrong host, missing or invalid

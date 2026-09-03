@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Code[Relay] app icon.
+
+  The mark is the one the tray already paints (TrayIcon.kt): a terminal prompt,
+  chevron and caret, on a rounded tile. Drawn as geometry rather than text so it
+  renders identically with no font installed. The tile uses the Tokyo Night
+  background the stock Omarchy theme ships, and the prompt uses its blue.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#24283b"/>
+      <stop offset="1" stop-color="#1a1b26"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="96" ry="96" fill="url(#tile)"/>
+  <rect x="32" y="32" width="448" height="448" rx="96" ry="96" fill="none" stroke="#414868" stroke-width="8"/>
+  <!-- Chevron ">" -->
+  <path d="M150 168 L266 256 L150 344" fill="none" stroke="#7aa2f7" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Caret "_" -->
+  <path d="M290 344 L372 344" fill="none" stroke="#c0caf5" stroke-width="44" stroke-linecap="round"/>
+</svg>

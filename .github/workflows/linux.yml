@@ -1,0 +1,107 @@
+name: Linux CI
+
+on:
+  pull_request:
+    paths:
+      # The Linux client itself...
+      - 'ClaudeRelayLinux/**'
+      - '.github/workflows/linux.yml'
+      # ...AND the Android modules whose SOURCE it compiles. The two builds share
+      # one copy of core-protocol / core-net / core-session / terminal on disk
+      # (docs/linux-client-spec.md AD-2), so an Android-side edit can break the
+      # Linux build without touching a single file under ClaudeRelayLinux/.
+      - 'ClaudeRelayAndroid/core-protocol/**'
+      - 'ClaudeRelayAndroid/core-net/**'
+      - 'ClaudeRelayAndroid/core-session/**'
+      - 'ClaudeRelayAndroid/terminal/**'
+      - 'ClaudeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
+      # ...and the feature screens it compiles verbatim (feature-servers,
+      # feature-workspace, feature-settings): a shared-screen edit on the Android
+      # side is a Linux build input too.
+      - 'ClaudeRelayAndroid/feature-servers/**'
+      - 'ClaudeRelayAndroid/feature-workspace/**'
+      - 'ClaudeRelayAndroid/feature-settings/**'
+  push:
+    branches: [main]
+    paths:
+      - 'ClaudeRelayLinux/**'
+      - '.github/workflows/linux.yml'
+      - 'ClaudeRelayAndroid/core-protocol/**'
+      - 'ClaudeRelayAndroid/core-net/**'
+      - 'ClaudeRelayAndroid/core-session/**'
+      - 'ClaudeRelayAndroid/terminal/**'
+      - 'ClaudeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
+      # ...and the feature screens it compiles verbatim (feature-servers,
+      # feature-workspace, feature-settings): a shared-screen edit on the Android
+      # side is a Linux build input too.
+      - 'ClaudeRelayAndroid/feature-servers/**'
+      - 'ClaudeRelayAndroid/feature-workspace/**'
+      - 'ClaudeRelayAndroid/feature-settings/**'
+
+concurrency:
+  group: linux-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ClaudeRelayLinux
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # cmake + a C++17 compiler build termlib's libvterm JNI bridge; libsecret
+      # and libnotify supply secret-tool / notify-send, which the storage and
+      # notification seams shell out to.
+      - name: Install native build and runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libsecret-tools libnotify-bin
+
+      # The primary correctness gate. These 34 test files (~6,800 lines) are the
+      # Android client's own suite, compiled from the SAME source files. If they
+      # pass here, the shared modules really are platform-free — which is the
+      # entire premise of this client.
+      - name: Shared-module tests (Android's suite, unmodified, on the desktop JVM)
+        run: ./gradlew :shared-protocol:test :shared-net:test :shared-session:test :shared-terminal:test --no-daemon
+
+      - name: Linux platform seam tests
+        run: ./gradlew :linux-storage:test :linux-platform:test --no-daemon
+
+      # Builds libjni_cb_term.so from termlib's upstream CMake (its non-Android
+      # `find_package(JNI)` branch) with our mouse-dispatch patch applied, then
+      # drives the REAL libvterm: ANSI parsing, cursor addressing, alt-screen,
+      # wheel reporting. Nothing here is mocked.
+      - name: Terminal tests (real libvterm through JNI)
+        run: ./gradlew :linux-terminal:test --no-daemon
+
+      - name: Feature and app tests
+        run: ./gradlew :feature-settings:test :feature-servers:test :feature-workspace:test :app:test --no-daemon
+
+      # `build` runs every module's tests and assembles them, so it is the
+      # backstop that catches a module added later without a step of its own.
+      # The steps above exist to fail fast with a clear name.
+      - name: Build everything (all modules, all tests)
+        run: ./gradlew build -x :app:createDistributable --no-daemon
+
+      # The jpackage image the release workflow tars up. Running it here means a
+      # packaging regression (a missing icon, the native library not staged onto
+      # java.library.path) fails the PR, not the release.
+      - name: Package the distributable image
+        run: |
+          ./gradlew :app:createDistributable --no-daemon
+          IMAGE=app/build/compose/binaries/main/app/coderelay
+          find "$IMAGE" -name 'libjni_cb_term.so' | grep -q . || { echo "libjni_cb_term.so missing from image"; exit 1; }
+          test -f "$IMAGE/lib/coderelay.png" || { echo "app icon missing from image"; exit 1; }

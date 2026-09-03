@@ -39,7 +39,7 @@ private const val TAG = "MainActivity"
  * M1 demo. Ported in role from `ClaudeRelayApp.swift`:
  *  - sets the Compose content to [RelayNavGraph] (Splash → Servers → Workspace +
  *    Settings);
- *  - parses `clauderelay://session/<uuid>` deep links on cold start (`onCreate`)
+ *  - parses `coderelay://session/<uuid>` deep links on cold start (`onCreate`)
  *    and warm start (`onNewIntent`, `launchMode="singleTop"`), storing the id in
  *    [pendingSessionId] which the nav graph consumes on workspace entry;
  *  - owns the long-lived [AppSettings] + [AndroidConnectivitySource] +
@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
         }
 
     /**
-     * The most recent session id parsed from a `clauderelay://session/<uuid>`
+     * The most recent session id parsed from a `coderelay://session/<uuid>`
      * deep link, or null. The nav graph collects this on workspace entry, calls
      * `SessionCoordinator.attachRemoteSession(id)`, then clears it via
      * [clearPendingSession].
@@ -79,7 +79,7 @@ class MainActivity : ComponentActivity() {
     private val _pendingSessionId = MutableStateFlow<UUID?>(null)
 
     /**
-     * The most recent pairing URL parsed from a `clauderelay://pair?...` deep link,
+     * The most recent pairing URL parsed from a `coderelay://pair?...` deep link,
      * or null. The nav graph collects this on the Servers route, presents the pairing
      * sheet prefilled from it, then clears it via [clearPendingPairing].
      */
@@ -168,7 +168,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Feeds a pairing URL from the in-app QR scanner into the SAME pending-pairing
-     * flow a `clauderelay://pair` deep link uses, so scan and deep-link converge on
+     * flow a `coderelay://pair` deep link uses, so scan and deep-link converge on
      * one prefilled-sheet consumer on the Servers screen.
      */
     fun setPendingPairing(url: relay.protocol.PairingURL) {
@@ -210,14 +210,14 @@ class MainActivity : ComponentActivity() {
     private fun handleDeepLink(intent: Intent?) {
         val data = intent?.data?.toString() ?: return
 
-        // Try pairing link first (clauderelay://pair?...).
+        // Try pairing link first (coderelay://pair?...).
         DeepLinks.parsePairingUrl(data)?.let {
             Log.i(TAG, "Deep link → pending pairing: ${it.host}:${it.port}")
             _pendingPairing.value = it
             return
         }
 
-        // Then try session link (clauderelay://session/<uuid>).
+        // Then try session link (coderelay://session/<uuid>).
         val sessionId = DeepLinks.parseSessionId(data)
         if (sessionId == null) {
             Log.w(TAG, "Ignoring unparseable deep link: $data")

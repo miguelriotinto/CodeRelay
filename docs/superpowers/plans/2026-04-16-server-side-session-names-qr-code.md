@@ -4,7 +4,7 @@
 
 **Goal:** Persist session names on the server with real-time broadcast sync, and add QR code generation/scanning for cross-device session attachment.
 
-**Architecture:** Two coordinated features built bottom-up: wire protocol (ClaudeRelayKit) → server (ClaudeRelayServer) → client library (ClaudeRelayClient) → iOS app (ClaudeRelayApp). The `name` field is added to `SessionInfo`, a `sessionRename` client message and `sessionRenamed` server broadcast are added to the wire protocol, and the server broadcasts renames via the existing activity observer infrastructure. The QR code feature uses CoreImage for generation and AVFoundation for scanning, with a `clauderelay://` URL scheme for deep linking.
+**Architecture:** Two coordinated features built bottom-up: wire protocol (ClaudeRelayKit) → server (ClaudeRelayServer) → client library (ClaudeRelayClient) → iOS app (ClaudeRelayApp). The `name` field is added to `SessionInfo`, a `sessionRename` client message and `sessionRenamed` server broadcast are added to the wire protocol, and the server broadcasts renames via the existing activity observer infrastructure. The QR code feature uses CoreImage for generation and AVFoundation for scanning, with a `coderelay://` URL scheme for deep linking.
 
 **Tech Stack:** Swift 5.9, SwiftUI, NIO, CoreImage (QR generation), AVFoundation (QR scanning), XcodeGen
 
@@ -1475,7 +1475,7 @@ Expected: Project generated successfully.
 
 ```bash
 git add project.yml
-git commit -m "chore(ios): add camera permission and clauderelay:// URL scheme"
+git commit -m "chore(ios): add camera permission and coderelay:// URL scheme"
 ```
 
 ---
@@ -1529,7 +1529,7 @@ struct QRCodeOverlay: View {
 
             VStack(spacing: 16) {
                 if let image = QRCodeGenerator.generate(
-                    from: "clauderelay://session/\(sessionId.uuidString)",
+                    from: "coderelay://session/\(sessionId.uuidString)",
                     size: 200
                 ) {
                     Image(uiImage: image)
@@ -1943,7 +1943,7 @@ Expected: Builds successfully.
 
 ```bash
 git add ClaudeRelayApp/ClaudeRelayApp.swift
-git commit -m "feat(ios): add onOpenURL handler for clauderelay:// deep links"
+git commit -m "feat(ios): add onOpenURL handler for coderelay:// deep links"
 ```
 
 ---

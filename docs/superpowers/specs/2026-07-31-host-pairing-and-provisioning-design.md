@@ -58,7 +58,7 @@ Two phases, sequenced. Each gets its own implementation plan.
 ### Explicitly out of scope
 
 - No push configuration automation (`setup` never touches APNs/FCM keys).
-- No changes to the existing session-sharing QR (`clauderelay://session/<uuid>`).
+- No changes to the existing session-sharing QR (`coderelay://session/<uuid>`).
 - No mDNS/Bonjour *discovery* of relay hosts from the app. `setup` uses the
   Bonjour *hostname* as an address; it does not advertise or browse a service.
 
@@ -346,7 +346,7 @@ under an explicit, backed-up, opt-in command.
 
 ### `PairingURL` (shared, in `ClaudeRelayKit`)
 
-Parses and validates `clauderelay://pair?host=&port=&tls=&code=`. Pure and
+Parses and validates `coderelay://pair?host=&port=&tls=&code=`. Pure and
 testable: host sanity, port range, code charset and length. Rejecting a
 malformed or hostile QR belongs in one tested place, not replicated across three
 UI layers.

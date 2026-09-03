@@ -17,7 +17,7 @@ import com.google.firebase.messaging.RemoteMessage
  *  1. `onNewToken` — publish the new registration token to [FcmTokenBridge] and
  *     trigger a (re)register so the server sends to the current token.
  *  2. `onMessageReceived` — display a notification whose tap fires the
- *     `clauderelay://session/<uuid>` deep link (parsed by [MainActivity]).
+ *     `coderelay://session/<uuid>` deep link (parsed by [MainActivity]).
  *
  * The server (PushDispatcher → FCMClient) sends `notification.{title,body}` plus
  * `data.deepLink`. A message carrying a `notification` block is auto-displayed by
@@ -50,7 +50,7 @@ class RelayFirebaseMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
 
         // Tap → launch MainActivity with the deep-link URI so it routes to the
-        // session (MainActivity.handleDeepLink already parses clauderelay://).
+        // session (MainActivity.handleDeepLink already parses coderelay://).
         if (deepLink != null) {
             val intent = Intent(this, MainActivity::class.java).apply {
                 action = Intent.ACTION_VIEW

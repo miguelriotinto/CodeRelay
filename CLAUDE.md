@@ -187,7 +187,7 @@ Named caps across the stack:
 - `RingBuffer` — `scrollbackSize` bytes (config, default 512 KB)
 - `PTYSession` pending-write queue — 4 MB
 - `TerminalScreenModel.maxResponseBytesPerFeed` — 4 KB of terminal-query answers per PTY read (so a query flood can't evict real keystrokes from the queue above)
-- `RateLimiter.maxTrackedIPs` — 10 k (LRU-evicts oldest 10 % on overflow)
+- `RateLimiter.maxTrackedIPs` — 10 k (LRU-evicts oldest 10 % on overflow). Bounds how many IPs are tracked; `recordFailure` separately retains only the `maxAttempts` most recent timestamps **per** IP, dropping the oldest so the window still slides forward with a sustained attack. Without that second bound one IP failing in a loop grows its array for the whole window, and `cleanup`'s `removeFirst()` is O(n²) in that length — on an actor every other caller serializes behind
 - `LogStore` — compacts at 5 % overshoot above `maxEntries` (not +1000)
 - `AdminHTTPServer.maxRequestBodyBytes` — 64 KB (returns 413)
 - `TerminalViewModel.pendingOutputByteLimit` — 4 MB client-side (logs once-per-session on first drop)
@@ -200,7 +200,7 @@ Named caps across the stack:
 
 ### Push Notifications
 
-Off by default (`pushEnabled=false`); device tokens are still accepted + stored so enabling later needs no reconnect. Pipeline: client `register_push_token` (platform/token/deviceId + per-device `enabled`/`notifyOnFinished`) → `RelayMessageHandler` (validated, rate-limited) → `PushRegistrationStore` (per-relay-token, capped, TTL-reaped, `0o600`) → a **global** `SessionManager` activity observer → `PushDispatcher`. The dispatcher does **per-session ordered edge detection**: `ActivityEvent`s carry the state at the edge and flow through an `AsyncStream` (single consumer), with a per-session revision guard, so a fast `working→blocked→idle` burst never loses the blocked edge and one session finishing fires even when a sibling stays `working`. It coalesces one push per `(token, workspace-group)` (debounced), keyed on a **hashed** collapse id (`ws_<sha256-prefix>` — never the raw host path), body/deep-link derived from the F2 rollup. Delivery: `APNsClient` (ES256 JWT/HTTP2, `Crypto`) and `FCMClient` (service-account RS256 → OAuth v1, `_CryptoExtras`) via the bounded/retrying `PushHTTP` (`AsyncHTTPClient`); a 410/`UNREGISTERED` result purges the dead token. Clients decide register-vs-update-vs-unregister via the shared `PushRegistrationController` (Swift + Kotlin) and send on connect / token rotation / settings change; taps route a `clauderelay://session/<uuid>` deep link.
+Off by default (`pushEnabled=false`); device tokens are still accepted + stored so enabling later needs no reconnect. Pipeline: client `register_push_token` (platform/token/deviceId + per-device `enabled`/`notifyOnFinished`) → `RelayMessageHandler` (validated, rate-limited) → `PushRegistrationStore` (per-relay-token, capped, TTL-reaped, `0o600`) → a **global** `SessionManager` activity observer → `PushDispatcher`. The dispatcher does **per-session ordered edge detection**: `ActivityEvent`s carry the state at the edge and flow through an `AsyncStream` (single consumer), with a per-session revision guard, so a fast `working→blocked→idle` burst never loses the blocked edge and one session finishing fires even when a sibling stays `working`. It coalesces one push per `(token, workspace-group)` (debounced), keyed on a **hashed** collapse id (`ws_<sha256-prefix>` — never the raw host path), body/deep-link derived from the F2 rollup. Delivery: `APNsClient` (ES256 JWT/HTTP2, `Crypto`) and `FCMClient` (service-account RS256 → OAuth v1, `_CryptoExtras`) via the bounded/retrying `PushHTTP` (`AsyncHTTPClient`); a 410/`UNREGISTERED` result purges the dead token. Clients decide register-vs-update-vs-unregister via the shared `PushRegistrationController` (Swift + Kotlin) and send on connect / token rotation / settings change; taps route a `coderelay://session/<uuid>` deep link.
 
 **Human/portal setup (required for real delivery):**
 - **iOS/macOS:** enable the Push Notifications capability on the App ID in the Apple Developer portal (the `aps-environment` entitlement is already in `project.yml`/`.entitlements`; a signed build fails without the capability on the profile). Upload an APNs auth key (`.p8`) and set `apnsKeyPath/apnsKeyId/apnsTeamId/apnsBundleId` (+ `apnsUseSandbox` for dev).
@@ -258,7 +258,7 @@ This is the second, previously-deferred half of the F11 spec; the first half (Cl
 `claude-relay setup` mints a **single-use pairing code** (8 chars Crockford
 Base32 = 40 bits, 5-minute TTL) via `POST /pair/create` on the localhost-only
 admin API, and renders it as a terminal QR encoding
-`clauderelay://pair?host=&port=&tls=&code=`.
+`coderelay://pair?host=&port=&tls=&code=`.
 
 The device redeems it **pre-auth** over the WebSocket: `pair_request` →
 `pair_success{token,tokenId,label}` → then the normal `auth_request` with the
@@ -273,6 +273,18 @@ received, so there is exactly one path to an authenticated connection.
 - A bad code is a `RateLimiter.recordFailure(ip:)`, identical to a bad token
   (10 attempts / 60 s as `main.swift` configures it), plus a per-connection cap
   of 3 mirroring `maxAuthAttempts`.
+- **The block is checked twice, and the second one is the gate — don't "dedupe"
+  it.** `handlerAdded`'s check is only a fast path: `await isBlocked` is a
+  suspension point, so a client that pipelines its first frame behind the HTTP
+  upgrade has it delivered to `channelRead` before that check can close the
+  channel — which handed a blocked IP one free credential check *per
+  connection*, on a surface where connections cost nothing. The authoritative
+  checks therefore live inside `handleAuth` and `handlePairRequest`, in the same
+  async context that validates the credential, with no suspension between the
+  verdict and its use. Pairing's runs **before** `redeem` so a blocked caller
+  cannot burn a pending single-use code the real device still needs. A
+  successful auth calls `reset(ip:)`, clearing the budget. Guarded by
+  `RelayMessageHandlerTests` and `PairRequestHandlerTests`.
 - The minted token is labeled `"<device> (paired)"` so it is revocable per device,
   unless the operator passed `setup --label`, in which case that label is used
   verbatim. Either way the label is sanitised identically on both paths
@@ -294,6 +306,49 @@ failed outright on a Homebrew install while `status`/`health` worked, because
 only the latter two go through the admin HTTP API.
 
 <!-- code-review-graph MCP tools -->
+## Linux client (`ClaudeRelayLinux/`)
+
+A Compose Desktop (JVM) client for Arch/Omarchy that **compiles the Android
+client's Kotlin sources in place** — `core-protocol`, `core-net`,
+`core-session`, `terminal`, and the three `feature-*` screen modules are read
+from `ClaudeRelayAndroid/` via `srcDirs` (spec AD-2). There is one copy of each
+shared file on disk, so an Android-side edit is a Linux build input:
+`linux.yml` triggers on both trees, and a shared-screen change must keep both
+builds green. Build with `JAVA_HOME` pointing at a JDK 21 (`~/.local/jdk` on
+the dev box; not on `PATH`) and `cmake`:
+
+```bash
+cd ClaudeRelayLinux && ./gradlew test            # 702 tests, real libvterm
+./gradlew :app:run                               # launch against a live relay
+./gradlew :app:createDistributable               # the jpackage image the release tars
+```
+
+Load-bearing details, each documented at its site:
+
+- **Terminal** is libvterm through termlib's JNI bridge, cloned at a pinned
+  commit and patched by `linux-terminal/patches/` (mouse dispatch, bracketed
+  paste). The patch tasks declare the files they edit as outputs; without that
+  the Kotlin sync after them reports up-to-date on a stale `TerminalNative.kt`.
+  `LinuxTerminalEmulator` is a ~400-line emulator, not a port of termlib's
+  Android one; callbacks never call back into the native side (deadlock).
+- **Mouse rule** (xterm's): the program gets the pointer while `mouseMode != 0`
+  unless Shift is held; otherwise clicks select, middle-click pastes PRIMARY,
+  and the wheel scrolls the local scrollback. The alternate screen has no
+  scrollback, so an agent transcript scrolls by wheel report only.
+- **Accelerators are Ctrl+Shift / Ctrl+Alt only** — a bare Ctrl chord is
+  terminal input. Dispatched at the `Window` (`onPreviewKeyEvent`) so they work
+  with the sidebar focused.
+- **Everything the shared `WorkspaceScreen` cannot pass to the terminal host
+  arrives ambiently**: `LocalTerminalTheme` (palette) and `LocalTerminalHooks`
+  (clipboard, title, paste, zoom, scrollback size), provided once by `Main.kt`.
+- **No push provider** (AD-4): notifications come from the coordinator's
+  `agentStates` stream via `notify-send`, off the AWT thread, with
+  click-to-focus through `--action`.
+- **One instance per user session**: `SingleInstance` binds a Unix socket in
+  `$XDG_RUNTIME_DIR`; a second launch forwards argv and exits.
+- **Secrets** go to the Secret Service via `secret-tool` on stdin; there is no
+  plaintext fallback by design.
+
 ## MCP Tools: code-review-graph
 
 **IMPORTANT: This project has a knowledge graph. ALWAYS use the

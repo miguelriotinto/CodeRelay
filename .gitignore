@@ -18,3 +18,5 @@ AGENTS.md
 .venv-*/
 # Local working notes (CLAUDE.md task/lesson tracking)
 tasks/
+# Linux client: packaged tarballs from the release build
+ClaudeRelayLinux/dist/

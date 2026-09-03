@@ -85,6 +85,15 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         // Rate-limit check has to run on the limiter actor. Dispatch a task
         // that checks first, then installs the auth timer on the event loop.
         // If blocked, close the channel with 429 before arming the timer.
+        //
+        // This is a FAST PATH, not the gate. `await isBlocked` is a suspension
+        // point, so a client that pipelines `auth_request`/`pair_request`
+        // immediately after the HTTP upgrade gets that frame delivered to
+        // `channelRead` before the close below runs. The authoritative checks
+        // therefore live inside `handleAuth`/`handlePairRequest`, in the same
+        // async context that checks the credential. This one still earns its
+        // keep: it hangs up on a blocked scanner that never sends a frame,
+        // instead of holding the connection for the full 10 s auth timer.
         let limiter = rateLimiter
         let ctx = UnsafeTransfer(context)
         Task { [weak self] in
@@ -319,6 +328,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     private enum AuthFailure: Error {
         case invalidToken
         case versionMismatch(clientVersion: Int)
+        case rateLimited
     }
 
     /// Bag of state produced by the async `work` phase and consumed by
@@ -336,12 +346,29 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     private func handleAuth(token: String, clientProtocolVersion: Int?, context: ChannelHandlerContext) {
         let tokenStore = self.tokenStore
         let manager = self.sessionManager
+        let gateLimiter = self.rateLimiter
+        let gateIP = self.remoteIP
         let observerCtx = UnsafeTransfer(context)
         let clientVersion = clientProtocolVersion ?? 0
 
         bridgeToEventLoop(
             context: context,
             work: {
+                // Re-check the block here, not only in `handlerAdded`. That
+                // eager gate races the first frame and loses: it suspends on
+                // `await isBlocked` before closing the channel, while a client
+                // that pipelines `auth_request` straight after the HTTP upgrade
+                // has that frame buffered and delivered to `channelRead` on the
+                // event loop first. A blocked IP therefore still got one
+                // credential check per connection, and connections are free —
+                // which made the cross-connection cap far weaker than it reads.
+                //
+                // Checking inside the same async context that validates the
+                // token closes the race: there is no suspension point between
+                // the verdict and its use.
+                guard await gateLimiter.isBlocked(ip: gateIP) == false else {
+                    throw AuthFailure.rateLimited
+                }
                 guard let info = await tokenStore.validate(token: token) else {
                     throw AuthFailure.invalidToken
                 }
@@ -415,6 +442,21 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                 handler.authenticatedTokenId = payload.tokenId
                 handler.authTimeout?.cancel()
                 handler.authTimeout = nil
+                // Clear this IP's failure budget now that it has proven it
+                // holds a valid token. Without this, `reset(ip:)` had no
+                // production caller at all and failures survived a successful
+                // auth for the rest of the window — so an operator who fumbled
+                // the token during setup stayed part-way to a lockout on a
+                // connection that had already succeeded.
+                //
+                // The trade-off is the usual one for login throttling: a client
+                // sharing a NAT egress IP with an attacker clears that
+                // attacker's budget too. Accepted, because the alternative
+                // (locking out the legitimate operator of a personal relay)
+                // is the worse failure, and a valid token is strong evidence.
+                let successLimiter = handler.rateLimiter
+                let successIP = handler.remoteIP
+                Task { await successLimiter.reset(ip: successIP) }
                 RelayLogger.log(category: "auth",
                     "Auth success for token \(payload.tokenId) (protocol v\(payload.clientVersion))")
                 handler.sendServerMessage(
@@ -424,6 +466,17 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             },
             onFailure: { handler, ctx, error in
                 switch error {
+                case AuthFailure.rateLimited:
+                    // Deliberately NOT recorded as another failure: the IP is
+                    // already at the cap, and counting rejected-while-blocked
+                    // attempts would let an attacker extend their own block
+                    // indefinitely — harmless here, but it also gives no signal.
+                    RelayLogger.log(.error, category: "auth",
+                        "Auth rejected: rate-limited from \(handler.remoteIP)")
+                    handler.sendServerMessage(
+                        .error(code: 429, message: "Too many failed attempts"), context: ctx)
+                    ctx.close(promise: nil)
+
                 case AuthFailure.versionMismatch(let clientVersion):
                     let remote = ctx.remoteAddress?.description ?? "unknown"
                     RelayLogger.log(.error, category: "auth",
@@ -468,6 +521,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
 
     private enum PairFailure: Error {
         case invalidCode
+        case rateLimited
     }
 
     private struct PairSuccessPayload: Sendable {
@@ -487,6 +541,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                                    context: ChannelHandlerContext) {
         let pairingStore = self.pairingStore
         let tokenStore = self.tokenStore
+        let gateLimiter = self.rateLimiter
+        let gateIP = self.remoteIP
 
         // Label the token after the device so it is identifiable and
         // individually revocable in `claude-relay token list`.
@@ -501,6 +557,14 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         bridgeToEventLoop(
             context: context,
             work: {
+                // Same race as `handleAuth`: the eager gate in `handlerAdded`
+                // loses to a pipelined first frame, so re-check here, in the
+                // same async context that redeems. This path matters more than
+                // auth's — a pairing code is 40 bits against a token's 256 —
+                // so the cap being real is what keeps online guessing bounded.
+                guard await gateLimiter.isBlocked(ip: gateIP) == false else {
+                    throw PairFailure.rateLimited
+                }
                 guard let grant = await pairingStore.redeem(code) else {
                     throw PairFailure.invalidCode
                 }
@@ -540,6 +604,17 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             },
             onFailure: { handler, ctx, error in
                 switch error {
+                case PairFailure.rateLimited:
+                    // Thrown before `redeem`, so a blocked caller cannot burn
+                    // a pending single-use code that the real device still
+                    // needs. Not recorded as a further failure — see the
+                    // matching case in `handleAuth`.
+                    RelayLogger.log(.error, category: "auth",
+                        "Pairing rejected: rate-limited from \(handler.remoteIP)")
+                    handler.sendServerMessage(
+                        .error(code: 429, message: "Too many failed attempts"), context: ctx)
+                    ctx.close(promise: nil)
+
                 case PairFailure.invalidCode:
                     handler.pairAttempts += 1
                     let remote = handler.remoteIP

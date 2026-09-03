@@ -23,7 +23,7 @@
 			<string>com.claude.relay</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>clauderelay</string>
+				<string>coderelay</string>
 			</array>
 		</dict>
 	</array>

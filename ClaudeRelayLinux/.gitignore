@@ -1,0 +1,11 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+local.properties
+
+# The termlib checkout and the native library are BUILD OUTPUTS, not sources.
+# termlib is fetched at a pinned commit and patched by the build (see
+# linux-terminal/patches/), so vendoring the result would create a second copy
+# that silently diverges from the pin.
+linux-terminal/build/

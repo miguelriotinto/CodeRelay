@@ -3,7 +3,7 @@ import XCTest
 
 final class TerminalQRRendererTests: XCTestCase {
 
-    private let payload = "clauderelay://pair?host=silverwing.local&port=9200&tls=0&code=K7QP2M4X"
+    private let payload = "coderelay://pair?host=silverwing.local&port=9200&tls=0&code=K7QP2M4X"
 
     func testMatrixIsSquareAndIncludesQuietZone() throws {
         let renderer = TerminalQRRenderer(quietZone: 2)

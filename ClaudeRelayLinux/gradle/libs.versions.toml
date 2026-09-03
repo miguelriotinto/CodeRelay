@@ -1,0 +1,61 @@
+# Version catalog for the Linux desktop client.
+#
+# Deliberately SEPARATE from ClaudeRelayAndroid/gradle/libs.versions.toml even
+# though the two share source (see docs/linux-client-spec.md AD-2). The Android
+# catalog pins AGP, the Android Compose BOM, Firebase and CameraX — none of which
+# exist here — while this one pins Compose Multiplatform, which does not exist
+# there. The versions that MUST agree are called out below; a mismatch on those
+# would compile the same source against two different stdlib/coroutines APIs.
+
+[versions]
+
+# ---- MUST match ClaudeRelayAndroid/gradle/libs.versions.toml ----
+# These compile the *shared* sources. Drift here means the same file is built
+# against two different language/library versions in the two builds.
+kotlin = "2.3.21"
+coroutines = "1.11.0"
+serialization = "1.11.0"
+okhttp = "4.12.0"
+junit5 = "5.11.3"
+turbine = "1.2.0"
+
+# ---- Desktop-only ----
+# Compose Multiplatform. Supplies androidx.compose.* under org.jetbrains.compose
+# for the JVM desktop target, which is why the shared UI source compiles here
+# with (mostly) unchanged imports.
+compose-multiplatform = "1.12.0"
+
+# CMP ports of the AndroidX libraries the shared UI uses. Different coordinates
+# from the Android ones (org.jetbrains.androidx.* rather than androidx.*), same
+# package names in source.
+androidx-navigation-compose = "2.9.2"
+androidx-lifecycle = "2.11.0"
+
+# Pure-JVM QR *encode* for the session-share sheet. Android uses the same
+# artifact; scanning is not ported (spec §4, camera deferral).
+zxing = "3.5.3"
+
+[libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+
+# CMP navigation + lifecycle (org.jetbrains.androidx.*, not androidx.*).
+navigation-compose = { module = "org.jetbrains.androidx.navigation:navigation-compose", version.ref = "androidx-navigation-compose" }
+lifecycle-viewmodel-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
+lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
+
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+
+junit5-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit5" }
+junit5-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit5" }
+junit5-params = { module = "org.junit.jupiter:junit-jupiter-params", version.ref = "junit5" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }

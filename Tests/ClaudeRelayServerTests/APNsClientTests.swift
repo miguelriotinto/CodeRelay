@@ -69,7 +69,7 @@ final class APNsClientTests: XCTestCase {
         let client = try APNsClient(config: config(sandbox: true), http: http)
         let result = await client.send(deviceToken: "abc123", platform: .apns, topic: nil,
                                        title: "demo", body: "1 agent blocked",
-                                       deepLink: "clauderelay://session/xyz", collapseKey: "ws_hash")
+                                       deepLink: "coderelay://session/xyz", collapseKey: "ws_hash")
         XCTAssertEqual(result, .delivered)
 
         let url = await http.url()
@@ -87,7 +87,7 @@ final class APNsClientTests: XCTestCase {
         let alert = aps?["alert"] as? [String: Any]
         XCTAssertEqual(alert?["title"] as? String, "demo")
         XCTAssertEqual(alert?["body"] as? String, "1 agent blocked")
-        XCTAssertEqual(json?["deepLink"] as? String, "clauderelay://session/xyz")
+        XCTAssertEqual(json?["deepLink"] as? String, "coderelay://session/xyz")
     }
 
     func testStatus410MapsToUnregistered() {

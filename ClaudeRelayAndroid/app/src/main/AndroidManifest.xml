@@ -58,13 +58,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- clauderelay://session/<uuid> deep links (Task 9). Matches the iOS
+            <!-- coderelay://session/<uuid> deep links (Task 9). Matches the iOS
                  URL scheme so a QR scanned on iOS opens the Android app. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="clauderelay" />
+                <data android:scheme="coderelay" />
             </intent-filter>
         </activity>
 

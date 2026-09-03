@@ -70,7 +70,7 @@ you can open on your phone" into "the thing that tells you when your agents need
 - **Delivery**: server-side APNs (HTTP/2, token-based auth via a `.p8` — same auth family already
   used for TestFlight) and FCM sender. Config keys for credentials/paths.
 - **Client**: request notification permission (respect a settings toggle); handle tap → deep-link
-  into the session (the `clauderelay://session/<uuid>` scheme already exists — reuse `handleDeepLink`).
+  into the session (the `coderelay://session/<uuid>` scheme already exists — reuse `handleDeepLink`).
 - **Settings**: per-app toggle; choice of "blocked only" vs "blocked + finished".
 
 ### Touches

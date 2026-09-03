@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -76,7 +77,7 @@ import relay.session.ServerStatus
  * the URL (deep link from `claude-relay setup` QR scan, OR a QR scanned via
  * [onScanPair]). Both entry points converge on this one flow. The caller must
  * clear it via [clearPendingPairing] after consumption.
- * @param onScanPair opens the camera QR scanner. A scanned `clauderelay://pair`
+ * @param onScanPair opens the camera QR scanner. A scanned `coderelay://pair`
  * QR is parsed by the host and delivered back through [pendingPairingUrl], so the
  * scan and deep-link paths share the same prefilled-sheet consumption. The camera
  * lives in the app/workspace module, so the Servers screen only asks for it.
@@ -162,7 +163,7 @@ fun ServersScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(servers, key = { it.id }) { server ->
+                        itemsIndexed(servers, key = { _, server -> server.id }) { index, server ->
                             SwipeableServerRow(
                                 server = server,
                                 status = statuses[server.id],
@@ -170,6 +171,18 @@ fun ServersScreen(
                                 onEdit = { sheetMode = ServerSheetMode.Edit(server) },
                                 onDelete = { viewModel.delete(server) },
                             )
+                            // A separator between rows, matching the inset
+                            // dividers iOS gets for free from `List`. Each row is
+                            // three unboxed lines of text on the same surface, so
+                            // without this two servers read as one entry. Skipped
+                            // after the last row: a trailing rule under an
+                            // otherwise empty list looks like a cut-off row.
+                            if (index < servers.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 16.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                )
+                            }
                         }
                     }
                 }

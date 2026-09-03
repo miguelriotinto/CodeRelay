@@ -1,0 +1,77 @@
+# Maintainer: Miguel Rio-Tinto <miguel.rio.tinto@gmail.com>
+#
+# Code[Relay] Linux desktop client — prebuilt.
+#
+# This is a `-bin` package by deliberate choice, not laziness. A source-built
+# AUR package is not currently possible: the build clones ConnectBot's termlib
+# at a pinned commit and patches it (see linux-terminal/patches/), and AUR
+# expects every input declared in source=() with a checksum — network access
+# inside build() breaks reproducibility and offline builds. Once the mouse
+# patch is upstreamed and we can depend on a released termlib artifact, a
+# source package becomes viable and should be added alongside this one.
+#
+# The tarball is produced by .github/workflows/release.yml, which gates it on
+# the full test suite, so what is packaged here is what CI verified.
+
+pkgname=coderelay-bin
+_pkgname=coderelay
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Remote terminal client for coding agents (Claude Code, Codex, opencode)"
+arch=('x86_64')
+url="https://github.com/miguelriotinto/CodeRelay"
+license=('MIT')
+
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+
+# Runtime dependencies are the small CLI tools the platform layer shells out
+# to. Both are load-bearing rather than optional niceties:
+#   libsecret  — secret-tool, the ONLY place relay and Bedrock tokens are
+#                stored. There is deliberately no plaintext fallback, so
+#                without this the app cannot save a token at all.
+#   libnotify  — notify-send, for agent-finished / needs-input notifications.
+#
+# No java dependency: the tarball bundles a trimmed JRE, so the package imposes
+# no system JDK and cannot break when the user's default Java changes.
+depends=('libsecret' 'libnotify' 'hicolor-icon-theme')
+
+optdepends=(
+  'gnome-keyring: Secret Service provider, if your desktop does not already run one'
+  'wl-clipboard: clipboard integration under Wayland'
+  'ttf-jetbrains-mono-nerd: recommended terminal font'
+)
+
+options=('!strip')  # The bundled JRE is already stripped; re-stripping breaks jlink images.
+
+source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$_pkgname-v$pkgver-linux-x86_64.tar.gz")
+# Replaced by the release workflow with the real digest of the artifact it built.
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir"
+
+  # The image is self-contained: launcher, jars, the libvterm JNI library, and
+  # a trimmed JRE. It goes to /usr/lib rather than /opt because it is a
+  # distro-packaged application, not a third-party blob drop.
+  install -dm755 "$pkgdir/usr/lib/$_pkgname"
+  cp -a "$_pkgname/." "$pkgdir/usr/lib/$_pkgname/"
+
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s "/usr/lib/$_pkgname/bin/$_pkgname" "$pkgdir/usr/bin/$_pkgname"
+
+  # Registers the launcher entry AND the coderelay:// scheme handler, which
+  # is what makes `coderelay://session/<uuid>` deep links and pairing URLs
+  # open the app. Its StartupWMClass must match the class the window actually
+  # reports (relay-app-CodeRelay) or Hyprland window rules will not match.
+  install -Dm644 "$_pkgname.desktop" \
+    "$pkgdir/usr/share/applications/$_pkgname.desktop"
+
+  # The icon jpackage embedded from packaging/coderelay.png (512 px), plus the
+  # scalable source shipped next to the desktop entry. `Icon=coderelay` in the
+  # desktop file resolves through hicolor, so both paths must exist.
+  install -Dm644 "$_pkgname/lib/$_pkgname.png" \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/$_pkgname.png"
+  install -Dm644 "$_pkgname.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_pkgname.svg"
+}

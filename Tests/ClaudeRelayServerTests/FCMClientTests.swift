@@ -59,7 +59,7 @@ final class FCMClientTests: XCTestCase {
         await http.configureSend(status: 200)
         let client = try FCMClient(serviceAccountJSON: testServiceAccount(), projectId: "test-proj", http: http)
         let result = await client.send(deviceToken: "dev1", platform: .fcm, topic: nil, title: "demo",
-                                       body: "blocked", deepLink: "clauderelay://session/x",
+                                       body: "blocked", deepLink: "coderelay://session/x",
                                        collapseKey: "ws_hash")
         XCTAssertEqual(result, .delivered)
 
@@ -72,7 +72,7 @@ final class FCMClientTests: XCTestCase {
         let msg = (try JSONSerialization.jsonObject(with: reqs[1].body) as! [String: Any])["message"] as! [String: Any]
         XCTAssertEqual(msg["token"] as? String, "dev1")
         XCTAssertEqual((msg["notification"] as? [String: Any])?["title"] as? String, "demo")
-        XCTAssertEqual((msg["data"] as? [String: Any])?["deepLink"] as? String, "clauderelay://session/x")
+        XCTAssertEqual((msg["data"] as? [String: Any])?["deepLink"] as? String, "coderelay://session/x")
         XCTAssertEqual((msg["android"] as? [String: Any])?["collapse_key"] as? String, "ws_hash")
     }
 

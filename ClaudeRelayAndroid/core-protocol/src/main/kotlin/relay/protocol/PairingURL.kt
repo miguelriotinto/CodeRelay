@@ -6,7 +6,7 @@ import java.net.URLDecoder
 /**
  * Kotlin mirror of Swift PairingURL. Pure JVM — no android.net.Uri.
  *
- * The `clauderelay://pair?host=&port=&tls=&code=` deep link produced by
+ * The `coderelay://pair?host=&port=&tls=&code=` deep link produced by
  * `claude-relay setup` and consumed by the apps.
  *
  * Parsing and validation live here, in the shared protocol module, so the
@@ -24,14 +24,18 @@ data class PairingURL(
     val wsUrl: String get() = "${if (useTLS) "wss" else "ws"}://$host:$port"
 
     companion object {
-        const val SCHEME = "clauderelay"
+        /**
+         * The URL scheme, renamed from `clauderelay` with the ClaudeRelay →
+         * CodeRelay rebrand. Hard cutover — server and clients update together.
+         */
+        const val SCHEME = "coderelay"
         const val HOST = "pair"
 
         /**
          * Parses a pairing URL string, or returns null if it's invalid.
          *
          * Validates:
-         * - scheme must be "clauderelay"
+         * - scheme must be "coderelay"
          * - host/authority must be "pair"
          * - query must have host (non-empty, trimmed), port (1..65535), code (via PairingCode.normalize)
          * - tls="1" → useTLS=true
@@ -43,7 +47,7 @@ data class PairingURL(
             // Validate scheme
             if (uri.scheme?.lowercase() != SCHEME) return null
 
-            // URI puts "pair" in authority/host for clauderelay://pair?...
+            // URI puts "pair" in authority/host for coderelay://pair?...
             val authority = (uri.host ?: uri.authority)?.lowercase()
             if (authority != HOST) return null
 

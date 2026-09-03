@@ -57,7 +57,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -161,6 +160,13 @@ fun WorkspaceScreen(
      * + `KeyboardAccessory.swift`). Defaults to false so previews stay silent.
      */
     hapticsEnabled: Boolean = false,
+    /**
+     * External sidebar-toggle requests. A desktop host (the Linux client) binds
+     * a keyboard accelerator to this; each emission flips whichever drawer the
+     * current width uses. Defaults to a flow that never emits, so Android and
+     * previews are unaffected.
+     */
+    sidebarToggleRequests: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
     modifier: Modifier = Modifier,
 ) {
     val coordinator = vm.coordinator
@@ -315,6 +321,19 @@ fun WorkspaceScreen(
             // Material3 "expanded" breakpoint: width ≥ 840 dp gets the two-pane
             // layout (same split point the iOS horizontalSizeClass uses).
             val expanded = maxWidth >= EXPANDED_WIDTH_BREAKPOINT
+
+            // Keyboard-driven sidebar toggle (desktop hosts). Keyed on `expanded`
+            // so a window resized across the breakpoint re-targets the right
+            // drawer; each drawer keeps its own open/closed state as before.
+            LaunchedEffect(expanded) {
+                sidebarToggleRequests.collect {
+                    if (expanded) {
+                        if (twoPaneDrawerState.isOpen) twoPaneDrawerState.close() else twoPaneDrawerState.open()
+                    } else {
+                        if (drawerState.isOpen) drawerState.close() else drawerState.open()
+                    }
+                }
+            }
 
             if (expanded) {
                 // Fold-open / tablet: an inline, persistent-looking sidebar pane that
@@ -550,7 +569,6 @@ private fun TerminalColumn(
                 Text(
                     text = WorkspaceLogic.formatUptime(uptimeSeconds),
                     color = Color.White.copy(alpha = 0.5f),
-                    fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
                 )
             }
@@ -737,7 +755,6 @@ private fun FnToggleButton(active: Boolean, onClick: () -> Unit) {
             color = if (active) Color.Black else Color.White.copy(alpha = 0.7f),
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            fontFamily = FontFamily.Monospace,
         )
     }
 }

@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test
 import java.util.UUID
 
 /**
- * Verifies [DeepLinks] parses/builds the `clauderelay://session/<uuid>` shape
+ * Verifies [DeepLinks] parses/builds the `coderelay://session/<uuid>` shape
  * that matches iOS (`QRCodeSheet.swift` builds it, `ClaudeRelayApp.swift` parses
  * it). Pure JVM — no Android dependency.
  */
@@ -17,7 +17,7 @@ class DeepLinksTest {
         val expected = UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
         assertEquals(
             expected,
-            DeepLinks.parseSessionId("clauderelay://session/550e8400-e29b-41d4-a716-446655440000"),
+            DeepLinks.parseSessionId("coderelay://session/550e8400-e29b-41d4-a716-446655440000"),
         )
     }
 
@@ -26,15 +26,15 @@ class DeepLinksTest {
         val expected = UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
         assertEquals(
             expected,
-            DeepLinks.parseSessionId("clauderelay://session/550E8400-E29B-41D4-A716-446655440000"),
+            DeepLinks.parseSessionId("coderelay://session/550E8400-E29B-41D4-A716-446655440000"),
         )
     }
 
     @Test
     fun `wrong host returns null`() {
         val uuid = "550e8400-e29b-41d4-a716-446655440000"
-        assertNull(DeepLinks.parseSessionId("clauderelay://nonsense/$uuid"))
-        assertNull(DeepLinks.parseSessionId("clauderelay://nonsense"))
+        assertNull(DeepLinks.parseSessionId("coderelay://nonsense/$uuid"))
+        assertNull(DeepLinks.parseSessionId("coderelay://nonsense"))
     }
 
     @Test
@@ -45,27 +45,27 @@ class DeepLinksTest {
 
     @Test
     fun `missing uuid returns null`() {
-        assertNull(DeepLinks.parseSessionId("clauderelay://session/"))
-        assertNull(DeepLinks.parseSessionId("clauderelay://session"))
+        assertNull(DeepLinks.parseSessionId("coderelay://session/"))
+        assertNull(DeepLinks.parseSessionId("coderelay://session"))
     }
 
     @Test
     fun `garbage uuid returns null`() {
-        assertNull(DeepLinks.parseSessionId("clauderelay://session/not-a-uuid"))
-        assertNull(DeepLinks.parseSessionId("clauderelay://session/1234"))
+        assertNull(DeepLinks.parseSessionId("coderelay://session/not-a-uuid"))
+        assertNull(DeepLinks.parseSessionId("coderelay://session/1234"))
     }
 
     @Test
     fun `extra path segment returns null`() {
         val uuid = "550e8400-e29b-41d4-a716-446655440000"
-        assertNull(DeepLinks.parseSessionId("clauderelay://session/$uuid/extra"))
-        assertNull(DeepLinks.parseSessionId("clauderelay://session/$uuid/"))
+        assertNull(DeepLinks.parseSessionId("coderelay://session/$uuid/extra"))
+        assertNull(DeepLinks.parseSessionId("coderelay://session/$uuid/"))
     }
 
     @Test
     fun `empty and junk input returns null`() {
         assertNull(DeepLinks.parseSessionId(""))
-        assertNull(DeepLinks.parseSessionId("clauderelay://nonsense"))
+        assertNull(DeepLinks.parseSessionId("coderelay://nonsense"))
         assertNull(DeepLinks.parseSessionId("just some text"))
     }
 
@@ -73,7 +73,7 @@ class DeepLinksTest {
     fun `sessionUri emits canonical lowercase form`() {
         val uuid = UUID.fromString("550E8400-E29B-41D4-A716-446655440000")
         assertEquals(
-            "clauderelay://session/550e8400-e29b-41d4-a716-446655440000",
+            "coderelay://session/550e8400-e29b-41d4-a716-446655440000",
             DeepLinks.sessionUri(uuid),
         )
     }
@@ -86,7 +86,7 @@ class DeepLinksTest {
 
     @Test
     fun `parsePairingUrl parses a valid pair link`() {
-        val u = DeepLinks.parsePairingUrl("clauderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4X")
+        val u = DeepLinks.parsePairingUrl("coderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4X")
         assertEquals("h.local", u?.host)
         assertEquals(9200, u?.port)
         assertEquals(false, u?.useTLS)
@@ -95,7 +95,7 @@ class DeepLinksTest {
 
     @Test
     fun `parsePairingUrl parses a TLS pair link`() {
-        val u = DeepLinks.parsePairingUrl("clauderelay://pair?host=example.com&port=443&tls=1&code=ABC123XY")
+        val u = DeepLinks.parsePairingUrl("coderelay://pair?host=example.com&port=443&tls=1&code=ABC123XY")
         assertEquals("example.com", u?.host)
         assertEquals(443, u?.port)
         assertEquals(true, u?.useTLS)
@@ -104,7 +104,7 @@ class DeepLinksTest {
 
     @Test
     fun `parsePairingUrl rejects a session link`() {
-        assertNull(DeepLinks.parsePairingUrl("clauderelay://session/${UUID.randomUUID()}"))
+        assertNull(DeepLinks.parsePairingUrl("coderelay://session/${UUID.randomUUID()}"))
     }
 
     @Test
@@ -116,6 +116,6 @@ class DeepLinksTest {
 
     @Test
     fun `parseSessionId still rejects a pair link`() {
-        assertNull(DeepLinks.parseSessionId("clauderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4X"))
+        assertNull(DeepLinks.parseSessionId("coderelay://pair?host=h.local&port=9200&tls=0&code=K7QP2M4X"))
     }
 }

@@ -313,6 +313,53 @@ final class PairRequestHandlerTests: XCTestCase {
         // untested by automated tests.
         throw XCTSkip("Cannot reliably force TokenStore.create to throw without test-only protocol")
     }
+
+    // MARK: - Rate-limit gate
+
+    /// Pairing is pre-auth and a code is only 40 bits (against a token's 256),
+    /// so the cross-connection cap is what keeps online guessing bounded here.
+    /// It must be enforced at redeem time, not only by the eager gate in
+    /// `handlerAdded` — that gate suspends on `await isBlocked` and loses the
+    /// race to a `pair_request` pipelined behind the HTTP upgrade.
+    ///
+    /// Also asserts the code SURVIVES: the block is checked before `redeem`,
+    /// so a blocked attacker cannot burn the single-use code that the real
+    /// device is still waiting to use.
+    func testRateLimitedIPCannotRedeemAndCodeSurvives() async throws {
+        let limiter = RateLimiter(maxAttempts: 2, windowSeconds: 60)
+        let store = PairingCodeStore()
+        let fixture = try await makeFixture(rateLimiter: limiter, pairingStore: store)
+        defer { Task { await cleanup(fixture) } }
+
+        let grant = await store.mint(label: "Real iPhone")
+
+        // Key off the handler's own remoteIP, as `testBadCodeRecordsRateLimiterFailure`
+        // already does — NIOAsyncTestingChannel does not necessarily report the
+        // sentinel address, and blocking the wrong key would let this test pass
+        // while the gate did nothing.
+        let ip = fixture.handler.remoteIP
+        await limiter.recordFailure(ip: ip)
+        await limiter.recordFailure(ip: ip)
+        let blocked = await limiter.isBlocked(ip: ip)
+        XCTAssertTrue(blocked, "precondition: the fixture's IP (\(ip)) must be blocked")
+
+        // A VALID code — the rejection must come from the rate limit.
+        try await send(pairFrame(code: grant.code), on: fixture)
+
+        let messages = try await serverMessages(fixture.channel)
+        let codes = messages.compactMap { msg -> Int? in
+            if case .error(let code, _) = msg { return code }
+            return nil
+        }
+        XCTAssertTrue(codes.contains(429), "expected a 429, got \(codes)")
+        XCTAssertFalse(messages.contains { if case .pairSuccess = $0 { return true } else { return false } },
+                       "a blocked IP must not receive pair_success")
+        XCTAssertFalse(fixture.handler.isAuthenticated)
+
+        let pending = await store.pendingCount()
+        XCTAssertEqual(pending, 1,
+            "the rate-limited attempt must not consume the code the real device still needs")
+    }
 }
 
 // MARK: - Test Helpers
