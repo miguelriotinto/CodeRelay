@@ -30,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -167,7 +166,7 @@ private fun TextKey(label: String, onClick: () -> Unit) {
     }
 }
 
-/** A monospaced single-character key (digits + the | / ~ - _ symbols) — iOS `charButton`. */
+/** A single-character key (digits + the | / ~ - _ symbols) — iOS `charButton`. */
 @Composable
 private fun CharKey(char: Char, onKey: (ByteArray) -> Unit) {
     KeyCell({ onKey(SpecialKeys.literal(char)) }) {
@@ -176,12 +175,11 @@ private fun CharKey(char: Char, onKey: (ByteArray) -> Unit) {
             color = KeyFg,
             fontSize = 15.sp,
             fontWeight = FontWeight.Medium,
-            fontFamily = FontFamily.Monospace,
         )
     }
 }
 
-/** A Ctrl-<letter> combo key — iOS `ctrlComboButton` (a "^" prefix + monospaced letter). */
+/** A Ctrl-<letter> combo key — iOS `ctrlComboButton` (a "^" prefix + the letter). */
 @Composable
 private fun CtrlKey(letter: Char, bytes: ByteArray, onKey: (ByteArray) -> Unit) {
     KeyCell({ onKey(bytes) }) {
@@ -192,7 +190,6 @@ private fun CtrlKey(letter: Char, bytes: ByteArray, onKey: (ByteArray) -> Unit) 
             color = KeyFg,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            fontFamily = FontFamily.Monospace,
         )
     }
 }

@@ -338,7 +338,7 @@ log once, never crash.
 
 - `.desktop` entry in `$XDG_DATA_HOME/applications/`, with a stable
   `StartupWMClass` so Hyprland window rules can match it.
-- Registers the `coderelay://` scheme (`x-scheme-handler/clauderelay`) so
+- Registers the `coderelay://` scheme (`x-scheme-handler/coderelay`) so
   `session/<uuid>` deep links and pairing URLs resolve. Deep-link parsing already exists
   in shared code (`DeepLinks.kt`).
 - Suggested keybinding for `~/.config/hypr/bindings.lua` documented in the README, not

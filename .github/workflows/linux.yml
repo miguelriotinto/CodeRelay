@@ -15,6 +15,12 @@ on:
       - 'ClaudeRelayAndroid/core-session/**'
       - 'ClaudeRelayAndroid/terminal/**'
       - 'ClaudeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
+      # ...and the feature screens it compiles verbatim (feature-servers,
+      # feature-workspace, feature-settings): a shared-screen edit on the Android
+      # side is a Linux build input too.
+      - 'ClaudeRelayAndroid/feature-servers/**'
+      - 'ClaudeRelayAndroid/feature-workspace/**'
+      - 'ClaudeRelayAndroid/feature-settings/**'
   push:
     branches: [main]
     paths:
@@ -25,6 +31,12 @@ on:
       - 'ClaudeRelayAndroid/core-session/**'
       - 'ClaudeRelayAndroid/terminal/**'
       - 'ClaudeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
+      # ...and the feature screens it compiles verbatim (feature-servers,
+      # feature-workspace, feature-settings): a shared-screen edit on the Android
+      # side is a Linux build input too.
+      - 'ClaudeRelayAndroid/feature-servers/**'
+      - 'ClaudeRelayAndroid/feature-workspace/**'
+      - 'ClaudeRelayAndroid/feature-settings/**'
 
 concurrency:
   group: linux-ci-${{ github.ref }}

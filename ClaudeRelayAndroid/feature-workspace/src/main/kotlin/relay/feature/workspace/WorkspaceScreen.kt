@@ -57,7 +57,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -550,7 +549,6 @@ private fun TerminalColumn(
                 Text(
                     text = WorkspaceLogic.formatUptime(uptimeSeconds),
                     color = Color.White.copy(alpha = 0.5f),
-                    fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
                 )
             }
@@ -737,7 +735,6 @@ private fun FnToggleButton(active: Boolean, onClick: () -> Unit) {
             color = if (active) Color.Black else Color.White.copy(alpha = 0.7f),
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            fontFamily = FontFamily.Monospace,
         )
     }
 }

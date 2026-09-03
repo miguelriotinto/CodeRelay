@@ -50,14 +50,29 @@ object KeyMapping {
      * `Ctrl+Alt` — a bare `Ctrl+<key>` belongs to the terminal, and stealing
      * `Ctrl+C` for "copy" would make the agent uninterruptible.
      */
-    fun map(event: KeyEvent): Action {
-        val mods = modifiersOf(event)
+    fun map(event: KeyEvent): Action =
+        decide(event.key, event.utf16CodePoint, modifiersOf(event))
 
-        specialKeyFor(event.key)?.let { return Action.SpecialKey(it, mods) }
+    /**
+     * The mapping decision, as pure data.
+     *
+     * Split from [map] so it can be tested directly: Compose Desktop's
+     * `KeyEvent` wraps an internal skiko type that a unit test cannot
+     * construct, and the interesting behaviour here is all in these three
+     * values.
+     */
+    internal fun decide(key: Key, codepoint: Int, mods: Int): Action {
+        specialKeyFor(key)?.let { return Action.SpecialKey(it, mods) }
 
-        // utf16CodePoint is 0 for pure modifier presses and other non-text keys.
-        val codepoint = event.utf16CodePoint
-        if (codepoint == 0) return Action.Unhandled
+        // A modifier is not text. Compose Desktop wraps AWT, and AWT reports a
+        // key with no character as CHAR_UNDEFINED — which is `0xFFFF`, NOT 0.
+        // So pressing Shift on its way to Shift+D dispatched U+FFFF as a
+        // printable character and zsh echoed a literal `<ffff>` before the D.
+        // Both guards stay: the key list says what we mean, and the codepoint
+        // check catches every other key AWT hands us with no character (media
+        // keys, Super, PrintScreen).
+        if (key in MODIFIER_KEYS) return Action.Unhandled
+        if (codepoint == 0 || codepoint == CHAR_UNDEFINED) return Action.Unhandled
 
         // Control characters the platform already folded (some toolkits deliver
         // Ctrl+C as codepoint 3). Passing that through with CTRL still set would
@@ -68,6 +83,24 @@ object KeyMapping {
 
         return Action.Character(codepoint, mods)
     }
+
+    /**
+     * AWT's `KeyEvent.CHAR_UNDEFINED`, which Compose Desktop passes straight
+     * through as [KeyEvent.utf16CodePoint] for any key that carries no
+     * character. It is `0xFFFF`, not `0`, which is exactly why the old
+     * `codepoint == 0` guard let modifier presses through.
+     */
+    private const val CHAR_UNDEFINED = 0xFFFF
+
+    /** Keys that are modifiers in their own right and never produce text. */
+    private val MODIFIER_KEYS = setOf(
+        Key.ShiftLeft, Key.ShiftRight,
+        Key.CtrlLeft, Key.CtrlRight,
+        Key.AltLeft, Key.AltRight,
+        Key.MetaLeft, Key.MetaRight,
+        Key.CapsLock, Key.NumLock, Key.ScrollLock,
+        Key.Function,
+    )
 
     /** The non-printable keys, by Compose [Key]. Null means "not special". */
     private fun specialKeyFor(key: Key): Int? = when (key) {

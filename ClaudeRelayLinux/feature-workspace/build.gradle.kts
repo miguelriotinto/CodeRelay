@@ -20,7 +20,7 @@
 //   TermlibTerminalEngine.kt — the ANDROID termlib binding; ours is :linux-terminal
 //   Haptics.kt               — no desktop equivalent
 //   QrScannerScreen.kt       — CameraX + ML Kit; pairing uses a typed code instead
-//   QrShareSheet.kt          — Android Bitmap; desktop QR render TODO
+//   QrShareSheet.kt          — Android Bitmap; ours draws the ZXing grid on a Canvas
 //   MicButton.kt             — speech is out of parity scope (spec §1.1)
 
 plugins {
@@ -31,11 +31,36 @@ plugins {
 
 val androidRoot: java.io.File by rootProject.extra
 
+// The shared special-key bar lives in the Android `terminal` module, which
+// `:shared-terminal` compiles WITHOUT it so that module can stay pure JVM (it is
+// the only Compose file in there). It is picked up here instead: its imports are
+// all `androidx.compose.*`, which CMP republishes, so it compiles unchanged like
+// every other shared screen — and the `fn` toggle in the workspace top bar is
+// wired to it, so without the real thing that button silently did nothing.
+val androidKeyBar = androidRoot.resolve("terminal/src/main/kotlin")
+
 sourceSets {
     main {
-        kotlin.srcDirs("src/main/kotlin", androidRoot.resolve("feature-workspace/src/main/kotlin"))
+        kotlin.srcDirs(
+            "src/main/kotlin",
+            androidRoot.resolve("feature-workspace/src/main/kotlin"),
+            androidKeyBar,
+        )
         kotlin.exclude {
-            it.file.absolutePath.startsWith(androidRoot.absolutePath) &&
+            // Directories are visited by this spec too, and excluding one prunes
+            // everything beneath it — so a name test that says "keep only
+            // KeyboardAccessory.kt" would drop `relay/terminal/` itself and the
+            // file with it. Let every directory through and judge files only.
+            if (it.isDirectory) return@exclude false
+
+            val path = it.file.absolutePath
+            // Everything else under the Android terminal module is already
+            // compiled by :shared-terminal; a second copy here would be a
+            // duplicate-class error.
+            if (path.startsWith(androidKeyBar.absolutePath)) {
+                return@exclude it.name != "KeyboardAccessory.kt"
+            }
+            path.startsWith(androidRoot.resolve("feature-workspace").absolutePath) &&
                 it.name in setOf(
                     "TerminalHost.kt",
                     "TermlibTerminalEngine.kt", "Haptics.kt", "QrScannerScreen.kt",
@@ -77,6 +102,8 @@ dependencies {
     implementation(compose.components.uiToolingPreview)
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.lifecycle.runtime.compose)
+    // QR encode for the session-share sheet (pure JVM; scanning is not ported).
+    implementation(libs.zxing.core)
 
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)

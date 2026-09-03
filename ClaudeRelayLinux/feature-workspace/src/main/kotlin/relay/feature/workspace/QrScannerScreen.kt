@@ -25,7 +25,7 @@ import java.util.UUID
  *
  * This renders an explanation rather than silently doing nothing, so the
  * affordance is never a dead end. Deep links arriving via the registered
- * `x-scheme-handler/clauderelay` handler reach the same attach path.
+ * `x-scheme-handler/coderelay` handler reach the same attach path.
  */
 @Composable
 @Suppress("UNUSED_PARAMETER")

@@ -5,11 +5,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import relay.terminal.RelayTerminalController
 import relay.terminal.TerminalSessionVm
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import relay.terminal.linux.DesktopTerminalFont
+import relay.terminal.linux.LocalTerminalTheme
 import relay.terminal.linux.LinuxTerminalEmulator
 import relay.terminal.linux.LinuxTerminalEngine
 import relay.terminal.linux.TerminalView
@@ -41,9 +47,13 @@ fun TerminalHost(
     onResize: (cols: Int, rows: Int) -> Unit,
     redrawToken: Int = 0,
     modifier: Modifier = Modifier,
-    palette: IntArray? = null,
-    background: Color = Color.Black,
-    foreground: Color = Color.White,
+    // Defaults come from the ambient terminal theme, which `:app` fills from the
+    // live Omarchy palette. They used to be null/black/white, so the grid rendered
+    // pure white on pure black next to Foot windows in the desktop's own colours —
+    // the theme was loaded, mapped and tested, and then never reached the terminal.
+    palette: IntArray? = LocalTerminalTheme.current.ansi,
+    background: Color = Color(LocalTerminalTheme.current.background),
+    foreground: Color = Color(LocalTerminalTheme.current.foreground),
 ) {
     // One emulator + engine per session, disposed with it.
     val emulator = remember(vm) {
@@ -61,13 +71,31 @@ fun TerminalHost(
     // sink, forwards size reports, and turns the first size report into
     // `terminalReady()`, which drains buffered scrollback. This is shared,
     // pure-Kotlin code — the same object that drives Android and iOS.
-    val controller = remember(engine, vm, onInput, onResize) {
-        RelayTerminalController(engine, vm, onInput, onResize)
+    //
+    // **Keyed on (engine, vm) only, with the callbacks read through
+    // `rememberUpdatedState`.** Keying on the lambdas too rebuilt the controller
+    // whenever a caller passed a fresh lambda identity — on the SAME engine. The
+    // outgoing instance's `detach()` then ran against the live engine and view
+    // model and tore down the incoming one's wiring: `engine.onInput = null`
+    // stopped every keystroke reaching the shell, and the released ownership
+    // stopped output reaching the pane, so a reload cleared the screen and
+    // nothing came back. One controller per engine+vm, callbacks always current.
+    val currentOnInput by rememberUpdatedState(onInput)
+    val currentOnResize by rememberUpdatedState(onResize)
+    val controller = remember(engine, vm) {
+        RelayTerminalController(
+            engine = engine,
+            vm = vm,
+            onInput = { bytes -> currentOnInput(bytes) },
+            onResize = { cols, rows -> currentOnResize(cols, rows) },
+        )
     }
 
-    // Constructing the controller is what wires engine ↔ view model; keeping the
-    // reference alive for the composition's lifetime is the whole point.
-    DisposableEffect(controller) { onDispose { } }
+    // `detach()` on dispose matches Android: it clears the engine's input sink
+    // unconditionally, and the view model's only if this controller is still its
+    // owner — so switching sessions cannot have the outgoing pane's teardown
+    // unwire the incoming one, which binds first.
+    DisposableEffect(controller) { onDispose { controller.detach() } }
 
     DisposableEffect(emulator) {
         onDispose {
@@ -77,25 +105,40 @@ fun TerminalHost(
         }
     }
 
-    // Relay → emulator. TerminalSessionVm buffers output while replaying and
-    // flushes it in one batch on endReplay(), so the grid shows the final state
-    // instead of animating history past the user.
-    DisposableEffect(vm, engine) {
-        vm.onTerminalOutput = { bytes -> engine.feedOutput(bytes) }
-        onDispose { vm.onTerminalOutput = null }
-    }
+    // Relay → emulator is the CONTROLLER's job (`vm.onTerminalOutput →
+    // engine.feedOutput`), installed in its constructor and released through the
+    // ownership token. This host deliberately does not also set that handler:
+    // the duplicate wiring it used to carry nulled `onTerminalOutput`
+    // unconditionally on dispose, which is exactly what the ownership check
+    // exists to prevent.
 
-    // A redraw token change means the user asked for a reload; ask the server
-    // for a repaint rather than clearing locally, so the grid is rebuilt from
-    // the authoritative screen instead of going briefly blank.
-    LaunchedEffect(redrawToken) {
-        if (redrawToken > 0) vm.beginServerReload()
-    }
+    // [redrawToken] is deliberately NOT acted on here.
+    //
+    // On Android it drives `engine.redraw()`, a purely local repaint that pokes
+    // termlib's renderer. Ours has nothing to poke: the grid is re-read from the
+    // emulator every frame, so a local repaint is a no-op by construction.
+    //
+    // This host used to call `vm.beginServerReload()` on the token instead, and
+    // that actively BROKE the name-tap reload. `beginServerReload` is the
+    // coordinator's to call: `reloadTerminalFromServer` starts with
+    // `if (vm.isReloadingFromServer.value) return` — a guard against a re-tap
+    // landing on a replay still in flight. Calling it here first tripped that
+    // guard, so the coordinator dropped the reload and never sent the resume.
+    // The pane cleared to the RIS, no replay ever arrived, and five seconds
+    // later the vm's backstop flushed an empty buffer: black, a long pause, then
+    // an empty terminal. The reload is driven entirely by `WorkspaceScreen`
+    // (`vm.reloadTerminal()` → coordinator → begin + resume), with the fade
+    // cover held until `isReloadingFromServer` clears.
 
     // Re-theme live when the palette changes (Omarchy theme switch).
     LaunchedEffect(palette, background, foreground) {
         palette?.let { emulator.applyPalette(it, foreground.toArgbInt(), background.toArgbInt()) }
     }
+
+    // Match the size and face the user's other terminals are rendering at —
+    // read once per host, from the same Foot/Alacritty config those windows use.
+    val font = remember { DesktopTerminalFont.load() }
+    val fontFamily = remember(font.family) { DesktopTerminalFont.resolveFamily(font.family) }
 
     Box(modifier.fillMaxSize()) {
         TerminalView(
@@ -104,7 +147,19 @@ fun TerminalHost(
             modifier = Modifier.fillMaxSize(),
             background = background,
             foreground = foreground,
-            onSizeChanged = onResize,
+            fontSize = font.sizeDp.sp,
+            fontFamily = fontFamily,
+            padding = font.padDp.dp,
+            // MUST go through the controller, not straight to `onResize`.
+            // `reportSize` does three things: resizes the engine, forwards the
+            // geometry to the relay, and — on the FIRST report — calls
+            // `vm.terminalReady()`, which is what drains the output the vm
+            // buffers until the view has a size. Wiring `onResize` directly
+            // skipped all three: libvterm stayed at its initial 24x80 whatever
+            // the window did, and every byte the shell produced went into
+            // `pendingOutput` and stayed there — a terminal showing nothing but
+            // a cursor on a session that was otherwise healthy.
+            onSizeChanged = controller::reportSize,
         )
     }
 }

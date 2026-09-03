@@ -222,9 +222,12 @@ val syncTermlibKotlin by tasks.registering(Sync::class) {
 sourceSets {
     main {
         kotlin.srcDir(syncTermlibKotlin)
-        // The built .so ships as a resource and is extracted at startup; see
-        // NativeLibraryLoader.
-        resources.srcDir(buildNativeTerminal)
+        // The .so is deliberately NOT a jar resource. It used to be, extracted at
+        // startup by NativeLibraryLoader — which cannot help: termlib's own
+        // static initializer resolves the library by NAME against
+        // java.library.path, so a copy loaded from a temp path is ignored. The
+        // library reaches the app through :app's `stageNativeTerminal` (into
+        // `$APPDIR/resources`) and through the run/test tasks' java.library.path.
     }
 }
 
@@ -261,6 +264,12 @@ dependencies {
     // reimplementation — the class and method names are identical.
     implementation("com.ibm.icu:icu4j:78.3")
 
+    // Skia's NATIVE library, for the tests that measure real font metrics
+    // (TerminalCellMetricsTest). `compose.ui` brings the skiko *bindings*; the
+    // platform runtime jar that carries libskiko-linux-x64.so arrives with
+    // `compose.desktop.currentOs`, which only :app depends on. Without it every
+    // Skia call in a test JVM dies in a static initializer.
+    testImplementation(compose.desktop.currentOs)
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)
     testImplementation(libs.kotlinx.coroutines.test)
