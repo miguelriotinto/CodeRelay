@@ -250,8 +250,11 @@ jobs:
 
           # Agent-detection manifests, resolved by Bundle.module next to the
           # binary. Absent → the server fatal-errors on the first session create.
-          BUNDLE=$(find .build/release -maxdepth 1 -name 'ClaudeRelay_ClaudeRelayServer.resources' -o -maxdepth 1 -name 'ClaudeRelay_ClaudeRelayServer.bundle' | head -1)
-          test -n "$BUNDLE" || { echo "server resource bundle missing"; exit 1; }
+          # `.build/release` is a symlink and find(1) does not descend into a
+          # symlinked start point without the trailing slash — without it this
+          # matched nothing and the step failed with "bundle missing".
+          BUNDLE=$(find .build/release/ -maxdepth 1 \( -name 'ClaudeRelay_ClaudeRelayServer.resources' -o -name 'ClaudeRelay_ClaudeRelayServer.bundle' \) | head -1)
+          test -n "$BUNDLE" || { echo "server resource bundle missing"; ls -la .build/release/; exit 1; }
           cp -a "$BUNDLE" "$STAGE/"
 
           install -m755 Scripts/hooks/claude-relay-state-hook.sh "$STAGE/"
