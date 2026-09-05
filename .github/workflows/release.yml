@@ -546,7 +546,7 @@ jobs:
 
   # ── Push formula update to homebrew-clauderelay tap ─────────────────────
   # Needs the HOMEBREW_TAP_TOKEN repo secret: a PAT with `contents: write`
-  # on miguelriotinto/homebrew-clauderelay. If the secret is missing or
+  # on miguelriotinto/homebrew-coderelay. If the secret is missing or
   # empty, this job is skipped (useful for dry-run tag pushes).
 
   homebrew:
@@ -570,7 +570,7 @@ jobs:
         if: steps.check_token.outputs.skip == 'false'
         uses: actions/checkout@v4
         with:
-          repository: miguelriotinto/homebrew-clauderelay
+          repository: miguelriotinto/homebrew-coderelay
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
 
