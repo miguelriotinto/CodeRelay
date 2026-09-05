@@ -75,7 +75,7 @@ final class PTYMasterFDInheritanceTests: XCTestCase {
         defer { for arg in argv where arg != nil { free(arg) } }
 
         let spawnResult = argv.withUnsafeBufferPointer { buffer in
-            posix_spawn(&pid, "/bin/sh", nil, nil, buffer.baseAddress, environ)
+            posix_spawn(&pid, "/bin/sh", nil, nil, buffer.baseAddress!, environ)
         }
         XCTAssertEqual(spawnResult, 0, "posix_spawn failed for the fd probe")
         var status: Int32 = 0

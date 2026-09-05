@@ -10,7 +10,7 @@ A remote terminal relay server and CLI over WebSocket, enabling secure terminal 
 - **PTY sessions** - Interactive shell sessions with full terminal emulation
 - **Session persistence** - Detach and reattach to running sessions
 - **TLS encryption** - Optional NIO-SSL support for secure WebSocket connections
-- **Service management** - Run as a background service with launchd/brew services
+- **Service management** - Run as a background service with launchd/brew services (macOS) or a systemd user unit (Linux)
 - **iOS client** - Native iOS app with terminal emulation, session tabs, and coding agent detection
 - **macOS client** - Native macOS app with menu-bar persistence, full keyboard shortcuts, and iOS feature parity
 - **Android client** - Native Android app (Jetpack Compose) with a real VT100 terminal, session tabs, recovery, and on-device speech (in test-build distribution; see [ClaudeRelayAndroid](ClaudeRelayAndroid/))
@@ -52,14 +52,43 @@ The macOS server/CLI and the two Apple clients are built from one Swift package;
 brew install miguelriotinto/clauderelay/clauderelay
 ```
 
+### Arch Linux / Omarchy
+
+The server and CLI also run natively on Linux under a **systemd user service**.
+Install the prebuilt package (statically linked; depends only on `curl`, with
+`wl-clipboard`/`xclip` optional for image paste):
+
+```bash
+# from the AUR
+yay -S coderelay-server-bin
+claude-relay setup                 # starts the service, prints a pairing QR
+```
+
+`setup` installs and starts `claude-relay.service` for your user and prints the
+pairing QR. The service runs while you are logged in; for a headless host that
+must serve with nobody logged in, run `loginctl enable-linger`. Manage it with
+the same commands as macOS — `claude-relay status | start | stop | restart |
+logs show` — and read the service log with
+`journalctl --user -u claude-relay -f`.
+
+See [`docs/linux-server-spec.md`](docs/linux-server-spec.md) for the full design.
+
 ### From Source
 
-Requires Xcode 15.0+ and macOS 14+:
+**macOS** requires Xcode 15.0+ and macOS 14+:
 
 ```bash
 git clone https://github.com/miguelriotinto/ClaudeRelay.git
 cd ClaudeRelay
 swift build -c release
+```
+
+**Linux** requires a Swift 6 toolchain and `cmake` (for the PTY C shim). The
+Apple client libraries are excluded from the Linux build automatically:
+
+```bash
+swift build -c release --static-swift-stdlib --product claude-relay-server
+swift build -c release --static-swift-stdlib --product claude-relay
 ```
 
 Binaries will be in `.build/release/`:

@@ -1,5 +1,5 @@
 import Foundation
-import os
+import NIOConcurrencyHelpers
 import CPTYShim
 import ClaudeRelayKit
 
@@ -162,9 +162,10 @@ public actor PTYSession: PTYSessionProtocol {
     /// section. Checking, unlocking, and then using the fd would be a check-then-act
     /// race — the cancel handler could mark-and-close in the gap, which is the exact
     /// hazard this flag exists to rule out. Copies share the underlying allocation,
-    /// so the cancel handler's captured copy is this same state. `os_unfair_lock` is
-    /// not recursive: never re-enter it from a `withLock` body.
-    private let fdClosed = OSAllocatedUnfairLock(initialState: false)
+    /// so the cancel handler's captured copy is this same state. The lock is a
+    /// plain mutex (`NIOLock`, so the same type on macOS and Linux) and is not
+    /// recursive: never re-enter it from a `withLockedValue` body.
+    private let fdClosed = NIOLockedValueBox(false)
     private var activityHandler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
     /// Callback for working-directory changes, fired from the foreground poll.
     private var workingDirHandler: (@Sendable (String) -> Void)?
@@ -235,6 +236,12 @@ public actor PTYSession: PTYSessionProtocol {
         // Resolve home directory BEFORE fork — NSHomeDirectory() and other
         // ObjC/Foundation calls are NOT safe in a forked child process.
         let homeDir = strdup(NSHomeDirectory())
+        // Likewise the login shell: `getpwuid` may allocate and touch NSS, so it
+        // runs in the parent and the child only sees C strings.
+        let shell = LoginShell.resolve()
+        let shellPath = strdup(shell.path)
+        let shellArgv0 = strdup(shell.argv0)
+        let userName = strdup(shell.userName)
 
         let pid = relay_forkpty(&fd, &ws)
 
@@ -242,14 +249,15 @@ public actor PTYSession: PTYSessionProtocol {
             free(homeDir)
             free(sessionIdCStr)
             free(adminPortCStr)
+            free(shellPath)
+            free(shellArgv0)
+            free(userName)
             throw PTYError.forkFailed(errno)
         }
 
         if pid == 0 {
             // Child process — only use POSIX/C calls here (no ObjC/Foundation).
             setenv("TERM", "xterm-256color", 1)
-            setenv("LANG", "en_US.UTF-8", 1)
-            setenv("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", 1)
             // F6: expose session id + admin port to the local lifecycle hook.
             if let sessionIdCStr { setenv("CLAUDE_RELAY_SESSION_ID", sessionIdCStr, 1) }
             if let adminPortCStr { setenv("CLAUDE_RELAY_ADMIN_PORT", adminPortCStr, 1) }
@@ -257,12 +265,14 @@ public actor PTYSession: PTYSessionProtocol {
                 chdir(homeDir)
             }
 
+            #if os(macOS)
+            setenv("LANG", "en_US.UTF-8", 1)
+            setenv("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", 1)
+
             // Use login -f to spawn shell with proper user context and permissions
-            let username = getenv("USER") ?? getpwuid(getuid()).pointee.pw_name
-            let usernameStr = strdup(username)
             let argv0 = strdup("login")
             let argv1 = strdup("-fp")
-            let cArgs: [UnsafeMutablePointer<CChar>?] = [argv0, argv1, usernameStr, nil]
+            let cArgs: [UnsafeMutablePointer<CChar>?] = [argv0, argv1, userName, nil]
             _ = cArgs.withUnsafeBufferPointer { buf in
                 execv("/usr/bin/login", buf.baseAddress)
             }
@@ -273,12 +283,48 @@ public actor PTYSession: PTYSessionProtocol {
             _ = fallbackArgs.withUnsafeBufferPointer { buf in
                 execv("/bin/zsh", buf.baseAddress)
             }
+            #else
+            // Linux: login(1) needs root, so exec the user's own shell directly
+            // and give it what `login -fp` would have — a login-shell argv[0]
+            // (leading '-', so /etc/profile and ~/.*profile run), the identity
+            // variables, and the server's environment preserved (`-p`). PATH
+            // and LANG are inherited rather than pinned: there is no Homebrew
+            // prefix to add, /etc/profile extends PATH, and a forced
+            // `en_US.UTF-8` on a box that has not generated it makes every
+            // setlocale() warn. Only a *missing* LANG is defaulted, to the
+            // `C.UTF-8` locale glibc always ships.
+            if let homeDir { setenv("HOME", homeDir, 1) }
+            if let userName {
+                setenv("USER", userName, 1)
+                setenv("LOGNAME", userName, 1)
+            }
+            if let shellPath { setenv("SHELL", shellPath, 1) }
+            if getenv("LANG") == nil { setenv("LANG", "C.UTF-8", 1) }
+            if getenv("PATH") == nil { setenv("PATH", "/usr/local/bin:/usr/bin:/bin", 1) }
+
+            let cArgs: [UnsafeMutablePointer<CChar>?] = [shellArgv0, nil]
+            if let shellPath {
+                _ = cArgs.withUnsafeBufferPointer { buf in
+                    execv(shellPath, buf.baseAddress!)
+                }
+            }
+
+            // Fallback to /bin/sh if the account's shell is missing or broken.
+            let fallbackArgv0 = strdup("-sh")
+            let fallbackArgs: [UnsafeMutablePointer<CChar>?] = [fallbackArgv0, nil]
+            _ = fallbackArgs.withUnsafeBufferPointer { buf in
+                execv("/bin/sh", buf.baseAddress!)
+            }
+            #endif
             _exit(1)
         }
 
         free(homeDir)
         free(sessionIdCStr)
         free(adminPortCStr)
+        free(shellPath)
+        free(shellArgv0)
+        free(userName)
 
         // Parent process
         self.masterFD = fd
@@ -485,8 +531,12 @@ public actor PTYSession: PTYSessionProtocol {
         // Persistent read buffer — reused across callbacks to avoid per-read allocation.
         var readBuffer = [UInt8](repeating: 0, count: 8192)
 
-        source.setEventHandler { [weak source, session] in
-            let estimated = max(Int(source?.data ?? 0), 256)
+        // `DispatchSourceRead` is class-bound only on Darwin (it is an @objc
+        // protocol there); on Linux it is a plain protocol, so capture the
+        // concrete `DispatchSource` object weakly instead — same object either way.
+        let sourceObject = source as? DispatchSource
+        source.setEventHandler { [weak sourceObject, session] in
+            let estimated = max(Int(sourceObject?.data ?? 0), 256)
             if estimated > readBuffer.count {
                 readBuffer = [UInt8](repeating: 0, count: min(estimated, 65536))
             }
@@ -499,7 +549,7 @@ public actor PTYSession: PTYSessionProtocol {
                 }
             } else {
                 // EOF or error — cancel source to stop firing and close FD
-                source?.cancel()
+                sourceObject?.cancel()
                 Task {
                     await session.handleExit()
                 }
@@ -513,7 +563,7 @@ public actor PTYSession: PTYSessionProtocol {
         source.setCancelHandler {
             // Mark before closing, never after: between the two, another thread
             // could see "open" for an fd that is already gone.
-            fdClosed.withLock { $0 = true }
+            fdClosed.withLockedValue { $0 = true }
             close(fd)
         }
 
@@ -855,7 +905,7 @@ public actor PTYSession: PTYSessionProtocol {
     /// Guarding on `fdClosed` rather than `terminated`, and running the ioctl *inside*
     /// the `withLock`: see `fdClosed`. Failure cases: see `WindowSizeFailure`.
     func _testOnly_kernelWindowSize() -> Result<(rows: UInt16, cols: UInt16), WindowSizeFailure> {
-        fdClosed.withLock { closed -> Result<(rows: UInt16, cols: UInt16), WindowSizeFailure> in
+        fdClosed.withLockedValue { closed -> Result<(rows: UInt16, cols: UInt16), WindowSizeFailure> in
             guard !closed else { return .failure(.fdClosed) }
             var rows: UInt16 = 0
             var cols: UInt16 = 0
@@ -892,7 +942,7 @@ public actor PTYSession: PTYSessionProtocol {
     /// reads *only* this flag: the fd's real state is what the flag exists to stand in
     /// for, so setting it is the whole of what the guard can observe.
     func _testOnly_markMasterFDClosed() {
-        fdClosed.withLock { $0 = true }
+        fdClosed.withLockedValue { $0 = true }
     }
 
     /// `F_GETFD` on the master fd, or -1 if the call fails. Lets a test assert

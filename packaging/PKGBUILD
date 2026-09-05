@@ -1,0 +1,92 @@
+# Maintainer: Miguel Rio-Tinto <miguel.rio.tinto@gmail.com>
+#
+# CodeRelay server + CLI for Linux — prebuilt.
+#
+# This is a `-bin` package: the tarball is produced by
+# .github/workflows/release.yml, which gates it on the full Swift test suite
+# (834 tests on Linux), so what is packaged here is what CI verified. A
+# source-built AUR package would need the Swift toolchain as a makedepend and a
+# long compile; the binaries are statically linked against the Swift runtime
+# (swift build --static-swift-stdlib), so the package depends only on the small
+# CLI tools the server shells out to.
+#
+# The macOS distribution (Homebrew: miguelriotinto/clauderelay/clauderelay) is
+# unaffected; this is the Linux-only counterpart.
+
+pkgname=coderelay-server-bin
+_pkgname=coderelay-server
+pkgver=0.3.23
+pkgrel=1
+pkgdesc="CodeRelay terminal relay server and CLI (remote coding-agent sessions)"
+arch=('x86_64')
+url="https://github.com/miguelriotinto/CodeRelay"
+license=('MIT')
+
+provides=('coderelay-server' 'claude-relay')
+conflicts=('coderelay-server' 'clauderelay')
+
+# Runtime dependencies:
+#   curl       — the state hook (Scripts/hooks/claude-relay-state-hook.sh) POSTs
+#                agent state to the admin API with it. Present in Arch base.
+# The server is fully functional without the optdepends below; only device→host
+# image paste degrades (to a success:false reply) without a clipboard tool.
+depends=('curl')
+
+optdepends=(
+  'wl-clipboard: device-to-host image paste under Wayland'
+  'xclip: device-to-host image paste under X11'
+  'avahi: advertise a <hostname>.local address for pairing'
+)
+
+options=('!strip')  # binaries are already release-built; keep debug info out but do not re-strip the static runtime
+
+source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/claude-relay-v$pkgver-linux-x86_64.tar.gz")
+# pkgver and this digest are rewritten by the release workflow (aur job) from
+# the tag and the tarball it built; the value here is the last release's.
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir"
+
+  install -Dm755 claude-relay-server "$pkgdir/usr/bin/claude-relay-server"
+  install -Dm755 claude-relay "$pkgdir/usr/bin/claude-relay"
+
+  # Agent-detection manifests, loaded at runtime via Bundle.module, which
+  # resolves the resource bundle NEXT TO the executable. Without this the server
+  # fatal-errors on the first session create (same requirement the Homebrew
+  # formula documents for the .bundle on macOS).
+  cp -a ClaudeRelay_ClaudeRelayServer.resources "$pkgdir/usr/bin/"
+
+  # systemd user unit. `claude-relay load` enables THIS file on a packaged
+  # install rather than writing a shadowing copy into ~/.config.
+  install -Dm644 claude-relay.service \
+    "$pkgdir/usr/lib/systemd/user/claude-relay.service"
+
+  # State hook, located by `claude-relay hook install` via its
+  # ../share/clauderelay candidate relative to /usr/bin.
+  install -Dm755 claude-relay-state-hook.sh \
+    "$pkgdir/usr/share/clauderelay/claude-relay-state-hook.sh"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+post_install() {
+  cat <<'MSG'
+CodeRelay server installed. To start it for your user:
+
+  claude-relay setup                 # starts the service and prints a pairing QR
+    # or, by hand:
+  systemctl --user enable --now claude-relay.service
+
+Serve with nobody logged in (headless host):
+  loginctl enable-linger
+
+Config:  ~/.claude-relay/config.json   (WebSocket 9200, admin 9100)
+Logs:    journalctl --user -u claude-relay.service -f
+MSG
+}
+
+post_upgrade() {
+  systemctl --user daemon-reload 2>/dev/null || true
+  echo "If the service is running, restart it:  claude-relay restart"
+}

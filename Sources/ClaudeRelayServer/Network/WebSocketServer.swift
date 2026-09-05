@@ -29,7 +29,7 @@ public final class WebSocketServer {
     public init(group: EventLoopGroup, config: RelayConfig,
                 sessionManager: SessionManager, tokenStore: TokenStore,
                 rateLimiter: RateLimiter = RateLimiter(maxAttempts: 10, windowSeconds: 60),
-                clipboardService: ClipboardService = MacClipboardService(),
+                clipboardService: ClipboardService = DefaultClipboardService.make(),
                 pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory),
                 pairingStore: PairingCodeStore) {
         self.group = group

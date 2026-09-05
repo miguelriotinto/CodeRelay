@@ -127,8 +127,6 @@ struct CLISessionInfo: Codable {
     let rows: UInt16
 
     var createdAtFormatted: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: createdAt, relativeTo: Date())
+        RelativeTime.abbreviated(from: createdAt)
     }
 }

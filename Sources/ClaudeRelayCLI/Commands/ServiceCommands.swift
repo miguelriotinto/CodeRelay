@@ -2,15 +2,14 @@ import ArgumentParser
 import Foundation
 import ClaudeRelayKit
 
-private let serviceLabel = "com.claude.relay"
-
 /// Prints the nudge and returns true when the caller should stop.
 /// `--quiet` suppresses the text but still blocks the wrong action.
 ///
 /// The nudge goes to stderr because every caller follows a `true` with
 /// `throw ExitCode.failure` — it is a refusal, and stdout may be carrying JSON.
-private func nudgeBlocks(_ verb: ServiceVerb, quiet: Bool) -> Bool {
-    guard let nudge = ServiceManagerDetector.detect().nudge(for: verb) else { return false }
+private func nudgeBlocks(_ platform: any ServicePlatform, _ verb: ServiceVerb,
+                         force: Bool = false, quiet: Bool) -> Bool {
+    guard let nudge = platform.nudge(for: verb, force: force) else { return false }
     if !quiet { CLIOutput.error(nudge) }
     return true
 }
@@ -29,66 +28,16 @@ struct LoadCommand: AsyncParsableCommand {
     var force = false
 
     func run() async throws {
-        if !force, nudgeBlocks(.load, quiet: globals.quiet) { throw ExitCode.failure }
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-        let relayDir = "\(homeDir)/.claude-relay"
-        let launchAgentsDir = "\(homeDir)/Library/LaunchAgents"
-        let plistPath = "\(launchAgentsDir)/\(serviceLabel).plist"
+        let platform = ServicePlatforms.current
+        if nudgeBlocks(platform, .load, force: force, quiet: globals.quiet) { throw ExitCode.failure }
 
         // Update config.json if ports were specified on the command line.
         try updateConfigIfNeeded()
 
         // Find server binary
-        let serverBinary = findServerBinary()
+        let serverBinary = platform.findServerBinary()
 
-        // Ensure directories exist
-        let fm = FileManager.default
-        try fm.createDirectory(atPath: relayDir, withIntermediateDirectories: true)
-        try fm.createDirectory(atPath: launchAgentsDir, withIntermediateDirectories: true)
-
-        // Get current user environment
-        let userName = ProcessInfo.processInfo.environment["USER"] ?? NSUserName()
-        let pathEnv = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-        // LaunchAgent plist: runs at user login, auto-restarts on crash
-        let plist = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>Label</key>
-            <string>\(serviceLabel)</string>
-            <key>ProgramArguments</key>
-            <array>
-                <string>\(serverBinary)</string>
-            </array>
-            <key>WorkingDirectory</key>
-            <string>\(homeDir)</string>
-            <key>EnvironmentVariables</key>
-            <dict>
-                <key>HOME</key>
-                <string>\(homeDir)</string>
-                <key>USER</key>
-                <string>\(userName)</string>
-                <key>PATH</key>
-                <string>\(pathEnv)</string>
-            </dict>
-            <key>KeepAlive</key>
-            <true/>
-            <key>RunAtLoad</key>
-            <true/>
-            <key>StandardOutPath</key>
-            <string>\(relayDir)/stdout.log</string>
-            <key>StandardErrorPath</key>
-            <string>\(relayDir)/stderr.log</string>
-        </dict>
-        </plist>
-        """
-
-        try plist.write(toFile: plistPath, atomically: true, encoding: .utf8)
-
-        // Load via launchctl
-        try runLaunchctl(["load", plistPath])
+        let installLines = try platform.load(serverBinary: serverBinary)
 
         let config = try ConfigManager.load()
         if !globals.quiet {
@@ -96,7 +45,7 @@ struct LoadCommand: AsyncParsableCommand {
             print("Service installed and started.")
             print("  WebSocket: \(wsHost):\(config.wsPort)")
             print("  Admin API: 127.0.0.1:\(config.adminPort)")
-            print("  Plist:     \(plistPath)")
+            for line in installLines { print(line) }
             if config.bindAll && (config.tlsCert?.isEmpty ?? true) {
                 print("")
                 print("  WARNING: bindAll=true without TLS — tokens travel in the clear on the network.")
@@ -132,32 +81,6 @@ struct LoadCommand: AsyncParsableCommand {
 
         try ConfigManager.save(config)
     }
-
-    // Search order: sibling of CLI binary, Homebrew prefix, standard paths, user home
-    private func findServerBinary() -> String {
-        // Check same directory as CLI binary first (covers Homebrew and local builds)
-        let cliPath = CommandLine.arguments[0]
-        let cliDir = URL(fileURLWithPath: cliPath).deletingLastPathComponent().path
-        let siblingCandidate = cliDir + "/claude-relay-server"
-        if FileManager.default.isExecutableFile(atPath: siblingCandidate) {
-            return siblingCandidate
-        }
-
-        let candidates = [
-            "/opt/homebrew/bin/claude-relay-server",
-            "/usr/local/bin/claude-relay-server",
-            FileManager.default.homeDirectoryForCurrentUser.path + "/.claude-relay/bin/claude-relay-server"
-        ]
-
-        for path in candidates {
-            if FileManager.default.isExecutableFile(atPath: path) {
-                return path
-            }
-        }
-
-        // Default fallback
-        return "/usr/local/bin/claude-relay-server"
-    }
 }
 
 // MARK: - Unload
@@ -171,19 +94,14 @@ struct UnloadCommand: AsyncParsableCommand {
     @OptionGroup var globals: GlobalOptions
 
     func run() async throws {
-        if nudgeBlocks(.unload, quiet: globals.quiet) { throw ExitCode.failure }
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
-        let plistPath = "\(homeDir)/Library/LaunchAgents/\(serviceLabel).plist"
+        let platform = ServicePlatforms.current
+        if nudgeBlocks(platform, .unload, quiet: globals.quiet) { throw ExitCode.failure }
 
-        try runLaunchctl(["unload", plistPath])
-
-        let fm = FileManager.default
-        if fm.fileExists(atPath: plistPath) {
-            try fm.removeItem(atPath: plistPath)
-        }
+        let notes = try platform.unload()
 
         if !globals.quiet {
             print("Service stopped and uninstalled.")
+            for line in notes { print(line) }
         }
     }
 }
@@ -199,8 +117,9 @@ struct StartCommand: AsyncParsableCommand {
     @OptionGroup var globals: GlobalOptions
 
     func run() async throws {
-        if nudgeBlocks(.start, quiet: globals.quiet) { throw ExitCode.failure }
-        try runLaunchctl(["start", serviceLabel])
+        let platform = ServicePlatforms.current
+        if nudgeBlocks(platform, .start, quiet: globals.quiet) { throw ExitCode.failure }
+        try platform.start()
         if !globals.quiet {
             print("Service started.")
         }
@@ -218,8 +137,9 @@ struct StopCommand: AsyncParsableCommand {
     @OptionGroup var globals: GlobalOptions
 
     func run() async throws {
-        if nudgeBlocks(.stop, quiet: globals.quiet) { throw ExitCode.failure }
-        try runLaunchctl(["stop", serviceLabel])
+        let platform = ServicePlatforms.current
+        if nudgeBlocks(platform, .stop, quiet: globals.quiet) { throw ExitCode.failure }
+        try platform.stop()
         if !globals.quiet {
             print("Service stopped.")
         }
@@ -237,9 +157,9 @@ struct RestartCommand: AsyncParsableCommand {
     @OptionGroup var globals: GlobalOptions
 
     func run() async throws {
-        if nudgeBlocks(.restart, quiet: globals.quiet) { throw ExitCode.failure }
-        try runLaunchctl(["stop", serviceLabel])
-        try runLaunchctl(["start", serviceLabel])
+        let platform = ServicePlatforms.current
+        if nudgeBlocks(platform, .restart, quiet: globals.quiet) { throw ExitCode.failure }
+        try platform.restart()
         if !globals.quiet {
             print("Service restarted.")
         }
@@ -262,16 +182,9 @@ struct StatusCommand: AsyncParsableCommand {
         do {
             let response: StatusResponse = try await client.get("/status")
 
-            let owner = ServiceManagerDetector.detect().owner
+            let platform = ServicePlatforms.current
             if globals.json {
-                let managerString: String
-                switch owner {
-                case .homebrew:    managerString = "homebrew"
-                case .launchAgent: managerString = "launchAgent"
-                case .both:        managerString = "both"
-                case .none:        managerString = "none"
-                }
-                print(OutputFormatter.formatJSON(response, merging: "manager", value: managerString))
+                print(OutputFormatter.formatJSON(response, merging: "manager", value: platform.managerJSON))
             } else {
                 print(OutputFormatter.formatStatus(
                     running: response.running,
@@ -281,12 +194,7 @@ struct StatusCommand: AsyncParsableCommand {
                     sessions: response.sessions
                 ))
                 if !globals.quiet {
-                    switch owner {
-                    case .homebrew:    print("  Managed by: Homebrew services")
-                    case .launchAgent: print("  Managed by: claude-relay (launchd agent)")
-                    case .both:        print("  Managed by: WARNING — two managers installed")
-                    case .none:        print("  Managed by: no launchd agent installed")
-                    }
+                    print("  Managed by: \(platform.managerDescription)")
                 }
             }
         } catch let error as AdminClientError where error == .serviceNotRunning {
@@ -349,32 +257,17 @@ struct StatusResponse: Codable {
     var sessions: Int { sessionCount ?? 0 }
 }
 
-private func runLaunchctl(_ arguments: [String]) throws {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-    process.arguments = arguments
-
-    let pipe = Pipe()
-    process.standardError = pipe
-
-    try process.run()
-    process.waitUntilExit()
-
-    if process.terminationStatus != 0 {
-        let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
-        let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-        throw CLIError.launchctlFailed(errorMessage.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-}
-
 enum CLIError: Error, LocalizedError {
     case launchctlFailed(String)
+    case serviceManagerFailed(tool: String, message: String)
     case shellCommandFailed(command: String, status: Int, stderr: String)
 
     var errorDescription: String? {
         switch self {
         case .launchctlFailed(let msg):
             return "launchctl failed: \(msg)"
+        case .serviceManagerFailed(let tool, let msg):
+            return "\(tool) failed: \(msg)"
         case .shellCommandFailed(let cmd, let status, let stderr):
             let name = (cmd as NSString).lastPathComponent
             return "\(name) failed (exit \(status)): \(stderr)"

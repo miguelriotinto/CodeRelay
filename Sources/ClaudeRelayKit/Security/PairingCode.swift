@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// A short, human-transcribable one-time pairing code.
 ///
@@ -44,11 +43,7 @@ public enum PairingCode {
         let count = alphabet.count
         let limit = (256 / count) * count
         while out.count < length {
-            var byte: UInt8 = 0
-            let status = withUnsafeMutablePointer(to: &byte) {
-                SecRandomCopyBytes(kSecRandomDefault, 1, $0)
-            }
-            precondition(status == errSecSuccess, "Failed to generate random bytes")
+            let byte = SecureRandom.byte()
             guard Int(byte) < limit else { continue }
             out.append(alphabet[Int(byte) % count])
         }

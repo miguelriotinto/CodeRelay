@@ -197,13 +197,80 @@ jobs:
           name: coderelay-linux-x86_64
           path: ClaudeRelayLinux/dist/*.tar.gz
 
+  # ── Build the Linux server + CLI ─────────────────────────────────────────
+  # The macOS server (ClaudeRelayServer/CLI) ported to Linux — see
+  # docs/linux-server-spec.md. Statically linked against the Swift runtime, so
+  # the tarball drops onto any glibc host and the coderelay-server-bin PKGBUILD
+  # consumes exactly it. Gated on the full Swift test suite.
+
+  build-linux-server:
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-version.outputs.tag }}
+
+      - name: Install Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.0'
+
+      # Gate the release on the tests, so a broken server cannot be published.
+      - name: Test
+        run: swift test
+
+      - name: Build release binaries (static Swift runtime)
+        run: |
+          swift build -c release --static-swift-stdlib --product claude-relay-server
+          swift build -c release --static-swift-stdlib --product claude-relay
+
+      - name: Assemble the tarball
+        env:
+          TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
+        run: |
+          STAGE=dist/stage
+          mkdir -p "$STAGE"
+          install -m755 .build/release/claude-relay-server "$STAGE/"
+          install -m755 .build/release/claude-relay "$STAGE/"
+
+          # Agent-detection manifests, resolved by Bundle.module next to the
+          # binary. Absent → the server fatal-errors on the first session create.
+          BUNDLE=$(find .build/release -maxdepth 1 -name 'ClaudeRelay_ClaudeRelayServer.resources' -o -maxdepth 1 -name 'ClaudeRelay_ClaudeRelayServer.bundle' | head -1)
+          test -n "$BUNDLE" || { echo "server resource bundle missing"; exit 1; }
+          cp -a "$BUNDLE" "$STAGE/"
+
+          install -m755 Scripts/hooks/claude-relay-state-hook.sh "$STAGE/"
+          install -m644 packaging/claude-relay.service "$STAGE/"
+          install -m644 LICENSE "$STAGE/"
+
+          # Fail loudly if the server picked up a dynamic Swift/Foundation dep —
+          # the whole point of the static build is that it has none.
+          if ldd "$STAGE/claude-relay-server" | grep -iqE 'libswift|libFoundation'; then
+            echo "server links the Swift runtime dynamically — static build regressed"
+            ldd "$STAGE/claude-relay-server"; exit 1
+          fi
+
+          mkdir -p dist/out
+          tar czf "dist/out/claude-relay-${TAG_NAME}-linux-x86_64.tar.gz" -C "$STAGE" .
+
+      - name: Package.resolved is unchanged (macOS superset preserved)
+        run: git checkout -- Package.resolved 2>/dev/null || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-relay-linux-x86_64
+          path: dist/out/*.tar.gz
+
   # ── Create GitHub Release + publish artifacts ───────────────────────────
 
   release:
-    needs: [resolve-version, build, build-linux]
+    needs: [resolve-version, build, build-linux, build-linux-server]
     # The Linux tarball is the artifact this release exists to publish; the
     # macOS build above is best-effort (see its comment).
-    if: ${{ !cancelled() && needs.resolve-version.result == 'success' && needs.build-linux.result == 'success' }}
+    if: ${{ !cancelled() && needs.resolve-version.result == 'success' && needs.build-linux.result == 'success' && needs.build-linux-server.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       source_sha256: ${{ steps.sha.outputs.source_sha256 }}

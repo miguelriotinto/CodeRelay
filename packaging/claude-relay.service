@@ -1,0 +1,31 @@
+# CodeRelay terminal relay server — systemd user unit (packaged).
+#
+# Installed to /usr/lib/systemd/user/ by the coderelay-server-bin package.
+# Enable it for your account with:
+#   systemctl --user enable --now claude-relay.service
+# or let the CLI do it:
+#   claude-relay setup
+#
+# Starts with your session (like a macOS LaunchAgent) and restarts on failure.
+# For a host that must serve with nobody logged in, run:
+#   loginctl enable-linger
+#
+# Logs: journalctl --user -u claude-relay.service -f
+
+[Unit]
+Description=CodeRelay terminal relay server
+Documentation=https://github.com/miguelriotinto/CodeRelay
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/claude-relay-server
+WorkingDirectory=%h
+Restart=always
+RestartSec=5
+# Sessions exec the user's login shell, which builds its own PATH; the service
+# itself needs only the system directories.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

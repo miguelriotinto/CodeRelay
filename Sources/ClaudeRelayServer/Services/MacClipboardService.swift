@@ -1,3 +1,4 @@
+#if canImport(AppKit)
 import AppKit
 import ClaudeRelayKit
 
@@ -11,3 +12,4 @@ public struct MacClipboardService: ClipboardService {
         return true
     }
 }
+#endif

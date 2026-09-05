@@ -1,10 +1,21 @@
+#if defined(__linux__)
+#define _GNU_SOURCE 1   /* POSIX_SPAWN_SETSID in <spawn.h> */
+#endif
 #include "pty_shim.h"
 #include <assert.h>
+#include <spawn.h>
 #include <errno.h>
-#include <util.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+
+// The PTY primitives (forkpty, winsize, tcgetpgrp) are POSIX and shared. The
+// process-introspection helpers are not: Darwin answers them with sysctl and
+// libproc, Linux with /proc. Each platform's implementations live behind its
+// own guard — Darwin's below, Linux's in pty_shim_linux.c — so one C target
+// compiles for macOS, iOS, and Linux from the same header.
+#if defined(__APPLE__)
+#include <util.h>
 #include <sys/sysctl.h>
 #include <sys/proc.h>
 #include <TargetConditionals.h>
@@ -13,6 +24,9 @@
 // shim also compiles into the iOS app, so guard the include + implementations.
 #if TARGET_OS_OSX
 #include <libproc.h>
+#endif
+#elif defined(__linux__)
+#include <pty.h>
 #endif
 
 int relay_forkpty(int *master_fd, struct winsize *ws) {
@@ -45,6 +59,12 @@ int relay_get_winsize(int fd, unsigned short *rows, unsigned short *cols) {
 int relay_get_foreground_pgid(int fd) {
     return tcgetpgrp(fd);
 }
+
+short relay_posix_spawn_setsid_flag(void) {
+    return (short)POSIX_SPAWN_SETSID;
+}
+
+#if defined(__APPLE__)
 
 int relay_get_process_name(int pid, char *buf, int bufsize) {
     if (bufsize <= 0) return -1;
@@ -256,3 +276,5 @@ int relay_proc_cwd_descendant(int pid, char *buf, int buflen) {
 }
 
 #endif
+
+#endif /* __APPLE__ */

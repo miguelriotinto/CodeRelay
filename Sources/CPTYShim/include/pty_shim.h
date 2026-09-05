@@ -82,4 +82,11 @@ int relay_proc_cwd(int pid, char *buf, int buflen);
 /// success (writing into `buf`), -1 if no descendant cwd is readable.
 int relay_proc_cwd_descendant(int pid, char *buf, int buflen);
 
+/// The platform's `POSIX_SPAWN_SETSID` flag for `posix_spawnattr_setflags`.
+/// Exposed as a function because glibc declares the macro only under
+/// `_GNU_SOURCE`, which Swift's Glibc module does not define, and its value
+/// differs between Darwin (0x0400) and Linux (0x80). Used by the PTY tests to
+/// spawn a probe that leads its own session, as `forkpty` does.
+short relay_posix_spawn_setsid_flag(void);
+
 #endif /* PTY_SHIM_H */

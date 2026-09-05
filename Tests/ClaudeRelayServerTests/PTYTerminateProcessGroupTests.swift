@@ -251,15 +251,23 @@ final class PTYTerminateProcessGroupTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: outputPath) }
         FileManager.default.createFile(atPath: outputPath, contents: nil)
 
+        // `posix_spawnattr_t` is an opaque pointer on Darwin (so Optional in
+        // Swift) and a plain struct on Linux; declaring the storage per platform
+        // lets every call below take `&attr` unchanged.
+        #if os(Linux)
+        var attr = posix_spawnattr_t()
+        var actions = posix_spawn_file_actions_t()
+        #else
         var attr: posix_spawnattr_t?
+        var actions: posix_spawn_file_actions_t?
+        #endif
         posix_spawnattr_init(&attr)
         defer { posix_spawnattr_destroy(&attr) }
         // POSIX_SPAWN_SETSID makes the spawned process a *session* leader, which is
         // what `forkpty` does and what this test needs: the probe must not share the
         // test runner's session, or the reap under test would signal the runner.
-        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
+        posix_spawnattr_setflags(&attr, relay_posix_spawn_setsid_flag())
 
-        var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDWR, 0)
@@ -271,7 +279,7 @@ final class PTYTerminateProcessGroupTests: XCTestCase {
 
         var leader: pid_t = 0
         let result = argv.withUnsafeBufferPointer { buffer in
-            posix_spawn(&leader, "/bin/sh", &actions, &attr, buffer.baseAddress, environ)
+            posix_spawn(&leader, "/bin/sh", &actions, &attr, buffer.baseAddress!, environ)
         }
         guard result == 0 else {
             throw XCTSkip("posix_spawn of the probe session failed (errno \(result))")
@@ -312,14 +320,19 @@ final class PTYTerminateProcessGroupTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: outputPath) }
         FileManager.default.createFile(atPath: outputPath, contents: nil)
 
+        #if os(Linux)
+        var attr = posix_spawnattr_t()
+        var actions = posix_spawn_file_actions_t()
+        #else
         var attr: posix_spawnattr_t?
+        var actions: posix_spawn_file_actions_t?
+        #endif
         posix_spawnattr_init(&attr)
         defer { posix_spawnattr_destroy(&attr) }
         // pgroup 0 => the spawned process becomes its own group leader.
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP))
         posix_spawnattr_setpgroup(&attr, 0)
 
-        var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDWR, 0)
@@ -331,7 +344,7 @@ final class PTYTerminateProcessGroupTests: XCTestCase {
 
         var leader: pid_t = 0
         let result = argv.withUnsafeBufferPointer { buffer in
-            posix_spawn(&leader, "/bin/sh", &actions, &attr, buffer.baseAddress, environ)
+            posix_spawn(&leader, "/bin/sh", &actions, &attr, buffer.baseAddress!, environ)
         }
         guard result == 0 else {
             throw XCTSkip("posix_spawn of the probe group failed (errno \(result))")
