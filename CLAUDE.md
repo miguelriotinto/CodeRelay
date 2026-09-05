@@ -35,6 +35,7 @@ Note: Service commands are top-level (`claude-relay stop`), while token/session/
 Use `/coderelay-deploy [ios|android|mac|server|all]` to build, publish, and verify; `/coderelay-health` for a read-only "is everything published and running?" check. Those skills own the version-bump trio, the publish targets, and the mandatory verification steps — never claim something is published without running them.
 
 - **The user installs APKs by downloading from GitHub Releases on the phone — the Android device is NOT adb-connected to this machine.** Never assume `adb install` reaches the user's device.
+- **A `vX.Y.Z` tag is the release.** `release.yml` builds and publishes the Linux client tarball, the Linux server + CLI tarball and the Android APK together, with a release body sectioned per platform, then bumps the Homebrew tap and the AUR. The APK is only signed with the project key when the `ANDROID_KEYSTORE_*` repo secrets exist (see `ClaudeRelayAndroid/RELEASE.md`); until then it is debug-signed and the body flags it.
 
 ## Architecture
 

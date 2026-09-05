@@ -42,7 +42,7 @@ The macOS server/CLI and the two Apple clients are built from one Swift package;
 
 **Android client (separate Gradle project, `ClaudeRelayAndroid/`):**
 
-- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and an on-device speech pipeline). It speaks the identical wire protocol to the same server. Distributed as test builds via GitHub Releases (`android-v*` tags) — see [`ClaudeRelayAndroid/RELEASE.md`](ClaudeRelayAndroid/RELEASE.md).
+- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and an on-device speech pipeline). It speaks the identical wire protocol to the same server. The APK is published with every [release](https://github.com/miguelriotinto/ClaudeRelay/releases) (`vX.Y.Z` tags, under its own **Android client** section) next to the Linux client and server; interim test builds also appear as `android-v*` pre-releases — see [`ClaudeRelayAndroid/RELEASE.md`](ClaudeRelayAndroid/RELEASE.md).
 
 ## Installation
 
@@ -63,6 +63,12 @@ Install the prebuilt package (statically linked; depends only on `curl`, with
 yay -S coderelay-server-bin
 claude-relay setup                 # starts the service, prints a pairing QR
 ```
+
+Or download the tarballs straight from the [Releases](https://github.com/miguelriotinto/ClaudeRelay/releases)
+page — every release has a **Linux server + CLI** section
+(`claude-relay-vX.Y.Z-linux-x86_64.tar.gz`), a **Linux client** section
+(`coderelay-vX.Y.Z-linux-x86_64.tar.gz`, the Compose Desktop app; also
+`yay -S coderelay-bin`), and an **Android client** section with the APK.
 
 `setup` installs and starts `claude-relay.service` for your user and prints the
 pairing QR. The service runs while you are logged in; for a headless host that

@@ -5,9 +5,11 @@ name: Release
 #   2. "Run workflow" button in the Actions UI — for re-runs or out-of-band
 #      releases; you type the version ("v0.3.4") manually
 #
-# Both paths produce identical artifacts: arm64 + x86_64 tarballs, a GitHub
-# Release, and an auto-push of the formula bump to the homebrew-clauderelay
-# tap so `brew upgrade clauderelay` picks it up immediately.
+# Both paths produce identical artifacts: the Linux client tarball, the Linux
+# server + CLI tarball, the Android APK (and the macOS server tarballs when
+# that best-effort build succeeds), a GitHub Release whose body has one
+# section per platform, and auto-pushed bumps to the homebrew-clauderelay tap
+# and the AUR so `brew upgrade` / `yay -Syu` pick the version up immediately.
 
 on:
   push:
@@ -264,13 +266,137 @@ jobs:
           name: claude-relay-linux-x86_64
           path: dist/out/*.tar.gz
 
+  # ── Build the Android client ─────────────────────────────────────────────
+  # The APK is a first-class release asset next to the two Linux tarballs: the
+  # user installs it by downloading it from the release page on the phone (no
+  # adb), so it must be here, sectioned and checksummed like everything else.
+  #
+  # Signing: the release buildType reads `keystore.properties`. When the four
+  # ANDROID_* secrets are set the job writes that file from them and the APK is
+  # signed with the real key; otherwise Gradle's fallback debug-signs it with
+  # the runner's throwaway key. Android refuses an update whose signer differs
+  # from the installed app, so an unsigned CI build cannot be installed over a
+  # phone that has a properly signed one — the release body says which it is.
+  #   ANDROID_KEYSTORE_B64      base64 of the .jks/.keystore file
+  #   ANDROID_KEYSTORE_PASSWORD store password
+  #   ANDROID_KEY_ALIAS         key alias
+  #   ANDROID_KEY_PASSWORD      key password
+  # The Android versionName is its own milestone scheme (0.3-mNN, see
+  # RELEASE.md), independent of the release tag; both appear in the body.
+
+  build-android:
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version_name: ${{ steps.version.outputs.version_name }}
+      version_code: ${{ steps.version.outputs.version_code }}
+      signing: ${{ steps.sign.outputs.signing }}
+    defaults:
+      run:
+        working-directory: ClaudeRelayAndroid
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-version.outputs.tag }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Read versionName / versionCode
+        id: version
+        run: |
+          VN=$(grep -E '^\s*versionName = ' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')
+          VC=$(grep -E '^\s*versionCode = ' app/build.gradle.kts | sed -E 's/.*= *([0-9]+).*/\1/')
+          test -n "$VN" && test -n "$VC" || { echo "could not read versionName/versionCode from app/build.gradle.kts"; exit 1; }
+          echo "version_name=$VN" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VC" >> "$GITHUB_OUTPUT"
+          echo "Android $VN (versionCode $VC)"
+
+      - name: Configure release signing from secrets (if present)
+        id: sign
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "ANDROID_KEYSTORE_B64 is not set; the APK will be debug-signed with the runner's key."
+            echo "signing=debug" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for v in KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [ -n "${!v}" ] || { echo "ANDROID_KEYSTORE_B64 is set but ANDROID_$v is missing"; exit 1; }
+          done
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          chmod 600 "$RUNNER_TEMP/release.keystore"
+          # keystore.properties is gitignored; build.gradle.kts reads exactly these keys.
+          cat > keystore.properties <<EOF
+          storeFile=$RUNNER_TEMP/release.keystore
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+          chmod 600 keystore.properties
+          echo "signing=release" >> "$GITHUB_OUTPUT"
+
+      # Gate the release on the unit tests, as the Linux jobs do.
+      - name: Test
+        run: ./gradlew test testDebugUnitTest --no-daemon
+
+      - name: Assemble the release APK
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Package
+        env:
+          TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
+          SIGNING: ${{ steps.sign.outputs.signing }}
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK" || { echo "release APK missing at $APK"; ls -R app/build/outputs/apk || true; exit 1; }
+
+          # Prove the signer matches what the job believes it configured, and
+          # print it so the run log shows which certificate a phone will see.
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            # AGP normally pulls build-tools in during the build; make sure.
+            yes | sdkmanager --licenses >/dev/null 2>&1 || true
+            sdkmanager "build-tools;34.0.0"
+            APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          fi
+          "$APKSIGNER" verify --print-certs "$APK" | tee /tmp/certs.txt
+          if [ "$SIGNING" = "release" ] && grep -q 'CN=Android Debug' /tmp/certs.txt; then
+            echo "expected the release key but the APK is debug-signed — keystore.properties was not picked up"
+            exit 1
+          fi
+
+          mkdir -p dist
+          cp "$APK" "dist/coderelay-${TAG_NAME}-android.apk"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coderelay-android
+          path: ClaudeRelayAndroid/dist/*.apk
+
   # ── Create GitHub Release + publish artifacts ───────────────────────────
 
   release:
-    needs: [resolve-version, build, build-linux, build-linux-server]
-    # The Linux tarball is the artifact this release exists to publish; the
-    # macOS build above is best-effort (see its comment).
-    if: ${{ !cancelled() && needs.resolve-version.result == 'success' && needs.build-linux.result == 'success' && needs.build-linux-server.result == 'success' }}
+    needs: [resolve-version, build, build-linux, build-linux-server, build-android]
+    # The Linux client, Linux server and Android APK are the artifacts this
+    # release exists to publish, so all three gate it; the macOS build above is
+    # best-effort (see its comment) and only adds assets when it succeeds.
+    if: ${{ !cancelled() && needs.resolve-version.result == 'success' && needs.build-linux.result == 'success' && needs.build-linux-server.result == 'success' && needs.build-android.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       source_sha256: ${{ steps.sha.outputs.source_sha256 }}
@@ -289,9 +415,7 @@ jobs:
       - name: Compute binary checksums
         run: |
           cd artifacts
-          for f in *.tar.gz; do
-            sha256sum "$f"
-          done | tee checksums.txt
+          sha256sum *.tar.gz *.apk | tee checksums.txt
 
       - name: Compute source tarball SHA256
         id: sha
@@ -315,13 +439,95 @@ jobs:
             echo "Linux tarball not found; the AUR job will skip."
           fi
 
+      # The release body is one section per platform — what the asset is, how
+      # to install it, and its checksum — so a visitor to the Releases page can
+      # find their download without reading the changelog. The auto-generated
+      # "What's Changed" list is appended below it by action-gh-release.
+      - name: Write release notes
+        env:
+          TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
+          REPO: ${{ github.repository }}
+          ANDROID_VERSION_NAME: ${{ needs.build-android.outputs.version_name }}
+          ANDROID_VERSION_CODE: ${{ needs.build-android.outputs.version_code }}
+          ANDROID_SIGNING: ${{ needs.build-android.outputs.signing }}
+        run: |
+          DL="https://github.com/${REPO}/releases/download/${TAG_NAME}"
+          CLIENT="coderelay-${TAG_NAME}-linux-x86_64.tar.gz"
+          SERVER="claude-relay-${TAG_NAME}-linux-x86_64.tar.gz"
+          APK="coderelay-${TAG_NAME}-android.apk"
+          sha() { awk -v f="$1" '$2 == f { print $1 }' artifacts/checksums.txt; }
+
+          {
+            echo "## Downloads"
+            echo
+            echo "| Platform | Asset | Version |"
+            echo "|---|---|---|"
+            echo "| Linux client (x86_64) | [\`${CLIENT}\`](${DL}/${CLIENT}) | ${TAG_NAME} |"
+            echo "| Linux server + CLI (x86_64) | [\`${SERVER}\`](${DL}/${SERVER}) | ${TAG_NAME} |"
+            echo "| Android client | [\`${APK}\`](${DL}/${APK}) | ${ANDROID_VERSION_NAME} (versionCode ${ANDROID_VERSION_CODE}) |"
+            for f in artifacts/claude-relay-${TAG_NAME}-macos-*.tar.gz; do
+              [ -f "$f" ] || continue
+              b=$(basename "$f"); arch=${b#claude-relay-${TAG_NAME}-macos-}; arch=${arch%.tar.gz}
+              echo "| macOS server + CLI (${arch}) | [\`${b}\`](${DL}/${b}) | ${TAG_NAME} |"
+            done
+            echo "| macOS server + CLI | Homebrew: \`brew install miguelriotinto/clauderelay/clauderelay\` | ${TAG_NAME} |"
+            echo "| iOS / macOS app | TestFlight | — |"
+            echo
+            echo "### Linux client"
+            echo
+            echo "Compose Desktop app for Arch / Omarchy and any x86_64 glibc host, with its own JRE and the libvterm terminal bundled. Runtime deps: \`libsecret\`, \`libnotify\`."
+            echo
+            echo '```bash'
+            echo "yay -S coderelay-bin                       # AUR"
+            echo "# or manually:"
+            echo "curl -LO ${DL}/${CLIENT}"
+            echo "tar xzf ${CLIENT} && ./coderelay/bin/coderelay"
+            echo '```'
+            echo
+            echo "### Linux server + CLI"
+            echo
+            echo "\`claude-relay-server\` and the \`claude-relay\` CLI, statically linked against the Swift runtime, plus the systemd user unit and the agent state hook. Runs as \`claude-relay.service\` for your user."
+            echo
+            echo '```bash'
+            echo "yay -S coderelay-server-bin                # AUR"
+            echo "claude-relay setup                         # starts the service, prints a pairing QR"
+            echo "# or manually:"
+            echo "curl -LO ${DL}/${SERVER}"
+            echo "mkdir -p claude-relay && tar xzf ${SERVER} -C claude-relay"
+            echo '```'
+            echo
+            echo "### Android client"
+            echo
+            echo "Version ${ANDROID_VERSION_NAME} (versionCode ${ANDROID_VERSION_CODE}). Open this page on the phone, download the APK, and install it over the existing app; allow installs from your browser if Android asks."
+            if [ "$ANDROID_SIGNING" != "release" ]; then
+              echo
+              echo "> **Signing:** this APK is debug-signed with a CI key. Android will not install it over a build signed with a different key — uninstall the old app first, or configure the \`ANDROID_KEYSTORE_*\` repository secrets so the release workflow signs with the project key."
+            fi
+            echo
+            echo "### macOS"
+            echo
+            echo "The server ships through Homebrew (the tap is bumped by this release); the desktop and iOS apps go through TestFlight. The macOS tarballs above, when present, are the bare server + CLI binaries for a manual install."
+            echo
+            echo "### Checksums (SHA-256)"
+            echo
+            echo '```'
+            cat artifacts/checksums.txt
+            echo '```'
+            echo
+          } > release-notes.md
+
+          echo "=== release-notes.md ==="
+          cat release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve-version.outputs.tag }}
+          body_path: release-notes.md
           generate_release_notes: true
           files: |
             artifacts/*.tar.gz
+            artifacts/*.apk
             artifacts/checksums.txt
 
   # ── Push formula update to homebrew-clauderelay tap ─────────────────────

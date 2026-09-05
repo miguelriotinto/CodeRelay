@@ -53,16 +53,39 @@ since their last release tag and confirm the skip list with the user.
 - **macOS**: same flow — including both flags — with scheme ClaudeRelayMac. Note
   its distribution log dir is named `ClaudeRelayMac_*`, after the *scheme*, not
   after `PRODUCT_NAME` ("Code[Relay]").
-- **Android**: `./gradlew :app:assembleRelease`, copy to
+- **Android, Linux client, Linux server**: all three are built and published
+  by the Release workflow (`.github/workflows/release.yml`) when a `vX.Y.Z`
+  tag is pushed. Tag main and push it:
+  `git tag vX.Y.Z && git push origin vX.Y.Z`, then watch
+  `gh run watch $(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')`.
+  The workflow gates on the Swift, Gradle-desktop and Android unit tests,
+  then creates the release with a body that has **one section per platform**
+  (Downloads table → Linux client → Linux server + CLI → Android client →
+  macOS → Checksums) and these assets:
+  - `coderelay-vX.Y.Z-linux-x86_64.tar.gz` — Linux client (also the AUR
+    `coderelay-bin` source)
+  - `claude-relay-vX.Y.Z-linux-x86_64.tar.gz` — Linux server + CLI (also the
+    AUR `coderelay-server-bin` source)
+  - `coderelay-vX.Y.Z-android.apk` — Android client, versionName from
+    `app/build.gradle.kts` (its own `0.3-mNN` scheme; bump it in step 2 when
+    Android changed, otherwise the previous milestone ships again under the new
+    tag, which is fine)
+  - `checksums.txt`
+  The APK is signed with the project key only if the `ANDROID_KEYSTORE_B64` /
+  `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`
+  secrets are set (`gh secret set`); otherwise it is debug-signed with the
+  runner's key and the release body says so. **A phone will not update across
+  a signer change** — see `ClaudeRelayAndroid/RELEASE.md` §"CI signing".
+  Out-of-band Android test builds (no server/Linux change worth a tag) can
+  still go the old way: `./gradlew :app:assembleRelease`, copy to
   `/tmp/CodeRelay-<versionName>.apk`,
   `gh release create android-v<versionName> <apk> --prerelease` with title
-  `Android client test build — <versionName> (<one-line summary>)` and notes
-  following the m20/m21 format (What's new, server-compat warning if protocol
-  changed, Install section). Android releases are always **pre-releases** tagged
-  `android-v<versionName>` with asset `CodeRelay-<versionName>.apk`; the main
-  `vX.Y.Z` releases carry no binaries (the server ships via Homebrew).
-- **Server**: push to main, `brew upgrade clauderelay && brew services restart
-  clauderelay` (never run the server binary directly or pkill).
+  `Android client test build — <versionName> (<one-line summary>)`. Those are
+  always **pre-releases** tagged `android-v<versionName>`.
+- **Server (macOS host)**: push to main, `brew upgrade clauderelay && brew
+  services restart clauderelay` (never run the server binary directly or
+  pkill). On a Linux host: `yay -Syu coderelay-server-bin` once the AUR job
+  has pushed, or drop the tarball in and `claude-relay restart`.
 
 ## 4. VERIFY — mandatory
 
@@ -71,9 +94,15 @@ since their last release tag and confirm the skip list with the user.
   Also confirm the archive's `CFBundleVersion` matches the bump. That log line is
   the proof of upload — Apple-side processing then takes up to ~1 h, so a build
   not yet visible in TestFlight is not a failure.
+- **Release workflow (Android + Linux)**: the run must end `success`, and
+  `gh release view vX.Y.Z --json assets` must list the client tarball, the
+  server tarball, the APK and `checksums.txt`. The release body must have the
+  per-platform sections (`gh release view vX.Y.Z` prints it).
 - **Android**: download the APK **back from the release URL** with
-  `gh release download`, then `aapt2 dump badging` must show the new
-  `versionCode`/`versionName`. Byte size alone is NOT proof.
+  `gh release download vX.Y.Z -p '*.apk'`, then `aapt2 dump badging` must
+  show the expected `versionCode`/`versionName`. Byte size alone is NOT proof.
+  If the run log's `apksigner verify --print-certs` shows `CN=Android Debug`
+  while the phone has a project-key build, the phone cannot update over it.
 - **Server**: `swift run claude-relay status` (or `claude-relay status`) must
   report the new version; `curl -s http://127.0.0.1:9100/health` must be ok;
   `/opt/homebrew/bin/claude-relay-server` symlink must point at the new Cellar

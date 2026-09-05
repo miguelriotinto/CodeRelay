@@ -48,3 +48,9 @@ jobs:
 
       - name: Assemble the whole project (verifies the full module graph links)
         run: ./gradlew assembleDebug --no-daemon
+
+      # The release workflow ships :app:assembleRelease (R8 full-mode, resource
+      # shrinking). Build it here too so a keep-rule regression fails the PR
+      # instead of the tag. Debug-signed — keystore.properties is absent on CI.
+      - name: Assemble the release APK (what the Release workflow publishes)
+        run: ./gradlew :app:assembleRelease --no-daemon

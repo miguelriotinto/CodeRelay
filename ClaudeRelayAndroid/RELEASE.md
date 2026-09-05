@@ -65,6 +65,40 @@ keyPassword=<key password>
   `./gradlew :app:assembleRelease` still builds (headless/CI). A debug-signed
   artifact is **not** uploadable to Play — it only verifies R8 + keep rules link.
 
+## 2b. CI signing — the APK on the GitHub Releases page
+
+Every `vX.Y.Z` tag runs `.github/workflows/release.yml`, whose `build-android`
+job assembles `:app:assembleRelease` and publishes it as
+`coderelay-vX.Y.Z-android.apk` under the release's **Android client** section.
+That build has no `keystore.properties`, so by default it is **debug-signed
+with the runner's throwaway key** — and Android refuses to install an APK over
+an app whose signer differs, so a phone running a locally built APK cannot
+update to it (it must uninstall first).
+
+To have CI sign with a stable key, add four repository secrets; the job writes
+`keystore.properties` from them and asserts the result is not debug-signed:
+
+```bash
+gh secret set ANDROID_KEYSTORE_B64      < <(base64 -w0 /path/to/key.jks)   # macOS: base64 -i key.jks
+gh secret set ANDROID_KEYSTORE_PASSWORD --body '<store password>'
+gh secret set ANDROID_KEY_ALIAS         --body '<alias>'
+gh secret set ANDROID_KEY_PASSWORD      --body '<key password>'
+```
+
+Which key to upload:
+
+- **The upload key from §1** — the right long-term answer, and the one that
+  keeps Play and GitHub installs mutually updatable. Phones that currently run
+  a debug-signed build must uninstall once when switching.
+- **The dev Mac's debug key** — `~/.android/debug.keystore`, store/key
+  password `android`, alias `androiddebugkey`. This is what the `android-v*`
+  pre-releases to date were signed with, so uploading it lets existing phones
+  update from the GitHub APK with no uninstall. It is a debug key: fine for the
+  test-build channel, never Play-eligible.
+
+Without the secrets the release still publishes; its Android section carries a
+note saying the APK is debug-signed.
+
 ## 3. Bump the version (each release)
 
 In `app/build.gradle.kts > android.defaultConfig`:
