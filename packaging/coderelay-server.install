@@ -1,0 +1,29 @@
+# pacman scriptlets for coderelay-server-bin. Referenced by the PKGBUILD's
+# `install=` — functions defined inside a PKGBUILD itself are never run.
+
+post_install() {
+  cat <<'MSG'
+CodeRelay server installed. To start it for your user:
+
+  claude-relay setup                 # starts the service and prints a pairing QR
+    # or, by hand:
+  systemctl --user enable --now claude-relay.service
+
+Serve with nobody logged in (headless host):
+  loginctl enable-linger
+
+Config:  ~/.claude-relay/config.json   (WebSocket 9200, admin 9100)
+Logs:    journalctl --user -u claude-relay.service -f
+MSG
+}
+
+post_upgrade() {
+  # The unit file may have changed, and a *user* manager will not notice on its
+  # own. This scriptlet runs as root, where `systemctl --user` addresses root's
+  # own manager rather than the logged-in user's — so tell the operator instead
+  # of reaching across session boundaries and getting it wrong.
+  cat <<'MSG'
+Server updated. In your own session, pick up the new unit and binary with:
+  systemctl --user daemon-reload && claude-relay restart
+MSG
+}

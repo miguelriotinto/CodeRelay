@@ -31,6 +31,32 @@ final class HostAddressProbeLinuxTests: XCTestCase {
         XCTAssertEqual(HostAddressResolver.choose(from: candidates)?.host, "192.168.10.136")
     }
 
+    /// A self-assigned 169.254 address classifies as `.lan` (shared with macOS,
+    /// because the apps' ATS allowlist covers it), so it ties with a routable
+    /// RFC1918 literal on rank and order alone would decide. Nothing else on the
+    /// network can reach a link-local address, so it must sort last.
+    func testLinkLocalSortsBelowRoutableAddresses() {
+        let ordered = HostAddressProbe.orderedInterfaces([
+            (name: "enp3s0", address: "169.254.12.7"),
+            (name: "wlp0s20f3", address: "192.168.10.136"),
+        ])
+        XCTAssertEqual(ordered.map(\.address), ["192.168.10.136", "169.254.12.7"])
+
+        let candidates = ordered.map {
+            HostCandidate(host: $0.address, kind: HostAddressProbe.kind(forHost: $0.address))
+        }
+        XCTAssertEqual(HostAddressResolver.choose(from: candidates)?.host, "192.168.10.136")
+    }
+
+    /// But it is still offered when it is all there is — the caller checks
+    /// `requiresTLS` and prints a code; reporting "no address" would be worse.
+    func testLinkLocalIsStillReturnedWhenItIsTheOnlyAddress() {
+        let ordered = HostAddressProbe.orderedInterfaces([
+            (name: "enp3s0", address: "169.254.12.7"),
+        ])
+        XCTAssertEqual(ordered.map(\.address), ["169.254.12.7"])
+    }
+
     func testLocalHostnameIsShortAndLowercase() throws {
         let name = try XCTUnwrap(HostAddressProbe.localHostname())
         XCTAssertFalse(name.contains("."))

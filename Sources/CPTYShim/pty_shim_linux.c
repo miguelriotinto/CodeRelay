@@ -220,8 +220,10 @@ long long relay_get_process_start_time(int pid) {
     if (ticks < 0) return -1;
     long hz = sysconf(_SC_CLK_TCK);
     if (hz <= 0) hz = 100;
-    // Microseconds since boot: same units as Darwin's packed timeval, and
-    // exact for any HZ that divides 1,000,000 (100, 250, 300, 1000 all do).
+    // Microseconds since boot: same units as Darwin's packed timeval. Exact
+    // when HZ divides 1,000,000 (100, 250, 1000 do); at HZ=300 the division
+    // truncates, which costs nothing here — the value only has to be stable
+    // per pid and different across a reuse, never a wall-clock reading.
     return ticks * (1000000LL / hz);
 }
 

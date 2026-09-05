@@ -40,6 +40,10 @@ optdepends=(
 
 options=('!strip')  # binaries are already release-built; keep debug info out but do not re-strip the static runtime
 
+# Scriptlets must live in their own file: functions named post_install/
+# post_upgrade inside a PKGBUILD are never executed by pacman.
+install="$_pkgname.install"
+
 source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/claude-relay-v$pkgver-linux-x86_64.tar.gz")
 # pkgver and this digest are rewritten by the release workflow (aur job) from
 # the tag and the tarball it built; the value here is the last release's.
@@ -68,25 +72,4 @@ package() {
     "$pkgdir/usr/share/clauderelay/claude-relay-state-hook.sh"
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-}
-
-post_install() {
-  cat <<'MSG'
-CodeRelay server installed. To start it for your user:
-
-  claude-relay setup                 # starts the service and prints a pairing QR
-    # or, by hand:
-  systemctl --user enable --now claude-relay.service
-
-Serve with nobody logged in (headless host):
-  loginctl enable-linger
-
-Config:  ~/.claude-relay/config.json   (WebSocket 9200, admin 9100)
-Logs:    journalctl --user -u claude-relay.service -f
-MSG
-}
-
-post_upgrade() {
-  systemctl --user daemon-reload 2>/dev/null || true
-  echo "If the service is running, restart it:  claude-relay restart"
 }

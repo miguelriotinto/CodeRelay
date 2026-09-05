@@ -53,7 +53,19 @@ public struct LinuxClipboardService: ClipboardService {
             do { try process.run() } catch { return false }
             // `wl-copy` forks a child that keeps serving the selection and the
             // parent exits once it has read stdin, so this returns promptly.
-            input.fileHandleForWriting.write(stdin)
+            //
+            // The throwing `write(contentsOf:)`, not the deprecated `write(_:)`:
+            // if the tool exits before reading stdin the pipe's read end is
+            // closed and the write fails with EPIPE. SIGPIPE is ignored
+            // process-wide (NIO does that), so the deprecated call would trap
+            // and take the server down; here a failed paste is just `false`.
+            do {
+                try input.fileHandleForWriting.write(contentsOf: stdin)
+            } catch {
+                try? input.fileHandleForWriting.close()
+                process.waitUntilExit()
+                return false
+            }
             try? input.fileHandleForWriting.close()
             process.waitUntilExit()
             return process.terminationStatus == 0
@@ -100,12 +112,19 @@ public struct LinuxClipboardService: ClipboardService {
         guard let runtimeDir = environment["XDG_RUNTIME_DIR"], !runtimeDir.isEmpty else {
             return nil
         }
-        for candidate in ["wayland-1", "wayland-0"] {
-            if FileManager.default.fileExists(atPath: "\(runtimeDir)/\(candidate)") {
-                var env = environment
-                env["WAYLAND_DISPLAY"] = candidate
-                return env
+        // Any `wayland-N`, not just 0 and 1: a second compositor on the same
+        // user gets wayland-2 and up. Highest first, so the most recently
+        // started compositor wins — that is the session a person is looking at.
+        let sockets = (try? FileManager.default.contentsOfDirectory(atPath: runtimeDir)) ?? []
+        let candidates = sockets
+            .filter { $0.hasPrefix("wayland-") && $0.dropFirst("wayland-".count).allSatisfy(\.isNumber) }
+            .sorted { lhs, rhs in
+                (Int(lhs.dropFirst("wayland-".count)) ?? 0) > (Int(rhs.dropFirst("wayland-".count)) ?? 0)
             }
+        if let socket = candidates.first {
+            var env = environment
+            env["WAYLAND_DISPLAY"] = socket
+            return env
         }
         return nil
     }

@@ -141,6 +141,16 @@ struct HostAddressProbe {
     /// among equally-ranked `.lan` literals the one a phone can actually reach
     /// wins `HostAddressResolver.choose`. Tailscale is kept — it classifies as
     /// `.cgnat` and ranks itself — as is anything unrecognised.
+    ///
+    /// IPv4 link-local (169.254/16) sinks to the bottom. It classifies as
+    /// `.lan` — correct, and shared with macOS, because the apps' ATS
+    /// allowlist covers it — but that gives it the *same rank* as a routable
+    /// RFC1918 literal, so on a host holding both (NetworkManager keeping
+    /// `ipv4.link-local`, or a NIC that self-assigned before DHCP answered)
+    /// order alone decides, and a self-assigned address is one nothing else on
+    /// the network can reach. macOS never had to rank this: it asks
+    /// `ipconfig getifaddr` for one address per interface, where this probe
+    /// enumerates every address the kernel holds.
     static func orderedInterfaces(
         _ interfaces: [(name: String, address: String)]
     ) -> [(name: String, address: String)] {
@@ -149,9 +159,13 @@ struct HostAddressProbe {
         let kept = interfaces.filter { iface in
             !virtualPrefixes.contains { iface.name.hasPrefix($0) }
         }
-        let physical = kept.filter { iface in physicalPrefixes.contains { iface.name.hasPrefix($0) } }
-        let rest = kept.filter { iface in !physicalPrefixes.contains { iface.name.hasPrefix($0) } }
-        return physical + rest
+        func isLinkLocal(_ iface: (name: String, address: String)) -> Bool {
+            iface.address.hasPrefix("169.254.")
+        }
+        let routable = kept.filter { !isLinkLocal($0) }
+        let physical = routable.filter { iface in physicalPrefixes.contains { iface.name.hasPrefix($0) } }
+        let rest = routable.filter { iface in !physicalPrefixes.contains { iface.name.hasPrefix($0) } }
+        return physical + rest + kept.filter(isLinkLocal)
     }
     #else
     static func candidates() -> [HostCandidate] {
