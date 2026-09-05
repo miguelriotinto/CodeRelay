@@ -6,6 +6,35 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
+## [0.3.24] - 2026-09-05 — native Linux server, one release page for everything
+
+### Server — Linux port
+
+`claude-relay-server` and the `claude-relay` CLI build and run natively on
+Linux (Arch/Omarchy and any systemd host): PTY process introspection via
+`/proc`, the account's own login shell instead of `login -fp`, a
+`wl-copy`/`xclip` clipboard service, and a **systemd user unit**
+(`claude-relay.service`) driven by the same `load/unload/start/stop/restart`
+commands through the `ServicePlatform` seam. Statically linked tarball
+`claude-relay-vX.Y.Z-linux-x86_64.tar.gz`; AUR package `coderelay-server-bin`.
+Full design in `docs/linux-server-spec.md`.
+
+### Release page
+
+Every `vX.Y.Z` release now publishes the Linux client, the Linux server + CLI
+**and the Android APK** together, with a body sectioned per platform (Downloads
+table, install steps, SHA-256 checksums). The APK is signed with the project
+key when the `ANDROID_KEYSTORE_*` repo secrets are set; otherwise it is
+debug-signed and the release says so.
+
+### Android — 0.3-m50 (versionCode 49)
+
+- Detach the active session from the sidebar; sidebar toggle hook; settings
+  regrouped into sections.
+- Shared with the Linux client: font-metrics, DPI and key-mapping work.
+- URL scheme `coderelay://` for pairing and deep links.
+
+
 ## [0.3.23] - 2026-09-03 — Linux client, server rate limiter
 
 The Linux client is versioned with the server from here on: one `vX.Y.Z` tag

@@ -15,7 +15,7 @@
 
 pkgname=coderelay-server-bin
 _pkgname=coderelay-server
-pkgver=0.3.23
+pkgver=0.3.24
 pkgrel=1
 pkgdesc="CodeRelay terminal relay server and CLI (remote coding-agent sessions)"
 arch=('x86_64')

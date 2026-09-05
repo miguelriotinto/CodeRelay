@@ -15,7 +15,7 @@
 
 pkgname=coderelay-bin
 _pkgname=coderelay
-pkgver=0.3.23
+pkgver=0.3.24
 pkgrel=1
 pkgdesc="Remote terminal client for coding agents (Claude Code, Codex, opencode)"
 arch=('x86_64')
