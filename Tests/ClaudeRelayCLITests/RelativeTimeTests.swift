@@ -7,28 +7,31 @@ import XCTest
 final class RelativeTimeTests: XCTestCase {
 
     func testUnitsAndTruncationMatchTheAbbreviatedStyle() {
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 0), "0 sec. ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 45), "45 sec. ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 60), "1 min. ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 5 * 60 + 59), "5 min. ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 3600), "1 hr. ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 2 * 3600 + 1800), "2 hr. ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 86_400), "1 day ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 3 * 86_400), "3 days ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 7 * 86_400), "1 wk. ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 35 * 86_400), "1 mo. ago")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 400 * 86_400), "1 yr. ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 0), "0s ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 45), "45s ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 60), "1m ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 5 * 60 + 59), "5m ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 3600), "1h ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 2 * 3600 + 1800), "2h ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 86_400), "1d ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 3 * 86_400), "3d ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 7 * 86_400), "1w ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 35 * 86_400), "1mo ago")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: 400 * 86_400), "1y ago")
     }
 
     func testFutureDatesReadAsIn() {
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: -90), "in 1 min.")
-        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: -2 * 86_400), "in 2 days")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: -90), "in 1m")
+        XCTAssertEqual(RelativeTime.portableAbbreviated(seconds: -2 * 86_400), "in 2d")
     }
 
+    /// The parity check that matters: on macOS this runs the real
+    /// `RelativeDateTimeFormatter`, on Linux the stand-in. If the two ever
+    /// diverge, macOS CI fails here rather than the two servers quietly
+    /// printing different `session list` output.
     func testAbbreviatedUsesTheDateDifference() {
         let now = Date()
         let text = RelativeTime.abbreviated(from: now.addingTimeInterval(-5 * 60), relativeTo: now)
-        // Same on both backends: "5 min. ago".
-        XCTAssertEqual(text, "5 min. ago")
+        XCTAssertEqual(text, "5m ago")
     }
 }

@@ -17,10 +17,20 @@ final class PTYSessionCwdTests: XCTestCase {
         // Nudge the shell to print, proving it is alive and executing commands.
         await session.write("cd /tmp && pwd\n".data(using: .utf8)!)
         await fulfillment(of: [gotOutput], timeout: 5.0)
-        // Give the cd a beat to settle after the prompt echo.
-        try await Task.sleep(for: .milliseconds(400))
 
-        let cwd = await session.currentWorkingDirectory()
+        // First output means the shell is talking, NOT that it has run the cd:
+        // on Linux the login shell's own profile prints before it reaches a
+        // prompt, so a fixed grace period races heavier /etc/profile setups
+        // (it failed on ubuntu-latest, reading the still-unchanged home dir).
+        // Poll the accessor to a deadline instead — same assertion, no timing
+        // assumption.
+        var cwd = await session.currentWorkingDirectory()
+        let deadline = Date().addingTimeInterval(5.0)
+        while cwd != "/tmp", cwd != "/private/tmp", Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+            cwd = await session.currentWorkingDirectory()
+        }
+
         XCTAssertNotNil(cwd, "cwd should be readable while the shell child is alive")
         if let cwd { XCTAssertTrue(cwd == "/tmp" || cwd == "/private/tmp", "got \(cwd)") }
     }

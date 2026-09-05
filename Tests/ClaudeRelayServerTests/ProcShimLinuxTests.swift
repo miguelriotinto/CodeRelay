@@ -122,7 +122,13 @@ final class ProcShimLinuxTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let script = dir.appendingPathComponent("codex").path
-        try "#!/bin/sh\nexec sleep 30\n".write(toFile: script, atomically: true, encoding: .utf8)
+        // A loop, not `exec sleep` and not a bare final `sleep`: a shell
+        // tail-execs its last simple command, replacing its own argv — dash
+        // (Ubuntu's /bin/sh) does this fast enough that the process is already
+        // `sleep 30` by the time /proc is read, and argv[1] reads "30". The
+        // loop keeps the interpreter itself alive as `sh <script>`, which is
+        // the shape agent detection actually inspects.
+        try "#!/bin/sh\nwhile :; do sleep 30; done\n".write(toFile: script, atomically: true, encoding: .utf8)
 
         let pid = try spawn(["/bin/sh", script])
         defer { reap(pid) }
