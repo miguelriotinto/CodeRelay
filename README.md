@@ -93,8 +93,8 @@ swift build -c release
 Apple client libraries are excluded from the Linux build automatically:
 
 ```bash
-swift build -c release --static-swift-stdlib --product claude-relay-server
-swift build -c release --static-swift-stdlib --product claude-relay
+swift build -c release --static-swift-stdlib --product claude-relay-server -Xlinker -lcurl
+swift build -c release --static-swift-stdlib --product claude-relay -Xlinker -lcurl
 ```
 
 Binaries will be in `.build/release/`:

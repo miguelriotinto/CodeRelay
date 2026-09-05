@@ -223,10 +223,21 @@ jobs:
       - name: Test
         run: swift test
 
+      # FoundationNetworking's static archive (lib_CFURLSessionInterface.a)
+      # calls libcurl but --static-swift-stdlib does not add -lcurl for it, so
+      # the link fails with ~40 `undefined reference to curl_*`. Link libcurl
+      # explicitly; it stays a dynamic dependency on the system libcurl.so.4,
+      # which the PKGBUILD already depends on (curl is in Arch base). The
+      # -dev package provides the libcurl.so link-time symlink on the runner.
+      - name: Install libcurl headers (link-time only)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
+
       - name: Build release binaries (static Swift runtime)
         run: |
-          swift build -c release --static-swift-stdlib --product claude-relay-server
-          swift build -c release --static-swift-stdlib --product claude-relay
+          swift build -c release --static-swift-stdlib --product claude-relay-server -Xlinker -lcurl
+          swift build -c release --static-swift-stdlib --product claude-relay -Xlinker -lcurl
 
       - name: Assemble the tarball
         env:

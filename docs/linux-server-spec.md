@@ -406,14 +406,18 @@ Both halves of F11 hold:
 ### 10.1 Build
 
 ```bash
-swift build -c release --static-swift-stdlib --product claude-relay-server
-swift build -c release --static-swift-stdlib --product claude-relay
+swift build -c release --static-swift-stdlib --product claude-relay-server -Xlinker -lcurl
+swift build -c release --static-swift-stdlib --product claude-relay -Xlinker -lcurl
 ```
 
 `--static-swift-stdlib` links the Swift runtime and Foundation statically so the
 binaries do not depend on a Swift toolchain at runtime. Remaining dynamic dependencies
-are glibc, libstdc++, libgcc_s, and libcurl (FoundationNetworking, CLI only) — all in
-Arch's `base`. Verified with `ldd` in §12.
+are glibc, libstdc++, libgcc_s, and libcurl — all in Arch's `base`. Verified with
+`ldd` in §12. `-Xlinker -lcurl` is required: FoundationNetworking's static archive
+(`lib_CFURLSessionInterface.a`) calls libcurl but the static-stdlib link does not
+add it, and the link fails with `undefined reference to curl_*` (seen on Swift 6.0.3;
+the flag is harmless where a newer toolchain adds it itself). The link-time
+`libcurl.so` symlink comes from `libcurl4-openssl-dev` on Ubuntu / `curl` on Arch.
 
 ### 10.2 Artifacts a release ships
 
