@@ -148,10 +148,9 @@ struct SetupCommand: AsyncParsableCommand {
     }
 
     /// Starts the service using whichever manager owns it, so `setup` never
-    /// installs a second competing launchd agent.
+    /// installs a second competing service definition. The decision is the
+    /// platform's (`ServicePlatform.setupStartPlan`); this only carries it out.
     private func startService() async throws {
-        let detector = ServiceManagerDetector.detect()
-
         // `start`/`load` narrate to stdout, which is correct when they are the
         // command the operator ran but not when they are a subroutine of
         // `setup --json` — their chatter would land ahead of the JSON. Borrowing
@@ -159,31 +158,20 @@ struct SetupCommand: AsyncParsableCommand {
         var subGlobals = globals
         if globals.json { subGlobals.quiet = true }
 
-        switch detector.owner {
-        case .homebrew:
-            progress("Starting via Homebrew services…")
-            try runShell(["/bin/sh", "-c", "brew services start clauderelay"])
-        case .launchAgent:
-            progress("Starting the launchd agent…")
+        switch ServicePlatforms.current.setupStartPlan() {
+        case .shell(let command, let narration):
+            progress(narration)
+            try runShell(["/bin/sh", "-c", command])
+        case .start(let narration):
+            progress(narration)
             var start = StartCommand()
             start.globals = subGlobals
             try await start.run()
-        case .both:
-            CLIOutput.error(detector.nudge(for: .start) ?? "Two service managers are installed.")
+        case .fail(let message):
+            CLIOutput.error(message)
             throw ExitCode.failure
-        case .none:
-            // If the binary came from Homebrew but no service is installed yet,
-            // tell the operator to start the Homebrew service instead of
-            // installing a CLI-managed agent that will conflict later.
-            if detector.installedViaHomebrew {
-                CLIOutput.error("""
-                    clauderelay was installed via Homebrew.
-                    Start the service with:
-                      brew services start clauderelay
-                    """)
-                throw ExitCode.failure
-            }
-            progress("Installing the launchd agent…")
+        case .load(let narration):
+            progress(narration)
             var load = LoadCommand()
             load.globals = subGlobals
             try await load.run()

@@ -78,6 +78,96 @@ struct HostAddressResolver {
 /// Reads the machine's actual addresses. Separate from `HostAddressResolver`
 /// so the selection policy stays pure and testable.
 struct HostAddressProbe {
+    #if os(Linux)
+    static func candidates() -> [HostCandidate] {
+        var out: [HostCandidate] = []
+
+        // `<hostname>.local` is only a candidate when something answers mDNS
+        // for it: Avahi's socket is the cheapest reliable sign the daemon is
+        // up. A `.local` name nobody serves would rank first (§AD-9) and fail
+        // where the DHCP literal below would have worked.
+        if let name = localHostname(), avahiIsRunning() {
+            out.append(HostCandidate(host: "\(name).local", kind: .bonjour))
+        }
+
+        for (_, ip) in orderedInterfaces(interfaceIPv4Addresses()) {
+            out.append(HostCandidate(host: ip, kind: kind(forHost: ip)))
+        }
+
+        out.append(HostCandidate(host: "127.0.0.1", kind: .loopback))
+        return out
+    }
+
+    /// The short host name, lowercased, as Avahi publishes it.
+    static func localHostname() -> String? {
+        var buffer = [CChar](repeating: 0, count: 256)
+        guard gethostname(&buffer, buffer.count - 1) == 0 else { return nil }
+        let full = String(cString: buffer).lowercased()
+        let short = full.split(separator: ".").first.map(String.init) ?? full
+        return short.isEmpty ? nil : short
+    }
+
+    static func avahiIsRunning() -> Bool {
+        FileManager.default.fileExists(atPath: "/run/avahi-daemon/socket")
+    }
+
+    /// Every non-loopback IPv4 address, as `(interface, address)`, in kernel order.
+    static func interfaceIPv4Addresses() -> [(name: String, address: String)] {
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0, let first = head else { return [] }
+        defer { freeifaddrs(head) }
+
+        var out: [(name: String, address: String)] = []
+        var cursor: UnsafeMutablePointer<ifaddrs>? = first
+        while let entry = cursor {
+            defer { cursor = entry.pointee.ifa_next }
+            guard let addr = entry.pointee.ifa_addr,
+                  addr.pointee.sa_family == sa_family_t(AF_INET),
+                  entry.pointee.ifa_flags & UInt32(IFF_LOOPBACK) == 0,
+                  entry.pointee.ifa_flags & UInt32(IFF_UP) != 0
+            else { continue }
+            var text = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            let converted = addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin -> Bool in
+                var inAddr = sin.pointee.sin_addr
+                return inet_ntop(AF_INET, &inAddr, &text, socklen_t(INET_ADDRSTRLEN)) != nil
+            }
+            guard converted else { continue }
+            out.append((name: String(cString: entry.pointee.ifa_name), address: String(cString: text)))
+        }
+        return out
+    }
+
+    /// Puts physical interfaces first and drops container/VM bridges, so that
+    /// among equally-ranked `.lan` literals the one a phone can actually reach
+    /// wins `HostAddressResolver.choose`. Tailscale is kept — it classifies as
+    /// `.cgnat` and ranks itself — as is anything unrecognised.
+    ///
+    /// IPv4 link-local (169.254/16) sinks to the bottom. It classifies as
+    /// `.lan` — correct, and shared with macOS, because the apps' ATS
+    /// allowlist covers it — but that gives it the *same rank* as a routable
+    /// RFC1918 literal, so on a host holding both (NetworkManager keeping
+    /// `ipv4.link-local`, or a NIC that self-assigned before DHCP answered)
+    /// order alone decides, and a self-assigned address is one nothing else on
+    /// the network can reach. macOS never had to rank this: it asks
+    /// `ipconfig getifaddr` for one address per interface, where this probe
+    /// enumerates every address the kernel holds.
+    static func orderedInterfaces(
+        _ interfaces: [(name: String, address: String)]
+    ) -> [(name: String, address: String)] {
+        let virtualPrefixes = ["docker", "br-", "veth", "virbr", "vmnet", "lxc", "lxd", "podman", "cni"]
+        let physicalPrefixes = ["en", "eth", "wl"]
+        let kept = interfaces.filter { iface in
+            !virtualPrefixes.contains { iface.name.hasPrefix($0) }
+        }
+        func isLinkLocal(_ iface: (name: String, address: String)) -> Bool {
+            iface.address.hasPrefix("169.254.")
+        }
+        let routable = kept.filter { !isLinkLocal($0) }
+        let physical = routable.filter { iface in physicalPrefixes.contains { iface.name.hasPrefix($0) } }
+        let rest = routable.filter { iface in !physicalPrefixes.contains { iface.name.hasPrefix($0) } }
+        return physical + rest + kept.filter(isLinkLocal)
+    }
+    #else
     static func candidates() -> [HostCandidate] {
         var out: [HostCandidate] = []
 
@@ -95,6 +185,7 @@ struct HostAddressProbe {
         out.append(HostCandidate(host: "127.0.0.1", kind: .loopback))
         return out
     }
+    #endif
 
     /// Classifies a host address string. IPv4 octets classify based on prefix;
     /// IPv6 literals return `.ipv6`; `.local` Bonjour names return `.bonjour`;
@@ -134,6 +225,7 @@ struct HostAddressProbe {
         return .publicHostname
     }
 
+    #if !os(Linux)
     private static func shellOutput(_ arguments: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: arguments[0])
@@ -150,4 +242,5 @@ struct HostAddressProbe {
         guard process.terminationStatus == 0 else { return nil }
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    #endif
 }

@@ -4,7 +4,6 @@ import CryptoKit
 #else
 import Crypto
 #endif
-import Security
 
 // MARK: - Data Extension
 
@@ -37,9 +36,7 @@ public enum TokenGenerator {
     /// - Returns: A tuple of the plaintext token (43 chars, base64URL) and its `TokenInfo`.
     public static func generate(label: String? = nil, expiryDays: Int? = nil) -> (plaintext: String, info: TokenInfo) {
         // 32 cryptographically secure random bytes
-        var bytes = [UInt8](repeating: 0, count: 32)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        precondition(status == errSecSuccess, "Failed to generate random bytes")
+        let bytes = SecureRandom.bytes(count: 32)
 
         // Base64URL encode (no padding) -> 43 characters
         let plaintext = Data(bytes).base64URLEncodedString()

@@ -60,6 +60,45 @@ jobs:
           swiftlint lint --config .swiftlint.yml --reporter github-actions-logging
         continue-on-error: true
 
+  linux-server:
+    # The server, CLI and Kit build and test on Linux — the whole premise of
+    # docs/linux-server-spec.md. The Apple client libraries are excluded from the
+    # build there (Package.swift, AD-1), so this job proves the ported server
+    # against the SAME test suite the macOS job runs, plus the Linux seam tests.
+    name: linux server build + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.0'
+
+      # forkpty(3) lives in libutil; wl-clipboard/xclip are runtime optionals
+      # the clipboard tests inject around, so they are not needed here.
+      - name: Swift version
+        run: swift --version
+
+      - name: swift build
+        run: swift build
+
+      # Resolving on Linux drops the pins for whisperkit / llm.swift /
+      # swift-syntax (AD-1). Package.resolved must stay the macOS superset, so
+      # restore whatever resolution rewrote and assert the pins survive rather
+      # than committing a Linux-only file.
+      - name: Package.resolved is unchanged (macOS superset preserved)
+        run: |
+          git checkout -- Package.resolved 2>/dev/null || true
+          for pkg in whisperkit llm.swift swift-syntax; do
+            grep -q "\"identity\" : \"$pkg\"" Package.resolved \
+              || { echo "Package.resolved lost the $pkg pin — do not commit a Linux-resolved copy"; exit 1; }
+          done
+
+      - name: swift test
+        run: swift test
+
   ios-build:
     # Builds for the iOS *device* SDK (not simulator). The simulator build
     # plan mis-resolves LLM.swift's swift-syntax-based macros against the

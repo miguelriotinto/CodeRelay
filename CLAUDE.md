@@ -28,6 +28,8 @@ Note: Service commands are top-level (`claude-relay stop`), while token/session/
 
 **Launchd**: Plist at `~/Library/LaunchAgents/com.claude.relay.plist`. The `load` command locates the server binary via a fallback chain: sibling of the CLI binary, `/opt/homebrew/bin/`, `/usr/local/bin/`, `~/.claude-relay/bin/`.
 
+**Linux server**: the same `ClaudeRelayServer`/`ClaudeRelayCLI`/`ClaudeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the two Apple client libraries (`ClaudeRelayClient`, `ClaudeRelaySpeech`) and their deps (WhisperKit, LLM.swift) are not declared. `swift build && swift test` run there (834 tests). The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). **Do not commit a Linux-resolved `Package.resolved`** — resolving on Linux drops the whisperkit/llm.swift/swift-syntax pins; keep the macOS superset (CI restores it). The `linux-server` CI job builds and tests on Ubuntu.
+
 ## Release Process
 
 Use `/coderelay-deploy [ios|android|mac|server|all]` to build, publish, and verify; `/coderelay-health` for a read-only "is everything published and running?" check. Those skills own the version-bump trio, the publish targets, and the mandatory verification steps — never claim something is published without running them.
@@ -304,6 +306,39 @@ driving the wrong label; `load` refuses to create a second manager unless
 `--force` is passed. Before this existed, `start`/`stop`/`restart`/`unload`
 failed outright on a Homebrew install while `status`/`health` worked, because
 only the latter two go through the admin HTTP API.
+
+On **Linux** the equivalent is `SystemdUnitDetector`: one unit name
+(`claude-relay.service`) with up to two files — packaged
+(`/usr/lib/systemd/user/`) and CLI-written (`~/.config/systemd/user/`). Both
+existing is *not* a hazard, because systemd's search path makes the user unit
+shadow the packaged one, so only one process ever binds the port; the detector
+only has to know whose file it is so `unload` never deletes the package's copy.
+
+### Linux platform seams
+
+The macOS-only surfaces and their Linux replacements (full table in
+`docs/linux-server-spec.md` §3):
+
+- **PTY process introspection** — `pty_shim.c` (Darwin sysctl/libproc) and
+  `pty_shim_linux.c` (`/proc`) implement the same `pty_shim.h`. The reap stays
+  session-scoped (`getsid(2)`) on both.
+- **Session shell** — macOS spawns `login -fp`; Linux execs the account's own
+  shell as `-<shell>` (`LoginShell`), since `login` needs root. The shell is
+  resolved before `forkpty` (getpwuid is not fork-safe).
+- **Clipboard** — `MacClipboardService` (NSPasteboard) vs `LinuxClipboardService`
+  (`wl-copy`/`xclip` on stdin), chosen by `DefaultClipboardService.make()`.
+- **Random/logging/QR** — `SecureRandom` (SystemRandomNumberGenerator) replaces
+  `SecRandomCopyBytes`; `RelayLogLevel` replaces `OSLogType` (os.Logger kept
+  under `canImport(os)`, stderr → journald on Linux); `TerminalQRRenderer` uses
+  CoreImage on macOS and `swift-qrcode-generator` (Linux-only dep) otherwise.
+- **Integration tests** — the 12 tests that drive the server through
+  `ClaudeRelayClient` are macOS-only; `TestWebSocketClient` (raw NIO) re-runs the
+  same scenarios on both platforms (`WireIntegrationTests`,
+  `WireRequestReplyTests`).
+- **Caveat**: `FileManager.homeDirectoryForCurrentUser` reads the passwd
+  database on Linux, not `$HOME` — so a unit's `Environment=HOME=` does not
+  redirect `~/.claude-relay`. Desirable here (the service always uses the real
+  user home), but do not rely on `$HOME` to relocate config in a test.
 
 <!-- code-review-graph MCP tools -->
 ## Linux client (`ClaudeRelayLinux/`)
