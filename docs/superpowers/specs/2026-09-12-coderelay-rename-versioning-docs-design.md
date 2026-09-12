@@ -51,8 +51,11 @@ These were decided with the user and are not reopened here.
      and Keychain key on iOS and macOS, and Android `TokenStore.BEDROCK_KEY`
      (`com.clauderelay.bedrock.bearerToken`). They are invisible to users and
      renaming them would erase saved servers, tokens and settings on every
-     device. Logger subsystems and `Notification.Name`s are renamed because
-     nothing persists under them.
+     device. The same applies to the macOS speech-model directory
+     `~/Library/Application Support/ClaudeRelay/Models/` (`SpeechModelStore`):
+     renaming it would force every Mac to re-download gigabytes of models.
+     Logger subsystems and `Notification.Name`s are renamed because nothing
+     persists under them.
 6. **Order of work**: layout rename first, then user-facing rename plus
    versioning, then docs. Rationale: the docs are written once against the
    final tree, and the layout PR is pure mechanics that is verified by "every
@@ -378,8 +381,8 @@ this spec and tracked separately.
   `settings.json` points at `~/.coderelay/hooks/coderelay-state-hook.sh`.
 - `grep -rIn "claude-relay\|claude_relay\|CLAUDE_RELAY\|clauderelay\|com\.claude\.relay" --exclude-dir=.git --exclude-dir=.build --exclude-dir=docs/superpowers .`
   returns only: bundle identifiers in `project.yml` and `Info.plist`,
-  the persistence keys listed in 2.5, `CHANGELOG.md` history, and the
-  migration commands in the CHANGELOG 1.5.0 entry.
+  the persistence keys and model directory listed in 2.5, `CHANGELOG.md`
+  history, and the migration commands in the CHANGELOG 1.5.0 entry.
 - `brew install --build-from-source Formula/coderelay.rb` on this machine
   succeeds and `brew test coderelay` passes.
 - `makepkg --printsrcinfo` for both PKGBUILDs parses; `namcap` clean.
