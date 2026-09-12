@@ -1,4 +1,4 @@
-name: ClaudeRelay
+name: CodeRelay
 options:
   bundleIdPrefix: com.claude
   deploymentTarget:
@@ -8,30 +8,30 @@ options:
   generateEmptyDirectories: true
 
 packages:
-  ClaudeRelayClient:
+  CodeRelayClient:
     path: .
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm.git
     majorVersion: 1.2.0
 
 targets:
-  ClaudeRelayApp:
+  CodeRelayApp:
     type: application
     platform: iOS
     sources:
-      - path: ClaudeRelayApp
+      - path: CodeRelayApp
         excludes:
           - README.md
     dependencies:
-      - package: ClaudeRelayClient
-        product: ClaudeRelayClient
-      - package: ClaudeRelayClient
-        product: ClaudeRelaySpeech
+      - package: CodeRelayClient
+        product: CodeRelayClient
+      - package: CodeRelayClient
+        product: CodeRelaySpeech
       - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claude.relay
-        INFOPLIST_FILE: ClaudeRelayApp/Info.plist
+        INFOPLIST_FILE: CodeRelayApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: "Code[Relay]"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
@@ -48,9 +48,9 @@ targets:
         MARKETING_VERSION: "1.4.1"
         CURRENT_PROJECT_VERSION: "183"
         GENERATE_INFOPLIST_FILE: YES
-        CODE_SIGN_ENTITLEMENTS: ClaudeRelayApp/ClaudeRelayApp.entitlements
+        CODE_SIGN_ENTITLEMENTS: CodeRelayApp/CodeRelayApp.entitlements
     info:
-      path: ClaudeRelayApp/Info.plist
+      path: CodeRelayApp/Info.plist
       properties:
         # App uses only Apple-provided cryptography (CryptoKit + system TLS),
         # which is exempt under U.S. export rules. Declaring this lets every
@@ -67,38 +67,38 @@ targets:
           - CFBundleURLName: "com.claude.relay"
             CFBundleURLSchemes:
               - coderelay
-  ClaudeRelayAppTests:
+  CodeRelayAppTests:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - path: ClaudeRelayAppTests
+      - path: CodeRelayAppTests
     dependencies:
-      - target: ClaudeRelayApp
-      - package: ClaudeRelayClient
-        product: ClaudeRelaySpeech
+      - target: CodeRelayApp
+      - package: CodeRelayClient
+        product: CodeRelaySpeech
       # The terminal scroll tests drive SwiftTerm's own scrolling API against a
       # real RelayTerminalView, so the test bundle needs the module too.
       - package: SwiftTerm
     settings:
       base:
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/ClaudeRelayApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ClaudeRelayApp"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/CodeRelayApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CodeRelayApp"
         BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.claude.relay.tests
-  ClaudeRelayMac:
+  CodeRelayMac:
     type: application
     platform: macOS
     sources:
-      - path: ClaudeRelayMac
+      - path: CodeRelayMac
         excludes:
           - "**/.gitkeep"
           - "Info.plist"
           - "README.md"
     dependencies:
-      - package: ClaudeRelayClient
-        product: ClaudeRelayClient
-      - package: ClaudeRelayClient
-        product: ClaudeRelaySpeech
+      - package: CodeRelayClient
+        product: CodeRelayClient
+      - package: CodeRelayClient
+        product: CodeRelaySpeech
       - package: SwiftTerm
     settings:
       base:
@@ -111,7 +111,7 @@ targets:
         # point CFBundleIconFile at it (see info.properties), matching how
         # Cursor.app does it.
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
-        INFOPLIST_FILE: ClaudeRelayMac/Info.plist
+        INFOPLIST_FILE: CodeRelayMac/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: "Code[Relay]"
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Code[Relay] needs microphone access for voice-to-text input."
         INFOPLIST_KEY_NSCameraUsageDescription: "Code[Relay] uses the camera to scan QR codes for session sharing."
@@ -122,9 +122,9 @@ targets:
         MARKETING_VERSION: "1.1.1"
         CURRENT_PROJECT_VERSION: "104"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
-        CODE_SIGN_ENTITLEMENTS: ClaudeRelayMac/ClaudeRelayMac.entitlements
+        CODE_SIGN_ENTITLEMENTS: CodeRelayMac/CodeRelayMac.entitlements
     info:
-      path: ClaudeRelayMac/Info.plist
+      path: CodeRelayMac/Info.plist
       properties:
         # Read versions from build settings (MARKETING_VERSION /
         # CURRENT_PROJECT_VERSION above) so a single source of truth in
@@ -151,17 +151,17 @@ targets:
           - CFBundleURLName: "com.claude.relay.mac"
             CFBundleURLSchemes:
               - coderelay
-  ClaudeRelayMacTests:
+  CodeRelayMacTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: ClaudeRelayMacTests
+      - path: CodeRelayMacTests
     dependencies:
-      - target: ClaudeRelayMac
-      - package: ClaudeRelayClient
-        product: ClaudeRelayClient
-      - package: ClaudeRelayClient
-        product: ClaudeRelaySpeech
+      - target: CodeRelayMac
+      - package: CodeRelayClient
+        product: CodeRelayClient
+      - package: CodeRelayClient
+        product: CodeRelaySpeech
     settings:
       base:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Code[Relay].app/Contents/MacOS/Code[Relay]"

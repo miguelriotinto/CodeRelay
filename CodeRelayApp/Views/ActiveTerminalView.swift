@@ -1,0 +1,462 @@
+import SwiftUI
+import CodeRelayClient
+import CodeRelayKit
+import CodeRelaySpeech
+import GameController
+
+/// Detail pane: thin toolbar + terminal + optional key bar.
+struct ActiveTerminalView: View {
+    @ObservedObject var coordinator: SessionCoordinator
+    @Binding var columnVisibility: NavigationSplitViewVisibility
+    var onDisconnect: () -> Void
+    @State private var showKeyBar = true
+    @State private var isKeyboardVisible = false
+    @State private var hasHardwareKeyboard = GCKeyboard.coalesced != nil
+    @State private var showQROverlay = false
+    @State private var showRenameAlert = false
+    @State private var renameText = ""
+    /// Blackout opacity for the session-name reload: 0 shows the terminal, 1
+    /// hides it behind opaque black while the server's copy is swapped in.
+    /// Driven by `TerminalReloadFade`.
+    @State private var reloadCover: Double = 0
+    @StateObject private var speechEngine = OnDeviceSpeechEngine()
+    @StateObject private var continuousEngine = ContinuousListeningEngine.makeDefault(
+        options: AppSettings.shared.currentSpeechOptions()
+    )
+    @ObservedObject private var settings = AppSettings.shared
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                if let id = coordinator.activeSessionId,
+                   let vm = coordinator.viewModel(for: id) {
+                    // Single host reused across session switches so each
+                    // terminal's SwiftTerm scrollback survives the swap.
+                    TerminalHostView(
+                        coordinator: coordinator,
+                        fontSize: CGFloat(settings.terminalFontSize),
+                        isKeyboardVisible: $isKeyboardVisible
+                    )
+                    // Covers only the terminal, not the toolbar or the key bar:
+                    // the session name has to stay visible, since it's the
+                    // control the user just tapped.
+                    .terminalReloadCover(reloadCover)
+
+                    if showKeyBar {
+                        KeyboardAccessory { data in
+                            vm.sendInput(data)
+                        }
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "No Active Session",
+                        systemImage: "terminal",
+                        description: Text("Swipe from the left edge or create a new session.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .onAppear {
+                speechEngine.preloadInBackground()
+            }
+
+            // Floating buttons: mic + keyboard toggle (only when a terminal session is active)
+            if coordinator.activeSessionId != nil {
+                HStack(spacing: 10) {
+                    MicButton(
+                        engine: speechEngine,
+                        settings: settings,
+                        coordinator: coordinator,
+                        continuousEngine: continuousEngine
+                    )
+
+                    Button {
+                        if settings.hapticFeedbackEnabled {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        }
+                        if isKeyboardVisible {
+                            NotificationCenter.default.post(
+                                name: .terminalResignFocus, object: nil
+                            )
+                        } else {
+                            NotificationCenter.default.post(
+                                name: .terminalRequestFocus, object: nil
+                            )
+                        }
+                    } label: {
+                        Image(systemName: isKeyboardVisible
+                              ? "keyboard.chevron.compact.down"
+                              : "keyboard")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(Color.gray.opacity(0.5))
+                            .clipShape(Circle())
+                    }
+                    .disabled(hasHardwareKeyboard)
+                    .opacity(hasHardwareKeyboard ? 0.35 : 1.0)
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, 12)
+            }
+        }
+        .safeAreaInset(edge: .top) {
+            HStack(spacing: 6) {
+                ToolbarIconButton(icon: "sidebar.left") {
+                    withAnimation {
+                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                    }
+                }
+                .accessibilityLabel("Toggle Sidebar")
+                ToolbarIconButton(icon: "server.rack") { onDisconnect() }
+                    .accessibilityLabel("Disconnect")
+                ToolbarIconButton(icon: "fn", isActive: showKeyBar) { showKeyBar.toggle() }
+                    .accessibilityLabel(showKeyBar ? "Hide Key Bar" : "Show Key Bar")
+
+                ConnectionQualityDot(quality: coordinator.connection.connectionQuality, size: 8)
+
+                if let id = coordinator.activeSessionId {
+                    if let createdAt = coordinator.createdAt(for: id) {
+                        SessionUptimeView(since: createdAt)
+                    }
+                }
+
+                if anyTabNeedsFlash {
+                    TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                        let flashOn = Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0
+                        sessionTabBar(flashOn: flashOn)
+                    }
+                } else {
+                    sessionTabBar(flashOn: false)
+                }
+
+                if coordinator.activeSessionId != nil {
+                    ToolbarIconButton(icon: "qrcode") {
+                        showQROverlay = true
+                    }
+                    .accessibilityLabel("Share Session")
+                }
+
+                if let id = coordinator.activeSessionId {
+                    Text(coordinator.name(for: id))
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .frame(maxWidth: 100)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 22)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .layoutPriority(1)
+                        // Tap → discard the locally cached terminal text and render
+                        // the server's scrollback instead, behind a fade through
+                        // black. We deliberately do NOT also post
+                        // `.terminalForceRedraw`: a local repaint paints the current
+                        // (stale) buffer at once, then the server's copy lands a
+                        // round-trip later — two slightly-different paints that read
+                        // as a flicker. The server's copy is authoritative alone.
+                        // Long-press → rename. The tap gesture is declared first so
+                        // it doesn't swallow the long-press.
+                        .onTapGesture {
+                            if settings.hapticFeedbackEnabled {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                            Task {
+                                await TerminalReloadFade.run(
+                                    coordinator: coordinator, id: id, cover: $reloadCover)
+                            }
+                        }
+                        .onLongPressGesture {
+                            renameText = coordinator.name(for: id)
+                            showRenameAlert = true
+                        }
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(.black)
+        }
+        .background(.black)
+        .ignoresSafeArea(.container, edges: .horizontal)
+        .preferredColorScheme(.dark)
+        .toolbar(.hidden, for: .navigationBar)
+        .onChange(of: coordinator.activeSessionId) { _, _ in
+            showQROverlay = false
+            speechEngine.cancel()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active {
+                speechEngine.cancel()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidConnect)) { _ in
+            hasHardwareKeyboard = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidDisconnect)) { _ in
+            hasHardwareKeyboard = GCKeyboard.coalesced != nil
+        }
+        .alert(
+            "Speech Error",
+            isPresented: Binding(
+                get: { if case .error = speechEngine.state { return true } else { return false } },
+                set: { _ in }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if case .error(let msg) = speechEngine.state {
+                Text(msg)
+            }
+        }
+        .alert("Rename Session", isPresented: $showRenameAlert) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                let trimmed = renameText.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty, let id = coordinator.activeSessionId {
+                    coordinator.setName(trimmed, for: id)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .selectAllOnBeginEditing(while: showRenameAlert)
+        .task(id: optionsHash) {
+            continuousEngine.onUtteranceReady = { text in
+                guard let id = coordinator.activeSessionId,
+                      let vm = coordinator.viewModel(for: id) else { return }
+                vm.sendInput(text)
+            }
+            continuousEngine.updateOptions(settings.currentSpeechOptions())
+            if settings.continuousListeningEnabled && scenePhase == .active {
+                await continuousEngine.enable()
+            } else {
+                await continuousEngine.disable()
+            }
+        }
+        .overlay {
+            if showQROverlay, let id = coordinator.activeSessionId {
+                QRCodeOverlay(
+                    sessionId: id,
+                    sessionName: coordinator.name(for: id),
+                    onDismiss: { showQROverlay = false }
+                )
+            }
+        }
+    }
+
+    private var optionsHash: String {
+        let s = settings
+        return [
+            "\(s.continuousListeningEnabled)",
+            "\(s.smartCleanupEnabled)",
+            "\(s.promptEnhancementEnabled)",
+            s.wakeWord,
+            "\(scenePhase)"
+        ].joined(separator: "|")
+    }
+
+    /// True when any active session's tab should be flashing — a blocked or
+    /// waiting (idle) agent via fine-grained state, or the legacy awaiting-input
+    /// set when no fine-grained state is reported. Gates the flash TimelineView.
+    private var anyTabNeedsFlash: Bool {
+        coordinator.activeSessions.contains { session in
+            if let state = coordinator.agentState(for: session.id) {
+                return state == .blocked || state == .idle
+            }
+            return coordinator.sessionsAwaitingInput.contains(session.id)
+        }
+    }
+
+    @ViewBuilder
+    private func sessionTabBar(flashOn: Bool) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Array(coordinator.activeSessions.enumerated()), id: \.element.id) { index, session in
+                        let isSelected = session.id == coordinator.activeSessionId
+                        let agentId = coordinator.activeAgent(for: session.id)
+                        let agentState = coordinator.agentState(for: session.id)
+                        // A blocked agent flashes for attention (parity with the
+                        // sidebar's blinking blocked dot and the Android tab); when no
+                        // fine-grained state is reported, fall back to the legacy
+                        // awaiting-input pulse.
+                        let needsAttention = agentState != nil
+                            ? (agentState == .blocked || agentState == .idle)
+                            : coordinator.sessionsAwaitingInput.contains(session.id)
+                        Button {
+                            if settings.hapticFeedbackEnabled {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                            Task { await coordinator.switchToSession(id: session.id) }
+                        } label: {
+                            SessionTab(
+                                number: index + 1,
+                                isSelected: isSelected,
+                                agentId: agentId,
+                                needsAttention: needsAttention,
+                                flashOn: flashOn,
+                                agentState: agentState
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .id(session.id)
+                    }
+                }
+            }
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: TabStripWidthKey.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(TabStripWidthKey.self) { _ in
+                if let id = coordinator.activeSessionId {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        proxy.scrollTo(id, anchor: nil)
+                    }
+                }
+            }
+            .onChange(of: coordinator.activeSessionId) { _, newID in
+                guard let newID else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(newID, anchor: nil)
+                }
+            }
+            .onAppear {
+                if let id = coordinator.activeSessionId {
+                    proxy.scrollTo(id, anchor: nil)
+                }
+            }
+        }
+    }
+
+}
+
+// MARK: - Preference Key for Tab Strip Width
+
+private struct TabStripWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+// MARK: - Toolbar Icon Button
+
+/// Compact icon button for the status bar toolbar.
+private struct ToolbarIconButton: View {
+    let icon: String
+    var isActive: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            if AppSettings.shared.hapticFeedbackEnabled {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+            action()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isActive ? .black : SwiftUI.Color.white.opacity(0.7))
+                .frame(minWidth: 26, minHeight: 22)
+                .background(isActive ? Color.white : Color.white.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Individual session tab. Flash phase is driven by a shared TimelineView clock
+/// in the parent, so we don't spin up one Timer.publish per tab.
+private struct SessionTab: View {
+    let number: Int
+    let isSelected: Bool
+    let agentId: String?
+    let needsAttention: Bool
+    /// Shared flash phase passed down from the parent's TimelineView.
+    /// Ignored by tabs that don't need attention.
+    let flashOn: Bool
+    /// Fine-grained agent state (Phase 2). When present it drives the tab color
+    /// and flash (parity with the sidebar dot and the Android tab); when nil the
+    /// tab falls back to the legacy agent-color + awaiting-input pulse.
+    var agentState: AgentDetectedState?
+
+    var body: some View {
+        Text("\(number)")
+            .font(.system(size: 12, weight: isSelected ? .bold : .semibold, design: .monospaced))
+            // Derive the label color from the fill so it stays legible on light
+            // backgrounds (e.g. the idle-yellow tab) instead of washing out white.
+            .foregroundStyle(tabBackground.contrastingLabel)
+            .frame(minWidth: 26, minHeight: 22)
+            .background(tabBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(selectionBorderColor, lineWidth: isSelected ? 2 : 0)
+            )
+            .animation(.easeInOut(duration: 0.15), value: flashOn)
+    }
+
+    private var selectionBorderColor: SwiftUI.Color { .white }
+
+    private var agentColor: SwiftUI.Color {
+        AgentColorPalette.color(for: agentId)
+    }
+
+    /// Bright orange for a session waiting on the user (idle), flashing to the
+    /// dark below. Motion distinguishes it from Claude's steady amber working fill.
+    static let waitingOrange = SwiftUI.Color(red: 1.0, green: 0.584, blue: 0.0)   // #FF9500
+    static let waitingFlashDark = SwiftUI.Color(red: 0.102, green: 0.102, blue: 0.102) // #1A1A1A
+
+    private var tabBackground: SwiftUI.Color {
+        // When fine-grained agentState is present it drives the color (parity
+        // with ActivityDot and the Android tab): blocked=red+flash, working=agent
+        // color, waiting(idle)=orange+flash, unknown=gray. Otherwise fall back to the
+        // legacy awaiting-input pulse / agent-color fill.
+        if let agentState {
+            switch agentState {
+            case .blocked: return flashOn ? .red : SwiftUI.Color.white.opacity(0.15)
+            case .working: return agentColor
+            case .idle:    return flashOn ? SessionTab.waitingOrange : SessionTab.waitingFlashDark
+            case .unknown: return .gray
+            }
+        }
+        if needsAttention {
+            return flashOn ? agentColor : SwiftUI.Color.white.opacity(0.15)
+        }
+        if agentId != nil { return agentColor }
+        return SwiftUI.Color.white.opacity(0.15)
+    }
+}
+
+// MARK: - Notification for requesting terminal focus
+
+extension Notification.Name {
+    static let terminalRequestFocus = Notification.Name("terminalRequestFocus")
+    static let terminalResignFocus = Notification.Name("terminalResignFocus")
+    static let toggleSpeechRecording = Notification.Name("toggleSpeechRecording")
+}
+
+// MARK: - Session Uptime
+
+private struct SessionUptimeView: View {
+    let since: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Text(formatUptime(from: since, to: context.date))
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(SwiftUI.Color.white.opacity(0.5))
+        }
+    }
+
+    private func formatUptime(from start: Date, to now: Date) -> String {
+        let total = max(0, Int(now.timeIntervalSince(start)))
+        let days = total / 86400
+        let hours = (total % 86400) / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if days > 0 {
+            return String(format: "%dd %02d:%02d:%02d", days, hours, minutes, seconds)
+        }
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+    }
+}
