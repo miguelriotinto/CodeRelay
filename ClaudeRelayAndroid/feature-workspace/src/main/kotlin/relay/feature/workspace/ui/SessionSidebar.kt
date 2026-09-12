@@ -52,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -268,10 +269,16 @@ private fun SwipeableSessionRow(
     onRenameRequest: () -> Unit,
     onShareQr: () -> Unit,
 ) {
+    // `confirmValueChange` is captured once by the state's keyless
+    // `rememberSaveable` and the row is keyed by session id, so the FIRST
+    // composition's lambda fires for the row's whole life. Route through
+    // `rememberUpdatedState` so it always dispatches to the current callback
+    // (the servers screen hit this as "edit shows the pre-edit server").
+    val currentOnTerminate by rememberUpdatedState(onTerminate)
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             if (value == SwipeToDismissBoxValue.EndToStart) {
-                onTerminate(); false
+                currentOnTerminate(); false
             } else {
                 false
             }

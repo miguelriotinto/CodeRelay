@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -258,11 +259,20 @@ private fun SwipeableServerRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    // `rememberSwipeToDismissBoxState` stores `confirmValueChange` in a keyless
+    // `rememberSaveable`, so the lambda from this row's FIRST composition is the
+    // one that fires for the row's whole life — and the list keys rows by server
+    // id, so an edit that keeps the id keeps the row. Calling `onEdit` directly
+    // therefore reopened the sheet with the pre-edit `server` captured by that
+    // first lambda. Read the callbacks through `rememberUpdatedState` so the
+    // captured lambda always dispatches to the current ones.
+    val currentOnEdit by rememberUpdatedState(onEdit)
+    val currentOnDelete by rememberUpdatedState(onDelete)
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             when (value) {
-                SwipeToDismissBoxValue.EndToStart -> { onDelete(); false }
-                SwipeToDismissBoxValue.StartToEnd -> { onEdit(); false }
+                SwipeToDismissBoxValue.EndToStart -> { currentOnDelete(); false }
+                SwipeToDismissBoxValue.StartToEnd -> { currentOnEdit(); false }
                 SwipeToDismissBoxValue.Settled -> false
             }
         },
