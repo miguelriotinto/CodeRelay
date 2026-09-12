@@ -1,0 +1,960 @@
+import Foundation
+import NIOConcurrencyHelpers
+import CPTYShim
+import CodeRelayKit
+
+// MARK: - PTYSessionProtocol
+
+public protocol PTYSessionProtocol: Actor {
+    var sessionId: UUID { get }
+    func startReading()
+    func setOutputHandler(_ handler: @escaping @Sendable (Data) -> Void)
+    func setExitHandler(_ handler: @escaping @Sendable () -> Void)
+    func clearOutputHandler()
+    /// Set a callback fired with decoded OSC 52 clipboard text written by the
+    /// terminal (F11 terminal-copy → device). Cleared by `clearOutputHandler`.
+    func setClipboardHandler(_ handler: @escaping @Sendable (String) -> Void)
+    func write(_ data: Data)
+    func resize(cols: UInt16, rows: UInt16)
+    /// Best-effort current working directory of the session's shell process
+    /// (the stable workspace anchor). Nil when the process is gone or the
+    /// lookup fails. Actor-isolated — callers await.
+    func currentWorkingDirectory() -> String?
+    /// Set a callback fired from the foreground poll with the session's cwd,
+    /// only when it changes. Used to track `cd` for workspace grouping.
+    func setWorkingDirHandler(_ handler: @escaping @Sendable (String) -> Void)
+    /// Asks the foreground app to repaint by wiggling the PTY width (cols−1,
+    /// ~150 ms, restore). Used after a ring-buffer replay and for client
+    /// tap-to-redraw: the on-screen bytes can be mis-wrapped/garbled until the
+    /// app re-emits its whole screen. A bare same-size SIGWINCH is NOT enough —
+    /// Node/Ink apps (Claude Code) re-query TIOCGWINSZ on WINCH and skip the
+    /// redraw when the size is unchanged — so we make the size genuinely change
+    /// twice, exactly like the keyboard show/hide gesture that provably works.
+    func forceRepaint() async
+    func readBuffer() -> Data
+    func terminate()
+    func getActivityState() -> ActivityState
+    func getActiveAgent() -> CodingAgent?
+    func getAgentState() -> AgentDetectedState?
+    func getTitle() -> String?
+    /// Activity updates carry a monotonic `revision`. Downstream observers
+    /// that cross isolation boundaries drop updates whose revision is older
+    /// than what they last recorded — see `SessionManager.reportActivityChange`.
+    func setActivityHandler(
+        _ handler: @escaping @Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void
+    )
+    func recordInput()
+    /// 1.0 for attached (responsive entry detection); 5.0 for detached.
+    ///
+    /// Declared `async` even though `PTYSession`'s implementation is
+    /// synchronous — a sync method satisfies an `async` requirement, and every
+    /// call site already suspends because this is a cross-actor call. The
+    /// widening lets a test double suspend here on purpose, pinning
+    /// `SessionManager` at this exact point to check what a reentrant caller
+    /// observes (see `testDetachTimerIsInstalledBeforeCadenceSuspension`).
+    func setPollCadence(_ seconds: TimeInterval) async
+    /// Apply an authoritative agent state reported by a local lifecycle hook
+    /// (F6). While fresh, hook state overrides screen detection. No-op when no
+    /// agent is currently active.
+    func applyHookState(_ hookState: AgentDetectedState)
+}
+
+// MARK: - PTYError
+
+public enum PTYError: Error {
+    case forkFailed(Int32)
+}
+
+// MARK: - ActivityCallbackBox
+
+/// Thread-safe box that holds an activity-change callback.
+/// Used to break the init-time `[weak self]` capture cycle: the monitor's
+/// `onChange` closure captures this box (which is created before `self` is
+/// fully initialized), and `PTYSession` writes the real handler into it later.
+private final class ActivityCallbackBox: @unchecked Sendable {
+    var handler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
+}
+
+// MARK: - PTYSession Actor
+
+public actor PTYSession: PTYSessionProtocol {
+    /// Poll cadence used while a client is attached — fast enough for responsive
+    /// agent entry/exit detection.
+    public static let attachedPollCadence: TimeInterval = 1.0
+    /// Poll cadence used while detached — slow enough that many-session deployments
+    /// don't pay 1 Hz of per-session walker cost, but fast enough that background
+    /// iOS tabs still reflect agent state changes within a few seconds.
+    public static let detachedPollCadence: TimeInterval = 5.0
+
+    public let sessionId: UUID
+
+    private let masterFD: Int32
+    private let childPID: Int32
+    /// Start time of `childPID`, captured right after `forkpty`. Used by
+    /// `terminate()` to detect PID reuse before sending SIGKILL (C-10). In
+    /// microseconds-since-epoch so sub-second restarts are distinguishable;
+    /// `-1` means the lookup failed at init and SIGKILL will skip the check.
+    private let childStartTime: Int64
+    /// The terminal session the child leads, captured right after `forkpty`.
+    ///
+    /// `forkpty` calls `setsid()`, so this is normally `childPID` — but it is read
+    /// from the kernel rather than assumed, and it is captured at init because
+    /// `getsid(childPID)` fails once the leader exits, which is exactly when the
+    /// strays we need to signal are still alive. `-1` means the lookup failed and
+    /// the reap falls back to group-only signalling.
+    private let childSessionID: pid_t
+    private var ringBuffer: RingBuffer
+    private var readSource: DispatchSourceRead?
+    private var outputHandler: (@Sendable (Data) -> Void)?
+    /// F11: invoked with decoded OSC 52 clipboard text (terminal copy → device).
+    private var clipboardHandler: (@Sendable (String) -> Void)?
+    /// F11: stateful OSC 52 parser — retains an in-progress clipboard sequence
+    /// across PTY reads (they're arbitrary ≤64 KB chunks, so a large payload
+    /// spans reads). Confined to this actor.
+    private var osc52Parser = OSC52Parser()
+    private var exitHandler: (@Sendable () -> Void)?
+    private let activityMonitor: SessionActivityMonitor
+    private let screenModel: TerminalScreenModel
+    private let stateDetector: AgentStateDetector
+    /// Shared box to bridge the monitor's synchronous onChange callback into the actor.
+    /// The monitor captures this box (not `self`) so the closure doesn't require `self` to be fully initialized.
+    private let activityCallbackBox = ActivityCallbackBox()
+    /// Whether `masterFD` has been closed.
+    ///
+    /// Deliberately *not* actor state. The read source's cancel handler closes the
+    /// fd from a dispatch queue, while `handleExit()` — the actor-isolated side of
+    /// the same event — hops onto the actor and so can run arbitrarily later. A flag
+    /// set on the actor would therefore still read `false` for a window *after* the
+    /// fd is already closed. Setting it here, immediately before the `close()`,
+    /// closes that window: it is never `false` while the fd is dead.
+    ///
+    /// `terminated` is not a substitute. `handleExit()` doesn't set it; it reports
+    /// the exit upward, and `SessionManager.handlePTYExit` schedules `terminate()`
+    /// in an unstructured `Task`. Between the child exiting and that task running,
+    /// `terminated` is `false` with the fd already closed. An ioctl on that fd
+    /// number does not merely fail — the kernel may have recycled it for another
+    /// session's PTY, in which case it *succeeds* and returns an unrelated
+    /// terminal's size.
+    ///
+    /// Scope: this guards `_testOnly_kernelWindowSize()`, the only fd use that
+    /// *returns a value the caller believes*. No other use of `masterFD` takes this
+    /// lock, because their failure mode is a discarded errno on an fd that no longer
+    /// belongs to us, not a plausible-looking wrong answer handed back to a caller.
+    /// So this is not a file-wide "always lock the fd" rule.
+    ///
+    /// What those uses check instead varies, and it is worth being precise rather than
+    /// claiming a uniformity that isn't there:
+    /// - `relay_set_winsize` in `resize()`/`forceRepaint()` and the entry to `write(_:)`
+    ///   check `terminated`.
+    /// - `drainWriteQueue()` does not, and cannot rely on its caller to: the write
+    ///   source's event handler calls it directly, bypassing `write(_:)`'s guard, so a
+    ///   drain scheduled before termination can write after it.
+    /// - `read(fd, …)` in the read source's event handler has no check at all — the
+    ///   handler is not actor-isolated, so reaching `terminated` would need an `await`
+    ///   inside the hot read path. It is instead ordered by the source itself: the same
+    ///   `cancel()` that stops the handler firing is what runs the cancel handler that
+    ///   closes the fd.
+    ///
+    /// None of the three can hand back a wrong *answer*, which is the line this lock
+    /// draws.
+    ///
+    /// Where it *is* taken, the closed check and the use must be one critical
+    /// section. Checking, unlocking, and then using the fd would be a check-then-act
+    /// race — the cancel handler could mark-and-close in the gap, which is the exact
+    /// hazard this flag exists to rule out. Copies share the underlying allocation,
+    /// so the cancel handler's captured copy is this same state. The lock is a
+    /// plain mutex (`NIOLock`, so the same type on macOS and Linux) and is not
+    /// recursive: never re-enter it from a `withLockedValue` body.
+    private let fdClosed = NIOLockedValueBox(false)
+    private var activityHandler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
+    /// Callback for working-directory changes, fired from the foreground poll.
+    private var workingDirHandler: (@Sendable (String) -> Void)?
+    /// Last cwd we reported, to fire the handler only on change.
+    private var lastReportedWorkingDir: String?
+    private var terminated: Bool = false
+    private var foregroundPollTimer: DispatchSourceTimer?
+    /// Last size applied via init/`resize()`. `forceRepaint()` restores to
+    /// these values after its wiggle; because reads happen inside the actor,
+    /// a client resize that lands mid-wiggle wins and the restore uses the
+    /// newest size instead of stomping it.
+    private var currentCols: UInt16
+    private var currentRows: UInt16
+
+    // MARK: - Write Queue
+
+    /// Bytes that could not be flushed immediately because the PTY master FD
+    /// returned EAGAIN. Drained by `writeSource` when the FD is writable.
+    /// Each entry tracks `offset` so partial writes advance in-place instead
+    /// of copying the tail via `subdata(in:)` — keeps drain O(n) under
+    /// sustained backpressure.
+    private struct QueuedWrite {
+        var data: Data
+        var offset: Int
+        var remaining: Int { data.count - offset }
+    }
+    private var writeQueue: [QueuedWrite] = []
+    private var writeQueueBytes = 0
+    /// Hard cap on buffered write bytes before we drop oldest. 4 MB matches
+    /// the client's terminal-output cap; shell input >4 MB is almost certainly
+    /// a runaway loop.
+    private static let maxWriteQueueBytes = 4 * 1024 * 1024
+    private var writeSource: DispatchSourceWrite?
+    /// One-shot flag so we only log the overflow warning once per session
+    /// (the stream of dropped chunks is all one operational event).
+    private var didLogWriteOverflow = false
+
+    // MARK: - Initialization
+
+    /// Initialize: forkpty with given terminal size, spawn command in child.
+    public init(
+        sessionId: UUID,
+        cols: UInt16,
+        rows: UInt16,
+        scrollbackSize: Int,
+        command: String = "/opt/homebrew/bin/claude",
+        adminPort: Int = 0
+    ) throws {
+        self.sessionId = sessionId
+        self.ringBuffer = RingBuffer(capacity: scrollbackSize)
+        self.currentCols = cols
+        self.currentRows = rows
+
+        // F6: session identity + admin port for the local lifecycle hook. The
+        // hook (installed in the user's agent config) reads these to POST state
+        // to 127.0.0.1:<port>/hook/state. Resolve to C strings BEFORE fork —
+        // the child may only make POSIX/C calls (no Foundation).
+        let sessionIdCStr = strdup(sessionId.uuidString)
+        let adminPortCStr = strdup(String(adminPort))
+
+        var fd: Int32 = 0
+        var ws = winsize()
+        ws.ws_col = cols
+        ws.ws_row = rows
+        ws.ws_xpixel = 0
+        ws.ws_ypixel = 0
+
+        // Resolve home directory BEFORE fork — NSHomeDirectory() and other
+        // ObjC/Foundation calls are NOT safe in a forked child process.
+        let homeDir = strdup(NSHomeDirectory())
+        // Likewise the login shell: `getpwuid` may allocate and touch NSS, so it
+        // runs in the parent and the child only sees C strings.
+        let shell = LoginShell.resolve()
+        let shellPath = strdup(shell.path)
+        let shellArgv0 = strdup(shell.argv0)
+        let userName = strdup(shell.userName)
+
+        let pid = relay_forkpty(&fd, &ws)
+
+        if pid < 0 {
+            free(homeDir)
+            free(sessionIdCStr)
+            free(adminPortCStr)
+            free(shellPath)
+            free(shellArgv0)
+            free(userName)
+            throw PTYError.forkFailed(errno)
+        }
+
+        if pid == 0 {
+            // Child process — only use POSIX/C calls here (no ObjC/Foundation).
+            setenv("TERM", "xterm-256color", 1)
+            // F6: expose session id + admin port to the local lifecycle hook.
+            if let sessionIdCStr { setenv("CLAUDE_RELAY_SESSION_ID", sessionIdCStr, 1) }
+            if let adminPortCStr { setenv("CLAUDE_RELAY_ADMIN_PORT", adminPortCStr, 1) }
+            if let homeDir = homeDir {
+                chdir(homeDir)
+            }
+
+            #if os(macOS)
+            setenv("LANG", "en_US.UTF-8", 1)
+            setenv("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", 1)
+
+            // Use login -f to spawn shell with proper user context and permissions
+            let argv0 = strdup("login")
+            let argv1 = strdup("-fp")
+            let cArgs: [UnsafeMutablePointer<CChar>?] = [argv0, argv1, userName, nil]
+            _ = cArgs.withUnsafeBufferPointer { buf in
+                execv("/usr/bin/login", buf.baseAddress)
+            }
+
+            // Fallback to direct zsh if login fails
+            let fallbackArgv0 = strdup("-zsh")
+            let fallbackArgs: [UnsafeMutablePointer<CChar>?] = [fallbackArgv0, nil]
+            _ = fallbackArgs.withUnsafeBufferPointer { buf in
+                execv("/bin/zsh", buf.baseAddress)
+            }
+            #else
+            // Linux: login(1) needs root, so exec the user's own shell directly
+            // and give it what `login -fp` would have — a login-shell argv[0]
+            // (leading '-', so /etc/profile and ~/.*profile run), the identity
+            // variables, and the server's environment preserved (`-p`). PATH
+            // and LANG are inherited rather than pinned: there is no Homebrew
+            // prefix to add, /etc/profile extends PATH, and a forced
+            // `en_US.UTF-8` on a box that has not generated it makes every
+            // setlocale() warn. Only a *missing* LANG is defaulted, to the
+            // `C.UTF-8` locale glibc always ships.
+            if let homeDir { setenv("HOME", homeDir, 1) }
+            if let userName {
+                setenv("USER", userName, 1)
+                setenv("LOGNAME", userName, 1)
+            }
+            if let shellPath { setenv("SHELL", shellPath, 1) }
+            if getenv("LANG") == nil { setenv("LANG", "C.UTF-8", 1) }
+            if getenv("PATH") == nil { setenv("PATH", "/usr/local/bin:/usr/bin:/bin", 1) }
+
+            let cArgs: [UnsafeMutablePointer<CChar>?] = [shellArgv0, nil]
+            if let shellPath {
+                _ = cArgs.withUnsafeBufferPointer { buf in
+                    execv(shellPath, buf.baseAddress!)
+                }
+            }
+
+            // Fallback to /bin/sh if the account's shell is missing or broken.
+            let fallbackArgv0 = strdup("-sh")
+            let fallbackArgs: [UnsafeMutablePointer<CChar>?] = [fallbackArgv0, nil]
+            _ = fallbackArgs.withUnsafeBufferPointer { buf in
+                execv("/bin/sh", buf.baseAddress!)
+            }
+            #endif
+            _exit(1)
+        }
+
+        free(homeDir)
+        free(sessionIdCStr)
+        free(adminPortCStr)
+        free(shellPath)
+        free(shellArgv0)
+        free(userName)
+
+        // Parent process
+        self.masterFD = fd
+        self.childPID = pid
+        // Capture the child's start time immediately so `terminate()` can
+        // detect PID reuse before sending SIGKILL (C-10). sysctl is
+        // best-effort; if it fails we store -1 and skip the check at kill
+        // time, accepting the residual reuse risk.
+        self.childStartTime = relay_get_process_start_time(pid)
+        // The session the sweep will target is `pid` itself, asserted rather than
+        // read back from the kernel — and that is a safety property, not a
+        // shortcut.
+        //
+        // `getsid(pid)` here is a RACE, and it loses essentially always: `forkpty`
+        // returns in the parent before the child has run its `setsid()`, so the
+        // value observed is *the parent's own session*. Measured: 8/8 forkpty calls
+        // reported the server's sid. Feeding that to the reap would make a routine
+        // session teardown SIGKILL the server and every session it hosts — during
+        // development it killed the test runner outright (exit 144, no output).
+        //
+        // Sleeping until it settles would trade that for a slow init and a residual
+        // race. There is nothing to read: POSIX guarantees `setsid()` in the child
+        // makes the child's sid equal its pid, so `pid` IS the answer. The sweep
+        // additionally refuses to signal our own session, so if this ever became
+        // wrong it degrades to signalling nothing rather than to suicide.
+        self.childSessionID = pid
+        // Put the master FD into non-blocking mode so write() never pins the
+        // actor. write(2) returns EAGAIN when the shell's input buffer is full;
+        // we buffer the remainder in writeQueue and drain from a DispatchSource.
+        let existingFlags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, existingFlags | O_NONBLOCK)
+
+        // Mark the master close-on-exec, or every session created *after* this
+        // one leaks it into its shell.
+        //
+        // `forkpty` closes the master in the child it forks, so this session's
+        // own shell is never the problem. The masters it knows nothing about are
+        // the ones already in our fd table: `fork` copies the table verbatim, and
+        // without this flag they all survive the `execv("/usr/bin/login", …)`
+        // below. Session N's shell would hold N−1 masters.
+        //
+        // Both symptoms of the leak follow from that:
+        // - The kernel pty pair is not freed when we close our master, because
+        //   another session's shell still references it. `ptmx` is a fixed pool
+        //   (`kern.tty.ptmx_max`, 511), so a long-running server that churns
+        //   sessions eventually cannot fork one at all.
+        // - The shell on a leaked pty never sees its master close, so it never
+        //   gets EOF/SIGHUP and never exits — it survives even the server that
+        //   spawned it, reparenting to launchd. This is why `terminate()`'s
+        //   SIGTERM/SIGKILL was not a sufficient backstop: those go to the
+        //   `login` child, whose own pty is fine; the wedged processes are
+        //   *other* sessions' shells, holding *this* master.
+        //
+        // Set on the parent's copy, after the fork, deliberately: it must not be
+        // set before, or `forkpty`'s own child plumbing would be affected, and
+        // the child that matters is every *future* one. `F_SETFD` (descriptor
+        // flag) is a different command from the `F_SETFL` above (file-status
+        // flag) — read-modify-write each independently rather than merging them.
+        let existingDescriptorFlags = fcntl(fd, F_GETFD, 0)
+        if existingDescriptorFlags != -1 {
+            _ = fcntl(fd, F_SETFD, existingDescriptorFlags | FD_CLOEXEC)
+        }
+        let box = self.activityCallbackBox
+        self.activityMonitor = SessionActivityMonitor(
+            silenceThreshold: 1.0,
+            agentSilenceThreshold: 2.0,
+            onChange: { newState, agent, agentState, title, revision in
+                box.handler?(newState, agent, agentState, title, revision)
+            }
+        )
+        self.screenModel = TerminalScreenModel(cols: cols, rows: rows)
+        self.stateDetector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+    }
+
+    /// Activate the dispatch source that reads PTY output.
+    /// Must be called after init to avoid actor-initializer isolation warning (Swift 6).
+    public func startReading() {
+        guard readSource == nil else { return }
+        let readSrc = Self.makeReadSource(fd: masterFD, session: self)
+        self.readSource = readSrc
+
+        activityMonitor.onSilenceTimeout = { [weak self] in
+            Task {
+                guard let session = self else { return }
+                await session.handleSilenceTimeout()
+            }
+        }
+
+        startForegroundPoll()
+    }
+
+    /// Re-enters actor isolation for the silence timer so state mutations are
+    /// serialized with processOutput/updateForegroundProcess.
+    private func handleSilenceTimeout() {
+        activityMonitor.applySilenceTimeout()
+    }
+
+    /// Re-enters actor isolation for the foreground process poll result.
+    private func handleForegroundPollResult(agent: CodingAgent?) {
+        guard !terminated else { return }
+        activityMonitor.updateForegroundProcess(agent: agent)
+        // Screen detection only runs while an agent is active. Snapshot the
+        // emulated grid and evaluate the agent's manifest, then arbitrate.
+        if let agent = activityMonitor.activeAgent {
+            let snapshot = screenModel.snapshot()
+            let detection = stateDetector.detect(agentId: agent.id, snapshot: snapshot)
+            activityMonitor.updateScreenDetection(detection, now: Date())
+        }
+        // Track cwd changes (e.g. `cd`) even without an activity change.
+        if let handler = workingDirHandler, let cwd = currentWorkingDirectory(),
+           cwd != lastReportedWorkingDir {
+            lastReportedWorkingDir = cwd
+            handler(cwd)
+        }
+    }
+
+    // MARK: - Foreground Process Polling
+
+    /// Polls tcgetpgrp + KERN_PROCARGS2 to detect a coding agent as the foreground process
+    /// or as an ancestor (up to 4 levels) of the foreground process.
+    ///
+    /// Parent chain walk is essential: when agents launch tools (git, npm, node),
+    /// those tools become the foreground process group leader while the agent remains
+    /// their ancestor. Without the walk, every tool execution briefly appears as
+    /// "agent exited", causing UI flicker.
+    ///
+    /// Poll interval: 1s, first fire immediately on attach for responsive entry detection.
+    /// Exit debouncing in SessionActivityMonitor prevents flicker.
+    private func startForegroundPoll() {
+        let timer = DispatchSource.makeTimerSource(queue: .global())
+        let fd = masterFD
+        timer.schedule(deadline: .now(), repeating: 1.0)
+        timer.setEventHandler { [weak self] in
+            let pgid = relay_get_foreground_pgid(fd)
+            guard pgid > 0 else { return }
+
+            let agent = Self.detectAgentInProcessChain(startingPid: pgid)
+            Task {
+                guard let session = self else { return }
+                await session.handleForegroundPollResult(agent: agent)
+            }
+        }
+        timer.resume()
+        foregroundPollTimer = timer
+    }
+
+    /// Adjust the foreground-process polling interval. Attached sessions use
+    /// `attachedPollCadence` (1.0 s) for responsive agent-entry detection;
+    /// detached sessions use `detachedPollCadence` (5.0 s) so many-session
+    /// deployments don't pay the full poll cost per second.
+    public func setPollCadence(_ seconds: TimeInterval) {
+        guard let timer = foregroundPollTimer else { return }
+        timer.schedule(deadline: .now() + seconds, repeating: seconds)
+    }
+
+    /// Walks the process tree from `startingPid` up through parents (max 5 hops)
+    /// looking for a known coding agent.
+    ///
+    /// For each PID we check two names:
+    /// 1. The executable basename (e.g. `claude`, `node`).
+    /// 2. `argv[1]` basename — the script path when the process is a script
+    ///    interpreter. This is what catches Node/Python/Ruby-based agents
+    ///    like `codex` whose binary is actually `node`.
+    private static func detectAgentInProcessChain(startingPid: Int32) -> CodingAgent? {
+        let ownPid = getpid()
+        var pid = startingPid
+        for _ in 0..<5 {
+            // Stop at init or at our own PID. The server binary is named
+            // `claude-relay-server`, which matches `claude-` via the prefix rule —
+            // without this guard every fresh PTY would look like Claude is running
+            // from the moment the shell starts (login → zsh → claude-relay-server).
+            guard pid > 1, pid != ownPid else { return nil }
+
+            var execBuf = [CChar](repeating: 0, count: 256)
+            if relay_get_process_name(pid, &execBuf, 256) == 0 {
+                let execName = String(cString: execBuf)
+                if let agent = CodingAgent.matching(processName: execName) {
+                    return agent
+                }
+            }
+
+            var scriptBuf = [CChar](repeating: 0, count: 256)
+            if relay_get_process_script_name(pid, &scriptBuf, 256) == 0 {
+                let scriptName = String(cString: scriptBuf)
+                if let agent = CodingAgent.matching(processName: scriptName) {
+                    return agent
+                }
+            }
+
+            let ppid = relay_get_parent_pid(pid)
+            if ppid <= 1 || ppid == pid { return nil }
+            pid = ppid
+        }
+        return nil
+    }
+
+    // MARK: - Read Source Setup
+
+    /// Creates and activates a DispatchSourceRead for the master file descriptor.
+    /// Bridges GCD callbacks into the actor context via unstructured Tasks.
+    private static func makeReadSource(fd: Int32, session: PTYSession) -> DispatchSourceRead {
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .global())
+
+        // Persistent read buffer — reused across callbacks to avoid per-read allocation.
+        var readBuffer = [UInt8](repeating: 0, count: 8192)
+
+        // `DispatchSourceRead` is class-bound only on Darwin (it is an @objc
+        // protocol there); on Linux it is a plain protocol, so capture the
+        // concrete `DispatchSource` object weakly instead — same object either way.
+        let sourceObject = source as? DispatchSource
+        source.setEventHandler { [weak sourceObject, session] in
+            let estimated = max(Int(sourceObject?.data ?? 0), 256)
+            if estimated > readBuffer.count {
+                readBuffer = [UInt8](repeating: 0, count: min(estimated, 65536))
+            }
+            let bytesRead = read(fd, &readBuffer, readBuffer.count)
+
+            if bytesRead > 0 {
+                let data = Data(readBuffer[0..<bytesRead])
+                Task {
+                    await session.handleOutput(data)
+                }
+            } else {
+                // EOF or error — cancel source to stop firing and close FD
+                sourceObject?.cancel()
+                Task {
+                    await session.handleExit()
+                }
+            }
+        }
+
+        // Copied out of the actor rather than captured through `session`, so the
+        // handler doesn't retain the actor for the lifetime of the source. The copy
+        // shares the lock's allocation, so it is the same state `session` reads.
+        let fdClosed = session.fdClosed
+        source.setCancelHandler {
+            // Mark before closing, never after: between the two, another thread
+            // could see "open" for an fd that is already gone.
+            fdClosed.withLockedValue { $0 = true }
+            close(fd)
+        }
+
+        source.resume()
+        return source
+    }
+
+    // MARK: - Internal Handlers
+
+    /// Called from the read source when output data is available.
+    /// Always writes to the ring buffer (for resume history) and
+    /// additionally forwards to the live output handler if attached.
+    private func handleOutput(_ data: Data) {
+        // Answer terminal queries HERE rather than letting them reach the device.
+        // The emulator we already feed for detection produces the same answer the
+        // device's SwiftTerm would, minus the WebSocket round trip that makes the
+        // device's answer arrive after the asking program stopped reading — at
+        // which point the shell echoes it as typed text (the reported
+        // `11;rgb:0000/0000/0000`). This is what tmux does, and it also means a
+        // DETACHED session's queries get answered instead of rotting in the ring
+        // buffer until some client reattaches and answers them.
+        //
+        // No loop: an answer written back may be echoed into this stream, but an
+        // answer is never itself a query, so it generates nothing further.
+        let queryAnswers = screenModel.feed(data)
+        if !queryAnswers.isEmpty {
+            write(queryAnswers)
+        }
+        // Everything client-bound — the live forward AND the replayable history —
+        // gets the queries stripped, so neither path can provoke a late answer.
+        // Detection and the OSC 52 scanner keep seeing the raw bytes.
+        let clientBound = TerminalQueryFilter.strip(data)
+
+        ringBuffer.write(clientBound)
+        activityMonitor.processOutput(data)
+        outputHandler?(clientBound)
+        // F11: surface OSC 52 clipboard writes (terminal copy → device). Fed the
+        // raw stream, not `clientBound`, so parser state can't be broken by the
+        // query filter — though only OSC 52 *reads* are stripped and those are
+        // ignored here anyway. The parser is stateful: a sequence split across
+        // reads completes on a later chunk. Always feed (even with no handler) so
+        // parser state doesn't desync across attach/detach.
+        //
+        // Coalesce to the LAST write in the chunk: each OSC 52 write REPLACES
+        // the clipboard, so only the final one matters. This also bounds a
+        // flood — a chunk packed with tiny sequences (a 64 KB read can hold
+        // ~5k) must not fan out to thousands of clipboard_update frames +
+        // pasteboard writes (clipboard_update bypasses the inflight-byte
+        // backpressure that guards binary output).
+        let clipboardWrites = osc52Parser.feed(data)
+        if let clipboardHandler, let latest = clipboardWrites.last {
+            clipboardHandler(latest)
+        }
+    }
+
+    /// Called from the read source on EOF (child exited).
+    private func handleExit() {
+        foregroundPollTimer?.cancel()
+        foregroundPollTimer = nil
+        activityMonitor.forceExit()
+        exitHandler?()
+    }
+
+    // MARK: - Activity Monitoring
+
+    /// Returns the current activity state of this session.
+    public func getActivityState() -> ActivityState {
+        activityMonitor.state
+    }
+
+    /// Returns the coding agent currently running in this session, if any.
+    public func getActiveAgent() -> CodingAgent? {
+        activityMonitor.activeAgent
+    }
+
+    /// Returns the fine-grained agent state detected from the screen, if any.
+    public func getAgentState() -> AgentDetectedState? {
+        activityMonitor.agentState
+    }
+
+    /// Returns the current window title (OSC 0/2), if any.
+    public func getTitle() -> String? {
+        activityMonitor.title
+    }
+
+    /// Set callback for activity state changes. The monitor emits a monotonic
+    /// `revision` with every change so downstream observers can drop out-of-order
+    /// updates that cross isolation boundaries.
+    public func setActivityHandler(
+        _ handler: @escaping @Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void
+    ) {
+        self.activityHandler = handler
+        self.activityCallbackBox.handler = handler
+    }
+
+    /// Set a callback invoked (on the foreground poll) with the session's
+    /// current working directory. Fires only when the cwd is readable and has
+    /// changed since the last poll, so `cd` is tracked even without an activity
+    /// state change. The handler resolves the git root and reports upward.
+    public func setWorkingDirHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        self.workingDirHandler = handler
+    }
+
+    /// Record that input was sent to this session.
+    public func recordInput() {
+        activityMonitor.recordInput()
+    }
+
+    public func applyHookState(_ hookState: AgentDetectedState) {
+        guard !terminated else { return }
+        activityMonitor.applyHookState(hookState, now: Date())
+    }
+
+    // MARK: - Public API
+
+    /// Set callback for PTY output (when client is attached).
+    public func setOutputHandler(_ handler: @escaping @Sendable (Data) -> Void) {
+        self.outputHandler = handler
+    }
+
+    /// Set callback for OSC 52 clipboard writes from the terminal (F11).
+    public func setClipboardHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        self.clipboardHandler = handler
+    }
+
+    /// Set callback for process exit.
+    public func setExitHandler(_ handler: @escaping @Sendable () -> Void) {
+        self.exitHandler = handler
+    }
+
+    /// Clear output handler (when client detaches -- output goes to ring buffer).
+    public func clearOutputHandler() {
+        self.outputHandler = nil
+        self.clipboardHandler = nil
+    }
+
+    /// Write data to PTY (terminal input from client). Non-blocking: on EAGAIN
+    /// the remainder is buffered and a DispatchSourceWrite is scheduled to
+    /// drain the queue when the FD becomes writable.
+    public func write(_ data: Data) {
+        guard !terminated else { return }
+        guard !data.isEmpty else { return }
+        writeQueue.append(QueuedWrite(data: data, offset: 0))
+        writeQueueBytes += data.count
+        capWriteQueue()
+        drainWriteQueue()
+    }
+
+    /// Drop oldest chunks while the queue exceeds the byte cap. Logs once per
+    /// session's lifetime so a runaway-input bug is diagnosable without
+    /// spamming the log.
+    private func capWriteQueue() {
+        guard writeQueueBytes > Self.maxWriteQueueBytes else { return }
+        let overshoot = writeQueueBytes
+        while writeQueueBytes > Self.maxWriteQueueBytes, !writeQueue.isEmpty {
+            let dropped = writeQueue.removeFirst()
+            writeQueueBytes -= dropped.remaining
+        }
+        if !didLogWriteOverflow {
+            RelayLogger.log(.error, category: "session",
+                "PTYSession \(sessionId) write queue overflow: dropped \(overshoot - writeQueueBytes) bytes (cap = \(Self.maxWriteQueueBytes))")
+            didLogWriteOverflow = true
+        }
+    }
+
+    /// Flush as many bytes as the kernel will take right now. On EAGAIN schedule
+    /// (or keep alive) a write source that will call us back.
+    private func drainWriteQueue() {
+        while let head = writeQueue.first {
+            let remaining = head.remaining
+            let written = head.data.withUnsafeBytes { raw -> Int in
+                guard let base = raw.baseAddress else { return 0 }
+                return Foundation.write(masterFD, base.advanced(by: head.offset), remaining)
+            }
+            if written >= remaining {
+                writeQueue.removeFirst()
+                writeQueueBytes -= remaining
+                continue
+            }
+            if written > 0 {
+                writeQueue[0].offset += written
+                writeQueueBytes -= written
+                continue
+            }
+            // written == -1
+            let err = errno
+            if err == EAGAIN || err == EINTR {
+                startWriteSourceIfNeeded()
+                return
+            }
+            RelayLogger.log(.error, category: "session",
+                "PTYSession \(sessionId) write error: errno \(err)")
+            writeQueue.removeAll()
+            writeQueueBytes = 0
+            writeSource?.cancel()
+            writeSource = nil
+            return
+        }
+        // Queue drained successfully. Reset the overflow log gate so a later
+        // overflow episode gets its own log line instead of being swallowed.
+        didLogWriteOverflow = false
+        writeSource?.cancel()
+        writeSource = nil
+    }
+
+    /// Lazy-create a write dispatch source that kicks drainWriteQueue whenever
+    /// the FD becomes writable. No-op if one is already live.
+    private func startWriteSourceIfNeeded() {
+        guard writeSource == nil else { return }
+        let sessionActor = self
+        let source = DispatchSource.makeWriteSource(fileDescriptor: masterFD, queue: .global(qos: .userInitiated))
+        source.setEventHandler {
+            Task { await sessionActor.drainWriteQueue() }
+        }
+        source.resume()
+        writeSource = source
+    }
+
+    /// Resize the terminal.
+    public func resize(cols: UInt16, rows: UInt16) {
+        guard !terminated else { return }
+        currentCols = cols
+        currentRows = rows
+        screenModel.resize(cols: cols, rows: rows)
+        _ = relay_set_winsize(masterFD, rows, cols)
+    }
+
+    /// Best-effort cwd of the session's shell (the stable workspace anchor).
+    ///
+    /// `childPID` is the setuid `login` process, whose vnode path info is not
+    /// readable by this non-root server (EPERM on sugid processes). So we
+    /// descend to the first readable child — the real interactive shell — and
+    /// return its cwd. Nil when nothing in the subtree is readable.
+    public func currentWorkingDirectory() -> String? {
+        guard !terminated else { return nil }
+        var buf = [CChar](repeating: 0, count: 1024)   // paths well under PATH_MAX
+        guard relay_proc_cwd_descendant(childPID, &buf, Int32(buf.count)) == 0 else { return nil }
+        return String(cString: buf)
+    }
+
+    /// Forces the foreground app to re-emit its whole screen by genuinely
+    /// changing the PTY width and restoring it (cols−1 → 150 ms → cols).
+    ///
+    /// A bare SIGWINCH at unchanged size does NOT work for Node/Ink apps
+    /// (Claude Code): Node's WINCH handler re-reads TIOCGWINSZ and only fires
+    /// the `resize` event when the dimensions differ from its cache — measured
+    /// 0 repaint bytes from `claude` on same-size WINCH vs a full repaint on a
+    /// 1-column change. The gap is required too: the foreground process must
+    /// handle the first WINCH *while the intermediate size is still current*,
+    /// or it observes only the restored size and skips the redraw (25 ms was
+    /// the measured minimum for `claude` on an idle machine; a busy process
+    /// needs more, and the keyboard gesture this mimics has a human-scale
+    /// gap). Cols is wiggled rather than rows because a rows-grow was observed
+    /// to produce no repaint. TIOCSWINSZ auto-delivers WINCH on each real
+    /// change, so no explicit kill() is needed.
+    public func forceRepaint() async {
+        guard !terminated, currentCols > 1 else { return }
+        _ = relay_set_winsize(masterFD, currentRows, currentCols - 1)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        // Re-read after the await: a client resize() that landed mid-wiggle
+        // has updated currentCols/currentRows, and restoring to those is
+        // correct (never stomp a legitimate resize with a stale size).
+        guard !terminated else { return }
+        _ = relay_set_winsize(masterFD, currentRows, currentCols)
+    }
+
+    /// Read the ring buffer contents (for resume, send scrollback history to client).
+    /// Does not clear — new output continues to accumulate for subsequent resumes.
+    public func readBuffer() -> Data {
+        return ringBuffer.read()
+    }
+
+    /// Clean up: kill child process, close fd.
+    public func terminate() {
+        guard !terminated else { return }
+        terminated = true
+        activityMonitor.cancel()
+        foregroundPollTimer?.cancel()
+        foregroundPollTimer = nil
+
+        // Cancel the read source (this also closes the fd via the cancel handler)
+        readSource?.cancel()
+        readSource = nil
+
+        writeSource?.cancel()
+        writeSource = nil
+        writeQueue.removeAll()
+        writeQueueBytes = 0
+
+        Self.reap(pid: childPID, sessionLabel: "\(sessionId)", startTime: childStartTime,
+                  sessionID: childSessionID)
+    }
+
+    // MARK: - Test Hooks
+
+    /// The terminal session `terminate()` sweeps.
+    var _testOnly_childSessionID: pid_t { childSessionID }
+
+    /// Drive the output path exactly as the read source does, so a test can
+    /// assert what a client is handed for a given chunk of PTY output.
+    ///
+    /// The production trigger is unreachable from a test: output comes only from
+    /// the child, and under a test harness `login -fp` echoes commands without
+    /// running them (see the reap notes in this directory's `CLAUDE.md`) — so
+    /// making the shell `printf` a query proves nothing about the code path.
+    func _testOnly_handleOutput(_ data: Data) {
+        handleOutput(data)
+    }
+
+    /// Why a window-size read produced no size.
+    ///
+    /// Two cases rather than `nil`, so a test can tell *the guard short-circuited*
+    /// from *the ioctl ran and failed*. Both collapse to "no size" for a caller that
+    /// only wants the width, but they are what makes the `fdClosed` guard
+    /// observable: without the distinction, deleting the guard still yields a
+    /// failure (`EBADF`) and the mutant survives. See
+    /// `testWindowSizeReportsClosedFDRatherThanProbingIt`.
+    ///
+    /// Callers deciding whether a *live* session is at fault should not read
+    /// significance into which case appeared — `TIOCGWINSZ` on an open pty master
+    /// does not fail, so in practice a read only fails once the fd is closed. The
+    /// split serves the guard's testability, not failure triage.
+    enum WindowSizeFailure: Error, Equatable {
+        /// The master fd has been closed; there is no PTY left to ask.
+        case fdClosed
+        /// The ioctl was issued and failed, with this errno.
+        case ioctlFailed(errno: Int32)
+    }
+
+    /// The window size the kernel currently holds for this PTY.
+    /// Prefix `_testOnly_` is the convention; do not call from production code —
+    /// the supported view of the size is `resize()`'s own `currentCols`/`currentRows`.
+    ///
+    /// Master and slave share one `struct winsize`, so this reads exactly the state
+    /// the child's own TIOCGWINSZ reports — i.e. what a Node/Ink app compares against
+    /// its cache to decide whether to repaint. Why tests read it here rather than
+    /// through a shell: `PTYForceRepaintTests`' file comment.
+    ///
+    /// Guarding on `fdClosed` rather than `terminated`, and running the ioctl *inside*
+    /// the `withLock`: see `fdClosed`. Failure cases: see `WindowSizeFailure`.
+    func _testOnly_kernelWindowSize() -> Result<(rows: UInt16, cols: UInt16), WindowSizeFailure> {
+        fdClosed.withLockedValue { closed -> Result<(rows: UInt16, cols: UInt16), WindowSizeFailure> in
+            guard !closed else { return .failure(.fdClosed) }
+            var rows: UInt16 = 0
+            var cols: UInt16 = 0
+            guard relay_get_winsize(masterFD, &rows, &cols) == 0 else {
+                return .failure(.ioctlFailed(errno: errno))
+            }
+            return .success((rows: rows, cols: cols))
+        }
+    }
+
+    /// Marks the master fd closed — the cancel handler's first step — so a test can
+    /// reach the `fdClosed` guard in `_testOnly_kernelWindowSize()`.
+    ///
+    /// Without this the guard is unreachable from a test: the real close happens on a
+    /// dispatch queue when the child exits, and every test read happens while the PTY
+    /// is deliberately alive. Deleting the guard therefore left the suite green.
+    ///
+    /// It deliberately does *not* `close()` the fd, even though the name of the state
+    /// it sets says "closed". Two reasons, and both are why this is a mark and not a
+    /// close:
+    ///
+    /// - The fd is still monitored by a live `DispatchSourceRead`, which owns it until
+    ///   its cancel handler runs. Closing it here would break that contract and hand
+    ///   the handler a second `close()` of an fd number the process may have already
+    ///   recycled — the exact cross-session mix-up `fdClosed` exists to prevent, only
+    ///   caused by the test rather than caught by it.
+    /// - It makes the assertion stronger. With the descriptor still open, an
+    ///   unguarded read *succeeds* and returns the real size, so deleting the guard
+    ///   fails `testWindowSizeReportsClosedFDRatherThanProbingIt` deterministically.
+    ///   A genuine close would instead yield `EBADF`, leaving the mutant's death
+    ///   dependent on the kernel not having recycled the number.
+    ///
+    /// That divergence from the cancel handler is sound precisely because the guard
+    /// reads *only* this flag: the fd's real state is what the flag exists to stand in
+    /// for, so setting it is the whole of what the guard can observe.
+    func _testOnly_markMasterFDClosed() {
+        fdClosed.withLockedValue { $0 = true }
+    }
+
+    /// `F_GETFD` on the master fd, or -1 if the call fails. Lets a test assert
+    /// `FD_CLOEXEC` directly, so the no-inheritance invariant stays covered even
+    /// where a child's fd table is unreadable and the consequence test skips.
+    var _testOnly_masterFDFlags: Int32 { fcntl(masterFD, F_GETFD) }
+
+    /// The process group `terminate()` must signal, or -1 once it is gone.
+    ///
+    /// `forkpty` calls `setsid()` in the child, so this is normally just
+    /// `childPID` — but it is read from the kernel rather than assumed, so a test
+    /// asserting that the whole group is reaped is anchored to the group the
+    /// child actually belongs to. See `PTYTerminateProcessGroupTests`.
+    var _testOnly_childPGID: pid_t { getpgid(childPID) }
+}
