@@ -1,10 +1,10 @@
 class Clauderelay < Formula
   desc "Remote terminal relay server and CLI over WebSocket"
-  homepage "https://github.com/miguelriotinto/ClaudeRelay"
-  url "https://github.com/miguelriotinto/ClaudeRelay/archive/refs/tags/v0.3.24.tar.gz"
+  homepage "https://github.com/miguelriotinto/CodeRelay"
+  url "https://github.com/miguelriotinto/CodeRelay/archive/refs/tags/v0.3.25.tar.gz"
   sha256 "87a462113b786ccb73b8291119bae90472a0b5df2687585e8c84bf38447853dd"
   license "MIT"
-  head "https://github.com/miguelriotinto/ClaudeRelay.git", branch: "main"
+  head "https://github.com/miguelriotinto/CodeRelay.git", branch: "main"
 
   depends_on xcode: ["15.0", :build]
   depends_on :macos
@@ -22,11 +22,11 @@ class Clauderelay < Formula
            "--product", "claude-relay"
     bin.install ".build/release/claude-relay"
     bin.install ".build/release/claude-relay-server"
-    # ClaudeRelayServer bundles agent-detection manifests (Resources/Agents)
+    # CodeRelayServer bundles agent-detection manifests (Resources/Agents)
     # loaded at runtime via `Bundle.module`, which resolves the bundle next to
     # the executable. Without this, the server fatal-errors on the first
     # agent-detection path (session create). See resource_bundle_accessor.swift.
-    bin.install ".build/release/ClaudeRelay_ClaudeRelayServer.bundle"
+    bin.install ".build/release/CodeRelay_CodeRelayServer.bundle"
     # State hook script is located by `claude-relay hook install` via
     # HookInstallCommand.locateBundledScript(), which checks pkgshare among
     # other candidates.

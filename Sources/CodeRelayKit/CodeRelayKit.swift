@@ -1,6 +1,6 @@
 /// CodeRelayKit provides shared types and utilities for the CodeRelay system.
 public enum CodeRelayKit {
-    public static let version = "0.3.24"
+    public static let version = "0.3.25"
 
     /// Current wire-protocol version. Bump when messages change in breaking ways.
     public static let protocolVersion = 1
