@@ -281,7 +281,7 @@ shipped verbatim by the package at `/usr/lib/systemd/user/claude-relay.service`:
 ```ini
 [Unit]
 Description=CodeRelay terminal relay server
-Documentation=https://github.com/miguelriotinto/clauderelay
+Documentation=https://github.com/miguelriotinto/CodeRelay
 After=default.target
 
 [Service]

@@ -42,7 +42,7 @@ The macOS server/CLI and the two Apple clients are built from one Swift package;
 
 **Android client (separate Gradle project, `CodeRelayAndroid/`):**
 
-- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and an on-device speech pipeline). It speaks the identical wire protocol to the same server. The APK is published with every [release](https://github.com/miguelriotinto/clauderelay/releases) (`vX.Y.Z` tags, under its own **Android client** section) next to the Linux client and server; interim test builds also appear as `android-v*` pre-releases — see [`CodeRelayAndroid/RELEASE.md`](CodeRelayAndroid/RELEASE.md).
+- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and an on-device speech pipeline). It speaks the identical wire protocol to the same server. The APK is published with every [release](https://github.com/miguelriotinto/CodeRelay/releases) (`vX.Y.Z` tags, under its own **Android client** section) next to the Linux client and server; interim test builds also appear as `android-v*` pre-releases — see [`CodeRelayAndroid/RELEASE.md`](CodeRelayAndroid/RELEASE.md).
 
 ## Installation
 
@@ -64,7 +64,7 @@ yay -S coderelay-server-bin
 claude-relay setup                 # starts the service, prints a pairing QR
 ```
 
-Or download the tarballs straight from the [Releases](https://github.com/miguelriotinto/clauderelay/releases)
+Or download the tarballs straight from the [Releases](https://github.com/miguelriotinto/CodeRelay/releases)
 page — every release has a **Linux server + CLI** section
 (`claude-relay-vX.Y.Z-linux-x86_64.tar.gz`), a **Linux client** section
 (`coderelay-vX.Y.Z-linux-x86_64.tar.gz`, the Compose Desktop app; also
@@ -84,7 +84,7 @@ See [`docs/linux-server-spec.md`](docs/linux-server-spec.md) for the full design
 **macOS** requires Xcode 15.0+ and macOS 14+:
 
 ```bash
-git clone https://github.com/miguelriotinto/clauderelay.git
+git clone https://github.com/miguelriotinto/CodeRelay.git
 cd CodeRelay
 swift build -c release
 ```
@@ -520,6 +520,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Links
 
-- **GitHub**: https://github.com/miguelriotinto/clauderelay
+- **GitHub**: https://github.com/miguelriotinto/CodeRelay
 - **Homebrew Tap**: https://github.com/miguelriotinto/homebrew-clauderelay
-- **Issues**: https://github.com/miguelriotinto/clauderelay/issues
+- **Issues**: https://github.com/miguelriotinto/CodeRelay/issues
