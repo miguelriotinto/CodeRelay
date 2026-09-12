@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Network connectivity callbacks: the AndroidConnectivitySource registers a
+         NetworkCallback so the coordinator can trigger recovery when the network
+         comes back (the NWPathMonitor analog). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- QR scanner (Task 9): runtime CAMERA permission; camera is OPTIONAL so the app
+         installs on camera-less devices (the scanner is just unavailable). Declaring
+         the CAMERA permission implicitly marks android.hardware.camera +
+         camera.autofocus as REQUIRED unless we explicitly opt out — so all three
+         camera features must be declared required="false", or Play (and some OEM
+         installers) will exclude/refuse devices that report no rear camera. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <!-- Haptic feedback on QR-scan detection (QrScannerScreen.vibrate). Normal
+         (non-dangerous) permission, no runtime request needed. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- On-device speech (M3 Task 10). RECORD_AUDIO is the dangerous runtime
+         permission for mic capture; POST_NOTIFICATIONS (API 33+) is required for the
+         continuous-listening foreground-service notification. FOREGROUND_SERVICE +
+         FOREGROUND_SERVICE_MICROPHONE back the always-on listening service — the
+         documented Android divergence from iOS's foreground-only model. Runtime
+         grants for RECORD_AUDIO + POST_NOTIFICATIONS are requested via
+         ActivityResultContracts (device-deferred). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <application
+        android:name="relay.app.RelayApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.CodeRelayM1">
+
+        <activity
+            android:name="relay.app.MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.CodeRelayM1"
+            android:configChanges="screenLayout|screenSize|smallestScreenSize|orientation|keyboardHidden|keyboard|navigation|uiMode|density|fontScale">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- coderelay://session/<uuid> deep links (Task 9). Matches the iOS
+                 URL scheme so a QR scanned on iOS opens the Android app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="coderelay" />
+            </intent-filter>
+        </activity>
+
+        <!-- Continuous-listening foreground service (M3 Task 10). microphone type
+             so the OS allows mic capture while foregrounded; not exported (started
+             only from within the app via Context.startForegroundService). -->
+        <service
+            android:name="relay.app.ContinuousListeningService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- FCM push (F1 Android). Receives registration-token refreshes and
+             agent-activity pushes; not exported (system-bound). -->
+        <service
+            android:name="relay.app.RelayFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

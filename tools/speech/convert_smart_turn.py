@@ -7,8 +7,8 @@ Audio → features preprocessing uses Whisper's feature extractor for 8s of
 we bundle a second CoreML model that wraps the Whisper mel pipeline.
 
 Outputs (committed to the repo so CI doesn't need Python):
-  Sources/ClaudeRelaySpeech/Resources/WhisperLogMel8s.mlpackage
-  Sources/ClaudeRelaySpeech/Resources/SmartTurnV3.mlpackage
+  Sources/CodeRelaySpeech/Resources/WhisperLogMel8s.mlpackage
+  Sources/CodeRelaySpeech/Resources/SmartTurnV3.mlpackage
 """
 from pathlib import Path
 import numpy as np
@@ -18,7 +18,7 @@ from transformers import WhisperFeatureExtractor
 from huggingface_hub import hf_hub_download
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-OUT_DIR = REPO_ROOT / "Sources" / "ClaudeRelaySpeech" / "Resources"
+OUT_DIR = REPO_ROOT / "Sources" / "CodeRelaySpeech" / "Resources"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 SAMPLE_RATE = 16000
