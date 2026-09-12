@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 swift build                                    # Build all SPM targets
 swift test                                     # Run all tests
-swift test --filter ClaudeRelayKitTests        # One test suite
+swift test --filter CodeRelayKitTests        # One test suite
 swift test --filter testTokenGeneration        # One test by name
 ```
 
@@ -24,31 +24,31 @@ swift run claude-relay token create --port 9100 --label "dev"  # Create auth tok
 
 Note: Service commands are top-level (`claude-relay stop`), while token/session/config/log commands are grouped (`claude-relay token create`, `claude-relay session list`, etc.).
 
-**iOS app**: Open `ClaudeRelay.xcodeproj` in Xcode, Cmd+R. After changing ClaudeRelayClient, ClaudeRelaySpeech, or ClaudeRelayKit sources, rebuild the iOS app in Xcode to pick up changes.
+**iOS app**: Open `CodeRelay.xcodeproj` in Xcode, Cmd+R. After changing CodeRelayClient, CodeRelaySpeech, or CodeRelayKit sources, rebuild the iOS app in Xcode to pick up changes.
 
 **Launchd**: Plist at `~/Library/LaunchAgents/com.claude.relay.plist`. The `load` command locates the server binary via a fallback chain: sibling of the CLI binary, `/opt/homebrew/bin/`, `/usr/local/bin/`, `~/.claude-relay/bin/`.
 
-**Linux server**: the same `ClaudeRelayServer`/`ClaudeRelayCLI`/`ClaudeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the two Apple client libraries (`ClaudeRelayClient`, `ClaudeRelaySpeech`) and their deps (WhisperKit, LLM.swift) are not declared. `swift build && swift test` run there (834 tests). The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). **Do not commit a Linux-resolved `Package.resolved`** — resolving on Linux drops the whisperkit/llm.swift/swift-syntax pins; keep the macOS superset (CI restores it). The `linux-server` CI job builds and tests on Ubuntu.
+**Linux server**: the same `CodeRelayServer`/`CodeRelayCLI`/`CodeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the two Apple client libraries (`CodeRelayClient`, `CodeRelaySpeech`) and their deps (WhisperKit, LLM.swift) are not declared. `swift build && swift test` run there (834 tests). The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). **Do not commit a Linux-resolved `Package.resolved`** — resolving on Linux drops the whisperkit/llm.swift/swift-syntax pins; keep the macOS superset (CI restores it). The `linux-server` CI job builds and tests on Ubuntu.
 
 ## Release Process
 
 Use `/coderelay-deploy [ios|android|mac|server|all]` to build, publish, and verify; `/coderelay-health` for a read-only "is everything published and running?" check. Those skills own the version-bump trio, the publish targets, and the mandatory verification steps — never claim something is published without running them.
 
 - **The user installs APKs by downloading from GitHub Releases on the phone — the Android device is NOT adb-connected to this machine.** Never assume `adb install` reaches the user's device.
-- **A `vX.Y.Z` tag is the release.** `release.yml` builds and publishes the Linux client tarball, the Linux server + CLI tarball and the Android APK together, with a release body sectioned per platform, then bumps the Homebrew tap and the AUR. The APK is only signed with the project key when the `ANDROID_KEYSTORE_*` repo secrets exist (see `ClaudeRelayAndroid/RELEASE.md`); until then it is debug-signed and the body flags it.
+- **A `vX.Y.Z` tag is the release.** `release.yml` builds and publishes the Linux client tarball, the Linux server + CLI tarball and the Android APK together, with a release body sectioned per platform, then bumps the Homebrew tap and the AUR. The APK is only signed with the project key when the `ANDROID_KEYSTORE_*` repo secrets exist (see `CodeRelayAndroid/RELEASE.md`); until then it is debug-signed and the body flags it.
 
 ## Architecture
 
 Six SPM targets + iOS app + macOS app (both XcodeGen-managed via `project.yml`):
 
 - **CPTYShim** — C shim for `forkpty` used by PTYSession.
-- **ClaudeRelayKit** — Shared library: wire-protocol models, config, and the pluggable `CodingAgent` registry. Used by all other targets.
-- **ClaudeRelayServer** — NIO-based server: `WebSocketServer` (port 9200, optional TLS via NIO-SSL) + `AdminHTTPServer` (port 9100, localhost-only). Actor-based (`SessionManager`, `TokenStore`, `PTYSession`). `RelayMessageHandler` holds a **shared static `JSONEncoder`/`JSONDecoder` — a single pair across all connections**.
-- **ClaudeRelayCLI** — ArgumentParser CLI (`claude-relay`): token/session/config/service/log management. Talks to the admin HTTP API; `AdminClient` requests timeout at 10 s (127.0.0.1-only).
-- **ClaudeRelayClient** — URLSessionWebSocketTask client: transport, session lifecycle, cross-platform coordination, auth. Also hosts the shared UI atoms under `Views/` used by both apps.
-- **ClaudeRelaySpeech** — Cross-platform on-device speech pipeline shared by both apps. iOS-only APIs (`AVAudioSession`, `UIApplication` memory-warning observer) are guarded by `#if canImport(UIKit)`; storage paths/keys are `#if os(iOS)`-branched **to preserve existing user downloads**.
-- **ClaudeRelayApp/** — iOS SwiftUI app (not in SPM, uses Xcode project). Depends on ClaudeRelayClient + ClaudeRelaySpeech + SwiftTerm.
-- **ClaudeRelayMac/** — macOS SwiftUI app (not in SPM, uses Xcode project). Menu-bar persistent, single-window with sidebar + native tab support, full iOS feature parity.
+- **CodeRelayKit** — Shared library: wire-protocol models, config, and the pluggable `CodingAgent` registry. Used by all other targets.
+- **CodeRelayServer** — NIO-based server: `WebSocketServer` (port 9200, optional TLS via NIO-SSL) + `AdminHTTPServer` (port 9100, localhost-only). Actor-based (`SessionManager`, `TokenStore`, `PTYSession`). `RelayMessageHandler` holds a **shared static `JSONEncoder`/`JSONDecoder` — a single pair across all connections**.
+- **CodeRelayCLI** — ArgumentParser CLI (`claude-relay`): token/session/config/service/log management. Talks to the admin HTTP API; `AdminClient` requests timeout at 10 s (127.0.0.1-only).
+- **CodeRelayClient** — URLSessionWebSocketTask client: transport, session lifecycle, cross-platform coordination, auth. Also hosts the shared UI atoms under `Views/` used by both apps.
+- **CodeRelaySpeech** — Cross-platform on-device speech pipeline shared by both apps. iOS-only APIs (`AVAudioSession`, `UIApplication` memory-warning observer) are guarded by `#if canImport(UIKit)`; storage paths/keys are `#if os(iOS)`-branched **to preserve existing user downloads**.
+- **CodeRelayApp/** — iOS SwiftUI app (not in SPM, uses Xcode project). Depends on CodeRelayClient + CodeRelaySpeech + SwiftTerm.
+- **CodeRelayMac/** — macOS SwiftUI app (not in SPM, uses Xcode project). Menu-bar persistent, single-window with sidebar + native tab support, full iOS feature parity.
 
 ### Wire Protocol
 
@@ -81,7 +81,7 @@ interactive zsh login shell. Several non-obvious invariants are load-bearing
 here — the `FD_CLOEXEC` master flag, the out-of-actor fd-liveness lock, the
 ancestor-path walk, and the **session**-wide reap in `PTYSessionReap.swift`
 (`pid ⊂ group ⊂ session`; a group kill misses zsh's job-control groups). See
-`Sources/ClaudeRelayServer/CLAUDE.md` before touching any of it.
+`Sources/CodeRelayServer/CLAUDE.md` before touching any of it.
 
 ### Terminal Queries (answered server-side)
 
@@ -89,7 +89,7 @@ Terminal queries in the PTY stream are answered by the server's own
 `TerminalScreenModel` and stripped from everything client-bound
 (`TerminalQueryFilter`), so no device ever answers one a WebSocket round trip
 late and lands the reply as typed text at the prompt. See
-`Sources/ClaudeRelayServer/CLAUDE.md`.
+`Sources/CodeRelayServer/CLAUDE.md`.
 
 ### NIO ↔ Swift Concurrency Bridge
 
@@ -118,7 +118,7 @@ The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments
 
 ### App Architecture (iOS + macOS)
 
-Both apps share `SharedSessionCoordinator` (in ClaudeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (e.g., macOS registers `SleepWakeObserver`; iOS uses `scenePhase`).
+Both apps share `SharedSessionCoordinator` (in CodeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (e.g., macOS registers `SleepWakeObserver`; iOS uses `scenePhase`).
 
 **iOS: a one-finger swipe is a wheel report while a program tracks the mouse, and
 the scroll view's own gesture otherwise.** `RelayTerminalView.mouseModeChanged`
@@ -154,7 +154,7 @@ keys to zsh and recall shell history.
 share a selector and `UIScrollView` implements it for its own pan, so every other
 recognizer must fall through to `super`. Android's termlib engine takes input only
 from the keyboard and has no mouse path at all, so it still has gap (1). Guarded
-by `ClaudeRelayAppTests/TerminalSwipeScrollTests`.
+by `CodeRelayAppTests/TerminalSwipeScrollTests`.
 
 ### Connection Health & Quality Monitoring
 
@@ -171,7 +171,7 @@ by `ClaudeRelayAppTests/TerminalSwipeScrollTests`.
 
 The server monitors all PTY output continuously (even for detached sessions) via
 `SessionActivityMonitor`, pushing `sessionActivity` messages to clients. See
-`Sources/ClaudeRelayServer/CLAUDE.md` for the poll-cadence invariants and the
+`Sources/CodeRelayServer/CLAUDE.md` for the poll-cadence invariants and the
 hook-based state authority (F6).
 
 ### Observer Cleanup (Server)
@@ -207,7 +207,7 @@ Off by default (`pushEnabled=false`); device tokens are still accepted + stored 
 
 **Human/portal setup (required for real delivery):**
 - **iOS/macOS:** enable the Push Notifications capability on the App ID in the Apple Developer portal (the `aps-environment` entitlement is already in `project.yml`/`.entitlements`; a signed build fails without the capability on the profile). Upload an APNs auth key (`.p8`) and set `apnsKeyPath/apnsKeyId/apnsTeamId/apnsBundleId` (+ `apnsUseSandbox` for dev).
-- **Android:** shipped. `google-services.json` is tracked in `ClaudeRelayAndroid/app/`, the `com.google.gms.google-services` plugin is applied (`app/build.gradle.kts`), `RelayFirebaseMessagingService` is registered in `AndroidManifest.xml`, and `POST_NOTIFICATIONS` is requested at runtime (API 33+). Note the Gradle plugin *requires* the JSON — removing it breaks the build. Server side: set `fcmServiceAccountPath` + `fcmProjectId`.
+- **Android:** shipped. `google-services.json` is tracked in `CodeRelayAndroid/app/`, the `com.google.gms.google-services` plugin is applied (`app/build.gradle.kts`), `RelayFirebaseMessagingService` is registered in `AndroidManifest.xml`, and `POST_NOTIFICATIONS` is requested at runtime (API 33+). Note the Gradle plugin *requires* the JSON — removing it breaks the build. Server side: set `fcmServiceAccountPath` + `fcmProjectId`.
 - Secrets (`.p8`, service-account JSON) are server-only, never logged (`PushHTTP.redact` strips `bearer` tokens); device push tokens persist `0o600`.
 
 ### Key Pattern: sendAndWaitForResponse
@@ -225,7 +225,7 @@ fire-and-forget, so the server drops them when unattached rather than replying
 `.pasteImageResult(success: false)` — the rule is about the reply *type*, not
 about staying silent). `detach` keeps its `.error(400, "No session attached")`: it
 has a real waiter. Full rationale at the top of
-`Sources/ClaudeRelayServer/Network/SessionRequestHandlers.swift`.
+`Sources/CodeRelayServer/Network/SessionRequestHandlers.swift`.
 
 Clients enforce the same thing from the other end, for servers that predate the
 above: `SessionController.isForeignError` (Swift + Kotlin) refuses to let an
@@ -236,14 +236,14 @@ the socket (`desyncedGeneration`), which is worse than surfacing a wrong error.
 
 ### Speech Layer Concurrency
 
-`TextCleaner` is `@MainActor`-isolated (not `@unchecked Sendable`). All real callers (`OnDeviceSpeechEngine`, `ClaudeRelayApp.preloadSpeechModels`, macOS `AppDelegate.applicationWillTerminate`) are or must be main-actor-isolated. This enforces "no concurrent `clean()`/`unload()`" at compile time instead of by convention.
+`TextCleaner` is `@MainActor`-isolated (not `@unchecked Sendable`). All real callers (`OnDeviceSpeechEngine`, `CodeRelayApp.preloadSpeechModels`, macOS `AppDelegate.applicationWillTerminate`) are or must be main-actor-isolated. This enforces "no concurrent `clean()`/`unload()`" at compile time instead of by convention.
 
 `CloudPromptEnhancer` takes an optional `modelId` at init (defaults to the current Haiku inference profile; override for newer models). Error bodies are JSON-parsed for clean messages, and free-form bodies have `Bearer <token>` redacted before logging.
 
 ### Continuous Listening Pipeline
 
 Always-on listening with a wake word, parallel to the push-to-talk
-`OnDeviceSpeechEngine`. See `Sources/ClaudeRelaySpeech/CLAUDE.md` for the state
+`OnDeviceSpeechEngine`. See `Sources/CodeRelaySpeech/CLAUDE.md` for the state
 machine, the detector cascade, and the strict two-phase UX contract.
 
 ## Configuration
@@ -294,7 +294,7 @@ received, so there is exactly one path to an authenticated connection.
   (`AdminRoutes.handlePairCreate` and `RelayMessageHandler.handlePairRequest`):
   control characters and newlines stripped, capped at 60 scalars — a label reaches
   `TokenStore` and the log, so a `\n` in it could forge log lines.
-- `PairingURL` + `PairingCode` live in ClaudeRelayKit and are shared with all
+- `PairingURL` + `PairingCode` live in CodeRelayKit and are shared with all
   three clients — validation of hostile QR input happens in one tested place.
 
 ### Service manager awareness
@@ -333,7 +333,7 @@ The macOS-only surfaces and their Linux replacements (full table in
   under `canImport(os)`, stderr → journald on Linux); `TerminalQRRenderer` uses
   CoreImage on macOS and `swift-qrcode-generator` (Linux-only dep) otherwise.
 - **Integration tests** — the 12 tests that drive the server through
-  `ClaudeRelayClient` are macOS-only; `TestWebSocketClient` (raw NIO) re-runs the
+  `CodeRelayClient` are macOS-only; `TestWebSocketClient` (raw NIO) re-runs the
   same scenarios on both platforms (`WireIntegrationTests`,
   `WireRequestReplyTests`).
 - **Caveat**: `FileManager.homeDirectoryForCurrentUser` reads the passwd
@@ -342,19 +342,19 @@ The macOS-only surfaces and their Linux replacements (full table in
   user home), but do not rely on `$HOME` to relocate config in a test.
 
 <!-- code-review-graph MCP tools -->
-## Linux client (`ClaudeRelayLinux/`)
+## Linux client (`CodeRelayLinux/`)
 
 A Compose Desktop (JVM) client for Arch/Omarchy that **compiles the Android
 client's Kotlin sources in place** — `core-protocol`, `core-net`,
 `core-session`, `terminal`, and the three `feature-*` screen modules are read
-from `ClaudeRelayAndroid/` via `srcDirs` (spec AD-2). There is one copy of each
+from `CodeRelayAndroid/` via `srcDirs` (spec AD-2). There is one copy of each
 shared file on disk, so an Android-side edit is a Linux build input:
 `linux.yml` triggers on both trees, and a shared-screen change must keep both
 builds green. Build with `JAVA_HOME` pointing at a JDK 21 (`~/.local/jdk` on
 the dev box; not on `PATH`) and `cmake`:
 
 ```bash
-cd ClaudeRelayLinux && ./gradlew test            # 702 tests, real libvterm
+cd CodeRelayLinux && ./gradlew test            # 702 tests, real libvterm
 ./gradlew :app:run                               # launch against a live relay
 ./gradlew :app:createDistributable               # the jpackage image the release tars
 ```

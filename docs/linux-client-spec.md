@@ -1,7 +1,7 @@
-# ClaudeRelay Linux Client — Specification & Implementation Plan
+# CodeRelay Linux Client — Specification & Implementation Plan
 
 **Target platform:** Arch Linux / Omarchy (Hyprland, Wayland)
-**Parity target:** the Android client (`ClaudeRelayAndroid/`), feature for feature
+**Parity target:** the Android client (`CodeRelayAndroid/`), feature for feature
 **Status:** implemented — parity scope plus the desktop additions below (2026-09-03)
 **Date:** 2026-09-01
 
@@ -9,7 +9,7 @@
 
 ## 1. Goal and scope
 
-Build a fourth first-class CodeRelay client, `ClaudeRelayLinux/`, that runs as a native
+Build a fourth first-class CodeRelay client, `CodeRelayLinux/`, that runs as a native
 desktop application on Omarchy and connects to a CodeRelay server running on a Mac.
 
 **Parity is defined against the Android client, not iOS.** Android is the existing
@@ -40,7 +40,7 @@ Measured against the alternatives (`docs/` review, 2026-09-01):
 | Base | Reusable | Verdict |
 |---|---|---|
 | Android / Kotlin + Compose Multiplatform | 6,660 lines compile as-is; 6,809 test lines run unchanged | **Chosen** |
-| Swift `ClaudeRelayClient` | SwiftUI in 10/34 files, plus Combine/UIKit/AppKit/Security/IOKit; `ClaudeRelaySpeech` is AVFoundation + CoreML | Rejected |
+| Swift `CodeRelayClient` | SwiftUI in 10/34 files, plus Combine/UIKit/AppKit/Security/IOKit; `CodeRelaySpeech` is AVFoundation + CoreML | Rejected |
 | Ground-up (Tauri + xterm.js, GTK4) | 0 — session logic rewritten in a 4th language | Rejected |
 
 `core-session` (3,216 lines: session coordinator, recovery state machine, activity
@@ -51,7 +51,7 @@ economical.
 
 ### AD-2 — Share source, do not copy it
 
-`ClaudeRelayLinux/` is a **separate Gradle build** whose modules point `srcDirs` at the
+`CodeRelayLinux/` is a **separate Gradle build** whose modules point `srcDirs` at the
 Android project's existing source directories. There is exactly one copy of every shared
 file on disk.
 
@@ -62,7 +62,7 @@ Rejected alternatives:
   but it rewrites the Android build — which cannot be verified in this environment (no
   Android SDK) and risks a shipping client for the benefit of a new one.
 
-The chosen approach touches **zero** existing files under `ClaudeRelayAndroid/`.
+The chosen approach touches **zero** existing files under `CodeRelayAndroid/`.
 
 Consequence to accept: a change to a shared file must keep both builds green, and only
 one of them is buildable on a Linux dev box. CI must build both (§10).
@@ -126,16 +126,16 @@ Tailscale without TLS puts the bearer token on a network the user does not contr
 ## 3. Module structure
 
 ```
-ClaudeRelayLinux/
+CodeRelayLinux/
 ├── settings.gradle.kts
 ├── build.gradle.kts
 ├── gradle/libs.versions.toml          # desktop catalog (CMP, not Android Compose)
-├── gradle/wrapper/                    # copied from ClaudeRelayAndroid (Gradle 8.14.3)
+├── gradle/wrapper/                    # copied from CodeRelayAndroid (Gradle 8.14.3)
 │
-├── shared-protocol/                   # srcDirs → ../ClaudeRelayAndroid/core-protocol
-├── shared-net/                        # srcDirs → ../ClaudeRelayAndroid/core-net
-├── shared-session/                    # srcDirs → ../ClaudeRelayAndroid/core-session
-├── shared-terminal/                   # srcDirs → ../ClaudeRelayAndroid/terminal (minus KeyboardAccessory)
+├── shared-protocol/                   # srcDirs → ../CodeRelayAndroid/core-protocol
+├── shared-net/                        # srcDirs → ../CodeRelayAndroid/core-net
+├── shared-session/                    # srcDirs → ../CodeRelayAndroid/core-session
+├── shared-terminal/                   # srcDirs → ../CodeRelayAndroid/terminal (minus KeyboardAccessory)
 │
 ├── linux-storage/                     # NEW — replaces :core-storage
 ├── linux-platform/                    # NEW — connectivity, notifications, clipboard, theme
@@ -182,11 +182,11 @@ existing JUnit5 tests that must pass on the desktop JVM unmodified (§10).
 ## 5. Desktop-specific additions
 
 The Android client has no equivalent for these; they come from the macOS client
-(`ClaudeRelayMac/`), which is the desktop UX reference.
+(`CodeRelayMac/`), which is the desktop UX reference.
 
 ### 5.1 Keyboard shortcuts
 
-Ported from `ClaudeRelayMac/Helpers/AppCommands.swift`, `Ctrl` replacing `Cmd`:
+Ported from `CodeRelayMac/Helpers/AppCommands.swift`, `Ctrl` replacing `Cmd`:
 
 | Action | macOS | Linux |
 |---|---|---|
@@ -478,7 +478,7 @@ Carried from Android, explicitly **not** solved here:
 
 CI (`.github/workflows/linux.yml`): `ubuntu-latest`, JDK 21, CMake; builds the native
 lib, runs all module tests, assembles the distribution. Must run on changes to
-`ClaudeRelayLinux/**` **and** to the shared Android modules — AD-2's shared source means
+`CodeRelayLinux/**` **and** to the shared Android modules — AD-2's shared source means
 an Android-side edit can break the Linux build.
 
 ---

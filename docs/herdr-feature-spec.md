@@ -76,7 +76,7 @@ you can open on your phone" into "the thing that tells you when your agents need
 ### Touches
 `SessionActivityMonitor.swift`, `ServerMessage.swift`/`ClientMessage.swift` (new push-token msgs),
 `TokenStore.swift`, `RelayConfig.swift` (APNs/FCM config), new server push sender,
-`ClaudeRelayApp.swift` + `ClaudeRelayMac` app delegates (registration + tap handling),
+`CodeRelayApp.swift` + `CodeRelayMac` app delegates (registration + tap handling),
 Android FCM service + `feature-*`, `AppSettings.swift` (toggle).
 
 ### Explicitly out of scope

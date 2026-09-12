@@ -3,7 +3,7 @@
 **Date:** 2026-06-09
 **Branch:** `android-m4-polish` (M1–M3 already merged to `main`)
 **Method:** screen-by-screen + settings + speech + cross-cutting cross-check of the Android
-port against the canonical iOS source (`ClaudeRelayApp/`, `Sources/ClaudeRelay*/`), grounded
+port against the canonical iOS source (`CodeRelayApp/`, `Sources/CodeRelay*/`), grounded
 in the actual code with file citations — not optimism.
 
 ## Verdict
@@ -96,7 +96,7 @@ These are gated on resources absent from the build environment. Each is document
 code and was an explicit, accepted deferral during M1–M3.
 
 ### Needs a Mac with `coremltools` + reference fixtures
-- **SmartTurn/Silero ONNX parity gate (M4 Task 1):** run `ClaudeRelayAndroid/ml/convert_*.py`,
+- **SmartTurn/Silero ONNX parity gate (M4 Task 1):** run `CodeRelayAndroid/ml/convert_*.py`,
   add the reference audio set + `labels.json`, make `validate_parity.py` pass (Silero rel-err
   <0.1%, SmartTurn TPR≥90%/FPR≤10%, LogMel ≤1e-2), bundle `ml/out/*.onnx` as `:app` assets, then
   wire `SmartTurnTurnEndDetector`/`SileroVoiceActivityDetector` into `ContinuousListeningEngine.makeDefault`.
