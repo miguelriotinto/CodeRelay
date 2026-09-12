@@ -5,8 +5,8 @@ import os.log
 import CodeRelayClient
 
 /// Diagnostic logger for the idle-no-echo bug. Filter Console.app on
-/// subsystem com.claude.relay.client and category EchoDiag.
-private let echoDiag = Logger(subsystem: "com.claude.relay.client",
+/// subsystem com.coderelay.client and category EchoDiag.
+private let echoDiag = Logger(subsystem: "com.coderelay.client",
                               category: "EchoDiag")
 
 /// Wraps a SwiftTerm TerminalView and intercepts Cmd+V to handle image paste.
