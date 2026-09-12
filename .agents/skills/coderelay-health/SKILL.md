@@ -1,9 +1,9 @@
 ---
 name: coderelay-health
-description: Read-only health/version check across all ClaudeRelay deliverables — is the latest server running, is the latest APK on GitHub Releases, did the last TestFlight upload succeed. Use when the user asks "is everything published/running/up to date?"
+description: Read-only health/version check across all CodeRelay deliverables — is the latest server running, is the latest APK on GitHub Releases, did the last TestFlight upload succeed. Use when the user asks "is everything published/running/up to date?"
 ---
 
-# ClaudeRelay doctor
+# CodeRelay doctor
 
 Read-only. Run all checks, then output ONE table. Never fix anything from this
 skill — report and let the user decide.
@@ -21,12 +21,12 @@ skill — report and let the user decide.
 ### Android
 1. Latest `android-v*` tag: `gh release list --limit 10`.
 2. Its APK asset exists and `versionName` in the tag matches
-   `versionName` in `ClaudeRelayAndroid/app/build.gradle.kts`. If gradle is
+   `versionName` in `CodeRelayAndroid/app/build.gradle.kts`. If gradle is
    ahead of the tag → flag "unreleased Android changes".
 
 ### iOS / macOS
-1. Archive build numbers: `plutil -p build/ClaudeRelayApp.xcarchive/Info.plist`
-   (and ClaudeRelayMac) → `CFBundleVersion` vs `project.yml`.
+1. Archive build numbers: `plutil -p build/CodeRelayApp.xcarchive/Info.plist`
+   (and CodeRelayMac) → `CFBundleVersion` vs `project.yml`.
 2. Last upload verdict: newest `$TMPDIR/<AppName>_*.xcdistributionlogs/ContentDelivery.log`,
    grep `UPLOAD SUCCEEDED` / error lines.
 3. If the `asc` CLI is available, check TestFlight processing state of the

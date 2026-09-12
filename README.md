@@ -1,4 +1,4 @@
-# ClaudeRelay
+# CodeRelay
 
 A remote terminal relay server and CLI over WebSocket, enabling secure terminal access with session management and authentication.
 
@@ -13,7 +13,7 @@ A remote terminal relay server and CLI over WebSocket, enabling secure terminal 
 - **Service management** - Run as a background service with launchd/brew services (macOS) or a systemd user unit (Linux)
 - **iOS client** - Native iOS app with terminal emulation, session tabs, and coding agent detection
 - **macOS client** - Native macOS app with menu-bar persistence, full keyboard shortcuts, and iOS feature parity
-- **Android client** - Native Android app (Jetpack Compose) with a real VT100 terminal, session tabs, recovery, and on-device speech (in test-build distribution; see [ClaudeRelayAndroid](ClaudeRelayAndroid/))
+- **Android client** - Native Android app (Jetpack Compose) with a real VT100 terminal, session tabs, recovery, and on-device speech (in test-build distribution; see [CodeRelayAndroid](CodeRelayAndroid/))
 - **Multi-agent detection** - Pluggable coding agent registry (Claude Code, Codex, opencode, Copilot CLI, Cursor Agent, Droid) with per-agent tab colors
 - **Device pairing** - `claude-relay setup` prints a QR carrying a single-use, 5-minute pairing code; the app redeems it for its own revocable per-device token
 - **Push notifications** - Optional APNs/FCM alerts when an agent finishes or needs input, coalesced per workspace (off by default)
@@ -28,21 +28,21 @@ A remote terminal relay server and CLI over WebSocket, enabling secure terminal 
 
 ## Architecture
 
-The macOS server/CLI and the two Apple clients are built from one Swift package; the Android client is a separate Gradle project under `ClaudeRelayAndroid/`.
+The macOS server/CLI and the two Apple clients are built from one Swift package; the Android client is a separate Gradle project under `CodeRelayAndroid/`.
 
 **Swift package (server, CLI, shared libraries, Apple clients):**
 
-- **ClaudeRelayServer** - WebSocket server (port 9200) and Admin HTTP API (port 9100)
-- **ClaudeRelayCLI** - Command-line interface for managing tokens, sessions, and service
-- **ClaudeRelayKit** - Shared library with protocol definitions, utilities, and `CodingAgent` registry
-- **ClaudeRelayClient** - Swift client library for building custom clients (includes shared `SessionCoordinating` protocol and `SessionNaming` helpers)
-- **ClaudeRelaySpeech** - Cross-platform on-device speech pipeline shared by both Apple apps (WhisperKit + LLM cleanup + `SpeechEngineState`)
-- **ClaudeRelayApp** - iOS application with terminal emulation
-- **ClaudeRelayMac** - Native macOS application with menu-bar persistence and full feature parity with iOS (both apps ship as **Code[Relay]**)
+- **CodeRelayServer** - WebSocket server (port 9200) and Admin HTTP API (port 9100)
+- **CodeRelayCLI** - Command-line interface for managing tokens, sessions, and service
+- **CodeRelayKit** - Shared library with protocol definitions, utilities, and `CodingAgent` registry
+- **CodeRelayClient** - Swift client library for building custom clients (includes shared `SessionCoordinating` protocol and `SessionNaming` helpers)
+- **CodeRelaySpeech** - Cross-platform on-device speech pipeline shared by both Apple apps (WhisperKit + LLM cleanup + `SpeechEngineState`)
+- **CodeRelayApp** - iOS application with terminal emulation
+- **CodeRelayMac** - Native macOS application with menu-bar persistence and full feature parity with iOS (both apps ship as **Code[Relay]**)
 
-**Android client (separate Gradle project, `ClaudeRelayAndroid/`):**
+**Android client (separate Gradle project, `CodeRelayAndroid/`):**
 
-- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and an on-device speech pipeline). It speaks the identical wire protocol to the same server. The APK is published with every [release](https://github.com/miguelriotinto/ClaudeRelay/releases) (`vX.Y.Z` tags, under its own **Android client** section) next to the Linux client and server; interim test builds also appear as `android-v*` pre-releases — see [`ClaudeRelayAndroid/RELEASE.md`](ClaudeRelayAndroid/RELEASE.md).
+- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and an on-device speech pipeline). It speaks the identical wire protocol to the same server. The APK is published with every [release](https://github.com/miguelriotinto/CodeRelay/releases) (`vX.Y.Z` tags, under its own **Android client** section) next to the Linux client and server; interim test builds also appear as `android-v*` pre-releases — see [`CodeRelayAndroid/RELEASE.md`](CodeRelayAndroid/RELEASE.md).
 
 ## Installation
 
@@ -64,7 +64,7 @@ yay -S coderelay-server-bin
 claude-relay setup                 # starts the service, prints a pairing QR
 ```
 
-Or download the tarballs straight from the [Releases](https://github.com/miguelriotinto/ClaudeRelay/releases)
+Or download the tarballs straight from the [Releases](https://github.com/miguelriotinto/CodeRelay/releases)
 page — every release has a **Linux server + CLI** section
 (`claude-relay-vX.Y.Z-linux-x86_64.tar.gz`), a **Linux client** section
 (`coderelay-vX.Y.Z-linux-x86_64.tar.gz`, the Compose Desktop app; also
@@ -84,8 +84,8 @@ See [`docs/linux-server-spec.md`](docs/linux-server-spec.md) for the full design
 **macOS** requires Xcode 15.0+ and macOS 14+:
 
 ```bash
-git clone https://github.com/miguelriotinto/ClaudeRelay.git
-cd ClaudeRelay
+git clone https://github.com/miguelriotinto/CodeRelay.git
+cd CodeRelay
 swift build -c release
 ```
 
@@ -299,7 +299,7 @@ swift build
 
 ```bash
 swift test                                    # All SPM tests (5 targets)
-swift test --filter ClaudeRelayKitTests       # Specific suite
+swift test --filter CodeRelayKitTests       # Specific suite
 swift test --filter testTokenGeneration       # Specific test
 ```
 
@@ -311,28 +311,28 @@ actors (`SessionManager`, `TokenStore`, `PTYSession` via `MockPTYSession`,
 saved connections, session naming, session ownership, terminal view model +
 LRU cache, recovery controller, WebSocket integration round-trip), the CLI
 (output formatter, admin client), and the speech pipeline
-(`ClaudeRelaySpeechTests` — text cleaning, wake-word matching, turn-end
+(`CodeRelaySpeechTests` — text cleaning, wake-word matching, turn-end
 heuristics, and other UIKit/Keychain-free units). Tests that require
 UIKit/AppKit or the Keychain live in the Xcode test bundles
-(`ClaudeRelayAppTests` on iOS) — build the `ClaudeRelayApp` scheme and run
+(`CodeRelayAppTests` on iOS) — build the `CodeRelayApp` scheme and run
 tests in Xcode to exercise them.
 
 Contributions that add a new public API or a new branch should come with a
 test in the corresponding `Tests/<Module>Tests/` directory (or
-`ClaudeRelayAppTests/` for app-target code). Follow the existing patterns —
+`CodeRelayAppTests/` for app-target code). Follow the existing patterns —
 most suites use the `ProtocolTestCase` (Kit) or `SessionManagerTestCase`
 (Server) base classes.
 
 ### iOS & Mac Apps
 
-Both apps are configured in the same `project.yml` and generated by XcodeGen. Open `ClaudeRelay.xcodeproj` in Xcode and select a scheme:
+Both apps are configured in the same `project.yml` and generated by XcodeGen. Open `CodeRelay.xcodeproj` in Xcode and select a scheme:
 
-- `ClaudeRelayApp` — iOS app, build for iPhone/iPad simulator or device
-- `ClaudeRelayMac` — macOS app, build for "My Mac"
+- `CodeRelayApp` — iOS app, build for iPhone/iPad simulator or device
+- `CodeRelayMac` — macOS app, build for "My Mac"
 
-After modifying `ClaudeRelayClient` or `ClaudeRelayKit` sources, rebuild the app in Xcode to pick up changes.
+After modifying `CodeRelayClient` or `CodeRelayKit` sources, rebuild the app in Xcode to pick up changes.
 
-See `ClaudeRelayMac/README.md` for Mac-specific setup notes (keyboard shortcuts, menu bar behavior, entitlements).
+See `CodeRelayMac/README.md` for Mac-specific setup notes (keyboard shortcuts, menu bar behavior, entitlements).
 
 **Note for contributors:**
 - `project.yml` contains a hardcoded `DEVELOPMENT_TEAM` — update this to your own Apple Developer Team ID.
@@ -341,43 +341,43 @@ See `ClaudeRelayMac/README.md` for Mac-specific setup notes (keyboard shortcuts,
 ### Project Structure
 
 ```
-ClaudeRelay/
+CodeRelay/
 ├── Sources/
 │   ├── CPTYShim/               # C shim for forkpty PTY operations
-│   ├── ClaudeRelayKit/         # Shared protocol models, CodingAgent registry, utilities
-│   ├── ClaudeRelayServer/      # WebSocket + HTTP server (NIO-based)
-│   ├── ClaudeRelayCLI/         # Command-line interface (ArgumentParser)
-│   ├── ClaudeRelayClient/      # Swift client library (shared across apps)
+│   ├── CodeRelayKit/         # Shared protocol models, CodingAgent registry, utilities
+│   ├── CodeRelayServer/      # WebSocket + HTTP server (NIO-based)
+│   ├── CodeRelayCLI/         # Command-line interface (ArgumentParser)
+│   ├── CodeRelayClient/      # Swift client library (shared across apps)
 │   │   ├── Protocols/          # SessionCoordinating protocol
 │   │   ├── Helpers/            # SessionNaming, SavedConnectionStore, NetworkMonitor, DeviceIdentifier
 │   │   ├── ViewModels/         # SharedSessionCoordinator, TerminalViewModel, ServerStatusChecker
 │   │   └── Views/              # Shared UI atoms: ConnectionQualityDot, ActivityDot, AgentColorPalette
-│   └── ClaudeRelaySpeech/      # Cross-platform on-device speech pipeline (WhisperKit + LLM + SpeechEngineState)
-├── ClaudeRelayApp/             # iOS application (SwiftUI, XcodeGen-managed)
+│   └── CodeRelaySpeech/      # Cross-platform on-device speech pipeline (WhisperKit + LLM + SpeechEngineState)
+├── CodeRelayApp/             # iOS application (SwiftUI, XcodeGen-managed)
 │   ├── Views/                  # SwiftUI views + components
 │   ├── ViewModels/             # Observable view models
 │   └── Models/                 # App settings, saved connections
-├── ClaudeRelayMac/             # macOS application (SwiftUI, XcodeGen-managed)
+├── CodeRelayMac/             # macOS application (SwiftUI, XcodeGen-managed)
 │   ├── Views/                  # SwiftUI views + menu-bar dropdown
 │   ├── ViewModels/             # Observable view models
 │   ├── Models/                 # App settings, saved connections
 │   └── Helpers/                # SleepWakeObserver, image paste, key capture, launch-at-login
-├── ClaudeRelayAndroid/         # Android application (Jetpack Compose, Gradle — separate build)
+├── CodeRelayAndroid/         # Android application (Jetpack Compose, Gradle — separate build)
 │   ├── core-protocol/          # Kotlin wire-protocol models (ClientMessage/ServerMessage/MessageEnvelope)
 │   ├── core-net/               # OkHttp WebSocket transport + SessionController
 │   ├── core-session/           # SessionCoordinator, RecoveryController, NetworkObserver (pure-JVM)
 │   ├── core-storage/           # Token / ownership / saved-connection stores
 │   ├── terminal/               # VT100 terminal (ConnectBot termlib) + session view model
-│   ├── speech/                 # On-device speech pipeline (Whisper/LLM, mirrors ClaudeRelaySpeech)
+│   ├── speech/                 # On-device speech pipeline (Whisper/LLM, mirrors CodeRelaySpeech)
 │   ├── feature-servers|workspace|settings/  # Compose UI features
 │   └── app/                    # Nav graph, MainActivity, connection wiring
 ├── Tests/
-│   ├── ClaudeRelayKitTests/    # Protocol, CodingAgent, ActivityState, SessionState, TokenGenerator, ConnectionQuality, RelayConfig, MessageEnvelope
-│   ├── ClaudeRelayServerTests/ # SessionManager, TokenStore, RateLimiter, RingBuffer, ConfigValidation, ActivityMonitor, AdminRoutesEndpoint
-│   ├── ClaudeRelayCLITests/    # OutputFormatter, AdminClient
-│   ├── ClaudeRelayClientTests/ # Auth, Connection, SessionNaming, TerminalViewModel, LRU cache, RecoveryController
-│   └── ClaudeRelaySpeechTests/ # TextCleaner, WakeWordDetector, turn-end heuristics, speech post-processing
-├── ClaudeRelayAppTests/        # iOS app unit tests (AppSettings, SpeechEngineState, WhisperHallucination, TextCleaner, OnDeviceSpeechEngine)
+│   ├── CodeRelayKitTests/    # Protocol, CodingAgent, ActivityState, SessionState, TokenGenerator, ConnectionQuality, RelayConfig, MessageEnvelope
+│   ├── CodeRelayServerTests/ # SessionManager, TokenStore, RateLimiter, RingBuffer, ConfigValidation, ActivityMonitor, AdminRoutesEndpoint
+│   ├── CodeRelayCLITests/    # OutputFormatter, AdminClient
+│   ├── CodeRelayClientTests/ # Auth, Connection, SessionNaming, TerminalViewModel, LRU cache, RecoveryController
+│   └── CodeRelaySpeechTests/ # TextCleaner, WakeWordDetector, turn-end heuristics, speech post-processing
+├── CodeRelayAppTests/        # iOS app unit tests (AppSettings, SpeechEngineState, WhisperHallucination, TextCleaner, OnDeviceSpeechEngine)
 ├── Formula/
 │   └── clauderelay.rb          # Homebrew formula
 ├── docs/                       # Design specs and implementation plans
@@ -511,7 +511,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
    pre-existing Keychain-dependent `AuthManagerTests` and one timing
    `SessionActivityMonitor` test may fail in sandboxed environments —
    they're environmental, not regressions). Android changes: run
-   `./gradlew test` from `ClaudeRelayAndroid/`.
+   `./gradlew test` from `CodeRelayAndroid/`.
 5. Ensure `swiftlint` passes (see `.swiftlint.yml`)
 
 ## License
@@ -520,6 +520,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Links
 
-- **GitHub**: https://github.com/miguelriotinto/ClaudeRelay
+- **GitHub**: https://github.com/miguelriotinto/CodeRelay
 - **Homebrew Tap**: https://github.com/miguelriotinto/homebrew-clauderelay
-- **Issues**: https://github.com/miguelriotinto/ClaudeRelay/issues
+- **Issues**: https://github.com/miguelriotinto/CodeRelay/issues

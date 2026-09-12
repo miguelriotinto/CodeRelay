@@ -1,7 +1,7 @@
-# ClaudeRelay Linux Server — Specification & Implementation Plan
+# CodeRelay Linux Server — Specification & Implementation Plan
 
 **Target platform:** Arch Linux / Omarchy (systemd user session, Hyprland/Wayland desktop; any systemd Linux for the service)
-**Parity target:** the macOS server and CLI (`ClaudeRelayServer` + `ClaudeRelayCLI`), feature for feature
+**Parity target:** the macOS server and CLI (`CodeRelayServer` + `CodeRelayCLI`), feature for feature
 **Status:** implemented — server, CLI, service management, packaging and tests complete on this host; see §12
 **Date:** 2026-09-04
 
@@ -23,8 +23,8 @@ clipboard, per-token caps, rate limiting), and the same test suite passing.
 
 ### 1.1 Non-goals
 
-- **The Apple client libraries.** `ClaudeRelayClient` (SwiftUI/UIKit/AppKit/IOKit) and
-  `ClaudeRelaySpeech` (WhisperKit/CoreML) are not ported; they are excluded from the
+- **The Apple client libraries.** `CodeRelayClient` (SwiftUI/UIKit/AppKit/IOKit) and
+  `CodeRelaySpeech` (WhisperKit/CoreML) are not ported; they are excluded from the
   Linux build (AD-1). The Linux client already exists in Kotlin.
 - **A new push provider.** APNs and FCM are HTTP/2 clients over `AsyncHTTPClient` and
   `Crypto`; they build and run unchanged on Linux. No Linux-specific push transport is
@@ -47,9 +47,9 @@ The server is ported in place, not forked. Measured before any change was made:
 | Target | Files | Lines | Apple-only imports |
 |---|---|---|---|
 | `CPTYShim` (C) | 2 | 343 | sysctl, libproc, `util.h` |
-| `ClaudeRelayKit` | 19 | 1,648 | `Security` ×2 |
-| `ClaudeRelayServer` | 36 | 7,657 | `os` ×3, `AppKit` ×1 |
-| `ClaudeRelayCLI` | 15 | 2,522 | `CoreImage` ×1 |
+| `CodeRelayKit` | 19 | 1,648 | `Security` ×2 |
+| `CodeRelayServer` | 36 | 7,657 | `os` ×3, `AppKit` ×1 |
+| `CodeRelayCLI` | 15 | 2,522 | `CoreImage` ×1 |
 
 Ten Apple-only imports in 12,170 lines; everything else is Foundation, NIO, Crypto,
 AsyncHTTPClient, ArgumentParser and SwiftTerm — all of which support Linux (SwiftTerm's
@@ -61,7 +61,7 @@ not declared. The manifest runs on the *host*, so "Linux" here means "building o
 Linux" — the same reasoning SwiftTerm documents.
 
 Rejected alternatives:
-- *A separate `ClaudeRelayLinux/server` package.* Two copies of 12 k lines to keep
+- *A separate `CodeRelayLinux/server` package.* Two copies of 12 k lines to keep
   honest, for ten imports.
 - *A rewrite (Go, Rust, Kotlin).* The protocol subtleties this codebase encodes —
   fire-and-forget replies, replay ordering, the reap-by-session invariant, the
@@ -214,7 +214,7 @@ are untouched; the `os.Logger` sink is kept under `canImport(os)`.
 ### AD-8 — Integration tests: a NIO WebSocket client
 
 Twelve of the server's 433 tests drive a real `WebSocketServer` through
-`ClaudeRelayClient` (`RelayConnection`, `SessionController`,
+`CodeRelayClient` (`RelayConnection`, `SessionController`,
 `SharedSessionCoordinator`), which cannot build on Linux (AD-1). Those three files are
 excluded from the Linux test target and the same twelve scenarios are re-expressed
 against a small `TestWebSocketClient` built on `NIOWebSocket`'s client upgrader, which
@@ -255,7 +255,7 @@ are the contracts the Linux code satisfies; the shared code calls them by these 
 | `ServiceManagerDetector` (Homebrew vs LaunchAgent) | `SystemdUnitDetector` (packaged vs user unit) | `ServiceCommands`, `SetupCommand` |
 | `scutil` / `ipconfig getifaddr` | `getifaddrs` / `gethostname` / Avahi check | `HostAddressProbe` (AD-9) |
 | `/opt/homebrew`, `/usr/local` search paths | `/usr/bin`, `/usr/share/clauderelay` | `findServerBinary`, `locateBundledScript` |
-| `Bundle.module` → `.bundle` beside the binary | `Bundle.module` → `ClaudeRelay_ClaudeRelayServer.resources/` beside the binary | PKGBUILD installs it |
+| `Bundle.module` → `.bundle` beside the binary | `Bundle.module` → `CodeRelay_CodeRelayServer.resources/` beside the binary | PKGBUILD installs it |
 | `posix_spawnattr_t?` (opaque) in tests | `posix_spawnattr_t()` (struct) under `os(Linux)` | `PTYTerminateProcessGroupTests` |
 
 ### 3.1 Not a seam — runs unchanged
@@ -264,7 +264,7 @@ are the contracts the Linux code satisfies; the shared code calls them by these 
 `TokenStore`, `RateLimiter`, `PairingCodeStore`, `SessionActivityMonitor`,
 `AgentStateDetector` + manifests, `TerminalScreenModel`/`TerminalQueryFilter`
 (SwiftTerm headless), `OSC52Parser`, `RingBuffer`, `PushDispatcher`/`APNsClient`/
-`FCMClient`/`PushHTTP`, `ConfigManager`, all of `ClaudeRelayKit`'s protocol models, and
+`FCMClient`/`PushHTTP`, `ConfigManager`, all of `CodeRelayKit`'s protocol models, and
 the CLI's token/session/config/log/hook commands. Measured: after the seams above, the
 Linux `swift test` runs **772 tests with 0 failures** (2 deliberate `XCTSkip`s that also
 skip on macOS without local TLS certs).
@@ -330,7 +330,7 @@ place of the macOS `homebrew | launchAgent | both | none`.
 
 ## 5. PTY and process model on Linux
 
-Everything in `Sources/ClaudeRelayServer/CLAUDE.md` still applies. Linux-specific
+Everything in `Sources/CodeRelayServer/CLAUDE.md` still applies. Linux-specific
 facts, each verified on this host:
 
 - `forkpty` allocates from `/dev/ptmx`; the child's `setsid()` makes it session
@@ -422,7 +422,7 @@ the flag is harmless where a newer toolchain adds it itself). The link-time
 ### 10.2 Artifacts a release ships
 
 - `claude-relay`, `claude-relay-server`
-- `ClaudeRelay_ClaudeRelayServer.resources/` — the agent manifests `Bundle.module`
+- `CodeRelay_CodeRelayServer.resources/` — the agent manifests `Bundle.module`
   resolves **next to the executable**; without it the server fatal-errors on the first
   session create (the Homebrew formula carries the same warning for `.bundle`).
 - `claude-relay-state-hook.sh` (→ `/usr/share/clauderelay/`, which

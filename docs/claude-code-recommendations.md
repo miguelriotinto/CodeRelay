@@ -1,6 +1,6 @@
 # Claude Code Proficiency Review & Recommendations
 
-*Based on analysis of 20 sessions (Jun 10 – Jul 7, 2026) on the ClaudeRelay repo: 186 user messages, ~2,400 tool calls, plus the current `.claude/` configuration.*
+*Based on analysis of 20 sessions (Jun 10 – Jul 7, 2026) on the CodeRelay repo: 186 user messages, ~2,400 tool calls, plus the current `.claude/` configuration.*
 
 > **Status (2026-08-01): completed — historical record.** Every recommendation in
 > the checklists below has landed: the ship skill exists (since renamed
@@ -78,7 +78,7 @@ The highest-value automation available to you. Create `.claude/skills/cr-ship/SK
 ```markdown
 ---
 name: cr-ship
-description: Build, publish, and VERIFY all ClaudeRelay artifacts — iOS/macOS to TestFlight, Android APK to GitHub Releases, server to Homebrew. Args: ios | android | mac | server | all (default all)
+description: Build, publish, and VERIFY all CodeRelay artifacts — iOS/macOS to TestFlight, Android APK to GitHub Releases, server to Homebrew. Args: ios | android | mac | server | all (default all)
 disable-model-invocation: true
 ---
 
@@ -102,7 +102,7 @@ disable-model-invocation: true
   `brew upgrade clauderelay && brew services restart clauderelay`.
 
 ### VERIFY (never skip — this is the point of the skill)
-- iOS: grep "UPLOAD SUCCEEDED" in $TMPDIR/ClaudeRelayApp_*.xcdistributionlogs/ContentDelivery.log.
+- iOS: grep "UPLOAD SUCCEEDED" in $TMPDIR/CodeRelayApp_*.xcdistributionlogs/ContentDelivery.log.
 - Android: download the APK back from the release URL, `aapt2 dump badging` must show the new versionCode. Byte size alone is not proof.
 - Server: `claude-relay status` must report the new version; `curl 127.0.0.1:9100/health` must be ok.
 - Report a table: platform | version | verified-by | link.
@@ -137,7 +137,7 @@ You asked "is the latest server running?" / "is everything published?" at least 
 
 - Server: `claude-relay status` version vs `Formula/clauderelay.rb` vs latest git tag.
 - Android: latest `android-v*` release tag + APK versionName vs `app/build.gradle.kts`.
-- iOS: last archive's CFBundleVersion (build/ClaudeRelayApp.xcarchive/Info.plist) vs project.yml, plus the last ContentDelivery.log verdict.
+- iOS: last archive's CFBundleVersion (build/CodeRelayApp.xcarchive/Info.plist) vs project.yml, plus the last ContentDelivery.log verdict.
 - Output one table with ✅/⚠️ per platform.
 
 Then "run /cr-doctor" replaces four follow-up questions. (An `asc`/App Store Connect API key would let it check TestFlight processing state too — you already use the `app-connect-cli` skill.)

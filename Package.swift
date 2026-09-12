@@ -2,7 +2,7 @@
 import PackageDescription
 
 // The server, CLI, and Kit build on macOS and Linux. The two Apple client
-// libraries (ClaudeRelayClient: SwiftUI/UIKit/AppKit; ClaudeRelaySpeech:
+// libraries (CodeRelayClient: SwiftUI/UIKit/AppKit; CodeRelaySpeech:
 // WhisperKit/CoreML) and their dependencies exist only on Apple platforms —
 // a manifest runs on the host, so `os(Linux)` here means "building on Linux".
 #if os(Linux)
@@ -12,9 +12,9 @@ let buildsAppleClients = true
 #endif
 
 var products: [Product] = [
-    .executable(name: "claude-relay-server", targets: ["ClaudeRelayServer"]),
-    .executable(name: "claude-relay", targets: ["ClaudeRelayCLI"]),
-    .library(name: "ClaudeRelayKit", targets: ["ClaudeRelayKit"]),
+    .executable(name: "claude-relay-server", targets: ["CodeRelayServer"]),
+    .executable(name: "claude-relay", targets: ["CodeRelayCLI"]),
+    .library(name: "CodeRelayKit", targets: ["CodeRelayKit"]),
 ]
 
 var dependencies: [Package.Dependency] = [
@@ -34,7 +34,7 @@ var dependencies: [Package.Dependency] = [
 // Server integration tests drive a real WebSocket server through the Swift
 // client library on Apple platforms. On Linux those three files are excluded
 // and the same scenarios run through the NIO-based test client instead.
-var serverTestDependencies: [Target.Dependency] = ["ClaudeRelayServer", "ClaudeRelayKit"]
+var serverTestDependencies: [Target.Dependency] = ["CodeRelayServer", "CodeRelayKit"]
 var serverTestExcludes: [String] = []
 
 var targets: [Target] = [
@@ -50,17 +50,17 @@ var targets: [Target] = [
         ]
     ),
     .target(
-        name: "ClaudeRelayKit",
+        name: "CodeRelayKit",
         dependencies: [
             "CPTYShim",
             .product(name: "Crypto", package: "swift-crypto"),
         ],
-        path: "Sources/ClaudeRelayKit"
+        path: "Sources/CodeRelayKit"
     ),
     .executableTarget(
-        name: "ClaudeRelayServer",
+        name: "CodeRelayServer",
         dependencies: [
-            "ClaudeRelayKit",
+            "CodeRelayKit",
             "CPTYShim",
             .product(name: "NIO", package: "swift-nio"),
             .product(name: "NIOCore", package: "swift-nio"),
@@ -75,56 +75,56 @@ var targets: [Target] = [
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ],
-        path: "Sources/ClaudeRelayServer",
+        path: "Sources/CodeRelayServer",
         resources: [
             .copy("Resources/Agents"),
         ]
     ),
     .executableTarget(
-        name: "ClaudeRelayCLI",
+        name: "CodeRelayCLI",
         dependencies: [
-            "ClaudeRelayKit",
+            "CodeRelayKit",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
             .product(name: "QRCodeGenerator", package: "swift-qrcode-generator",
                      condition: .when(platforms: [.linux])),
         ],
-        path: "Sources/ClaudeRelayCLI"
+        path: "Sources/CodeRelayCLI"
     ),
     .testTarget(
-        name: "ClaudeRelayKitTests",
-        dependencies: ["ClaudeRelayKit"],
-        path: "Tests/ClaudeRelayKitTests"
+        name: "CodeRelayKitTests",
+        dependencies: ["CodeRelayKit"],
+        path: "Tests/CodeRelayKitTests"
     ),
     .testTarget(
-        name: "ClaudeRelayCLITests",
-        dependencies: ["ClaudeRelayCLI", "ClaudeRelayKit"],
-        path: "Tests/ClaudeRelayCLITests"
+        name: "CodeRelayCLITests",
+        dependencies: ["CodeRelayCLI", "CodeRelayKit"],
+        path: "Tests/CodeRelayCLITests"
     ),
 ]
 
 if buildsAppleClients {
     products += [
-        .library(name: "ClaudeRelayClient", targets: ["ClaudeRelayClient"]),
-        .library(name: "ClaudeRelaySpeech", targets: ["ClaudeRelaySpeech"]),
+        .library(name: "CodeRelayClient", targets: ["CodeRelayClient"]),
+        .library(name: "CodeRelaySpeech", targets: ["CodeRelaySpeech"]),
     ]
     dependencies += [
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "1.0.0"),
         .package(url: "https://github.com/obra/LLM.swift.git", revision: "c2144e1a0e29c280ec6080b7da85e876d51f8509"),
     ]
-    serverTestDependencies.append("ClaudeRelayClient")
+    serverTestDependencies.append("CodeRelayClient")
     targets += [
         .target(
-            name: "ClaudeRelayClient",
-            dependencies: ["ClaudeRelayKit"],
-            path: "Sources/ClaudeRelayClient"
+            name: "CodeRelayClient",
+            dependencies: ["CodeRelayKit"],
+            path: "Sources/CodeRelayClient"
         ),
         .target(
-            name: "ClaudeRelaySpeech",
+            name: "CodeRelaySpeech",
             dependencies: [
                 .product(name: "WhisperKit", package: "WhisperKit"),
                 .product(name: "LLM", package: "LLM.swift"),
             ],
-            path: "Sources/ClaudeRelaySpeech",
+            path: "Sources/CodeRelaySpeech",
             resources: [
                 .copy("Resources/SileroVAD.mlmodelc"),
                 .copy("Resources/WhisperLogMel8s.mlpackage"),
@@ -132,14 +132,14 @@ if buildsAppleClients {
             ]
         ),
         .testTarget(
-            name: "ClaudeRelayClientTests",
-            dependencies: ["ClaudeRelayClient"],
-            path: "Tests/ClaudeRelayClientTests"
+            name: "CodeRelayClientTests",
+            dependencies: ["CodeRelayClient"],
+            path: "Tests/CodeRelayClientTests"
         ),
         .testTarget(
-            name: "ClaudeRelaySpeechTests",
-            dependencies: ["ClaudeRelaySpeech"],
-            path: "Tests/ClaudeRelaySpeechTests",
+            name: "CodeRelaySpeechTests",
+            dependencies: ["CodeRelaySpeech"],
+            path: "Tests/CodeRelaySpeechTests",
             resources: [.copy("Fixtures")]
         ),
     ]
@@ -153,15 +153,15 @@ if buildsAppleClients {
 
 targets.append(
     .testTarget(
-        name: "ClaudeRelayServerTests",
+        name: "CodeRelayServerTests",
         dependencies: serverTestDependencies,
-        path: "Tests/ClaudeRelayServerTests",
+        path: "Tests/CodeRelayServerTests",
         exclude: serverTestExcludes
     )
 )
 
 let package = Package(
-    name: "ClaudeRelay",
+    name: "CodeRelay",
     platforms: [.macOS(.v14), .iOS(.v17)],
     products: products,
     dependencies: dependencies,

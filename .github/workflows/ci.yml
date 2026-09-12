@@ -3,11 +3,11 @@ name: CI
 on:
   pull_request:
     paths-ignore:
-      - 'ClaudeRelayAndroid/**'
+      - 'CodeRelayAndroid/**'
   push:
     branches: [main]
     paths-ignore:
-      - 'ClaudeRelayAndroid/**'
+      - 'CodeRelayAndroid/**'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -127,8 +127,8 @@ jobs:
       - name: Build iOS app for device
         run: |
           xcodebuild \
-            -project ClaudeRelay.xcodeproj \
-            -scheme ClaudeRelayApp \
+            -project CodeRelay.xcodeproj \
+            -scheme CodeRelayApp \
             -destination 'generic/platform=iOS' \
             -configuration Debug \
             -skipMacroValidation \
@@ -166,8 +166,8 @@ jobs:
       - name: Build macOS app
         run: |
           xcodebuild \
-            -project ClaudeRelay.xcodeproj \
-            -scheme ClaudeRelayMac \
+            -project CodeRelay.xcodeproj \
+            -scheme CodeRelayMac \
             -configuration Debug \
             -skipMacroValidation \
             CODE_SIGN_IDENTITY="" \

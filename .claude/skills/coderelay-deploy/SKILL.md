@@ -1,10 +1,10 @@
 ---
 name: coderelay-deploy
-description: Build, publish, and VERIFY ClaudeRelay artifacts — iOS/macOS to TestFlight, Android APK to GitHub Releases, server to Homebrew. Args: ios | android | mac | server | all (default all)
+description: Build, publish, and VERIFY CodeRelay artifacts — iOS/macOS to TestFlight, Android APK to GitHub Releases, server to Homebrew. Args: ios | android | mac | server | all (default all)
 disable-model-invocation: true
 ---
 
-# Ship ClaudeRelay
+# Ship CodeRelay
 
 Execute in order. Never skip the VERIFY phase — the whole point of this skill is
 that "published" claims are proven, not assumed. If any step fails, stop and
@@ -18,17 +18,17 @@ since their last release tag and confirm the skip list with the user.
 
 1. `git status` must be clean and branch must be `main` (or ask).
 2. Tests pass: `swift test` (server/kit) and, if shipping Android,
-   `cd ClaudeRelayAndroid && ./gradlew testDebugUnitTest`.
+   `cd CodeRelayAndroid && ./gradlew testDebugUnitTest`.
 3. Diff each platform's paths against its last release tag to decide what
-   needs shipping (`Sources/` + `Formula/` → server; `ClaudeRelayApp/`,
-   `ClaudeRelayClient`, `ClaudeRelaySpeech`, `ClaudeRelayKit` → iOS/mac;
-   `ClaudeRelayAndroid/` → android).
+   needs shipping (`Sources/` + `Formula/` → server; `CodeRelayApp/`,
+   `CodeRelayClient`, `CodeRelaySpeech`, `CodeRelayKit` → iOS/mac;
+   `CodeRelayAndroid/` → android).
 
 ## 2. Version bumps (only platforms being shipped)
 
 - **iOS/macOS**: bump build number in `project.yml`, regenerate with `xcodegen`.
 - **Android**: bump `versionCode` and `versionName` (`0.3-mNN` milestone
-  scheme) in `ClaudeRelayAndroid/app/build.gradle.kts`, including the
+  scheme) in `CodeRelayAndroid/app/build.gradle.kts`, including the
   "M-NN version." comment above them.
 - **Server**: bump the version constant + `Formula/clauderelay.rb`. Homebrew
   builds from HEAD; the Cellar dir name `HEAD-<commit>` encodes the built commit.
@@ -37,7 +37,7 @@ since their last release tag and confirm the skip list with the user.
 
 ## 3. Build & publish
 
-- **iOS**: `xcodebuild archive` (scheme ClaudeRelayApp) →
+- **iOS**: `xcodebuild archive` (scheme CodeRelayApp) →
   `xcodebuild -exportArchive` with `build/ExportOptions.plist`
   (destination=upload → goes straight to App Store Connect). Two flags the CLI
   needs and Xcode.app does not:
@@ -50,8 +50,8 @@ since their last release tag and confirm the skip list with the user.
     `-authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_H8WJXYB4M3.p8
     -authenticationKeyID H8WJXYB4M3
     -authenticationKeyIssuerID 69a6de76-f499-47e3-e053-5b8c7c11a4d1`
-- **macOS**: same flow — including both flags — with scheme ClaudeRelayMac. Note
-  its distribution log dir is named `ClaudeRelayMac_*`, after the *scheme*, not
+- **macOS**: same flow — including both flags — with scheme CodeRelayMac. Note
+  its distribution log dir is named `CodeRelayMac_*`, after the *scheme*, not
   after `PRODUCT_NAME` ("Code[Relay]").
 - **Android, Linux client, Linux server**: all three are built and published
   by the Release workflow (`.github/workflows/release.yml`) when a `vX.Y.Z`
@@ -75,7 +75,7 @@ since their last release tag and confirm the skip list with the user.
   `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`
   secrets are set (`gh secret set`); otherwise it is debug-signed with the
   runner's key and the release body says so. **A phone will not update across
-  a signer change** — see `ClaudeRelayAndroid/RELEASE.md` §"CI signing".
+  a signer change** — see `CodeRelayAndroid/RELEASE.md` §"CI signing".
   Out-of-band Android test builds (no server/Linux change worth a tag) can
   still go the old way: `./gradlew :app:assembleRelease`, copy to
   `/tmp/CodeRelay-<versionName>.apk`,

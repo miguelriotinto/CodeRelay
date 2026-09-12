@@ -4,39 +4,39 @@ on:
   pull_request:
     paths:
       # The Linux client itself...
-      - 'ClaudeRelayLinux/**'
+      - 'CodeRelayLinux/**'
       - '.github/workflows/linux.yml'
       # ...AND the Android modules whose SOURCE it compiles. The two builds share
       # one copy of core-protocol / core-net / core-session / terminal on disk
       # (docs/linux-client-spec.md AD-2), so an Android-side edit can break the
-      # Linux build without touching a single file under ClaudeRelayLinux/.
-      - 'ClaudeRelayAndroid/core-protocol/**'
-      - 'ClaudeRelayAndroid/core-net/**'
-      - 'ClaudeRelayAndroid/core-session/**'
-      - 'ClaudeRelayAndroid/terminal/**'
-      - 'ClaudeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
+      # Linux build without touching a single file under CodeRelayLinux/.
+      - 'CodeRelayAndroid/core-protocol/**'
+      - 'CodeRelayAndroid/core-net/**'
+      - 'CodeRelayAndroid/core-session/**'
+      - 'CodeRelayAndroid/terminal/**'
+      - 'CodeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
       # ...and the feature screens it compiles verbatim (feature-servers,
       # feature-workspace, feature-settings): a shared-screen edit on the Android
       # side is a Linux build input too.
-      - 'ClaudeRelayAndroid/feature-servers/**'
-      - 'ClaudeRelayAndroid/feature-workspace/**'
-      - 'ClaudeRelayAndroid/feature-settings/**'
+      - 'CodeRelayAndroid/feature-servers/**'
+      - 'CodeRelayAndroid/feature-workspace/**'
+      - 'CodeRelayAndroid/feature-settings/**'
   push:
     branches: [main]
     paths:
-      - 'ClaudeRelayLinux/**'
+      - 'CodeRelayLinux/**'
       - '.github/workflows/linux.yml'
-      - 'ClaudeRelayAndroid/core-protocol/**'
-      - 'ClaudeRelayAndroid/core-net/**'
-      - 'ClaudeRelayAndroid/core-session/**'
-      - 'ClaudeRelayAndroid/terminal/**'
-      - 'ClaudeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
+      - 'CodeRelayAndroid/core-protocol/**'
+      - 'CodeRelayAndroid/core-net/**'
+      - 'CodeRelayAndroid/core-session/**'
+      - 'CodeRelayAndroid/terminal/**'
+      - 'CodeRelayAndroid/core-storage/src/main/kotlin/relay/storage/SessionNaming.kt'
       # ...and the feature screens it compiles verbatim (feature-servers,
       # feature-workspace, feature-settings): a shared-screen edit on the Android
       # side is a Linux build input too.
-      - 'ClaudeRelayAndroid/feature-servers/**'
-      - 'ClaudeRelayAndroid/feature-workspace/**'
-      - 'ClaudeRelayAndroid/feature-settings/**'
+      - 'CodeRelayAndroid/feature-servers/**'
+      - 'CodeRelayAndroid/feature-workspace/**'
+      - 'CodeRelayAndroid/feature-settings/**'
 
 concurrency:
   group: linux-ci-${{ github.ref }}
@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 25
     defaults:
       run:
-        working-directory: ClaudeRelayLinux
+        working-directory: CodeRelayLinux
     steps:
       - uses: actions/checkout@v5
 

@@ -1,0 +1,558 @@
+import SwiftUI
+import SwiftTerm
+import CodeRelayClient
+import CodeRelayKit
+import UIKit
+import ObjectiveC
+
+// MARK: - TerminalView subclass for hardware keyboard commands
+
+/// Adds explicit UIKeyCommand entries for Cmd+C / Cmd+V / Cmd+X so that
+/// copy-paste works reliably when a hardware keyboard is connected.
+/// SwiftTerm implements the `copy(_:)` / `paste(_:)` methods but does not
+/// register key commands, so the system never dispatches them on iOS.
+class RelayTerminalView: TerminalView {
+    // UIKit stops firing deleteBackward when text buffer is empty;
+    // override hasText to always return true so key-repeat works.
+    private static var hasTextOverrideInstalled = false
+    private static func installRuntimeOverrides() {
+        guard !hasTextOverrideInstalled else { return }
+        hasTextOverrideInstalled = true
+
+        // 1. Override hasText → always true so iOS keeps firing deleteBackward on repeat.
+        let sel = sel_registerName("hasText")
+        let imp = imp_implementationWithBlock({ (_: AnyObject) -> Bool in
+            true
+        } as @convention(block) (AnyObject) -> Bool)
+        // "B16@0:8" = returns Bool, total frame 16, self at 0, _cmd at 8
+        class_replaceMethod(RelayTerminalView.self, sel, imp, "B16@0:8")
+
+        // 2. Override deleteBackward to notify inputDelegate even when the internal
+        //    text buffer is empty. SwiftTerm's "buffer empty" path sends the backspace
+        //    escape code but skips beginTextInputEdit/endTextInputEdit, so iOS's text
+        //    system never sees activity and stops key repeat.
+        let delSel = sel_registerName("deleteBackward")
+        if let origMethod = class_getInstanceMethod(TerminalView.self, delSel) {
+            let origImp = method_getImplementation(origMethod)
+            typealias DeleteFn = @convention(c) (AnyObject, Selector) -> Void
+            let delImp = imp_implementationWithBlock({ (self_: AnyObject) in
+                if let textInput = self_ as? UITextInput {
+                    textInput.inputDelegate?.textWillChange(textInput)
+                }
+                let fn = unsafeBitCast(origImp, to: DeleteFn.self)
+                fn(self_, delSel)
+                if let textInput = self_ as? UITextInput {
+                    textInput.inputDelegate?.textDidChange(textInput)
+                }
+            } as @convention(block) (AnyObject) -> Void)
+            // "v16@0:8" = returns void, total frame 16, self at 0, _cmd at 8
+            class_replaceMethod(RelayTerminalView.self, delSel, delImp, "v16@0:8")
+        }
+
+        // 3. Override canPerformAction to hide Paste when clipboard has no text.
+        //    SwiftTerm declares this as `public` (not `open`), so we use the runtime.
+        let canSel = #selector(UIResponder.canPerformAction(_:withSender:))
+        if let origCanMethod = class_getInstanceMethod(TerminalView.self, canSel) {
+            let origCanImp = method_getImplementation(origCanMethod)
+            typealias CanFn = @convention(c) (AnyObject, Selector, Selector, AnyObject?) -> Bool
+            let canImp = imp_implementationWithBlock({ (self_: AnyObject, action: Selector, sender: AnyObject?) -> Bool in
+                if action == #selector(UIResponderStandardEditActions.paste(_:)) {
+                    return UIPasteboard.general.hasStrings || UIPasteboard.general.hasImages
+                }
+                let fn = unsafeBitCast(origCanImp, to: CanFn.self)
+                return fn(self_, canSel, action, sender)
+            } as @convention(block) (AnyObject, Selector, AnyObject?) -> Bool)
+            // "B32@0:8:16@24" = returns Bool, self at 0, _cmd at 8, SEL at 16, id at 24
+            class_replaceMethod(RelayTerminalView.self, canSel, canImp, "B32@0:8:16@24")
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            Self.installRuntimeOverrides()
+        }
+    }
+
+    override var keyCommands: [UIKeyCommand]? {
+        var commands = super.keyCommands ?? []
+        commands.append(contentsOf: [
+            UIKeyCommand(input: "c", modifierFlags: .command, action: #selector(copy(_:))),
+            UIKeyCommand(input: "v", modifierFlags: .command, action: #selector(paste(_:))),
+            UIKeyCommand(input: "x", modifierFlags: .command, action: #selector(handleCut(_:)))
+        ])
+
+        let enabled = UserDefaults.standard.object(forKey: "recordingShortcutEnabled") as? Bool ?? true
+        if enabled {
+            let key = UserDefaults.standard.string(forKey: "recordingShortcutKey") ?? ""
+            if !key.isEmpty {
+                let flagsRaw = UserDefaults.standard.integer(forKey: "recordingShortcutFlags")
+                let flags: UIKeyModifierFlags = flagsRaw != 0
+                    ? UIKeyModifierFlags(rawValue: flagsRaw)
+                    : [.command, .alternate]
+                let cmd = UIKeyCommand(input: key, modifierFlags: flags,
+                                       action: #selector(handleRecordingShortcut))
+                cmd.discoverabilityTitle = "Toggle Recording"
+                commands.append(cmd)
+            }
+        }
+
+        return commands
+    }
+
+    @objc private func handleRecordingShortcut() {
+        NotificationCenter.default.post(name: .toggleSpeechRecording, object: nil)
+    }
+
+    // MARK: - Output
+
+    /// Parser state for [feedTrackingScrollbackClear]. Lives on the view because a
+    /// `CSI 3 J` can straddle two output frames.
+    private var scrollbackClearScanner = ScrollbackClearScanner()
+
+    /// Feeds output to the emulator and repairs the scroll geometry if the chunk
+    /// cleared the scrollback.
+    ///
+    /// `CSI 3 J` trims the buffer's history and lowers `yBase`/`yDisp` *silently*
+    /// — SwiftTerm's `cmdEraseInDisplay` case 3 notifies nobody — so afterwards
+    /// `contentSize`/`contentOffset` still describe lines that no longer exist.
+    /// `changeScrollback` is the public door to SwiftTerm's own `updateScroller()`;
+    /// passing the CURRENT scrollback makes the buffer change a no-op (the
+    /// underlying `changeHistorySize` returns early when the max length is
+    /// unchanged), leaving a pure resync.
+    ///
+    /// Do NOT instead "fix" the geometry here by writing `contentSize` /
+    /// `contentOffset` directly. The app cannot tell stale geometry from a scroll
+    /// in flight: SwiftTerm syncs `yDisp` from the offset only while the finger is
+    /// down (`isTracking`), so during a downward fling — or any coast after the
+    /// lift — the offset legitimately runs ahead of `yDisp`. Reading that gap as
+    /// staleness truncated `contentSize` to the lift point, which deleted the
+    /// content below it and left the user able to scroll up but never back down to
+    /// the prompt.
+    func feedTrackingScrollbackClear(_ bytes: ArraySlice<UInt8>) {
+        let didClearScrollback = scrollbackClearScanner.scan(bytes)
+        feed(byteArray: bytes)
+        if didClearScrollback {
+            changeScrollback(getTerminal().options.scrollback)
+        }
+    }
+
+    // MARK: - A swipe is a wheel event, not a mouse drag
+
+    /// Turns a one-finger swipe into mouse-wheel reports while the program is
+    /// tracking the mouse, and does **not** call `super`.
+    ///
+    /// Three facts decide this, and the fix needs all three:
+    ///
+    /// 1. Claude Code runs in the **alternate screen buffer** (`CSI ? 1049 h`),
+    ///    which has no scrollback by definition. `contentSize.height` is then
+    ///    `rows * cellHeight`, so the `UIScrollView` this view *is* has nothing
+    ///    to scroll and a swipe only rubber-bands. The viewport is not what
+    ///    moves — the agent's own transcript is.
+    /// 2. What the agent listens for is a **wheel report** (buttons 4/5, SGR
+    ///    encoding under `CSI ? 1006 h`). macOS already does this in
+    ///    `scrollWheel`, which is why the Mac app scrolls the same session fine.
+    ///    iOS has no wheel event source at all, so nothing ever sent one.
+    /// 3. SwiftTerm's own `mouseModeChanged` installs a pan that reports the
+    ///    drag as press → motion → release. Upstream #586 (in the 1.13 → 1.15
+    ///    bump) changed iOS drags from button 1 to button 0, turning that into a
+    ///    *selection* drag: a swipe highlighted terminal text and Claude Code
+    ///    answered "copied 393 characters to clipboard".
+    ///
+    /// So the pan stays, but it carries wheel notches instead of a button drag.
+    /// `allowMouseReporting` is deliberately left alone: `singleTap` /
+    /// `doubleTap` / `tripleTap` consult it independently, and a tap is a click
+    /// the user does want reported — it is how an agent's clickable UI works.
+    override func mouseModeChanged(source: Terminal) {
+        installedWheelPan().isEnabled = source.mouseMode != .off
+    }
+
+    /// The gesture that carries the swipe, created on first mouse-mode change.
+    private var wheelPanGesture: UIPanGestureRecognizer?
+
+    /// Finger travel not yet worth a whole wheel notch, in points. Keeping the
+    /// remainder is what makes a slow drag scroll smoothly instead of dropping
+    /// every sub-row movement.
+    private var wheelTravel: CGFloat = 0
+
+    /// Installs the wheel pan once and gives it priority over the scroll view's
+    /// own pan.
+    ///
+    /// `require(toFail:)` is safe to leave in place permanently: a *disabled*
+    /// recognizer never participates in the gesture graph, so while mouse
+    /// reporting is off this costs native scrolling — the right behaviour in a
+    /// plain shell, where the scrollback really is local — exactly nothing.
+    private func installedWheelPan() -> UIPanGestureRecognizer {
+        if let existing = wheelPanGesture { return existing }
+        let gesture = UIPanGestureRecognizer(target: self, action: #selector(handleWheelPan))
+        gesture.maximumNumberOfTouches = 1
+        gesture.isEnabled = false
+        addGestureRecognizer(gesture)
+        panGestureRecognizer.require(toFail: gesture)
+        wheelPanGesture = gesture
+        return gesture
+    }
+
+    /// Stands the wheel pan down while a selection is live, so long-press → drag
+    /// still extends it via SwiftTerm's own `panSelectionHandler`.
+    ///
+    /// This is `UIView`'s hook, not `UIGestureRecognizerDelegate`'s — the two
+    /// share a selector, and `UIScrollView` already implements it to arbitrate
+    /// its *own* pan. So every other recognizer must go to `super`: answering
+    /// `true` here on the scroll view's behalf would discard that logic and is
+    /// the one way this method can break native scrolling.
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === wheelPanGesture { return !hasActiveSelection }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
+    @objc private func handleWheelPan(_ gesture: UIPanGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            wheelTravel = 0
+        case .changed:
+            // Read the translation incrementally: take it, then zero it, so the
+            // accumulator below sees finger *movement* rather than a distance
+            // from the touch-down point that would re-send old notches.
+            let travel = gesture.translation(in: self).y
+            gesture.setTranslation(.zero, in: self)
+            sendWheel(travel: travel, at: gesture.location(in: self))
+        default:
+            break
+        }
+    }
+
+    /// Converts `travel` points of finger movement into whole wheel notches and
+    /// reports them. Returns the number sent (negative for wheel-down), which is
+    /// what the tests assert against.
+    ///
+    /// Not private, and split from the gesture handler, because a
+    /// `UIPanGestureRecognizer` cannot be driven from a unit test — a real touch
+    /// sequence is the only thing that moves one. This is the seam the tests
+    /// drive instead.
+    @discardableResult
+    func sendWheel(travel: CGFloat, at point: CGPoint) -> Int {
+        let terminal = getTerminal()
+        guard allowMouseReporting, terminal.mouseMode != .off else { return 0 }
+
+        let rowHeight = wheelRowHeight
+        wheelTravel += travel
+        let notches = Int(wheelTravel / rowHeight)
+        guard notches != 0 else { return 0 }
+        wheelTravel -= CGFloat(notches) * rowHeight
+
+        // Dragging down (positive travel) pulls earlier lines into view, which
+        // is a wheel-*up* report — the same mapping as a trackpad with natural
+        // scrolling, and the direction `scrollWheel` uses on macOS.
+        let button = notches > 0 ? 4 : 5
+        let flags = terminal.encodeButton(button: button, release: false,
+                                          shift: false, meta: false, control: false)
+        let col = max(0, min(terminal.cols - 1, Int(point.x / wheelColumnWidth)))
+        let row = max(0, min(terminal.rows - 1, Int(point.y / rowHeight)))
+        for _ in 0..<abs(notches) {
+            terminal.sendEvent(buttonFlags: flags, x: col, y: row,
+                               pixelX: Int(point.x), pixelY: Int(point.y))
+        }
+        return notches
+    }
+
+    /// One row's height in points. SwiftTerm's own `cellDimension` is internal to
+    /// that module, so this derives the same number from the grid the emulator
+    /// reports — self-correcting across font-size changes and rotation. The
+    /// fallback only matters before first layout, when `bounds` is empty.
+    var wheelRowHeight: CGFloat {
+        let height = bounds.height / CGFloat(max(1, getTerminal().rows))
+        return height >= 1 ? height : 16
+    }
+
+    /// One column's width in points; see `wheelRowHeight`.
+    var wheelColumnWidth: CGFloat {
+        let width = bounds.width / CGFloat(max(1, getTerminal().cols))
+        return width >= 1 ? width : 8
+    }
+
+    var onPasteImage: ((Data) -> Void)?
+
+    override func paste(_ sender: Any?) {
+        // Prioritize images — many clipboard sources (Safari, Mail) include both image and URL representations
+        if UIPasteboard.general.hasImages,
+           let image = UIPasteboard.general.image,
+           let pngData = image.pngData() {
+            onPasteImage?(pngData)
+            return
+        }
+        // Plain text — let SwiftTerm handle it normally.
+        super.paste(sender)
+    }
+
+    @objc private func handleCut(_ sender: Any?) {
+        // Terminal output isn't editable — cut behaves like copy.
+        copy(sender)
+    }
+}
+
+/// Holds a RelayTerminalView together with the SwiftTerm delegate so its
+/// lifetime exceeds any single SwiftUI render cycle. Cached on the coordinator
+/// so switching sessions reuses the same UIView (preserving SwiftTerm's
+/// internal scrollback) instead of tearing it down.
+final class CachedIOSTerminal {
+    let view: RelayTerminalView
+    let delegate: IOSTerminalCoordinator
+
+    init(view: RelayTerminalView, delegate: IOSTerminalCoordinator) {
+        self.view = view
+        self.delegate = delegate
+    }
+}
+
+/// SwiftUI host that shows the coordinator's cached terminal for the active
+/// session. Creates a new cached terminal on first use and registers it with
+/// the coordinator so subsequent resumes can ask the server to skip the
+/// ring-buffer replay.
+struct TerminalHostView: UIViewRepresentable {
+    @ObservedObject var coordinator: SessionCoordinator
+    var fontSize: CGFloat
+    @Binding var isKeyboardVisible: Bool
+
+    func makeCoordinator() -> HostCoordinator {
+        HostCoordinator(isKeyboardVisible: $isKeyboardVisible)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let host = UIView(frame: .zero)
+        host.backgroundColor = .black
+        context.coordinator.installKeyboardObservers()
+        context.coordinator.installFocusObservers { [weak host] in
+            (host?.subviews.first { !$0.isHidden }) as? RelayTerminalView
+        }
+        return host
+    }
+
+    func updateUIView(_ host: UIView, context: Context) {
+        guard let activeId = coordinator.activeSessionId,
+              let viewModel = coordinator.viewModel(for: activeId) else {
+            for subview in host.subviews { subview.isHidden = true }
+            return
+        }
+
+        let isFirstTimeForSession = coordinator.cachedTerminalView(for: activeId) == nil
+        let sessionChanged = context.coordinator.lastFocusedSessionId != activeId
+        let cached = cachedOrMake(for: activeId, viewModel: viewModel, host: host)
+
+        if cached.view.superview !== host {
+            host.addSubview(cached.view)
+            cached.view.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                cached.view.topAnchor.constraint(equalTo: host.topAnchor),
+                cached.view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+                cached.view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                cached.view.trailingAnchor.constraint(equalTo: host.trailingAnchor)
+            ])
+        }
+
+        for subview in host.subviews {
+            subview.isHidden = (subview !== cached.view)
+        }
+
+        let newFont = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        if cached.view.font != newFont {
+            cached.view.font = newFont
+        }
+
+        cached.delegate.viewModel = viewModel
+        viewModel.onTerminalOutput = { [weak view = cached.view] data in
+            guard let view else { return }
+            view.feedTrackingScrollbackClear(ArraySlice([UInt8](data)))
+        }
+        viewModel.onReplayFlushed = { [weak view = cached.view] in
+            DispatchQueue.main.async {
+                guard let view else { return }
+                let currentScrollback = view.getTerminal().options.scrollback
+                view.changeScrollback(currentScrollback)
+                view.getTerminal().updateFullScreen()
+                view.setNeedsDisplay(view.bounds)
+            }
+        }
+        // `terminalReady` is itself idempotent, but `updateUIView` fires on every
+        // coordinator publish. Only dispatch once per session to avoid the
+        // guard + pending-buffer flush loop cost on each update pass. Tracking
+        // by session id doubles as the session-switch reset.
+        if context.coordinator.readiedSessionId != activeId {
+            context.coordinator.readiedSessionId = activeId
+            viewModel.terminalReady()
+        }
+
+        // Hide the built-in input accessory once per terminal (idempotent, but
+        // not needed on every updateUIView).
+        if isFirstTimeForSession {
+            cached.view.inputAccessoryView?.isHidden = true
+            cached.view.inputAccessoryView?.frame.size.height = 0
+            cached.view.reloadInputViews()
+        }
+
+        // Only focus the terminal when the active session actually changes.
+        // updateUIView fires on every @ObservedObject publish (activity updates,
+        // connection quality, etc.), and forcing first-responder on each call
+        // would override user dismisses — the keyboard would pop back up every
+        // time a coordinator property changes.
+        if sessionChanged {
+            context.coordinator.lastFocusedSessionId = activeId
+            _ = cached.view.becomeFirstResponder()
+        }
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: HostCoordinator) {
+        coordinator.removeKeyboardObservers()
+        coordinator.removeFocusObservers()
+    }
+
+    // MARK: - Cache Lookup
+
+    private func cachedOrMake(
+        for sessionId: UUID,
+        viewModel: TerminalViewModel,
+        host: UIView
+    ) -> CachedIOSTerminal {
+        if let existing = coordinator.cachedTerminalView(for: sessionId) as? CachedIOSTerminal {
+            return existing
+        }
+        let delegate = IOSTerminalCoordinator(viewModel: viewModel)
+        let terminal = RelayTerminalView(frame: host.bounds)
+        terminal.terminalDelegate = delegate
+        terminal.nativeBackgroundColor = .black
+        terminal.nativeForegroundColor = .white
+        terminal.font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        terminal.installColors(TerminalPalette.colors)
+        terminal.changeScrollback(AppSettings.shared.terminalScrollbackLines)
+        terminal.onPasteImage = { [weak viewModel] imageData in
+            viewModel?.sendPasteImage(imageData)
+        }
+
+        let cached = CachedIOSTerminal(view: terminal, delegate: delegate)
+        coordinator.registerLiveTerminal(for: sessionId, view: cached)
+        return cached
+    }
+}
+
+// MARK: - Host Coordinator (keyboard + focus observers)
+
+/// Owns the keyboard-visibility and focus/resign notification observers for
+/// the terminal host. These are installed once per host (not per terminal)
+/// so switching sessions doesn't register duplicate observers.
+final class HostCoordinator: NSObject {
+    private var isKeyboardVisible: Binding<Bool>
+    private var focusObserver: Any?
+    private var resignObserver: Any?
+    private var keyboardShowObserver: Any?
+    private var keyboardHideObserver: Any?
+    /// Tracks which session was most recently focused so we only force-focus
+    /// the terminal on actual session switches, not on every coordinator
+    /// property publish.
+    var lastFocusedSessionId: UUID?
+
+    /// Tracks which session has had its first `terminalReady()` call dispatched.
+    /// `updateUIView` fires on every @ObservedObject publish, and while
+    /// `terminalReady()` is already internally idempotent, this avoids the
+    /// guard dispatch + flush loop cost on each update pass.
+    var readiedSessionId: UUID?
+
+    init(isKeyboardVisible: Binding<Bool>) {
+        self.isKeyboardVisible = isKeyboardVisible
+        super.init()
+    }
+
+    func installKeyboardObservers() {
+        removeKeyboardObservers()
+        keyboardShowObserver = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardDidShowNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.isKeyboardVisible.wrappedValue = true
+        }
+        keyboardHideObserver = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardDidHideNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.isKeyboardVisible.wrappedValue = false
+        }
+    }
+
+    func removeKeyboardObservers() {
+        if let obs = keyboardShowObserver {
+            NotificationCenter.default.removeObserver(obs)
+            keyboardShowObserver = nil
+        }
+        if let obs = keyboardHideObserver {
+            NotificationCenter.default.removeObserver(obs)
+            keyboardHideObserver = nil
+        }
+    }
+
+    /// Installs focus/resign observers that act on the currently-visible
+    /// terminal, resolved lazily via `activeTerminal()` — this avoids dangling
+    /// references when session swaps change which terminal is front.
+    func installFocusObservers(activeTerminal: @escaping () -> RelayTerminalView?) {
+        removeFocusObservers()
+        focusObserver = NotificationCenter.default.addObserver(
+            forName: .terminalRequestFocus, object: nil, queue: .main
+        ) { _ in
+            _ = activeTerminal()?.becomeFirstResponder()
+        }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: .terminalResignFocus, object: nil, queue: .main
+        ) { _ in
+            _ = activeTerminal()?.resignFirstResponder()
+        }
+    }
+
+    func removeFocusObservers() {
+        if let obs = focusObserver {
+            NotificationCenter.default.removeObserver(obs)
+            focusObserver = nil
+        }
+        if let obs = resignObserver {
+            NotificationCenter.default.removeObserver(obs)
+            resignObserver = nil
+        }
+    }
+}
+
+// MARK: - SwiftTerm Delegate
+
+/// One instance per cached terminal. Holds a weak reference to the current
+/// view model (which is re-assigned by `updateUIView` as sessions swap in).
+final class IOSTerminalCoordinator: NSObject, TerminalViewDelegate {
+    weak var viewModel: TerminalViewModel?
+
+    init(viewModel: TerminalViewModel) {
+        self.viewModel = viewModel
+    }
+
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        Task { @MainActor [weak self] in
+            self?.viewModel?.sendInput(Data(data))
+        }
+    }
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        guard newCols > 0, newRows > 0 else { return }
+        Task { @MainActor [weak self] in
+            self?.viewModel?.sendResize(cols: UInt16(newCols), rows: UInt16(newRows))
+            self?.viewModel?.terminalReady()
+        }
+    }
+
+    func scrolled(source: TerminalView, position: Double) {}
+    func setTerminalTitle(source: TerminalView, title: String) {
+        Task { @MainActor [weak self] in
+            self?.viewModel?.terminalTitle = title
+            self?.viewModel?.onTitleChanged?(title)
+        }
+    }
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {}
+    func bell(source: TerminalView) {}
+    func clipboardCopy(source: TerminalView, content: Data) {}
+    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+}

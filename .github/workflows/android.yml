@@ -3,12 +3,12 @@ name: Android CI
 on:
   pull_request:
     paths:
-      - 'ClaudeRelayAndroid/**'
+      - 'CodeRelayAndroid/**'
       - '.github/workflows/android.yml'
   push:
     branches: [main]
     paths:
-      - 'ClaudeRelayAndroid/**'
+      - 'CodeRelayAndroid/**'
       - '.github/workflows/android.yml'
 
 concurrency:
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ClaudeRelayAndroid
+        working-directory: CodeRelayAndroid
     steps:
       - uses: actions/checkout@v5
 

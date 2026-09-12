@@ -1,4 +1,4 @@
-# SwiftLint configuration for ClaudeRelay
+# SwiftLint configuration for CodeRelay
 
 excluded:
   - .build
