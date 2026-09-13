@@ -99,4 +99,85 @@ final class PromptOptimizerFactoryTests: XCTestCase {
         let path = try writeKey("  sk-ant-loose \n", mode: 0o644)
         XCTAssertEqual(try PromptOptimizerFactory.readKey(atPath: path), "sk-ant-loose")
     }
+
+    // MARK: - Log Coverage Tests
+
+    func testDisabledConfigLogsNothing() async throws {
+        let before = RelayLogger.store.recent(count: 100)
+        var config = RelayConfig.default
+        config.promptOptimizerEnabled = false
+        config.promptOptimizerKeyPath = try writeKey("sk-ant-test")
+        let result = try await make(config)
+        let after = RelayLogger.store.recent(count: 100)
+        XCTAssertNil(result)
+        XCTAssertEqual(before.count, after.count, "Disabled config should log nothing")
+    }
+
+    func testUnusableConfigLogsExactlyOneError() async throws {
+        let before = RelayLogger.store.recent(count: 100)
+        var config = RelayConfig.default
+        config.promptOptimizerEnabled = true
+        config.promptOptimizerKeyPath = tempDir.appendingPathComponent("missing").path
+        let result = try await make(config)
+        let after = RelayLogger.store.recent(count: 100)
+        XCTAssertNil(result)
+        let newLogs = after.dropFirst(before.count)
+        let errorLogs = newLogs.filter { $0.contains("[ERROR]") && $0.contains("[optimizer]") }
+        XCTAssertEqual(errorLogs.count, 1, "Unusable config should log exactly one error")
+    }
+
+    func testInvalidRegionLogsOneError() async throws {
+        let before = RelayLogger.store.recent(count: 100)
+        var config = RelayConfig.default
+        config.promptOptimizerEnabled = true
+        config.promptOptimizerKeyPath = try writeKey("bedrock-key")
+        config.promptOptimizerProvider = "bedrock"
+        config.promptOptimizerRegion = "INVALID REGION"
+        let result = try await make(config)
+        let after = RelayLogger.store.recent(count: 100)
+        XCTAssertNil(result)
+        let newLogs = after.dropFirst(before.count)
+        let errorLogs = newLogs.filter { $0.contains("[ERROR]") && $0.contains("[optimizer]") }
+        XCTAssertEqual(errorLogs.count, 1, "Invalid region should log exactly one error")
+    }
+
+    func testKeyWithInteriorNewlineLogsOneErrorWithoutKey() async throws {
+        let keyWithNewline = "sk-ant\ntest123"
+        let path = try writeKey(keyWithNewline, mode: 0o600)
+        let before = RelayLogger.store.recent(count: 100)
+        var config = RelayConfig.default
+        config.promptOptimizerEnabled = true
+        config.promptOptimizerKeyPath = path
+        let result = try await make(config)
+        let after = RelayLogger.store.recent(count: 100)
+        XCTAssertNil(result)
+        let newLogs = after.dropFirst(before.count)
+        let errorLogs = newLogs.filter { $0.contains("[ERROR]") && $0.contains("[optimizer]") }
+        XCTAssertEqual(errorLogs.count, 1, "Invalid key should log exactly one error")
+        // Ensure the key material is not in the log.
+        for log in errorLogs {
+            XCTAssertFalse(log.contains("sk-ant"), "Log should not contain key material")
+            XCTAssertFalse(log.contains("test123"), "Log should not contain key material")
+        }
+    }
+
+    func testDirectoryAtKeyPathLogsOneError() async throws {
+        let dirPath = tempDir.appendingPathComponent("keydir").path
+        try FileManager.default.createDirectory(atPath: dirPath, withIntermediateDirectories: true)
+        let before = RelayLogger.store.recent(count: 100)
+        var config = RelayConfig.default
+        config.promptOptimizerEnabled = true
+        config.promptOptimizerKeyPath = dirPath
+        let result = try await make(config)
+        let after = RelayLogger.store.recent(count: 100)
+        XCTAssertNil(result)
+        let newLogs = after.dropFirst(before.count)
+        let errorLogs = newLogs.filter { $0.contains("[ERROR]") && $0.contains("[optimizer]") }
+        XCTAssertEqual(errorLogs.count, 1, "Directory at keyPath should log exactly one error")
+    }
+
+    func testDefaultModelsResolveCorrectly() throws {
+        XCTAssertEqual(MessagesEndpoint.anthropic.defaultModel, "claude-sonnet-5")
+        XCTAssertEqual(MessagesEndpoint.bedrock(region: "eu-west-1").defaultModel, "anthropic.claude-sonnet-5")
+    }
 }

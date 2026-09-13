@@ -173,7 +173,6 @@ observerPurgeTask.cancel()
 terminalSessionPurgeTask.cancel()
 pushReapTask?.cancel()
 if let pushHTTPClient { try? await pushHTTPClient.shutdown() }
-if let optimizerHTTPClient { try? await optimizerHTTPClient.shutdown() }
 
 // Race the graceful-shutdown path against a 10s timer. If the normal
 // teardown stalls (e.g. a stuck PTY terminate), fall through to the forced
@@ -182,6 +181,7 @@ let shutdownSucceeded: Bool = await withTaskGroup(of: Bool.self) { group in
     group.addTask {
         await sessionManager.shutdown()
         await tokenStore.flushIfDirty()
+        if let optimizerHTTPClient { try? await optimizerHTTPClient.shutdown() }
         return true
     }
     group.addTask {

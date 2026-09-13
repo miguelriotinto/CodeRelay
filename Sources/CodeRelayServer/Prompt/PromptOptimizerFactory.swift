@@ -11,13 +11,19 @@ import CodeRelayKit
 enum PromptOptimizerFactory {
 
     enum KeyError: Error, CustomStringConvertible {
+        case notRegularFile(String)
+        case tooLarge(String)
         case unreadable(String)
         case empty(String)
+        case invalidCharacters(String)
 
         var description: String {
             switch self {
+            case .notRegularFile(let path): return "promptOptimizerKeyPath is not a regular file: \(path)"
+            case .tooLarge(let path): return "promptOptimizerKeyPath exceeds 64 KB: \(path)"
             case .unreadable(let path): return "promptOptimizerKeyPath not readable: \(path)"
             case .empty(let path): return "promptOptimizerKeyPath is empty: \(path)"
+            case .invalidCharacters(let path): return "promptOptimizerKeyPath contains whitespace or control characters: \(path)"
             }
         }
     }
@@ -42,7 +48,7 @@ enum PromptOptimizerFactory {
             RelayLogger.log(.error, category: "optimizer", "\(error.clientMessage): \(error); optimizer disabled")
             return nil
         } catch {
-            RelayLogger.log(.error, category: "optimizer", "\(error); optimizer disabled")
+            RelayLogger.log(.error, category: "optimizer", "\(PushHTTP.redact("\(error)")); optimizer disabled")
             return nil
         }
 
@@ -65,17 +71,40 @@ enum PromptOptimizerFactory {
     /// readable by others. Never logs the key itself.
     static func readKey(atPath path: String) throws -> String {
         let expanded = NSString(string: path).expandingTildeInPath
+
+        // Check file type and size before reading.
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: expanded) else {
+            throw KeyError.unreadable(path)
+        }
+        guard (attrs[.type] as? FileAttributeType) == .typeRegular else {
+            throw KeyError.notRegularFile(path)
+        }
+        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        guard size <= 64 * 1024 else {
+            throw KeyError.tooLarge(path)
+        }
+
         guard let data = FileManager.default.contents(atPath: expanded) else {
             throw KeyError.unreadable(path)
         }
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: expanded),
-           let mode = (attrs[.posixPermissions] as? NSNumber)?.int16Value,
+        let key = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { throw KeyError.empty(path) }
+
+        // Reject keys with interior whitespace or control characters.
+        for scalar in key.unicodeScalars {
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) || CharacterSet.controlCharacters.contains(scalar) {
+                throw KeyError.invalidCharacters(path)
+            }
+        }
+
+        // Log (but proceed) when the file is readable by others. Only emitted
+        // when the key is otherwise accepted.
+        if let mode = (attrs[.posixPermissions] as? NSNumber)?.int16Value,
            mode & 0o077 != 0 {
             RelayLogger.log(.error, category: "optimizer",
                 "promptOptimizerKeyPath \(path) is readable by others (mode \(String(mode, radix: 8))); chmod 600 it")
         }
-        let key = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { throw KeyError.empty(path) }
+
         return key
     }
 }
