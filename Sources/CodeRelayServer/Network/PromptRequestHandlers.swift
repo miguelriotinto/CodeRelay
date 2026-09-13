@@ -118,7 +118,7 @@ extension RelayMessageHandler {
                             await pty.write(bytes)
                             let elapsed = Int(Date().timeIntervalSince(startedAt) * 1000)
                             ctx.value.eventLoop.execute { [weak self] in
-                                guard let handler = self else { return }
+                                guard let handler = self, ctx.value.channel.isActive else { return }
                                 RelayLogger.log(.debug, category: "optimizer",
                                     "optimize_prompt ok draft=\(promptContext.draft.utf8.count)B prompt=\(prompt.utf8.count)B in \(elapsed)ms")
                                 handler.sendServerMessage(.optimizePromptResult(status: "ok", original: promptContext.draft, prompt: prompt), context: ctx.value)
@@ -179,12 +179,13 @@ extension RelayMessageHandler {
                     return
                 }
                 // Write PTY first, then send reply to preserve ordering with binary terminal input.
+                let ctx = UnsafeTransfer(ctx)
                 Task {
                     await pty.write(bytes)
-                    ctx.eventLoop.execute { [weak handler] in
-                        guard let handler else { return }
+                    ctx.value.eventLoop.execute { [weak handler] in
+                        guard let handler, ctx.value.channel.isActive else { return }
                         RelayLogger.log(.debug, category: "optimizer", "replace_prompt ok text=\(text.utf8.count)B")
-                        handler.sendServerMessage(.replacePromptResult(status: "ok"), context: ctx)
+                        handler.sendServerMessage(.replacePromptResult(status: "ok"), context: ctx.value)
                     }
                 }
             },

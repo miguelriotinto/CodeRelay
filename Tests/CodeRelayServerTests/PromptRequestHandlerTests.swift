@@ -338,16 +338,21 @@ final class PromptRequestHandlerTests: XCTestCase {
     func testTimeoutFollowedByModelCompletionYieldsNoWriteAndNoSecondResult() async throws {
         actor SlowThenFastOptimizer: PromptOptimizing {
             nonisolated let sharesScreen = true
+            private let stream: AsyncStream<Void>
             private let continuation: AsyncStream<Void>.Continuation
             init() {
                 var cont: AsyncStream<Void>.Continuation!
-                _ = AsyncStream<Void> { cont = $0 }
-                self.continuation = cont
+                self.stream = AsyncStream<Void> { cont = $0 }
+                self.continuation = cont!
             }
             func optimize(_ context: PromptContext) async throws -> OptimizerOutcome {
-                // Hang until signalled.
-                for await _ in AsyncStream<Void> { _ in } {
-                    break
+                // Hang until signalled, ignore cancellation.
+                await withTaskCancellationHandler {
+                    // Do nothing on cancellation - we want to test late completion.
+                } operation: {
+                    for await _ in stream {
+                        break
+                    }
                 }
                 return .optimized("late result")
             }
