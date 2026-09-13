@@ -164,13 +164,15 @@ final class AgentInputProfileProbeTests: XCTestCase {
         }
     }
 
-    /// Measure inset as wrap width: inset = columns - firstRowGlyphCount.
-    /// Type 130 glyphs (more than PTY width of 100) and count first-row glyphs.
+    /// Measure inset as wrap width: inset = columns - maxRowGlyphCount.
+    /// Type 130 glyphs (more than PTY width of 100) and count glyphs in the row
+    /// holding the MOST of them (the first wrapped row, not a continuation).
     private func probeInset(agentId: String, command: String) async -> String {
         return await withAgent(agentId: agentId, command: command) { pty in
-            // Type 130 x's in chunks of 10 with gaps to avoid paste detection
+            // Type 130 Q's in chunks of 10 with gaps to avoid paste detection.
+            // Q is chosen because it never appears in agent UI text.
             for _ in 0..<13 {
-                await pty.write(Data("xxxxxxxxxx".utf8))
+                await pty.write(Data("QQQQQQQQQQ".utf8))
                 try? await Task.sleep(for: .milliseconds(30))
             }
             try? await Task.sleep(for: .milliseconds(500))
@@ -178,15 +180,25 @@ final class AgentInputProfileProbeTests: XCTestCase {
             let screen = await pty.promptContext(includeScreen: true).screenLines
             let tail = screen.suffix(6).joined(separator: " ⏎ ")
 
-            guard let firstRow = screen.first(where: { $0.contains("x") }) else {
-                return "could not find 'x' | \(tail)"
+            // Find the row with the MOST Qs (the first wrapped row holds full width)
+            let rowCounts = screen.map { row -> (row: String, count: Int) in
+                (row, row.filter { $0 == "Q" }.count)
+            }.filter { $0.count > 0 }
+
+            guard let maxRow = rowCounts.max(by: { $0.count < $1.count }) else {
+                return "could not find 'Q' | \(tail)"
             }
 
-            let firstRowCount = firstRow.filter { $0 == "x" }.count
-            let inset = 100 - firstRowCount
-            let leftColumn = firstRow.firstIndex(of: "x").map { firstRow.distance(from: firstRow.startIndex, to: $0) } ?? 0
+            let maxCount = maxRow.count
+            let leftColumn = maxRow.row.firstIndex(of: "Q").map { maxRow.row.distance(from: maxRow.row.startIndex, to: $0) } ?? 0
 
-            return "\(inset) (first row holds \(firstRowCount) glyphs, text starts at column \(leftColumn))"
+            // Sanity check: wrap width must be reasonable (20-100)
+            guard maxCount >= 20 && maxCount <= 100 else {
+                return "unclear (max row holds \(maxCount))"
+            }
+
+            let inset = 100 - maxCount
+            return "\(inset) (first row holds \(maxCount) glyphs, text starts at column \(leftColumn))"
         }
     }
 
