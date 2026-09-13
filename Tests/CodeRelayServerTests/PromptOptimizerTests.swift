@@ -160,6 +160,15 @@ final class PromptOptimizerTests: XCTestCase {
         XCTAssertEqual(try PromptOptimizer.parseOutcome(toolReply(#"{"kind":"passthrough"}"#)), .passthrough)
     }
 
+    /// A prompt alongside kind=passthrough is redundant, not malformed: the model
+    /// said "send it as typed", so honour that and drop the extra field rather
+    /// than failing an optimize the user asked for. `allowedKeys` stays strict —
+    /// any *other* key is still malformed (see testParseMalformedVariants).
+    func testParsePassthroughCarryingAPromptIgnoresIt() throws {
+        XCTAssertEqual(try PromptOptimizer.parseOutcome(toolReply(#"{"kind":"passthrough","prompt":"ok"}"#)),
+                       .passthrough)
+    }
+
     func testParseRefusalIsRefused() {
         let data = Data(#"{"content":[],"stop_reason":"refusal","usage":{}}"#.utf8)
         XCTAssertThrowsError(try PromptOptimizer.parseOutcome(data)) { XCTAssertEqual($0 as? OptimizerError, .refused) }
@@ -173,7 +182,6 @@ final class PromptOptimizerTests: XCTestCase {
             toolReply(#"{"kind":"optimized"}"#),                                                     // missing prompt
             toolReply(#"{"kind":"optimized","prompt":"   "}"#),                                      // blank prompt
             toolReply(#"{"kind":"optimized","prompt":"ok","extra":1}"#),                             // extra key
-            toolReply(#"{"kind":"passthrough","prompt":"ok"}"#),                                     // prompt on passthrough
         ]
         for data in bad {
             XCTAssertThrowsError(try PromptOptimizer.parseOutcome(data), String(decoding: data, as: UTF8.self)) {
@@ -226,5 +234,26 @@ final class PromptOptimizerTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? OptimizerError, .keyRejected)
         }
+    }
+
+    // MARK: Logging
+
+    /// The optimizer's debug telemetry must carry sizes and latency, never text.
+    /// The draft is the whole secret here: it is whatever the user typed at their
+    /// agent's prompt, and `/logs` is readable over the admin API.
+    func testOptimizeNeverLogsTheDraft() async throws {
+        let marker = "ZEBRA-7731-DRAFT"
+        let client = ScriptedMessages([.success(toolReply(#"{"kind":"optimized","prompt":"Fix it."}"#))])
+        let optimizer = PromptOptimizer(client: client, model: "claude-sonnet-5", sharesScreen: true)
+        let outcome = try await optimizer.optimize(
+            context(draft: marker, screen: ["$ echo \(marker)", "\(marker) on screen"]))
+        XCTAssertEqual(outcome, .optimized("Fix it."))
+
+        let recent = RelayLogger.store.recent(count: 2_000)
+        // Non-vacuous: the call did log its telemetry line.
+        XCTAssertTrue(recent.contains { $0.contains("optimize: draft=") },
+                      "expected the optimizer's debug telemetry in the log store")
+        XCTAssertFalse(recent.contains { $0.contains(marker) },
+                       "the draft (or the screen) reached the log store")
     }
 }

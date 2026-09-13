@@ -113,25 +113,42 @@ enum KeyEvent: Equatable {
     case left, right, up, down, home, end
     case control(UInt8)               // Ctrl-A … Ctrl-Z, Ctrl-_
     case alt(Character)               // ESC <char>: Alt+B/F/D/Y and friends
-    case ignored                      // any other CSI/SS3/OSC/DCS, release events
+    case lineFeed                     // bare LF (Ctrl+J); maps to `ctrl_j`
+    case ignored                      // provably inert: mouse, DA/DSR/CPR, F-keys,
+                                      // release events, ESC ESC, well-formed OSC/DCS
+    case unknown                      // anything else — the tracker clears
 }
 ```
 
 Decoding rules:
 
 - UTF-8 is decoded across chunk boundaries with a partial-byte carry.
-- `LF` decodes as `.enter([.control])` so a profile can treat Ctrl+J and a
-  bare line feed identically; `CR` decodes as `.enter([])`.
+- `LF` decodes as `.lineFeed`, which maps to the `ctrl_j` profile symbol, NOT
+  to `ctrl_enter`: the live probe (2026-09-13) measured bare LF as *newline* and
+  `CSI 13;5u` as *no effect* in both claude 2.1.270 and codex-cli 0.154.0, so the
+  two are separate keys. `CR` decodes as `.enter([])`.
 - Kitty `CSI <cp>[:alt[:base]];<mods>[:event][;<text…>]u`: press and repeat
   events are decoded, release events are `.ignored`. When the trailing text
   field is present it wins; otherwise the shifted alternate, then the base
   codepoint, is the text. Codepoints 13, 127, 9, 27 map to enter, backspace,
-  tab (`.ignored`), escape (`.ignored`). Modifier bits map onto `Modifiers`.
-- `CSI 1;<mods> A/B/C/D`, `CSI H/F`, `CSI 1~/4~/7~/8~`, `CSI 3[;m]~` decode to
-  the arrow, home, end, and delete events regardless of modifiers.
+  `.control(0x09)` (Tab — the tracker clears on it), and `.unknown` (Escape).
+  Modifier bits map onto `Modifiers`.
+- Unmodified `CSI A/B/C/D`, `CSI H/F`, `CSI 1~/4~/7~/8~`, `CSI 3~` decode to the
+  arrow, home, end, and delete events. A *modified* one (`CSI 1;5D`, `CSI 3;5~`,
+  …) is a word jump or word delete, neither of which the tracker models, so it
+  decodes to `.unknown`. `CSI 1;1X` encodes "no modifiers" and stays a motion.
 - Bracketed paste bodies are accumulated until `ESC[201~` and emitted once.
-- Anything else that parses as a control sequence is consumed to completion
-  and emitted as `.ignored`. Bare `ESC` followed by a printable is `.alt`.
+- Anything else that parses as a control sequence is consumed to completion and
+  emitted as `.unknown`; only the enumerated inert set above is `.ignored`. Bare
+  `ESC` followed by a printable is `.alt`.
+- Two byte budgets keep a hostile or unlucky frame bounded: a CSI parameter list
+  is abandoned past `maxCSIParameterBytes` (64) and an OSC/DCS body past
+  `maxStringSequenceBytes` (1 024) — `Alt+]` and `Alt+Shift+P` are byte-identical
+  to those introducers, so an unterminated string sequence is an ordinary
+  keystroke, not a protocol error. Both abandon to `.ground` + `.unknown`. A
+  printable run longer than `DraftTracker.maxScalars` (16 384) is dropped whole
+  and reported as one `.unknown` — emitting the tail would leave the mirror
+  holding the end of a much longer line, which is the direction that corrupts.
 
 ### 5.2 `InputProfile` and `DraftTracker` (pure value types)
 
@@ -141,7 +158,7 @@ new `input` object and is loaded by `CodingAgent`:
 
 ```json
 "input": {
-  "newline": ["ctrl_enter", "alt_enter", "shift_enter", "backslash_enter"],
+  "newline": ["shift_enter", "alt_enter", "backslash_enter", "ctrl_j"],
   "submit":  ["enter"],
   "killLineAcrossLines": true
 }
@@ -150,10 +167,15 @@ new `input` object and is loaded by `CodingAgent`:
 | Symbol | Keys it matches | Claude Code |
 |---|---|---|
 | `enter` | `.enter([])` from CR or `CSI 13u` | submit |
-| `ctrl_enter` | `.enter([.control])` from LF (Ctrl+J) or `CSI 13;5u` | newline |
+| `ctrl_enter` | `.enter([.control])` from `CSI 13;5u` or `CSI 27;5;13~` | **no effect** (measured 2026-09-13, claude 2.1.270) — in neither list, so the tracker clears |
+| `ctrl_j` | `.lineFeed` from a bare LF (0x0A) | newline |
 | `alt_enter` | `.enter([.alt])` from `ESC CR` or `CSI 13;3u` | newline |
 | `shift_enter` | `.enter([.shift])` from `CSI 13;2u` or `CSI 27;2;13~` | newline |
 | `backslash_enter` | `.text("\\")` immediately followed by `.enter([])` | newline, replacing the backslash |
+
+An Enter-family key in neither list clears the mirror rather than being
+ignored: what it did to the real input line was never measured, so the draft can
+no longer be trusted.
 
 The default profile, used when a manifest has no `input` object and for a
 plain shell, is `newline: []`, `submit: ["enter", "ctrl_enter"]`. The plan for
@@ -287,10 +309,10 @@ constructed once in `main.swift` from `RelayConfig` and injected into
     "input_schema": {
       "type": "object",
       "properties": {
-        "kind":   {"type": "string", "enum": ["instruction", "passthrough"]},
+        "kind":   {"type": "string", "enum": ["optimized", "passthrough"]},
         "prompt": {"type": "string"}
       },
-      "required": ["kind", "prompt"],
+      "required": ["kind"],
       "additionalProperties": false
     }
   }],

@@ -63,4 +63,25 @@ final class DraftReplacerTests: XCTestCase {
         let out = DraftReplacer.bytes(replacing: "", with: "a\u{1B}[3~b\rc", bracketedPaste: false, keyboardFlags: [])
         XCTAssertEqual(string(out), "a[3~b c")
     }
+
+    /// End-to-end against the real mirror: type "hello world", move the cursor
+    /// five left, then feed the replacer's own bytes back through `KeyDecoder`
+    /// into the tracker. BS×11 eats everything left of the cursor and stops at
+    /// the line start; DEL×11 eats everything right of it — the asymmetry is why
+    /// the replacer emits both counts instead of one.
+    func testReplacementRoundTripsThroughDecoderAndTracker() {
+        var tracker = DraftTracker(profile: .default, columns: 80)
+        tracker.apply(.text("hello world"))
+        for _ in 0..<5 { tracker.apply(.left) }
+        XCTAssertEqual(tracker.draft, "hello world")
+        XCTAssertEqual(tracker.cursor, 6)
+        XCTAssertFalse(tracker.cursorUncertain)
+
+        let out = DraftReplacer.bytes(replacing: tracker.draft, with: "new",
+                                      bracketedPaste: false, keyboardFlags: [])
+        var decoder = KeyDecoder()
+        tracker.apply(contentsOf: decoder.decode(out))
+        XCTAssertEqual(tracker.draft, "new")
+        XCTAssertEqual(tracker.cursor, 3)
+    }
 }

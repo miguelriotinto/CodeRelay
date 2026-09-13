@@ -18,9 +18,19 @@ final class AgentInputProfileProbeTests: XCTestCase {
     private static let candidates: [Candidate] = [
         Candidate(key: "shift_enter",     bytes: Data("\u{1B}[13;2u".utf8)),      // kitty CSI u
         Candidate(key: "ctrl_enter",      bytes: Data("\u{1B}[13;5u".utf8)),
+        // Bare LF: what a terminal without the kitty protocol sends for Ctrl+J
+        // (and, on many terminals, for Ctrl+Enter). Probed separately from
+        // `ctrl_enter` because the two are only the same key if the agent
+        // agrees they are — see spec §5.2.
+        Candidate(key: "ctrl_j",          bytes: Data([0x0A])),
         Candidate(key: "alt_enter",       bytes: Data("\u{1B}\r".utf8)),           // ESC CR
         Candidate(key: "backslash_enter", bytes: Data("\\\r".utf8)),
     ]
+
+    /// PTY width every probe spawns at. The inset arithmetic below is
+    /// `probeColumns - maxRowGlyphCount`, so changing this changes the measured
+    /// inset — keep the spawn and the arithmetic reading the same constant.
+    private static let probeColumns = 100
 
     private static let agents: [(id: String, paths: [String])] = [
         ("claude",       ["/opt/homebrew/bin/claude"]),
@@ -39,17 +49,17 @@ final class AgentInputProfileProbeTests: XCTestCase {
     func testProbeInstalledAgents() async throws {
         for agent in Self.agents {
             guard let path = agent.paths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-                print("PROBE \(agent.id): SKIPPED (not installed)")
+                probePrint("PROBE \(agent.id): SKIPPED (not installed)")
                 continue
             }
-            print("PROBE \(agent.id): \(path) \(version(of: path))")
+            probePrint("PROBE \(agent.id): \(path) \(version(of: path))")
 
             var newlineChords: [String] = []
 
             // Probe each chord
             for candidate in Self.candidates {
                 let verdict = await probeChord(agentId: agent.id, command: path, chord: candidate)
-                print("PROBE \(agent.id) \(candidate.key.padding(toLength: 16, withPad: " ", startingAt: 0)) → \(verdict)")
+                probePrint("PROBE \(agent.id) \(candidate.key.padding(toLength: 16, withPad: " ", startingAt: 0)) → \(verdict)")
                 if verdict.hasPrefix("newline") {
                     newlineChords.append(candidate.key)
                 }
@@ -58,12 +68,19 @@ final class AgentInputProfileProbeTests: XCTestCase {
             // Measure inset and test killLineAcrossLines if any newline chord exists
             if !newlineChords.isEmpty, let firstNewline = Self.candidates.first(where: { newlineChords.contains($0.key) }) {
                 let inset = await probeInset(agentId: agent.id, command: path)
-                print("PROBE \(agent.id) inset            → \(inset)")
+                probePrint("PROBE \(agent.id) inset            → \(inset)")
 
                 let killLine = await probeKillLineAcrossLines(agentId: agent.id, command: path, newlineChord: firstNewline)
-                print("PROBE \(agent.id) killLineAcrossLines → \(killLine)")
+                probePrint("PROBE \(agent.id) killLineAcrossLines → \(killLine)")
             }
         }
+    }
+
+    /// PROBE lines go straight to stderr. `print` writes to a block-buffered
+    /// stdout when the output is a pipe (`| tail`), and this test forks PTYs —
+    /// a buffered line can be lost entirely instead of reaching the log.
+    private func probePrint(_ line: String) {
+        FileHandle.standardError.write(Data((line + "\n").utf8))
     }
 
     private func version(of path: String) -> String {
@@ -87,7 +104,7 @@ final class AgentInputProfileProbeTests: XCTestCase {
     ) async -> String {
         let pty: PTYSession
         do {
-            pty = try PTYSession(sessionId: UUID(), cols: 100, rows: 30, scrollbackSize: 65_536, adminPort: 9100)
+            pty = try PTYSession(sessionId: UUID(), cols: UInt16(Self.probeColumns), rows: 30, scrollbackSize: 65_536, adminPort: 9100)
         } catch {
             return "could not spawn: \(error)"
         }
@@ -163,7 +180,7 @@ final class AgentInputProfileProbeTests: XCTestCase {
     /// holding the MOST of them (the first wrapped row, not a continuation).
     private func probeInset(agentId: String, command: String) async -> String {
         return await withAgent(agentId: agentId, command: command) { pty in
-            // Type 130 Q's in chunks of 10 with gaps to avoid paste detection.
+            // Type 130 Q's (more than probeColumns) in chunks of 10 with gaps to avoid paste detection.
             // Q is chosen because it never appears in agent UI text.
             for _ in 0..<13 {
                 await pty.write(Data("QQQQQQQQQQ".utf8))
@@ -186,12 +203,12 @@ final class AgentInputProfileProbeTests: XCTestCase {
             let maxCount = maxRow.count
             let leftColumn = maxRow.row.firstIndex(of: "Q").map { maxRow.row.distance(from: maxRow.row.startIndex, to: $0) } ?? 0
 
-            // Sanity check: wrap width must be reasonable (20-100)
-            guard maxCount >= 20 && maxCount <= 100 else {
+            // Sanity check: wrap width must be reasonable (20…probeColumns)
+            guard maxCount >= 20 && maxCount <= Self.probeColumns else {
                 return "unclear (max row holds \(maxCount))"
             }
 
-            let inset = 100 - maxCount
+            let inset = Self.probeColumns - maxCount
             return "\(inset) (first row holds \(maxCount) glyphs, text starts at column \(leftColumn))"
         }
     }

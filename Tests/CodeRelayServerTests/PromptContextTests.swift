@@ -28,4 +28,18 @@ final class PromptContextTests: XCTestCase {
         XCTAssertTrue(ctx.keyboardFlags.contains(.reportAllKeys))
         XCTAssertFalse(ctx.keyboardFlags.contains(.reportEvents))
     }
+
+    /// One line longer than the whole byte budget degrades to *no screen*, not to
+    /// a truncated line. Deliberate: the trim only ever drops whole lines from the
+    /// top, so a half-line is never sent to the model, and the optimize still runs
+    /// on the draft alone. Pinned so the degradation stays a choice, not a bug.
+    func testSingleOverLongLineDegradesToNoScreen() {
+        let huge = String(repeating: "x", count: PromptContext.maxScreenBytes + 1)
+        XCTAssertEqual(PromptContext.trailingScreenLines(huge), [])
+        // With a short line above it, that line goes too — the over-long line is
+        // last, and trimming from the top cannot reach it.
+        XCTAssertEqual(PromptContext.trailingScreenLines("keep me\n" + huge), [])
+        // The other way round the short line survives.
+        XCTAssertEqual(PromptContext.trailingScreenLines(huge + "\nkeep me"), ["keep me"])
+    }
 }

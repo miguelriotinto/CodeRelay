@@ -63,16 +63,51 @@ final class InputProfileTests: XCTestCase {
         XCTAssertEqual(detector.inputProfile(for: "nope"), .default)
     }
 
-    func testBundledClaudeManifestCarriesClaudeCodeProfile() {
-        let profile = AgentStateDetector.loadBundled()["claude"]?.input
-        XCTAssertEqual(profile?.newline, [.shiftEnter, .altEnter, .backslashEnter])
-        XCTAssertEqual(profile?.submit, [.enter])
-        XCTAssertEqual(profile?.killLineAcrossLines, true)
-        XCTAssertEqual(profile?.inset, 4)
+    /// The manifest values every probed agent ships with. These are measurements
+    /// (`AgentInputProfileProbeTests`, 2026-09-13), not preferences — a change
+    /// here means the agent's input box changed or the probe was re-read wrong.
+    /// `ctrl_enter` is absent from BOTH lists on purpose: `CSI 13;5u` measured as
+    /// "no effect" on both agents, so the tracker clears on it.
+    func testBundledProbedManifestsCarryTheirMeasuredProfiles() {
+        let expected: [(id: String, inset: Int)] = [("claude", 4), ("codex", 3)]
+        let bundled = AgentStateDetector.loadBundled()
+        for (id, inset) in expected {
+            guard let profile = bundled[id]?.input else {
+                XCTFail("\(id) manifest has no input block")
+                continue
+            }
+            XCTAssertEqual(profile.newline, [.shiftEnter, .altEnter, .backslashEnter, .ctrlJ], id)
+            XCTAssertEqual(profile.submit, [.enter], id)
+            XCTAssertEqual(profile.killLineAcrossLines, true, id)
+            XCTAssertEqual(profile.inset, inset, id)
+            XCTAssertNotNil(profile.probedWith, id)
+        }
+    }
+
+    /// The manifest spelling is wire format: a rename silently disables the
+    /// newline chord on every shipped agent.
+    func testCtrlJSymbolSpelling() {
+        XCTAssertEqual(InputKey(rawValue: "ctrl_j"), .ctrlJ)
+        XCTAssertEqual(InputKey.ctrlJ.rawValue, "ctrl_j")
+        // `forEnter` never produces it — `KeyEvent.lineFeed` maps to it directly.
+        XCTAssertNotEqual(InputKey.forEnter([.control]), .ctrlJ)
+    }
+
+    func testMalformedInputBlockKeepsTheRules() throws {
+        let manifest = try JSONDecoder().decode(AgentManifest.self, from: Data("""
+        {"id": "x",
+         "rules": [{"id": "r", "state": "idle", "priority": 1, "region": "whole_recent",
+                    "contains": ["hi"]}],
+         "input": {"newline": ["not_a_key"]}}
+        """.utf8))
+        XCTAssertNil(manifest.input)          // degrades to the plain-shell profile
+        XCTAssertEqual(manifest.rules.count, 1)
+        XCTAssertEqual(manifest.rules.first?.id, "r")
     }
 
     func testEveryBundledManifestStillLoads() {
-        // A bad `input` block would make loadBundled() drop the manifest.
+        // A bad *rules* block would make loadBundled() drop the manifest; a bad
+        // `input` block only costs the input profile (see the test above).
         let ids = Set(AgentStateDetector.loadBundled().keys)
         for expected in ["claude", "codex", "copilot", "cursor-agent", "droid", "opencode"] {
             XCTAssertTrue(ids.contains(expected), "\(expected) manifest failed to load")
