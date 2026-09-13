@@ -23,9 +23,12 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// One optimize per connection at a time (spec §6 "Already optimizing").
     var optimizeInFlight = false
     /// Generation counter for optimize requests. Incremented on each new request.
-    /// The deadline task checks this to ensure it only clears the flag if its own
-    /// request is still the active one.
+    /// Marks a request as resolved when incremented by completion/timeout.
     var optimizeGeneration: UInt64 = 0
+    /// The scheduled deadline task for the active optimize request, cancelled on completion.
+    var optimizeDeadlineTask: Scheduled<Void>?
+    /// The work Task for the active optimize request, cancelled on timeout.
+    var optimizeWorkTask: Task<Void, Never>?
     /// End-to-end budget for context capture + model call + PTY write. Tests shorten it.
     var optimizeDeadline: Duration = .seconds(12)
     private var context: ChannelHandlerContext?
@@ -145,6 +148,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         let remote = context.remoteAddress?.description ?? "unknown"
         RelayLogger.log(category: "connection", "WebSocket disconnected from \(remote)")
         authTimeout?.cancel()
+        cleanupOptimizeState()
         cleanupSession()
         self.context = nil
     }

@@ -43,6 +43,7 @@ final class PromptRequestHandlerTests: XCTestCase {
         let mock: MockPTYSession
         let sessionId: UUID
         let tempDir: URL
+        let testingLoop: NIOAsyncTestingEventLoop
     }
 
     private func makeFixture(optimizer: (any PromptOptimizing)?, attached: Bool = true) async throws -> Fixture {
@@ -76,7 +77,8 @@ final class PromptRequestHandlerTests: XCTestCase {
             handler.attachedSessionId = sessionId
             handler.attachedPTY = mock
         }
-        return Fixture(channel: channel, handler: handler, mock: mock, sessionId: sessionId, tempDir: tempDir)
+        let testingLoop = channel.eventLoop as! NIOAsyncTestingEventLoop
+        return Fixture(channel: channel, handler: handler, mock: mock, sessionId: sessionId, tempDir: tempDir, testingLoop: testingLoop)
     }
 
     private func cleanup(_ fixture: Fixture) async {
@@ -220,7 +222,7 @@ final class PromptRequestHandlerTests: XCTestCase {
         await fixture.mock.setMockPromptContext(context(draft: "slow one"))
         try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
         // Advance time to trigger the deadline task.
-        (fixture.channel.eventLoop as! EmbeddedEventLoop).advanceTime(by: TimeAmount.milliseconds(151))
+        await fixture.testingLoop.advanceTime(by: TimeAmount.milliseconds(151))
         let reply = try await nextServerMessage(fixture)
         XCTAssertEqual(reply, .optimizePromptResult(status: "failed", message: "Optimizer unavailable, try again"))
         XCTAssertFalse(fixture.handler.optimizeInFlight)
@@ -313,8 +315,64 @@ final class PromptRequestHandlerTests: XCTestCase {
         // Wait for the optimizer to complete.
         try await Task.sleep(for: .milliseconds(300))
         // No reply sent (connection moved on), no PTY write.
+        let reply = try await nextServerMessage(fixture, timeout: .milliseconds(100))
+        XCTAssertNil(reply, "detached session must not receive replies")
         let writes = await fixture.mock.recordedWrites()
         XCTAssertTrue(writes.isEmpty, "detached session must not receive PTY writes")
+    }
+
+    func testSuccessfulOptimizeFollowedByDeadlineYieldsOnlyOneResult() async throws {
+        let fixture = try await makeFixture(optimizer: FakeOptimizer(delay: .zero))
+        defer { Task { await self.cleanup(fixture) } }
+        fixture.handler.optimizeDeadline = .milliseconds(150)
+        await fixture.mock.setMockPromptContext(context(draft: "fast one"))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        let firstReply = try await nextServerMessage(fixture)
+        XCTAssertEqual(firstReply, .optimizePromptResult(status: "ok", original: "fast one", prompt: "Run `git status`."))
+        // Advance past the deadline - should NOT send a second result.
+        await fixture.testingLoop.advanceTime(by: TimeAmount.milliseconds(151))
+        let secondReply = try await nextServerMessage(fixture, timeout: .milliseconds(100))
+        XCTAssertNil(secondReply, "deadline task must not fire after successful completion")
+    }
+
+    func testTimeoutFollowedByModelCompletionYieldsNoWriteAndNoSecondResult() async throws {
+        actor SlowThenFastOptimizer: PromptOptimizing {
+            nonisolated let sharesScreen = true
+            private let continuation: AsyncStream<Void>.Continuation
+            init() {
+                var cont: AsyncStream<Void>.Continuation!
+                _ = AsyncStream<Void> { cont = $0 }
+                self.continuation = cont
+            }
+            func optimize(_ context: PromptContext) async throws -> OptimizerOutcome {
+                // Hang until signalled.
+                for await _ in AsyncStream<Void> { _ in } {
+                    break
+                }
+                return .optimized("late result")
+            }
+            func complete() {
+                continuation.yield()
+                continuation.finish()
+            }
+        }
+        let optimizer = SlowThenFastOptimizer()
+        let fixture = try await makeFixture(optimizer: optimizer)
+        defer { Task { await self.cleanup(fixture) } }
+        fixture.handler.optimizeDeadline = .milliseconds(150)
+        await fixture.mock.setMockPromptContext(context(draft: "timeout then complete"))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        // Advance time to trigger timeout.
+        await fixture.testingLoop.advanceTime(by: TimeAmount.milliseconds(151))
+        let timeoutReply = try await nextServerMessage(fixture)
+        XCTAssertEqual(timeoutReply, .optimizePromptResult(status: "failed", message: "Optimizer unavailable, try again"))
+        // Now complete the model call - should send nothing, write nothing.
+        await optimizer.complete()
+        try await Task.sleep(for: .milliseconds(100))
+        let lateReply = try await nextServerMessage(fixture, timeout: .milliseconds(100))
+        XCTAssertNil(lateReply, "late model completion must not send a second result")
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "late model completion must not write PTY")
     }
 
     func testNeverReturningOptimizerTimesOutAndReleasesFlag() async throws {
@@ -333,14 +391,14 @@ final class PromptRequestHandlerTests: XCTestCase {
         await fixture.mock.setMockPromptContext(context(draft: "hang"))
         try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
         // Advance time to trigger the first deadline task.
-        (fixture.channel.eventLoop as! EmbeddedEventLoop).advanceTime(by: TimeAmount.milliseconds(151))
+        await fixture.testingLoop.advanceTime(by: TimeAmount.milliseconds(151))
         let firstReply = try await nextServerMessage(fixture)
         XCTAssertEqual(firstReply, .optimizePromptResult(status: "failed", message: "Optimizer unavailable, try again"))
         // Second request is accepted (not "Already optimizing").
         await fixture.mock.setMockPromptContext(context(draft: "second"))
         try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
         // Advance time to trigger the second deadline task.
-        (fixture.channel.eventLoop as! EmbeddedEventLoop).advanceTime(by: TimeAmount.milliseconds(151))
+        await fixture.testingLoop.advanceTime(by: TimeAmount.milliseconds(151))
         let secondReply = try await nextServerMessage(fixture)
         XCTAssertEqual(secondReply, .optimizePromptResult(status: "failed", message: "Optimizer unavailable, try again"))
         // No PTY writes from either timed-out request.
