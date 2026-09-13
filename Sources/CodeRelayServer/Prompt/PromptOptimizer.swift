@@ -45,7 +45,8 @@ final class PromptOptimizer: PromptOptimizing, @unchecked Sendable {
         }
         let (outcome, cacheRead) = try Self.parseResponse(data)
         // Debug telemetry only: sizes, cache hit, latency. Never the text.
-        let latencyMs = (ContinuousClock.now - started).components.seconds * 1000 + (ContinuousClock.now - started).components.attoseconds / 1_000_000_000_000_000
+        let elapsed = ContinuousClock.now - started
+        let latencyMs = elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000
         RelayLogger.log(.debug, category: "optimizer",
             "optimize: draft=\(context.draft.utf8.count)B screen=\(context.screenLines.count) lines cache_read=\(cacheRead.map(String.init) ?? "-") latencyMs=\(latencyMs)")
         return outcome
