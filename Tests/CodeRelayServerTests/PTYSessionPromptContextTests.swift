@@ -53,7 +53,9 @@ final class PTYSessionPromptContextTests: XCTestCase {
         }
         XCTAssertTrue(armed)
 
-        await session.write(Data("printf '\\e[?2004l\\e[<u'\r".utf8))
+        // Keep shell busy so poll can observe the cleared flags before zsh's prompt
+        // redraw re-arms bracketed paste (zle_bracketed_paste runs on every prompt).
+        await session.write(Data("printf '\\e[?2004l\\e[<u'; sleep 3\r".utf8))
         let released = await poll {
             let c = await session.promptContext(includeScreen: false)
             return !c.bracketedPaste && c.keyboardFlags.isEmpty
