@@ -1,4 +1,5 @@
 import XCTest
+import Foundation
 @testable import CodeRelayServer
 
 final class DraftTrackerTests: XCTestCase {
@@ -180,13 +181,16 @@ final class DraftTrackerTests: XCTestCase {
         XCTAssertEqual(t.draft, "")
     }
 
+    /// The row width comes from `columns - inset`, not from `columns`: at 10
+    /// columns and inset 4 the box is 6 cells wide, so 12 chars fill rows 0 and 1
+    /// and the trailing cursor slot sits alone on row 2 (see
+    /// `testSoftWrapExactMultipleHasATrailingRow` for that phantom row).
     func testSoftWrapCountsRowsFromColumnsMinusInset() {
-        // 10 columns − 4 inset = 6 cells per row; 12 chars = two rows.
         var t = tracker(claude, columns: 10, typing: "abcdefghijkl")
         t.apply(.up)
         XCTAssertEqual(t.draft, "abcdefghijkl")
         XCTAssertTrue(t.cursorUncertain)
-        XCTAssertEqual(t.cursor, 6)                   // row 0, col 6 → the end slot of row 0 is index 6
+        XCTAssertEqual(t.cursor, 6)                   // row 2 col 0 → up → row 1 col 0 = index 6
     }
 
     /// A partly-filled last row. 6 cells per row, 13 chars → rows 0 and 1 full,
@@ -233,15 +237,25 @@ final class DraftTrackerTests: XCTestCase {
         XCTAssertTrue(t.cursorUncertain)
     }
 
-    func testReplacementSequenceRestoresCertainty() {
-        // What DraftReplacer emits: BS×N, DEL×N, then the paste.
+    /// A replacement (BS×N, DEL×N, paste) arrives as ordinary input, so at an
+    /// *uncertain* cursor its first backspace is an edit the row model cannot
+    /// place — the mirror is invalidated and the paste that follows is a no-op.
+    /// Before D1 this rebuilt the mirror as "new text"; it is now empty until the
+    /// user submits. The trade is deliberate: the same relaxation that let this
+    /// paste land also let a user's next keystroke rebuild a short mirror over a
+    /// real line, which is the under-count the replacer cannot survive. The
+    /// certain-cursor path — the one an optimize normally takes — still round
+    /// trips exactly (`DraftReplacerTests.testReplacementRoundTripsThroughDecoderAndTracker`).
+    func testReplacementSequenceAtAnUncertainCursorLosesTheMirror() {
         var t = tracker(claude, typing: "a")
         t.apply(.enter([.control])); t.apply(.text("b"))
         t.apply(.up)
+        XCTAssertTrue(t.cursorUncertain)
         for _ in 0..<3 { t.apply(.backspace) }
         for _ in 0..<3 { t.apply(.delete) }
         t.apply(.paste("new text"))
-        XCTAssertEqual(t.draft, "new text")
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
         XCTAssertFalse(t.cursorUncertain)
     }
 
@@ -333,5 +347,104 @@ final class DraftTrackerTests: XCTestCase {
         t.reset(profile: claude)
         t.apply(.control(0x19))
         XCTAssertEqual(t.draft, "")
+    }
+
+    // MARK: D1 — mirror loss is sticky
+
+    /// The wave-C hazard this closes: a bare `clear()` let the very next
+    /// keystroke rebuild a 1-scalar mirror over a real line that still held
+    /// everything typed before the clear, and `DraftReplacer` would then erase
+    /// one character and paste the optimized prompt into the surviving residue.
+    func testUnknownThenTypingStaysEmpty() {
+        var t = tracker(bundledClaude, typing: "fix the bug")
+        t.apply(.unknown)                             // e.g. Ctrl+Left = CSI 1;5D
+        t.apply(.text("s"))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    /// A submit is the one Enter that proves the real box is empty.
+    func testSubmitRecoversLostMirror() {
+        var t = tracker(bundledClaude, typing: "fix the bug")
+        t.apply(.unknown)
+        t.apply(.text("s"))
+        t.apply(.enter([]))                           // claude submits on plain Enter
+        XCTAssertFalse(t.mirrorLost)
+        t.apply(.text("new"))
+        XCTAssertEqual(t.draft, "new")
+    }
+
+    func testResetRecoversLostMirror() {
+        var t = tracker(bundledClaude, typing: "fix the bug")
+        t.apply(.unknown)
+        t.reset(profile: .default)
+        XCTAssertFalse(t.mirrorLost)
+        t.apply(.text("x"))
+        XCTAssertEqual(t.draft, "x")
+    }
+
+    func testCtrlCRecoversLostMirror() {
+        var t = tracker(bundledClaude, typing: "fix the bug")
+        t.apply(.unknown)
+        t.apply(.control(0x03))
+        XCTAssertFalse(t.mirrorLost)
+        t.apply(.text("x"))
+        XCTAssertEqual(t.draft, "x")
+    }
+
+    /// Ctrl-C empties the box; Ctrl-_ (undo) restores unknown text into it, so
+    /// the two cannot share a branch even though both leave the mirror empty.
+    func testCtrlUnderscoreLosesTheMirrorButCtrlCDoesNot() {
+        var undo = tracker(typing: "abc")
+        undo.apply(.control(0x1F))
+        XCTAssertEqual(undo.draft, "")
+        XCTAssertTrue(undo.mirrorLost)
+
+        var interrupt = tracker(typing: "abc")
+        interrupt.apply(.control(0x03))
+        XCTAssertEqual(interrupt.draft, "")
+        XCTAssertFalse(interrupt.mirrorLost)
+    }
+
+    /// A newline-Enter while lost says nothing about the real box — it is still
+    /// holding whatever was there, plus a newline.
+    func testNewlineEnterWhileLostStaysLost() {
+        var t = tracker(bundledClaude, typing: "fix the bug")
+        t.apply(.unknown)
+        t.apply(.enter([.shift]))                     // newline under claude
+        t.apply(.text("y"))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    func testTabThenTypingStaysEmpty() {
+        var t = tracker(bundledClaude, typing: "fix the bu")
+        t.apply(.control(0x09))                       // completion rewrites the line
+        t.apply(.text("s"))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    func testOverflowThenTypingStaysEmpty() {
+        var t = tracker(typing: "abc")
+        t.apply(.text(String(repeating: "x", count: 20_000)))
+        t.apply(.text("z"))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    /// End to end through the decoder: an abandoned OSC (C1's byte cap) emits
+    /// `.unknown` and the trailing bytes of the same frame must not re-seed the
+    /// mirror — before D1 this left the mirror holding 77 scalars of a ~1100
+    /// character real line.
+    func testOscAbandonThenTypingStaysEmpty() {
+        var decoder = KeyDecoder()
+        var t = tracker(bundledClaude, typing: "fix the bug")
+        var bytes = Data("\u{1B}]".utf8)
+        bytes.append(Data(repeating: 0x61, count: 1_100))
+        bytes.append(Data("hi".utf8))
+        t.apply(contentsOf: decoder.decode(bytes))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
     }
 }

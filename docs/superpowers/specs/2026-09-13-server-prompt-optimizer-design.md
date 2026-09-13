@@ -108,7 +108,7 @@ program asks for it (Claude Code and OpenCode do).
 enum KeyEvent: Equatable {
     case text(String)                 // one or more printable scalars
     case paste(String)                // body of ESC[200~ … ESC[201~, newlines kept
-    case enter(Modifiers)             // CR, LF, ESC CR, CSI 13[;m]u, CSI 27;m;13~
+    case enter(Modifiers)             // CR, ESC CR, ESC LF, CSI 13[;m]u, CSI 27;m;13~
     case backspace, delete
     case left, right, up, down, home, end
     case control(UInt8)               // Ctrl-A … Ctrl-Z, Ctrl-_
@@ -177,6 +177,18 @@ An Enter-family key in neither list clears the mirror rather than being
 ignored: what it did to the real input line was never measured, so the draft can
 no longer be trusted.
 
+**A clear made out of doubt is sticky.** Whenever the tracker clears because it
+cannot model what happened (an `.unknown` sequence, Tab, an unmeasured Enter
+chord, Ctrl-_, an over-long insert, Up/Down off the draft, an edit at an
+uncertain cursor) it also marks the mirror *lost*, and every later event is a
+no-op until one of three things proves the real input box is empty again: a
+submit-Enter, Ctrl-C, or a foreground-agent change (`reset`). Without that,
+the next keystroke would start rebuilding a short mirror over a real line that
+still holds everything typed before the clear — the under-count the replacer
+cannot survive, since it erases only as many characters as the mirror claims.
+A clear that *does* prove emptiness (submit, Ctrl-C, reset) resumes tracking
+immediately.
+
 The default profile, used when a manifest has no `input` object and for a
 plain shell, is `newline: []`, `submit: ["enter", "ctrl_enter"]`. The plan for
 this spec probes Codex, OpenCode, Copilot, Cursor Agent, and Droid in a live
@@ -215,11 +227,14 @@ wrapping, which the tracker approximates from the PTY width the session
 already tracks and the agent's input-box inset (Claude Code: 4 columns). The
 tracker moves the cursor by the approximated row; when the move would leave
 the first or last row it clears instead. After any Up/Down in a multi-row
-draft the tracker sets `cursorUncertain`. Uncertainty is cleared by the next
-submit, clear, or replacement; while it is set, `.text`, `.backspace`,
-`.delete`, and kill events still apply but flip the draft to unknown (clear),
-because their position can no longer be trusted. The replacement encoding does
-not need the cursor, so a wand press straight after an Up/Down still works.
+draft the tracker sets `cursorUncertain`. While it is set, `.text`,
+`.backspace`, `.delete`, and kill events do not apply — they flip the draft to
+unknown (a sticky clear), because their position can no longer be trusted. The
+replacement encoding does not need the cursor, so a wand press straight after an
+Up/Down still rewrites the real line correctly (BS×N + DEL×N erases from either
+side of the cursor); the mirror itself does not survive that replacement,
+because those same backspaces arrive at an uncertain cursor, so the next
+optimize answers `no_draft` until the user submits.
 
 Additional rules: reset when the foreground agent changes (fed by
 `PTYSession`'s foreground poll, which also swaps the profile); cap 16 384

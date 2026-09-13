@@ -4,7 +4,11 @@ import Foundation
 /// knows which draft to replace. Pure value type; `PTYSession` owns one per
 /// session and feeds it every `write`. Anything it cannot model (history
 /// navigation, unknown chords) clears the draft rather than guessing — an
-/// empty draft is a `no_draft` reply, a wrong one would be typed over.
+/// empty draft is a `no_draft` reply, a wrong one would be typed over. That
+/// doubt is **sticky**: `mirrorLost` holds until an event proves the real box
+/// is empty (a submit-Enter, Ctrl-C) or the agent changes (`reset`), because
+/// re-accumulating from the next keystroke onwards would under-count a real
+/// line that still holds everything typed before the clear.
 struct DraftTracker: Sendable {
     static let maxScalars = 16_384
 
@@ -14,6 +18,13 @@ struct DraftTracker: Sendable {
     /// approximation, so the next *edit* clears instead of applying; motion
     /// and submission still behave normally.
     private(set) var cursorUncertain = false
+    /// Set when the mirror can no longer be trusted. While set, `draft` is
+    /// empty and every event except recovery is a no-op, because re-accumulating
+    /// over an unknown real line produces exactly the under-count the replacer
+    /// cannot survive. Recovery: a submit-Enter (the box is empty for real),
+    /// Ctrl-C (both modelled agents clear the input box), or `reset(profile:)`
+    /// (agent changed).
+    private(set) var mirrorLost = false
     private(set) var profile: InputProfile
     private var columns: Int
     private var killBuffer: [Unicode.Scalar] = []
@@ -23,17 +34,41 @@ struct DraftTracker: Sendable {
         self.columns = max(1, columns)
     }
 
-    var draft: String { String(String.UnicodeScalarView(scalars)) }
+    /// Empty whenever `mirrorLost` — `invalidate()` empties `scalars` and the
+    /// gate in `apply` refuses every event that could refill it.
+    var draft: String {
+        assert(!mirrorLost || scalars.isEmpty, "a lost mirror must expose an empty draft")
+        return String(String.UnicodeScalarView(scalars))
+    }
 
-    mutating func clear() {
+    /// Empties the mirror without saying anything about the real input line.
+    /// Callers pick `invalidate()` or `knownEmpty()` instead — nothing outside
+    /// this type calls it (`PTYSession` uses only `reset`, `setColumns`,
+    /// `apply`, `draft`).
+    private mutating func clear() {
         scalars.removeAll(keepingCapacity: true)
         cursor = 0
         cursorUncertain = false
     }
 
-    /// Foreground agent changed: drop the draft and adopt its chords.
-    mutating func reset(profile: InputProfile) {
+    /// The mirror no longer matches the real line and we cannot say what the
+    /// line holds. Sticky: every later event is a no-op until a recovery event.
+    private mutating func invalidate() {
         clear()
+        mirrorLost = true
+    }
+
+    /// The real input line is empty for certain (submitted, or Ctrl-C'd), so an
+    /// empty mirror is *correct* and accumulation can resume immediately.
+    private mutating func knownEmpty() {
+        clear()
+        mirrorLost = false
+    }
+
+    /// Foreground agent changed: drop the draft and adopt its chords. The new
+    /// agent draws its own (empty) input box, so this is a recovery point.
+    mutating func reset(profile: InputProfile) {
+        knownEmpty()
         killBuffer.removeAll()
         self.profile = profile
     }
@@ -47,8 +82,18 @@ struct DraftTracker: Sendable {
     }
 
     mutating func apply(_ event: KeyEvent) {
+        // While the mirror is lost only the Enter family and Ctrl-C can restore
+        // it (they are the events that can prove the box is empty). Everything
+        // else — text, paste, edits, motion, other chords — is a no-op: applying
+        // it would start rebuilding a short mirror over an unknown real line.
+        if mirrorLost {
+            switch event {
+            case .enter, .lineFeed, .control(0x03): break
+            default: return
+            }
+        }
         if cursorUncertain, Self.isEdit(event) {
-            clear()
+            invalidate()
             return
         }
         switch event {
@@ -75,8 +120,8 @@ struct DraftTracker: Sendable {
         case .ignored: break
         // Unclassifiable: the mirror can no longer be trusted. Under-counting
         // the draft is the one destructive direction (the replacer would erase
-        // too little and paste into the residue), so drop it.
-        case .unknown: clear()
+        // too little and paste into the residue), so drop it and stay lost.
+        case .unknown: invalidate()
         case .lineFeed: applyEnterKey(.ctrlJ)
         }
     }
@@ -103,25 +148,30 @@ struct DraftTracker: Sendable {
             insertNewline()
             return
         }
-        guard let key = InputKey.forEnter(mods) else { clear(); return }
+        guard let key = InputKey.forEnter(mods) else { invalidate(); return }
         applyEnterKey(key)
     }
 
-    /// An Enter-family key resolved to a manifest symbol. A key in neither list
-    /// is a chord this agent's behaviour was never measured for — it may well
-    /// have inserted a newline or submitted, so the mirror is no longer sound.
+    /// An Enter-family key resolved to a manifest symbol. The three branches do
+    /// genuinely different things now: a newline keeps the draft, a submit is the
+    /// one event that proves the real box is empty, and a key in neither list is
+    /// a chord this agent was never measured for — it may have inserted a newline
+    /// or submitted, so the mirror is unsound and stays that way.
     private mutating func applyEnterKey(_ key: InputKey) {
         if profile.newline.contains(key) {
             insertNewline()
         } else if profile.submit.contains(key) {
-            clear()
+            knownEmpty()
         } else {
-            clear()
+            invalidate()
         }
     }
 
     private mutating func insertNewline() {
-        if cursorUncertain { clear(); return }
+        // Reached from the `mirrorLost` gate above for a newline-Enter: the real
+        // box still holds an unknown line, so there is nothing to append to.
+        if mirrorLost { return }
+        if cursorUncertain { invalidate(); return }
         insert(["\n"])
     }
 
@@ -131,7 +181,7 @@ struct DraftTracker: Sendable {
         guard !new.isEmpty else { return }
         // Checked *before* inserting: a client frame may carry 10 MB, and the
         // mirror would be cleared straight afterwards anyway.
-        guard scalars.count + new.count <= Self.maxScalars else { clear(); return }
+        guard scalars.count + new.count <= Self.maxScalars else { invalidate(); return }
         scalars.insert(contentsOf: new, at: cursor)
         cursor += new.count
     }
@@ -181,12 +231,13 @@ struct DraftTracker: Sendable {
         case 0x0B: kill(cursor..<lineEnd())                   // Ctrl-K
         case 0x17: kill(wordStart()..<cursor)                 // Ctrl-W
         case 0x19: insert(killBuffer)                         // Ctrl-Y
-        case 0x03, 0x1F: clear()                              // Ctrl-C, Ctrl-_
-        case 0x09: clear()                                    // Tab: completion rewrites the line
+        case 0x03: knownEmpty()                               // Ctrl-C: both modelled agents empty the box
+        case 0x1F: invalidate()                               // Ctrl-_: undo puts unknown text back
+        case 0x09: invalidate()                               // Tab: completion rewrites the line
         case 0x0C: break                                      // Ctrl-L: redraw only, draft intact
         // Ctrl-P/N (history), Ctrl-R (search), Ctrl-T (transpose), Ctrl-O, …
         // every one of them can change the line in a way this does not model.
-        default: clear()
+        default: invalidate()
         }
     }
 
@@ -196,8 +247,8 @@ struct DraftTracker: Sendable {
         case "f": cursor = wordEnd()
         case "d": kill(cursor..<wordEnd())
         case "\u{7F}": kill(wordStart()..<cursor)
-        case "y": clear()
-        default: clear()      // Alt-<anything else> is an unmodelled agent binding
+        case "y": invalidate()   // yank-pop: the previous yank is replaced by unknown text
+        default: invalidate()    // Alt-<anything else> is an unmodelled agent binding
         }
     }
 
@@ -237,10 +288,10 @@ struct DraftTracker: Sendable {
 
     private mutating func moveRow(by delta: Int) {
         let (slots, rows) = layout()
-        guard rows > 1 else { clear(); return }        // single row: Up/Down is history
+        guard rows > 1 else { invalidate(); return }   // single row: Up/Down is history
         let current = slots[cursor]
         let target = current.row + delta
-        guard target >= 0, target < rows else { clear(); return }
+        guard target >= 0, target < rows else { invalidate(); return }
         var best = cursor
         for (index, slot) in slots.enumerated() where slot.row == target {
             best = index

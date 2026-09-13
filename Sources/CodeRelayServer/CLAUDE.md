@@ -247,7 +247,13 @@ Pipeline per session, all inside the `PTYSession` actor:
   **It clears itself on anything it cannot model** (unknown escape, Tab, history
   Up/Down at the edges, a submit) rather than guessing: a wrong draft would make
   the replacer erase the wrong number of characters in the user's terminal, and
-  an empty draft only costs a `no_draft` reply. Capped at 16 384 scalars
+  an empty draft only costs a `no_draft` reply. **That doubt is sticky**
+  (`mirrorLost`): while it is set every event is a no-op, because otherwise the
+  next keystroke would rebuild a 1-scalar mirror over a real line that still
+  holds everything typed before the clear, and the replacer erases only as many
+  characters as the mirror claims. Exactly three events resume tracking — a
+  submit-Enter, Ctrl-C, and `reset(profile:)` (agent changed) — since only they
+  prove the real input box is empty. Capped at 16 384 scalars
   (`DraftTracker.maxScalars`), checked *before* an insert, and the decoder drops a
   printable run past the same bound as one `.unknown`.
 - `PromptContext` is the snapshot handed to the model: draft, agent id + display
