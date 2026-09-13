@@ -42,7 +42,7 @@ enum OptimizerSystemPrompt {
     private static let agentGuidance: String = {
         var lines = ["Agent-specific conventions (apply only the line for the agent in <agent>):"]
         for agent in CodingAgent.all {
-            lines.append("- \(agent.displayName): \(guidance[agent.id] ?? "no special syntax; plain prose."))")
+            lines.append("- \(agent.displayName): \(guidance[agent.id] ?? "no special syntax; plain prose.")")
         }
         lines.append("- No <agent> block: the draft goes to a plain shell; treat it as prose for a coding agent anyway.")
         return lines.joined(separator: "\n")

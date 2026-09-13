@@ -6,8 +6,9 @@ enum OptimizerOutcome: Equatable, Sendable {
 }
 
 /// What the handlers and the admin route depend on. `sharesScreen` is the
-/// operator's server-wide cap (`promptOptimizerShareScreen`); a request's
-/// `shareScreen` can only narrow it.
+/// server-wide cap from `promptOptimizerShareScreen`; screen is included in
+/// the optimizer request only when both it and the client's `shareScreen` are
+/// true. The handler (Task 11) performs the AND.
 protocol PromptOptimizing: Sendable {
     var sharesScreen: Bool { get }
     func optimize(_ context: PromptContext) async throws -> OptimizerOutcome
@@ -42,11 +43,11 @@ final class PromptOptimizer: PromptOptimizing, @unchecked Sendable {
             warnKeyRejectedOnce()
             throw OptimizerError.keyRejected
         }
-        let outcome = try Self.parseOutcome(data)
+        let (outcome, cacheRead) = try Self.parseResponse(data)
         // Debug telemetry only: sizes, cache hit, latency. Never the text.
-        let cacheRead = Self.cacheReadTokens(data)
+        let latencyMs = (ContinuousClock.now - started).components.seconds * 1000 + (ContinuousClock.now - started).components.attoseconds / 1_000_000_000_000_000
         RelayLogger.log(.debug, category: "optimizer",
-            "optimize: draft=\(context.draft.utf8.count)B screen=\(context.screenLines.count) lines cache_read=\(cacheRead.map(String.init) ?? "-") latency=\(ContinuousClock.now - started)")
+            "optimize: draft=\(context.draft.utf8.count)B screen=\(context.screenLines.count) lines cache_read=\(cacheRead.map(String.init) ?? "-") latencyMs=\(latencyMs)")
         return outcome
     }
 
@@ -105,12 +106,18 @@ final class PromptOptimizer: PromptOptimizing, @unchecked Sendable {
     }
 
     private static func escape(_ text: String) -> String {
-        text.replacingOccurrences(of: "</", with: "<\u{200B}/")
+        text.replacingOccurrences(of: "\u{200B}", with: "")
+            .replacingOccurrences(of: "</", with: "<\u{200B}/")
     }
 
     // MARK: - Response
 
     static func parseOutcome(_ data: Data) throws -> OptimizerOutcome {
+        let (outcome, _) = try parseResponse(data)
+        return outcome
+    }
+
+    private static func parseResponse(_ data: Data) throws -> (outcome: OptimizerOutcome, cacheReadTokens: Int?) {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw OptimizerError.malformed
         }
@@ -123,24 +130,21 @@ final class PromptOptimizer: PromptOptimizing, @unchecked Sendable {
         }
         let allowedKeys: Set<String> = ["kind", "prompt"]
         guard Set(input.keys).isSubset(of: allowedKeys) else { throw OptimizerError.malformed }
+        let outcome: OptimizerOutcome
         switch kind {
         case "passthrough":
             guard input["prompt"] == nil else { throw OptimizerError.malformed }
-            return .passthrough
+            outcome = .passthrough
         case "optimized":
             guard let prompt = input["prompt"] as? String,
                   !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw OptimizerError.malformed
             }
-            return .optimized(prompt)
+            outcome = .optimized(prompt)
         default:
             throw OptimizerError.malformed
         }
-    }
-
-    private static func cacheReadTokens(_ data: Data) -> Int? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let usage = json["usage"] as? [String: Any] else { return nil }
-        return usage["cache_read_input_tokens"] as? Int
+        let cacheRead = (json["usage"] as? [String: Any])?["cache_read_input_tokens"] as? Int
+        return (outcome, cacheRead)
     }
 }

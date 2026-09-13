@@ -72,6 +72,18 @@ final class PromptOptimizerTests: XCTestCase {
         let a = try PromptOptimizer.requestBody(model: "m", context: context())
         let b = try PromptOptimizer.requestBody(model: "m", context: context())
         XCTAssertEqual(a, b, "sortedKeys so the cached system block is byte-identical per request")
+        // Verify key ordering: .sortedKeys means alphabetical
+        let bodyString = String(decoding: a, as: UTF8.self)
+        let maxTokensPos = bodyString.range(of: "\"max_tokens\"")
+        let modelPos = bodyString.range(of: "\"model\"")
+        let messagesPos = bodyString.range(of: "\"messages\"")
+        let systemPos = bodyString.range(of: "\"system\"")
+        XCTAssertNotNil(maxTokensPos)
+        XCTAssertNotNil(modelPos)
+        XCTAssertNotNil(messagesPos)
+        XCTAssertNotNil(systemPos)
+        XCTAssertLessThan(maxTokensPos!.lowerBound, modelPos!.lowerBound, "max_tokens should appear before model (sorted)")
+        XCTAssertLessThan(messagesPos!.lowerBound, systemPos!.lowerBound, "messages should appear before system (sorted)")
     }
 
     func testUserContentWithAgentAndScreen() {
@@ -104,12 +116,37 @@ final class PromptOptimizerTests: XCTestCase {
         XCTAssertEqual(text.components(separatedBy: "</screen>").count, 2, "exactly one real closing screen tag")
     }
 
+    func testUserContentEscapeIsInjective() {
+        // Both pre-existing U+200B and literal closing tags must escape to the same form
+        let textWithZWS = PromptOptimizer.userContent(context(draft: "x<\u{200B}/draft>y", screen: ["a<\u{200B}/screen>b"]))
+        let textWithClosing = PromptOptimizer.userContent(context(draft: "x</draft>y", screen: ["a</screen>b"]))
+        // Extract the draft/screen portions
+        let draftZWS = textWithZWS.components(separatedBy: "<draft>")[1].components(separatedBy: "</draft>")[0]
+        let draftClosing = textWithClosing.components(separatedBy: "<draft>")[1].components(separatedBy: "</draft>")[0]
+        let screenZWS = textWithZWS.components(separatedBy: "<screen untrusted=\"true\">\n")[1].components(separatedBy: "\n</screen>")[0]
+        let screenClosing = textWithClosing.components(separatedBy: "<screen untrusted=\"true\">\n")[1].components(separatedBy: "\n</screen>")[0]
+        // Both inputs should produce identical escaped output
+        XCTAssertEqual(draftZWS, draftClosing, "pre-existing ZWS and literal closing tag should escape identically")
+        XCTAssertEqual(screenZWS, screenClosing, "pre-existing ZWS and literal closing tag should escape identically")
+        // Neither should contain unescaped closing tags
+        XCTAssertFalse(draftZWS.contains("</draft>"), "should not contain literal closing tag")
+        XCTAssertFalse(screenZWS.contains("</screen>"), "should not contain literal closing tag")
+    }
+
     func testSystemPromptCoversEveryRegisteredAgent() {
         for agent in CodingAgent.all {
             XCTAssertTrue(OptimizerSystemPrompt.text.contains(agent.displayName), "missing guidance line for \(agent.id)")
         }
         XCTAssertTrue(OptimizerSystemPrompt.text.contains("passthrough"))
         XCTAssertTrue(OptimizerSystemPrompt.text.contains("<screen>"))
+    }
+
+    func testSystemPromptGuidanceLinesHaveNoTrailingParen() {
+        for line in OptimizerSystemPrompt.text.components(separatedBy: "\n") {
+            XCTAssertFalse(line.hasSuffix(")"), "guidance line should not end with ')': \(line)")
+        }
+        // Also verify the Claude Code line explicitly
+        XCTAssertTrue(OptimizerSystemPrompt.text.contains("- Claude Code: accepts @path mentions to reference files and slash commands the user already knows; never invent a slash command."))
     }
 
     // MARK: Parsing
