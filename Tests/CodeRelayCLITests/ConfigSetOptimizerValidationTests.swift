@@ -40,6 +40,13 @@ final class ConfigSetOptimizerValidationTests: XCTestCase {
         XCTAssertNil(error("promptOptimizerKeyPath", present.path))
     }
 
+    func testKeyPathRejectsDirectory() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: nil)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertEqual(error("promptOptimizerKeyPath", dir.path), "promptOptimizerKeyPath is a directory, not a file: \(dir.path)")
+    }
+
     func testUnrelatedKeysAreNotJudged() {
         XCTAssertNil(error("promptOptimizerModel", "anything-goes"))
         XCTAssertNil(error("wsPort", "80"))

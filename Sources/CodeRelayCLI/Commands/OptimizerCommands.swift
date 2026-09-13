@@ -45,25 +45,35 @@ struct OptimizerTryCommand: AsyncParsableCommand {
 
     func run() async throws {
         let client = AdminClient(port: globals.port)
+        // Above the 12 s optimizer deadline plus transport, matching the 20 s waiter the spec gives these RPCs.
+        client.requestTimeout = 20
         let request = OptimizerTryRequest(draft: draft, sessionId: session, shareScreen: !noScreen)
         do {
             let response: OptimizerTryResponse = try await client.post("/optimizer/try", body: request)
             if globals.json {
+                // Exits 0 even when status == "failed", deliberately consistent with `config validate`; scripts inspect the payload.
                 print(OutputFormatter.formatJSON(response))
                 return
             }
-            switch response.status {
-            case "ok":
-                print(response.prompt ?? "")
-            case "passthrough":
-                print("passthrough — the model left the draft as it was")
-            default:
-                print("failed: \(response.message ?? "unknown error")")
+            let (text, isFailure) = Self.render(response)
+            print(text)
+            if isFailure {
                 throw ExitCode.failure
             }
         } catch let error as AdminClientError {
             print(OutputFormatter.formatError(error, json: globals.json))
             throw ExitCode.failure
+        }
+    }
+
+    static func render(_ response: OptimizerTryResponse) -> (text: String, isFailure: Bool) {
+        switch response.status {
+        case "ok":
+            return (response.prompt ?? "", false)
+        case "passthrough":
+            return ("passthrough — the model left the draft as it was", false)
+        default:
+            return ("failed: \(response.message ?? "unknown error")", true)
         }
     }
 }

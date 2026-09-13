@@ -190,5 +190,5 @@ object MessageEnvelope {
     private fun JsonObject.sessions(key: String): List<SessionInfo> =
         WireJson.instance.decodeFromJsonElement(ListSerializer(SessionInfo.serializer()), getValue(key))
     private fun JsonObject.stringListOrNull(key: String): List<String>? =
-        this[key]?.jsonArray?.map { it.jsonPrimitive.content }
+        this[key]?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.jsonArray?.map { it.jsonPrimitive.content }
 }

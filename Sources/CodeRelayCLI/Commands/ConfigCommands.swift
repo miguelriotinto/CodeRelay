@@ -165,6 +165,10 @@ struct ConfigSetCommand: AsyncParsableCommand {
             let expanded = NSString(string: path).expandingTildeInPath
             let fm = FileManager.default
             if !fm.fileExists(atPath: expanded) { return "promptOptimizerKeyPath path not found: \(path)" }
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: expanded, isDirectory: &isDir), isDir.boolValue {
+                return "promptOptimizerKeyPath is a directory, not a file: \(path)"
+            }
             if !fm.isReadableFile(atPath: expanded) { return "promptOptimizerKeyPath path exists but is not readable: \(path)" }
             return nil
         default:

@@ -407,7 +407,7 @@ New `RelayConfig` keys, all optional, decoded with defaults like the push keys:
 |---|---|---|---|
 | `promptOptimizerEnabled` | Bool | `false` | bool |
 | `promptOptimizerProvider` | String | `"anthropic"` | `anthropic` or `bedrock` |
-| `promptOptimizerModel` | String | provider default (see §5.5) | non-empty; on `bedrock` must start with `anthropic.` |
+| `promptOptimizerModel` | String | provider default (see §5.5) | any string; empty string clears the override (provider default applies). No bedrock prefix check at write time — the provider rejects an unknown model id at call time. |
 | `promptOptimizerRegion` | String | `"us-east-1"` | non-empty, `[a-z0-9-]+`; used only by `bedrock` |
 | `promptOptimizerKeyPath` | String? | `nil` | readable regular file; startup logs a warning if mode is not `0600` |
 | `promptOptimizerShareScreen` | Bool | `true` | bool |

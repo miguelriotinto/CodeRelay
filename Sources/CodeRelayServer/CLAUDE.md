@@ -260,9 +260,10 @@ Pipeline per session, all inside the `PTYSession` actor:
   `OptimizerError` (`refused`, `malformed`, `keyRejected`, `unavailable`,
   `draftTooLong`).
 - `DraftReplacer` emits the bytes that erase the current draft and type the
-  replacement: Ctrl-U per line (or backspaces), then the new text wrapped in
-  bracketed paste when the terminal has it on, or the agent's newline chord
-  between lines when it does not.
+  replacement: Backspace×N then Delete×N (N = UTF-16 count of the current draft;
+  never Ctrl-U, never per line), then the new text wrapped in bracketed paste
+  when the terminal has it on; otherwise newlines (`\r\n`, `\n`, `\r`) are folded
+  to spaces and control bytes stripped.
 
 Caps and fixed strings: draft > 4 KB → `"Prompt too long to optimize"`;
 `replace_prompt.text` > 16 KB → `"Replacement too long"`; one optimize in

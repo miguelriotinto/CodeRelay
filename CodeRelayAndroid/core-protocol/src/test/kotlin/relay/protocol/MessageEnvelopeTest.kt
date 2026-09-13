@@ -2,7 +2,6 @@ package relay.protocol
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -76,6 +75,11 @@ class MessageEnvelopeTest {
     @Test fun `decode auth_success without version`() {
         val msg = MessageEnvelope.decodeServer("""{"type":"auth_success","payload":{}}""")
         assertEquals(ServerMessage.AuthSuccess(protocolVersion = null), msg)
+    }
+
+    @Test fun `decode auth_success with null capabilities`() {
+        val msg = MessageEnvelope.decodeServer("""{"type":"auth_success","payload":{"capabilities":null}}""")
+        assertEquals(ServerMessage.AuthSuccess(protocolVersion = null, capabilities = null), msg)
     }
 
     @Test fun `decode pong`() {

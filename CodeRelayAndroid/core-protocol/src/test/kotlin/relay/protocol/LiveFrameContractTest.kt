@@ -12,9 +12,11 @@ import java.util.UUID
  * The fixture `captured_session_list_result.json` is a verbatim `session_list_result`
  * text frame captured from the running Claude Relay server (ws://127.0.0.1:9200) on
  * 2026-06-08. It is the single most important fidelity test in M1: it proves the
- * Kotlin decoder accepts genuine server output, not just synthetic fixtures.
+ * Kotlin decoder accepts genuine server output, not just synthetic fixtures. The fixture
+ * `shared_optimize_prompt_result.json` is a hand-authored contract fixture whose bytes
+ * are pinned identical to the Swift literal in `OptimizerProtocolMessageTests.swift`.
  *
- * Salient real-world properties this frame locks in:
+ * Salient real-world properties the captured session_list_result frame locks in:
  *  - `createdAt` is a floating-point NUMBER (802628495.194415 — seconds since the 2001
  *    reference date), NOT an ISO-8601 string. The Swift WebSocket server uses a default
  *    JSONEncoder that emits Double timestamps; the Admin HTTP API uses ISO-8601. These
@@ -78,7 +80,7 @@ class LiveFrameContractTest {
 
     @Test fun `decodes the shared optimize_prompt_result contract fixture`() {
         val frame = javaClass.classLoader!!
-            .getResource("captured_optimize_prompt_result.json")!!
+            .getResource("shared_optimize_prompt_result.json")!!
             .readText()
         val decoded = MessageEnvelope.decodeServer(frame)
         assertEquals(

@@ -171,6 +171,7 @@ enum AdminRoutes {
         guard draft.utf8.count <= PromptOptimizer.maxDraftBytes else {
             return .error(OptimizerError.draftTooLong.clientMessage, status: 400)
         }
+        // The wire decoder defaults to false (fail-closed for a device, ClientMessage.swift); the admin route defaults to true because it is operator-local and the CLI always sends the flag explicitly.
         let shareScreen = json["shareScreen"] as? Bool ?? true
 
         var context = PromptContext(draft: draft, agentId: nil, agentDisplayName: nil, workingDirectory: nil,

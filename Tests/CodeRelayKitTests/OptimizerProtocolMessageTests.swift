@@ -3,7 +3,7 @@ import XCTest
 
 /// Wire shapes for the prompt optimizer RPCs (spec §5.1). The one JSON literal
 /// in `sharedOptimizeResultFixture` is byte-for-byte the Kotlin fixture
-/// `CodeRelayAndroid/core-protocol/src/test/resources/captured_optimize_prompt_result.json`,
+/// `CodeRelayAndroid/core-protocol/src/test/resources/shared_optimize_prompt_result.json`,
 /// so both decoders are pinned to one contract.
 final class OptimizerProtocolMessageTests: ProtocolTestCase {
 
