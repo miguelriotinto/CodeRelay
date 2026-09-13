@@ -252,6 +252,12 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                                     topic: topic, context: context)
         case .unregisterPushToken(let deviceId):
             handleUnregisterPushToken(deviceId: deviceId, context: context)
+        case .optimizePrompt:
+            // Interim until PromptRequestHandlers lands: the relay has no optimizer yet.
+            sendServerMessage(.optimizePromptResult(status: "unconfigured",
+                                                    message: "Optimizer not configured on the relay"), context: context)
+        case .replacePrompt:
+            sendServerMessage(.replacePromptResult(status: "failed", message: "Session not attached"), context: context)
         }
     }
 

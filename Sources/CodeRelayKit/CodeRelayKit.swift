@@ -3,7 +3,10 @@ public enum CodeRelayKit {
     public static let version = "0.3.24"
 
     /// Current wire-protocol version. Bump when messages change in breaking ways.
-    public static let protocolVersion = 1
+    public static let protocolVersion = 2
+    /// Capability advertised in `auth_success.capabilities` when the relay has
+    /// a usable prompt optimizer (enabled + key readable at startup, spec §8).
+    public static let promptOptimizerCapability = "prompt_optimizer"
 
     /// Oldest protocol version this build can communicate with.
     /// Keep at 0 until a breaking wire-protocol change forces older clients out.

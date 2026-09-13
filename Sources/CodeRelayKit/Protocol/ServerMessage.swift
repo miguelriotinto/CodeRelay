@@ -2,7 +2,10 @@ import Foundation
 
 /// Messages sent from the server to the client.
 public enum ServerMessage: Equatable, Sendable {
-    case authSuccess(protocolVersion: Int? = nil, tokenId: String? = nil)
+    /// `capabilities` (protocolVersion ≥ 2) lists optional relay features the
+    /// client may use; today only `CodeRelayKit.promptOptimizerCapability`.
+    /// Absent (not empty) when the server predates it or has none.
+    case authSuccess(protocolVersion: Int? = nil, tokenId: String? = nil, capabilities: [String]? = nil)
     case authFailure(reason: String)
     case sessionCreated(sessionId: UUID, cols: UInt16, rows: UInt16)
     case sessionAttached(sessionId: UUID, state: String)
@@ -30,6 +33,12 @@ public enum ServerMessage: Equatable, Sendable {
     case error(code: Int, message: String)
     /// A pairing code was redeemed: here is the newly minted device token.
     case pairSuccess(token: String, tokenId: String, label: String)
+    /// Reply to `optimize_prompt`. `status`: `ok` (draft replaced; `original`
+    /// + `prompt` present), `passthrough`, `no_draft`, `failed` (`message`),
+    /// `unconfigured` (`message`). Spec §5.1.
+    case optimizePromptResult(status: String, original: String? = nil, prompt: String? = nil, message: String? = nil)
+    /// Reply to `replace_prompt`. `status`: `ok` or `failed` (`message`).
+    case replacePromptResult(status: String, message: String? = nil)
 
     // MARK: - Wire type strings
 
@@ -57,6 +66,8 @@ public enum ServerMessage: Equatable, Sendable {
         case .clipboardUpdate:     return "clipboard_update"
         case .error:               return "error"
         case .pairSuccess:         return "pair_success"
+        case .optimizePromptResult: return "optimize_prompt_result"
+        case .replacePromptResult:  return "replace_prompt_result"
         }
     }
 
@@ -69,7 +80,7 @@ public enum ServerMessage: Equatable, Sendable {
         "session_stolen", "session_renamed",
         "session_list_result", "session_list_all_result",
         "resize_ack", "paste_image_result", "pong", "push_token_ack", "clipboard_update", "error",
-        "pair_success"
+        "pair_success", "optimize_prompt_result", "replace_prompt_result"
     ]
 }
 
@@ -79,15 +90,16 @@ extension ServerMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case reason, sessionId, cols, rows, state, code, message, sessions, activity, agent, name, success, protocolVersion
         case agentState, title, workingDir, accepted, text, tokenId
-        case token, label
+        case token, label, capabilities, status, original, prompt
     }
 
     public func encodePayload(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: PayloadCodingKeys.self)
         switch self {
-        case .authSuccess(let protocolVersion, let tokenId):
+        case .authSuccess(let protocolVersion, let tokenId, let capabilities):
             try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
             try container.encodeIfPresent(tokenId, forKey: .tokenId)
+            try container.encodeIfPresent(capabilities, forKey: .capabilities)
         case .authFailure(let reason):
             try container.encode(reason, forKey: .reason)
         case .sessionCreated(let sessionId, let cols, let rows):
@@ -146,6 +158,14 @@ extension ServerMessage: Codable {
             try container.encode(token, forKey: .token)
             try container.encode(tokenId, forKey: .tokenId)
             try container.encode(label, forKey: .label)
+        case .optimizePromptResult(let status, let original, let prompt, let message):
+            try container.encode(status, forKey: .status)
+            try container.encodeIfPresent(original, forKey: .original)
+            try container.encodeIfPresent(prompt, forKey: .prompt)
+            try container.encodeIfPresent(message, forKey: .message)
+        case .replacePromptResult(let status, let message):
+            try container.encode(status, forKey: .status)
+            try container.encodeIfPresent(message, forKey: .message)
         }
     }
 
@@ -155,7 +175,8 @@ extension ServerMessage: Codable {
         case "auth_success":
             let protocolVersion = try container.decodeIfPresent(Int.self, forKey: .protocolVersion)
             let tokenId = try container.decodeIfPresent(String.self, forKey: .tokenId)
-            return .authSuccess(protocolVersion: protocolVersion, tokenId: tokenId)
+            let capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities)
+            return .authSuccess(protocolVersion: protocolVersion, tokenId: tokenId, capabilities: capabilities)
         case "auth_failure":
             let reason = try container.decode(String.self, forKey: .reason)
             return .authFailure(reason: reason)
@@ -233,6 +254,16 @@ extension ServerMessage: Codable {
                 token: try container.decode(String.self, forKey: .token),
                 tokenId: try container.decode(String.self, forKey: .tokenId),
                 label: try container.decode(String.self, forKey: .label))
+        case "optimize_prompt_result":
+            return .optimizePromptResult(
+                status: try container.decode(String.self, forKey: .status),
+                original: try container.decodeIfPresent(String.self, forKey: .original),
+                prompt: try container.decodeIfPresent(String.self, forKey: .prompt),
+                message: try container.decodeIfPresent(String.self, forKey: .message))
+        case "replace_prompt_result":
+            return .replacePromptResult(
+                status: try container.decode(String.self, forKey: .status),
+                message: try container.decodeIfPresent(String.self, forKey: .message))
         default:
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(
