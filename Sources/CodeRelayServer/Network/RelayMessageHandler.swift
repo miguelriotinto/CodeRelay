@@ -22,6 +22,10 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     let optimizer: (any PromptOptimizing)?
     /// One optimize per connection at a time (spec §6 "Already optimizing").
     var optimizeInFlight = false
+    /// Generation counter for optimize requests. Incremented on each new request.
+    /// The deadline task checks this to ensure it only clears the flag if its own
+    /// request is still the active one.
+    var optimizeGeneration: UInt64 = 0
     /// End-to-end budget for context capture + model call + PTY write. Tests shorten it.
     var optimizeDeadline: Duration = .seconds(12)
     private var context: ChannelHandlerContext?
@@ -212,13 +216,12 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         case .ping:
             sendServerMessage(.pong, context: context)
         case .resize, .refresh, .pasteImage, .sessionRename, .sessionTerminate, .optimizePrompt, .replacePrompt:
-            // Dropped, NOT answered with `.error(401)` — these are all
-            // fire-and-forget, so see the unattached-request reply rule atop
-            // `SessionRequestHandlers.swift`. They can reach the pre-auth window
-            // because they bypass the client's RPC chain entirely: a terminal view
-            // that lays out while `auth_request` is still on the wire sends its
-            // resize immediately, and a 401 here would resolve the `authenticate`
-            // waiter with someone else's error.
+            // Dropped, NOT answered with `.error(401)` — an error here would
+            // resolve the client's `authenticate` waiter with someone else's
+            // error. They can reach the pre-auth window because they bypass the
+            // client's RPC chain entirely: a terminal view that lays out while
+            // `auth_request` is still on the wire sends its resize immediately,
+            // and optimize/replace can be fired by the user before auth completes.
             RelayLogger.log(.debug, category: "session",
                             "pre-auth \(message.typeString) dropped")
         default:

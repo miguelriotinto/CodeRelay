@@ -219,6 +219,8 @@ final class PromptRequestHandlerTests: XCTestCase {
         fixture.handler.optimizeDeadline = .milliseconds(150)
         await fixture.mock.setMockPromptContext(context(draft: "slow one"))
         try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        // Advance time to trigger the deadline task.
+        (fixture.channel.eventLoop as! EmbeddedEventLoop).advanceTime(by: TimeAmount.milliseconds(151))
         let reply = try await nextServerMessage(fixture)
         XCTAssertEqual(reply, .optimizePromptResult(status: "failed", message: "Optimizer unavailable, try again"))
         XCTAssertFalse(fixture.handler.optimizeInFlight)
@@ -297,5 +299,61 @@ final class PromptRequestHandlerTests: XCTestCase {
         XCTAssertEqual(reply, .replacePromptResult(status: "failed", message: "Replacement too long"))
         let writes = await fixture.mock.recordedWrites()
         XCTAssertTrue(writes.isEmpty)
+    }
+
+    func testDetachWhileOptimizeInFlightPreventsWrite() async throws {
+        let fixture = try await makeFixture(optimizer: FakeOptimizer(delay: .milliseconds(200)))
+        defer { Task { await self.cleanup(fixture) } }
+        await fixture.mock.setMockPromptContext(context(draft: "detach test"))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        // Detach while the optimizer is suspended.
+        try await Task.sleep(for: .milliseconds(50))
+        fixture.handler.attachedSessionId = nil
+        fixture.handler.attachedPTY = nil
+        // Wait for the optimizer to complete.
+        try await Task.sleep(for: .milliseconds(300))
+        // No reply sent (connection moved on), no PTY write.
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "detached session must not receive PTY writes")
+    }
+
+    func testNeverReturningOptimizerTimesOutAndReleasesFlag() async throws {
+        actor HangingOptimizer: PromptOptimizing {
+            nonisolated let sharesScreen = true
+            func optimize(_ context: PromptContext) async throws -> OptimizerOutcome {
+                // Ignores cancellation and never returns.
+                while true {
+                    try? await Task.sleep(for: .seconds(100))
+                }
+            }
+        }
+        let fixture = try await makeFixture(optimizer: HangingOptimizer())
+        defer { Task { await self.cleanup(fixture) } }
+        fixture.handler.optimizeDeadline = .milliseconds(150)
+        await fixture.mock.setMockPromptContext(context(draft: "hang"))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        // Advance time to trigger the first deadline task.
+        (fixture.channel.eventLoop as! EmbeddedEventLoop).advanceTime(by: TimeAmount.milliseconds(151))
+        let firstReply = try await nextServerMessage(fixture)
+        XCTAssertEqual(firstReply, .optimizePromptResult(status: "failed", message: "Optimizer unavailable, try again"))
+        // Second request is accepted (not "Already optimizing").
+        await fixture.mock.setMockPromptContext(context(draft: "second"))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        // Advance time to trigger the second deadline task.
+        (fixture.channel.eventLoop as! EmbeddedEventLoop).advanceTime(by: TimeAmount.milliseconds(151))
+        let secondReply = try await nextServerMessage(fixture)
+        XCTAssertEqual(secondReply, .optimizePromptResult(status: "failed", message: "Optimizer unavailable, try again"))
+        // No PTY writes from either timed-out request.
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty)
+    }
+
+    func testWhitespaceOnlyDraftIsNoDraft() async throws {
+        let fixture = try await makeFixture(optimizer: FakeOptimizer())
+        defer { Task { await self.cleanup(fixture) } }
+        await fixture.mock.setMockPromptContext(context(draft: "   \n\t  "))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .optimizePromptResult(status: "no_draft"))
     }
 }

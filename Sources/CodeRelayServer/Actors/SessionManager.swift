@@ -414,7 +414,7 @@ public actor SessionManager {
 
     /// The live PTY behind `id`, or nil once the session is terminal. Used by the
     /// admin `optimizer/try` route and by wire tests to reach the mock PTY.
-    public func ptySession(for id: UUID) -> (any PTYSessionProtocol)? {
+    func ptySession(for id: UUID) -> (any PTYSessionProtocol)? {
         sessions[id]?.ptySession
     }
 

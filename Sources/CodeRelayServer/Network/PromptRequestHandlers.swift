@@ -32,52 +32,90 @@ extension RelayMessageHandler {
             return
         }
         optimizeInFlight = true
+        optimizeGeneration &+= 1
+        let generation = optimizeGeneration
 
         // Screen goes to the model only when BOTH the relay config and the device ask for it.
         let includeScreen = shareScreen && optimizer.sharesScreen
         let deadline = optimizeDeadline
         let startedAt = Date()
 
+        // Deadline task clears the flag and sends failure if the generation still matches.
+        let ctx = UnsafeTransfer(context)
+        let deadlineNanos = Int64(deadline.components.seconds) * 1_000_000_000 + deadline.components.attoseconds / 1_000_000_000
+        context.eventLoop.scheduleTask(in: .nanoseconds(deadlineNanos)) { [weak self] in
+            guard let handler = self, handler.optimizeGeneration == generation else { return }
+            handler.optimizeInFlight = false
+            let elapsed = Int(Date().timeIntervalSince(startedAt) * 1000)
+            RelayLogger.log(.debug, category: "optimizer", "optimize_prompt timeout (unavailable) in \(elapsed)ms")
+            handler.sendServerMessage(.optimizePromptResult(status: "failed", message: "Optimizer unavailable, try again"), context: ctx.value)
+        }
+
         bridgeToEventLoop(
             context: context,
-            work: { () async throws -> ServerMessage in
-                try await Self.withDeadline(deadline) {
-                    let promptContext = await pty.promptContext(includeScreen: includeScreen)
-                    if promptContext.draft.isEmpty {
-                        return .optimizePromptResult(status: "no_draft")
-                    }
-                    switch try await optimizer.optimize(promptContext) {
-                    case .passthrough:
-                        return .optimizePromptResult(status: "passthrough")
-                    case .optimized(let prompt):
-                        // Re-read the draft right before typing: the user may have kept
-                        // editing while the model ran, and the replacement must erase
-                        // exactly what is on the line now.
-                        let current = await pty.promptContext(includeScreen: false)
-                        let bytes = DraftReplacer.bytes(replacing: current.draft, with: prompt,
-                                                        bracketedPaste: current.bracketedPaste,
-                                                        keyboardFlags: current.keyboardFlags)
-                        try Task.checkCancellation()   // deadline fired while we were looking
-                        await pty.write(bytes)
-                        return .optimizePromptResult(status: "ok", original: promptContext.draft, prompt: prompt)
-                    }
+            work: { () async throws -> (ServerMessage, Data?) in
+                let promptContext = await pty.promptContext(includeScreen: includeScreen)
+                let trimmed = promptContext.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    return (.optimizePromptResult(status: "no_draft"), nil)
+                }
+                switch try await optimizer.optimize(promptContext) {
+                case .passthrough:
+                    return (.optimizePromptResult(status: "passthrough"), nil)
+                case .optimized(let prompt):
+                    // Re-read the draft right before typing: the user may have kept
+                    // editing while the model ran, and the replacement must erase
+                    // exactly what is on the line now.
+                    let current = await pty.promptContext(includeScreen: false)
+                    let bytes = DraftReplacer.bytes(replacing: current.draft, with: prompt,
+                                                    bracketedPaste: current.bracketedPaste,
+                                                    keyboardFlags: current.keyboardFlags)
+                    // checkCancellation narrows the window for a late write but does not
+                    // eliminate it — the write itself is not cancellable.
+                    try Task.checkCancellation()
+                    return (.optimizePromptResult(status: "ok", original: promptContext.draft, prompt: prompt), bytes)
                 }
             },
-            onSuccess: { handler, ctx, message in
+            onSuccess: { handler, ctx, result in
+                let (message, bytes) = result
+                // Only process if this generation is still active (not timed out).
+                guard handler.optimizeGeneration == generation else { return }
                 handler.optimizeInFlight = false
+
+                // Re-validate attachment before PTY write.
+                if let data = bytes {
+                    guard handler.attachedSessionId == sessionId, ctx.channel.isActive,
+                          let pty = handler.attachedPTY else {
+                        // Connection detached or closed while model was running; write nothing, send nothing.
+                        return
+                    }
+                    Task { await pty.write(data) }
+                }
+
                 if case .optimizePromptResult(let status, let original, let prompt, _) = message {
+                    let elapsed = Int(Date().timeIntervalSince(startedAt) * 1000)
                     RelayLogger.log(.debug, category: "optimizer",
-                        "optimize_prompt \(status) draft=\(original?.utf8.count ?? 0)B prompt=\(prompt?.utf8.count ?? 0)B "
-                        + "in \(Int(Date().timeIntervalSince(startedAt) * 1000))ms")
+                        "optimize_prompt \(status) draft=\(original?.utf8.count ?? 0)B prompt=\(prompt?.utf8.count ?? 0)B in \(elapsed)ms")
                 }
                 handler.sendServerMessage(message, context: ctx)
             },
             onFailure: { handler, ctx, error in
+                // Only process if this generation is still active (not timed out).
+                guard handler.optimizeGeneration == generation else { return }
                 handler.optimizeInFlight = false
-                let text = (error as? OptimizerError)?.clientMessage ?? OptimizerError.unavailable.clientMessage
-                RelayLogger.log(.debug, category: "optimizer",
-                    "optimize_prompt failed (\(text)) in \(Int(Date().timeIntervalSince(startedAt) * 1000))ms")
-                handler.sendServerMessage(.optimizePromptResult(status: "failed", message: text), context: ctx)
+
+                let errorName: String
+                let clientMessage: String
+                if let optimizerError = error as? OptimizerError {
+                    errorName = String(describing: optimizerError).components(separatedBy: "(").first ?? "unknown"
+                    clientMessage = optimizerError.clientMessage
+                } else {
+                    errorName = "unknown"
+                    clientMessage = OptimizerError.unavailable.clientMessage
+                }
+                let elapsed = Int(Date().timeIntervalSince(startedAt) * 1000)
+                RelayLogger.log(.debug, category: "optimizer", "optimize_prompt failed (\(errorName)) in \(elapsed)ms")
+                handler.sendServerMessage(.optimizePromptResult(status: "failed", message: clientMessage), context: ctx)
             }
         )
     }
@@ -93,14 +131,21 @@ extension RelayMessageHandler {
         }
         bridgeToEventLoop(
             context: context,
-            work: { () async throws -> Void in
+            work: { () async throws -> Data in
                 let current = await pty.promptContext(includeScreen: false)
                 let bytes = DraftReplacer.bytes(replacing: current.draft, with: text,
                                                 bracketedPaste: current.bracketedPaste,
                                                 keyboardFlags: current.keyboardFlags)
-                await pty.write(bytes)
+                return bytes
             },
-            onSuccess: { handler, ctx, _ in
+            onSuccess: { handler, ctx, bytes in
+                // Re-validate attachment before PTY write.
+                guard handler.attachedSessionId == sessionId, ctx.channel.isActive,
+                      let pty = handler.attachedPTY else {
+                    // Connection detached or closed; write nothing, send nothing.
+                    return
+                }
+                Task { await pty.write(bytes) }
                 RelayLogger.log(.debug, category: "optimizer", "replace_prompt ok text=\(text.utf8.count)B")
                 handler.sendServerMessage(.replacePromptResult(status: "ok"), context: ctx)
             },
