@@ -38,11 +38,16 @@ enum DraftReplacer {
     }
 
     /// The text the replacement actually types: sanitized, and — without
-    /// bracketed paste, where a newline would submit — folded to one line. This
-    /// is what `DraftTracker.adopt` must be given: the raw text can differ from
-    /// it in length (`\r\n` becomes one space) and in content (dropped control
-    /// scalars), and a mirror that holds scalars the real input line does not
-    /// mis-sizes the next erase.
+    /// bracketed paste — folded to plain spaces wherever a byte would be read as
+    /// a key rather than as text. Outside the paste bracket a newline submits and
+    /// a tab is expand-or-complete (zsh and both agents' input boxes), so neither
+    /// can be *typed* at all: sending one either sends the line or grows it with
+    /// a completion the mirror never saw. Inside the bracket both are literal.
+    ///
+    /// This is what `DraftTracker.adopt` must be given: the raw text can differ
+    /// from it in length (`\r\n` becomes one space) and in content (dropped
+    /// control scalars), and a mirror that holds scalars the real input line does
+    /// not mis-sizes the next erase.
     static func effectiveText(_ text: String, bracketedPaste: Bool) -> String {
         let sanitizedText = sanitized(text)
         guard !bracketedPaste else { return sanitizedText }
@@ -50,6 +55,7 @@ enum DraftReplacer {
             .replacingOccurrences(of: "\r\n", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
     }
 
     static func bytes(replacing draft: String, with text: String,

@@ -95,6 +95,28 @@ final class DraftReplacerTests: XCTestCase {
         XCTAssertEqual(DraftReplacer.effectiveText("a\nb\rc", bracketedPaste: false), "a b c")
     }
 
+    /// H1: outside a bracketed paste a raw 0x09 is expand-or-complete in zsh and
+    /// in the agents' input boxes, so it cannot be *typed* — the real line grows
+    /// past what was sent while the mirror still holds the pre-completion text.
+    /// Same failure mode as a newline, so the same fold.
+    func testEffectiveTextFoldsTabWithoutBracketedPaste() {
+        XCTAssertEqual(DraftReplacer.effectiveText("a\tb", bracketedPaste: false), "a b")
+        XCTAssertEqual(DraftReplacer.effectiveText("a\t\tb", bracketedPaste: false), "a  b")
+    }
+
+    /// Inside the paste bracket the tab is inert literal text — no fold there.
+    func testEffectiveTextKeepsTabInsideBracketedPaste() {
+        XCTAssertEqual(DraftReplacer.effectiveText("a\tb", bracketedPaste: true), "a\tb")
+    }
+
+    /// The emitted payload carries the fold too, so `bytes` and the adopted text
+    /// still agree (`bytes` routes through `effectiveText`).
+    func testBytesEmitNoTabWithoutBracketedPaste() {
+        let out = DraftReplacer.bytes(replacing: "", with: "a\tb", bracketedPaste: false, keyboardFlags: [])
+        XCTAssertEqual(string(out), "a b")
+        XCTAssertFalse(out.contains(0x09), "a typed tab would trigger completion at the input line")
+    }
+
     func testEffectiveTextKeepsNewlinesInsideBracketedPaste() {
         XCTAssertEqual(DraftReplacer.effectiveText("a\nb", bracketedPaste: true), "a\nb")
     }

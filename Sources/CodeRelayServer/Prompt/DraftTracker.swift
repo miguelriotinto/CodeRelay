@@ -95,8 +95,8 @@ struct DraftTracker: Sendable {
     }
 
     /// The server just erased the mirrored line and pasted `draft`; the line is
-    /// now exactly `draft` with the cursor at its end. Only the two server write
-    /// sites call this — client keystrokes never do.
+    /// now exactly `draft` with the cursor at its end. Only
+    /// `PTYSession.replaceDraft` calls this — client keystrokes never do.
     ///
     /// This is a recovery point for the same reason a submit is: the server knows
     /// what the line holds, so accumulating from here cannot under-count. The
