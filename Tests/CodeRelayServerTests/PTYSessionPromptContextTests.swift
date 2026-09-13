@@ -5,6 +5,13 @@ import SwiftTerm
 /// Drives a real login shell: the draft mirror follows bytes written through
 /// `write`, and the screen-model flags follow what the shell prints.
 final class PTYSessionPromptContextTests: XCTestCase {
+    private var session: PTYSession?
+
+    override func tearDown() async throws {
+        if let session { await session.terminate() }
+        session = nil
+    }
+
     private func poll(_ deadline: Duration = .seconds(8), until condition: () async -> Bool) async -> Bool {
         let end = ContinuousClock.now + deadline
         while ContinuousClock.now < end {
@@ -16,6 +23,7 @@ final class PTYSessionPromptContextTests: XCTestCase {
 
     private func startedSession() async throws -> PTYSession {
         let session = try PTYSession(sessionId: UUID(), cols: 80, rows: 24, scrollbackSize: 8192)
+        self.session = session
         await session.setOutputHandler { _ in }
         await session.startReading()
         // Wait for the shell prompt to render before typing into it.
@@ -26,7 +34,6 @@ final class PTYSessionPromptContextTests: XCTestCase {
 
     func testDraftFollowsWritesAndSubmitClearsIt() async throws {
         let session = try await startedSession()
-        defer { Task { await session.terminate() } }
 
         await session.write(Data("echo hel".utf8))
         await session.write(Data("lo".utf8))
@@ -44,7 +51,6 @@ final class PTYSessionPromptContextTests: XCTestCase {
 
     func testScreenFlagsFollowWhatTheShellPrints() async throws {
         let session = try await startedSession()
-        defer { Task { await session.terminate() } }
 
         await session.write(Data("printf '\\e[?2004h\\e[>1u'\r".utf8))
         let armed = await poll {
