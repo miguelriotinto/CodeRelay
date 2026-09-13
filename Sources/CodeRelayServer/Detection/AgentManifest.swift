@@ -77,4 +77,7 @@ struct AgentStateRule: Codable {
 struct AgentManifest: Codable {
     let id: String
     let rules: [AgentStateRule]
+    /// Input-line profile for the prompt optimizer's draft tracker. Optional;
+    /// a missing block means the plain-shell `InputProfile.default`.
+    let input: InputProfile?
 }

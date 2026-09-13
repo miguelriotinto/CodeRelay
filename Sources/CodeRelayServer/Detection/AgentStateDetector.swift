@@ -21,6 +21,12 @@ final class AgentStateDetector {
         }
     }
 
+    /// The input profile for `agentId`, or `.default` when its manifest has no
+    /// `input` block (or the agent is unknown).
+    func inputProfile(for agentId: String) -> InputProfile {
+        manifests[agentId]?.input ?? .default
+    }
+
     /// Detect the agent's state. Returns nil for an unknown agent id (herdr's
     /// "nil agent → Unknown"; callers treat nil as "no manifest, skip").
     func detect(agentId: String, snapshot: ScreenSnapshot) -> AgentDetection? {
