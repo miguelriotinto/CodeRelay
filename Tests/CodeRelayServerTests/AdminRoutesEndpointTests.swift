@@ -302,4 +302,19 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
                             body: ["draft": "x", "sessionId": UUID().uuidString], optimizer: FakeOptimizer())
         XCTAssertEqual(r.status, 404)
     }
+
+    func testOptimizerTryOversizedDraftReturns400() async {
+        let oversized = String(repeating: "x", count: 4097)
+        let r = await route(.POST, "/optimizer/try", body: ["draft": oversized], optimizer: FakeOptimizer())
+        XCTAssertEqual(r.status, 400)
+        XCTAssertEqual(r.json?["error"] as? String, "Prompt too long to optimize")
+    }
+
+    func testOptimizerTryTimesOutAt12Seconds() async {
+        let suspending = FakeOptimizer(result: .success(.optimized("will never arrive")), delay: .seconds(20))
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "wait forever"], optimizer: suspending)
+        XCTAssertEqual(r.status, 200)
+        XCTAssertEqual(r.json?["status"] as? String, "failed")
+        XCTAssertEqual(r.json?["message"] as? String, "Optimizer unavailable, try again")
+    }
 }

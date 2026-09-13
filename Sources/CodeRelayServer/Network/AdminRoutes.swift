@@ -184,7 +184,10 @@ enum AdminRoutes {
         }
 
         do {
-            switch try await optimizer.optimize(context) {
+            let outcome = try await withOptimizerDeadline(.seconds(12)) {
+                try await optimizer.optimize(context)
+            }
+            switch outcome {
             case .optimized(let prompt): return .json(["status": "ok", "prompt": prompt])
             case .passthrough: return .json(["status": "passthrough"])
             }
