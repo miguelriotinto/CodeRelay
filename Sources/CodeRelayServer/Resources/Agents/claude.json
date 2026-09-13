@@ -1,7 +1,7 @@
 {
   "id": "claude",
   "input": {
-    "newline": ["ctrl_enter", "alt_enter", "shift_enter", "backslash_enter"],
+    "newline": ["shift_enter", "alt_enter", "backslash_enter"],
     "submit": ["enter"],
     "killLineAcrossLines": true,
     "inset": 4,

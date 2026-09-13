@@ -164,28 +164,36 @@ final class AgentInputProfileProbeTests: XCTestCase {
         }
     }
 
-    /// Measure where typed text starts in the input box.
+    /// Measure inset as wrap width: inset = columns - firstRowGlyphCount.
+    /// Type 130 glyphs (more than PTY width of 100) and count first-row glyphs.
     private func probeInset(agentId: String, command: String) async -> String {
         return await withAgent(agentId: agentId, command: command) { pty in
-            await pty.write(Data("alpha".utf8))
-            try? await Task.sleep(for: .milliseconds(400))
+            // Type 130 x's in chunks of 10 with gaps to avoid paste detection
+            for _ in 0..<13 {
+                await pty.write(Data("xxxxxxxxxx".utf8))
+                try? await Task.sleep(for: .milliseconds(30))
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+
             let screen = await pty.promptContext(includeScreen: true).screenLines
             let tail = screen.suffix(6).joined(separator: " ⏎ ")
 
-            guard let row = screen.first(where: { $0.contains("alpha") }) else {
-                return "could not find 'alpha' | \(tail)"
+            guard let firstRow = screen.first(where: { $0.contains("x") }) else {
+                return "could not find 'x' | \(tail)"
             }
 
-            if let range = row.range(of: "alpha") {
-                let inset = row.distance(from: row.startIndex, to: range.lowerBound)
-                return "\(inset)              | \(tail)"
-            }
+            let firstRowCount = firstRow.filter { $0 == "x" }.count
+            let inset = 100 - firstRowCount
+            let leftColumn = firstRow.firstIndex(of: "x").map { firstRow.distance(from: firstRow.startIndex, to: $0) } ?? 0
 
-            return "could not locate 'alpha' | \(tail)"
+            return "\(inset) (first row holds \(firstRowCount) glyphs, text starts at column \(leftColumn))"
         }
     }
 
     /// Does Ctrl-U (kill line) remove a newline inserted by a newline chord?
+    /// After alpha+newline, cursor is on empty second line. One Ctrl-U:
+    /// - true: removes the newline, cursor after alpha, Z lands as alphaZ
+    /// - false: does nothing at line start, Z goes on separate row
     private func probeKillLineAcrossLines(agentId: String, command: String, newlineChord: Candidate) async -> String {
         return await withAgent(agentId: agentId, command: command) { pty in
             await pty.write(Data("alpha".utf8))
@@ -193,9 +201,7 @@ final class AgentInputProfileProbeTests: XCTestCase {
             await pty.write(newlineChord.bytes)
             try? await Task.sleep(for: .milliseconds(400))
 
-            // Send Ctrl-U twice
-            await pty.write(Data([0x15]))  // Ctrl-U
-            try? await Task.sleep(for: .milliseconds(400))
+            // Send ONE Ctrl-U
             await pty.write(Data([0x15]))  // Ctrl-U
             try? await Task.sleep(for: .milliseconds(400))
 
@@ -205,7 +211,7 @@ final class AgentInputProfileProbeTests: XCTestCase {
             let screen = await pty.promptContext(includeScreen: true).screenLines
             let tail = screen.suffix(6).joined(separator: " ⏎ ")
 
-            // Verdict: alphaZ on one row → true; alpha and Z on different rows → false
+            // Verdict: alphaZ on one row → true; alpha and Z on different rows → false; Z alone → false
             if screen.contains(where: { $0.contains("alphaZ") }) {
                 return "true          | \(tail)"
             }

@@ -3,8 +3,8 @@
   "input": {
     "newline": ["shift_enter", "alt_enter", "backslash_enter"],
     "submit": ["enter"],
-    "killLineAcrossLines": false,
-    "inset": 2,
+    "killLineAcrossLines": true,
+    "inset": 99,
     "probedWith": "codex-cli 0.154.0 on 2026-09-13"
   },
   "rules": [

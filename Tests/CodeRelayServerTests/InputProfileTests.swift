@@ -65,7 +65,7 @@ final class InputProfileTests: XCTestCase {
 
     func testBundledClaudeManifestCarriesClaudeCodeProfile() {
         let profile = AgentStateDetector.loadBundled()["claude"]?.input
-        XCTAssertEqual(profile?.newline, [.ctrlEnter, .altEnter, .shiftEnter, .backslashEnter])
+        XCTAssertEqual(profile?.newline, [.shiftEnter, .altEnter, .backslashEnter])
         XCTAssertEqual(profile?.submit, [.enter])
         XCTAssertEqual(profile?.killLineAcrossLines, true)
         XCTAssertEqual(profile?.inset, 4)
