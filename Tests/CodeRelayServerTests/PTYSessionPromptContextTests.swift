@@ -49,12 +49,10 @@ final class PTYSessionPromptContextTests: XCTestCase {
         XCTAssertTrue(echoed, "screen never showed the echoed line")
     }
 
-    /// E1 + E3 through the real actor: an Up on a single-row draft is history
-    /// navigation, so the mirror is lost and `draftKnown` goes false — the state
-    /// in which `replace_prompt` refuses. A server-written replacement then
-    /// adopts its own text, so the very next optimize/Undo has an exact mirror
-    /// again without waiting for a submit.
-    func testWriteReplacementAdoptsTheDraftAndRestoresDraftKnown() async throws {
+    /// G1 through the real actor: the replacement is sized from the mirror as the
+    /// actor holds it and adopts its own text, so the very next optimize/Undo has
+    /// an exact mirror again without waiting for a submit.
+    func testReplaceDraftAdoptsItsOwnTextOnAKnownMirror() async throws {
         let session = try await startedSession()
 
         await session.write(Data("echo hello".utf8))
@@ -62,15 +60,8 @@ final class PTYSessionPromptContextTests: XCTestCase {
         XCTAssertEqual(ctx.draft, "echo hello")
         XCTAssertTrue(ctx.draftKnown)
 
-        await session.write(Data([0x1B, 0x5B, 0x41]))          // CSI A — Up: history
-        ctx = await session.promptContext(includeScreen: false)
-        XCTAssertEqual(ctx.draft, "")
-        XCTAssertFalse(ctx.draftKnown)
-
-        let bytes = DraftReplacer.bytes(replacing: "echo hello", with: "echo bye",
-                                        bracketedPaste: ctx.bracketedPaste,
-                                        keyboardFlags: ctx.keyboardFlags)
-        await session.writeReplacement(bytes, adopting: "echo bye")
+        let replaced = await session.replaceDraft(with: "echo bye", forAgent: .any)
+        XCTAssertTrue(replaced)
         ctx = await session.promptContext(includeScreen: false)
         XCTAssertEqual(ctx.draft, "echo bye")
         XCTAssertTrue(ctx.draftKnown)
@@ -79,6 +70,29 @@ final class PTYSessionPromptContextTests: XCTestCase {
         await session.write(Data("!".utf8))
         ctx = await session.promptContext(includeScreen: false)
         XCTAssertEqual(ctx.draft, "echo bye!")
+    }
+
+    /// G1 / re-review Important 1+2: an Up on a single-row draft is history
+    /// navigation, so the mirror is lost. The actor — not the handler's stale
+    /// snapshot — refuses: nothing is typed and the mirror stays lost, because an
+    /// erase sized from a mirror it cannot count would paste into the residue.
+    func testReplaceDraftRefusesOnALostMirrorAndTypesNothing() async throws {
+        let session = try await startedSession()
+
+        await session.write(Data("echo hello".utf8))
+        let typed = await session.promptContext(includeScreen: false)
+        XCTAssertTrue(typed.draftKnown)
+
+        await session.write(Data([0x1B, 0x5B, 0x41]))          // CSI A — Up: history
+        var ctx = await session.promptContext(includeScreen: false)
+        XCTAssertEqual(ctx.draft, "")
+        XCTAssertFalse(ctx.draftKnown)
+
+        let replaced = await session.replaceDraft(with: "echo bye", forAgent: .any)
+        XCTAssertFalse(replaced, "a lost mirror must refuse the replacement")
+        ctx = await session.promptContext(includeScreen: false)
+        XCTAssertEqual(ctx.draft, "")
+        XCTAssertFalse(ctx.draftKnown, "a refused replacement must not adopt anything")
     }
 
     func testScreenFlagsFollowWhatTheShellPrints() async throws {

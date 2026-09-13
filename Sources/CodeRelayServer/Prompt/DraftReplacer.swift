@@ -37,26 +37,38 @@ enum DraftReplacer {
         })
     }
 
+    /// The text the replacement actually types: sanitized, and — without
+    /// bracketed paste, where a newline would submit — folded to one line. This
+    /// is what `DraftTracker.adopt` must be given: the raw text can differ from
+    /// it in length (`\r\n` becomes one space) and in content (dropped control
+    /// scalars), and a mirror that holds scalars the real input line does not
+    /// mis-sizes the next erase.
+    static func effectiveText(_ text: String, bracketedPaste: Bool) -> String {
+        let sanitizedText = sanitized(text)
+        guard !bracketedPaste else { return sanitizedText }
+        return sanitizedText
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+    }
+
     static func bytes(replacing draft: String, with text: String,
                       bracketedPaste: Bool, keyboardFlags: KittyKeyboardFlags) -> Data {
-        let sanitizedText = sanitized(text)
+        // One source of truth for what gets typed, so `bytes` and the text the
+        // caller adopts cannot drift apart.
+        let payload = effectiveText(text, bracketedPaste: bracketedPaste)
         let count = draft.utf16.count
         let backspace = keyboardFlags.contains(.reportAllKeys) ? kittyBackspace : legacyBackspace
         var out = Data()
-        out.reserveCapacity(count * (backspace.count + deleteKey.count) + sanitizedText.utf8.count + 12)
+        out.reserveCapacity(count * (backspace.count + deleteKey.count) + payload.utf8.count + 12)
         for _ in 0..<count { out.append(contentsOf: backspace) }
         for _ in 0..<count { out.append(contentsOf: deleteKey) }
         if bracketedPaste {
             out.append(contentsOf: pasteStart)
-            out.append(contentsOf: Array(sanitizedText.utf8))
+            out.append(contentsOf: Array(payload.utf8))
             out.append(contentsOf: pasteEnd)
         } else {
-            // Without bracketed paste a newline would submit; fold to one line.
-            let flat = sanitizedText
-                .replacingOccurrences(of: "\r\n", with: " ")
-                .replacingOccurrences(of: "\n", with: " ")
-                .replacingOccurrences(of: "\r", with: " ")
-            out.append(contentsOf: Array(flat.utf8))
+            out.append(contentsOf: Array(payload.utf8))
         }
         return out
     }

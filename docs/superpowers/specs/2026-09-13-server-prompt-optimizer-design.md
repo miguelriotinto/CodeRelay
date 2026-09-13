@@ -257,14 +257,29 @@ unknown (a sticky clear), because their position can no longer be trusted. The
 replacement encoding does not need the cursor, so a wand press straight after an
 Up/Down still rewrites the real line correctly (BS×N + DEL×N erases from either
 side of the cursor). The server's own erase keystrokes would themselves flip the
-mirror to unknown on the way through the decoder, so the two server write sites
-go through `PTYSession.writeReplacement(_:adopting:)`, which pastes and then
+mirror to unknown on the way through the decoder, so both server write sites go
+through `PTYSession.replaceDraft(with:forAgent:)`, which pastes and then
 **adopts** the pasted text as the mirror in the same actor step
-(`DraftTracker.adopt`): the line is known to be exactly what the server just
-typed, so a second wand press or an Undo works immediately. Adoption is the
-server stating a fact about its own write — a mirror lost to *user* keystrokes
-stays lost until a provable submit-Enter (see the bare-Enter rule above), Ctrl-C,
-or an agent change.
+(`DraftTracker.adopt`, given the text `DraftReplacer` actually typed): the line is
+known to be exactly what the server just typed, so a second wand press or an Undo
+works immediately. Adoption is the server stating a fact about its own write — a
+mirror lost to *user* keystrokes stays lost until a provable submit-Enter (see the
+bare-Enter rule above), Ctrl-C, or an agent change.
+
+**The replacement is sized and decided on the actor, never from a handler's
+snapshot.** A `promptContext` taken before the model call — or even in the
+handler's mid-flight re-check — is two to three async hops old by the time the
+bytes are written, and terminal input reaches the same actor through its own
+unstructured `Task`, so a keystroke can land in that window. Sizing the erase from
+the stale draft under-counts the real line and adopting anyway declares the
+shorter line exact: the one destructive direction. `replaceDraft` therefore reads
+the mirror, the bracketed-paste state and the tracked agent itself and **refuses**
+— writing nothing, adopting nothing, returning false — when the session has
+terminated, the mirror is lost, or the caller's `.exactly(agentId)` expectation no
+longer matches the foreground agent. Both handlers turn that refusal into
+`status: failed` with "Optimizer could not rewrite this prompt"; optimize passes
+`.exactly(agentId)` (the agent it optimized for) and Undo passes `.any`, having no
+agent snapshot to compare against.
 
 Additional rules: reset when the foreground agent changes (fed by
 `PTYSession`'s foreground poll, which also swaps the profile); cap 16 384
@@ -511,16 +526,17 @@ the PTY. This is how the system prompt is tuned without a phone in hand.
 5. `pty.promptContext(includeScreen:)`; empty draft → `status: no_draft`.
 6. `optimize(context)` with a 12 s deadline. `passthrough` → `status: passthrough`
    with no PTY write. Failure → `status: failed` with the table message.
-7. `optimized(text)` → `pty.writeReplacement(DraftReplacer.bytes(replacing: draft, with: text, …), adopting: text)` →
-   `status: ok, original: draft, prompt: text`. The write adopts `text` as the new
-   mirror (§5.2).
+7. `optimized(text)` → a re-read of `promptContext` fails fast on an agent change,
+   then `pty.replaceDraft(with: text, forAgent: .exactly(agentId))`. `true` →
+   `status: ok, original: draft, prompt: text` (the actor sized the erase from the
+   live mirror and adopted what it typed, §5.2). `false` (mirror lost or agent
+   changed since the snapshot) → `status: failed` with "Optimizer could not rewrite
+   this prompt" and no PTY write.
 
 `handleReplacePrompt(sessionId:text:)`: steps 1–2 as above, then
-`promptContext(includeScreen: false)`; if the mirror is lost
-(`draftKnown == false`) → `failed` with "Optimizer could not rewrite this
-prompt" and **no PTY write**, because the erase length is unknown; otherwise
-write the replacement (adopting `text`) and reply
-`replace_prompt_result{status: ok}`. `text` is capped at 16 KB; over the cap
+`pty.replaceDraft(with: text, forAgent: .any)`; `false` (the mirror is lost, so
+the erase length is unknown) → `failed` with "Optimizer could not rewrite this
+prompt" and **no PTY write**; `true` → `replace_prompt_result{status: ok}`. `text` is capped at 16 KB; over the cap
 → `failed`. A genuinely empty but *known* draft is written normally — the erase
 prefix is simply empty.
 
@@ -698,6 +714,7 @@ history and are left alone.
 | Waiter timeout (should not happen) | Client | Existing RPC-timeout handling | n/a |
 | Undo after the user typed more | Server replaces the current draft | Draft becomes the original | yes |
 | Undo while the mirror is lost | Server → `failed` | "Optimizer could not rewrite this prompt" | no |
+| Optimize completes while the mirror is lost | Server → `failed` | "Optimizer could not rewrite this prompt" | no |
 
 Nothing is dropped silently. Every request receives exactly one reply.
 

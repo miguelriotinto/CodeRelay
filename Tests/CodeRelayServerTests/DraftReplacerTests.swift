@@ -84,4 +84,35 @@ final class DraftReplacerTests: XCTestCase {
         XCTAssertEqual(tracker.draft, "new")
         XCTAssertEqual(tracker.cursor, 3)
     }
+
+    // MARK: G2 — the text the replacer actually types
+
+    /// `adopt` is given `effectiveText`, not the raw text: without bracketed paste
+    /// a `\r\n` becomes ONE space, so adopting the raw text would leave the mirror
+    /// one scalar longer than the real line.
+    func testEffectiveTextFoldsNewlinesWithoutBracketedPaste() {
+        XCTAssertEqual(DraftReplacer.effectiveText("a\r\nb", bracketedPaste: false), "a b")
+        XCTAssertEqual(DraftReplacer.effectiveText("a\nb\rc", bracketedPaste: false), "a b c")
+    }
+
+    func testEffectiveTextKeepsNewlinesInsideBracketedPaste() {
+        XCTAssertEqual(DraftReplacer.effectiveText("a\nb", bracketedPaste: true), "a\nb")
+    }
+
+    func testEffectiveTextDropsControlBytes() {
+        XCTAssertEqual(DraftReplacer.effectiveText("x\u{07}\u{00}\ty\u{7F}z", bracketedPaste: true), "x\tyz")
+    }
+
+    /// The pasted tail of `bytes` is exactly `effectiveText`, so the two cannot
+    /// drift apart.
+    func testBytesPasteExactlyTheEffectiveText() {
+        let text = "a\r\nb\u{07}c"
+        let flat = DraftReplacer.effectiveText(text, bracketedPaste: false)
+        XCTAssertEqual(string(DraftReplacer.bytes(replacing: "", with: text,
+                                                 bracketedPaste: false, keyboardFlags: [])), flat)
+        let wrapped = DraftReplacer.effectiveText(text, bracketedPaste: true)
+        XCTAssertEqual(string(DraftReplacer.bytes(replacing: "", with: text,
+                                                 bracketedPaste: true, keyboardFlags: [])),
+                       "\(esc)[200~" + wrapped + "\(esc)[201~")
+    }
 }

@@ -42,17 +42,42 @@ actor MockPTYSession: PTYSessionProtocol {
 
     func write(_ data: Data) { writes.append(data) }
     func recordedWrites() -> [Data] { writes }
-    /// Every draft adopted through `writeReplacement`, in order. The bytes land
-    /// in `writes` exactly as a plain `write` would, so write assertions are
-    /// unaffected by which of the two the handler used.
+    /// Every draft adopted through `replaceDraft`, in order. Its bytes land in
+    /// `writes` exactly as a plain `write` would, so write assertions do not care
+    /// which path produced them.
     private var adoptedDrafts: [String] = []
-    func writeReplacement(_ data: Data, adopting draft: String) {
-        write(data)
-        adoptedDrafts.append(draft)
+    /// Mirrors `PTYSession.replaceDraft`'s contract against `mockPromptContext`:
+    /// `draftKnown == false` stands in for a lost mirror, and `.exactly` compares
+    /// the tracked agent. A refusal writes nothing and adopts nothing.
+    @discardableResult
+    func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> Bool {
+        guard !terminated, mockPromptContext.draftKnown else { return false }
+        if case .exactly(let expected) = expectation, expected != mockPromptContext.agentId { return false }
+        let bytes = DraftReplacer.bytes(replacing: mockPromptContext.draft, with: text,
+                                        bracketedPaste: mockPromptContext.bracketedPaste,
+                                        keyboardFlags: mockPromptContext.keyboardFlags)
+        write(bytes)
+        adoptedDrafts.append(DraftReplacer.effectiveText(text, bracketedPaste: mockPromptContext.bracketedPaste))
+        return true
     }
     func recordedAdoptedDrafts() -> [String] { adoptedDrafts }
     func setMockPromptContext(_ context: PromptContext) { mockPromptContext = context }
+    /// Test hook: install `context` only once `promptContext` has been read
+    /// `afterReads` times, so a test can change what the actor sees *after* a
+    /// handler's mid-flight re-check has already run.
+    func setMockPromptContext(_ context: PromptContext, afterReads: Int) {
+        deferredContext = (afterReads, context)
+    }
+    private var promptContextReads = 0
+    private var deferredContext: (afterReads: Int, context: PromptContext)?
     func promptContext(includeScreen: Bool) -> PromptContext {
+        promptContextReads += 1
+        defer {
+            if let deferred = deferredContext, promptContextReads >= deferred.afterReads {
+                mockPromptContext = deferred.context
+                deferredContext = nil
+            }
+        }
         guard includeScreen else {
             return PromptContext(
                 draft: mockPromptContext.draft, agentId: mockPromptContext.agentId,

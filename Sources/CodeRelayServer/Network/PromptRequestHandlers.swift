@@ -99,7 +99,8 @@ extension RelayMessageHandler {
                         handler.sendServerMessage(.optimizePromptResult(status: "passthrough"), context: ctx.value)
                     }
                 case .optimized(let prompt):
-                    // Re-read draft and prepare replacement on the same path.
+                    // Re-read only to fail fast on an agent change: the erase is
+                    // sized inside the actor at write time, not from this snapshot.
                     let current = await pty.promptContext(includeScreen: false)
                     // The foreground agent changed (or exited) while the model
                     // ran: the tracker was reset with it, so the erase count is
@@ -122,9 +123,6 @@ extension RelayMessageHandler {
                         }
                         return
                     }
-                    let bytes = DraftReplacer.bytes(replacing: current.draft, with: prompt,
-                                                    bracketedPaste: current.bracketedPaste,
-                                                    keyboardFlags: current.keyboardFlags)
                     try Task.checkCancellation()
                     // Back to event loop: validate attachment, write PTY, then send reply.
                     ctx.value.eventLoop.execute { [weak self] in
@@ -150,15 +148,29 @@ extension RelayMessageHandler {
                         }
                         // Write PTY first, then send reply to preserve ordering with binary terminal input.
                         Task {
-                            // `writeReplacement`, not `write`: the erase keystrokes
-                            // pass through the decoder like any input and would
-                            // invalidate the mirror at an uncertain cursor, so the
-                            // session adopts the prompt it just pasted instead.
-                            await pty.writeReplacement(bytes, adopting: prompt)
+                            // The actor sizes the erase from the mirror as it is
+                            // when the write lands and refuses if the mirror is
+                            // lost or the agent changed since the snapshot above:
+                            // this Task and the one carrying terminal input reach
+                            // the actor in no defined order, so only the actor can
+                            // decide. It also adopts what it typed, since the erase
+                            // keystrokes pass through the decoder like any input and
+                            // would invalidate the mirror at an uncertain cursor.
+                            let replaced = await pty.replaceDraft(with: prompt,
+                                                                  forAgent: .exactly(promptContext.agentId))
                             let elapsed = Int(Date().timeIntervalSince(startedAt) * 1000)
                             ctx.value.eventLoop.execute { [weak self] in
                                 guard let handler = self, handler.optimizeGeneration == resolvedGeneration,
                                       ctx.value.channel.isActive else { return }
+                                guard replaced else {
+                                    RelayLogger.log(.debug, category: "optimizer",
+                                                    "optimize_prompt refused: agent changed or mirror lost")
+                                    handler.sendServerMessage(
+                                        .optimizePromptResult(status: "failed",
+                                                              message: "Optimizer could not rewrite this prompt"),
+                                        context: ctx.value)
+                                    return
+                                }
                                 RelayLogger.log(.debug, category: "optimizer",
                                     "optimize_prompt ok draft=\(promptContext.draft.utf8.count)B prompt=\(prompt.utf8.count)B in \(elapsed)ms")
                                 handler.sendServerMessage(.optimizePromptResult(status: "ok", original: promptContext.draft, prompt: prompt), context: ctx.value)
@@ -195,13 +207,15 @@ extension RelayMessageHandler {
 
     /// `replace_prompt` has **no deadline and no single-flight guard**, unlike
     /// `optimize_prompt`: there is no model call here, only one actor hop for the
-    /// draft snapshot plus a PTY write, so there is nothing slow to bound and
-    /// nothing expensive to serialize. The trade-off is explicit — if the PTY
-    /// actor is wedged, nothing on the server answers and the client's own 20 s
-    /// waiter expires; adding a deadline here would only re-describe that
-    /// timeout on the server side.
+    /// replacement (the actor sizes, types and adopts it in one step), so there is
+    /// nothing slow to bound and nothing expensive to serialize. The trade-off is
+    /// explicit — if the PTY actor is wedged, nothing on the server answers and the
+    /// client's own 20 s waiter expires; adding a deadline here would only
+    /// re-describe that timeout on the server side.
     func handleReplacePrompt(sessionId: UUID, text: String, context: ChannelHandlerContext) {
-        guard let pty = attachedPTY, attachedSessionId == sessionId else {
+        // The PTY is re-read in `onSuccess` (attachment can change across the
+        // hop), so this is only the fast "not attached" answer.
+        guard attachedPTY != nil, attachedSessionId == sessionId else {
             sendServerMessage(.replacePromptResult(status: "failed", message: "Session not attached"), context: context)
             return
         }
@@ -211,34 +225,11 @@ extension RelayMessageHandler {
         }
         bridgeToEventLoop(
             context: context,
-            // `nil` means refused: the draft mirror is lost, so there is no
-            // erase length to compute. Carried as an optional rather than a
-            // thrown error because it is not a failure of the work — it is the
-            // answer — and `onFailure` owns a different client string.
-            work: { () async throws -> Data? in
-                let current = await pty.promptContext(includeScreen: false)
-                // The replacement erases exactly as many characters as the mirror
-                // says the line holds. While the mirror is lost the real line holds
-                // text the server cannot count, so the erase would be too short and
-                // the paste would land inside the surviving residue — the one
-                // destructive direction. Deliberately *not* `draft.isEmpty`: a
-                // genuinely empty, known line is a legitimate Undo target (erase
-                // nothing, paste the original back).
-                guard current.draftKnown else { return nil }
-                let bytes = DraftReplacer.bytes(replacing: current.draft, with: text,
-                                                bracketedPaste: current.bracketedPaste,
-                                                keyboardFlags: current.keyboardFlags)
-                return bytes
-            },
-            onSuccess: { handler, ctx, bytes in
-                guard let bytes else {
-                    RelayLogger.log(.debug, category: "optimizer", "replace_prompt refused: mirror lost")
-                    handler.sendServerMessage(
-                        .replacePromptResult(status: "failed",
-                                             message: "Optimizer could not rewrite this prompt"),
-                        context: ctx)
-                    return
-                }
+            // Nothing to compute off the PTY here any more: the erase length is
+            // read from the mirror inside the actor, at the moment the bytes are
+            // written, so there is no snapshot for a keystroke to invalidate.
+            work: { () async throws -> Void in },
+            onSuccess: { handler, ctx, _ in
                 // Re-validate attachment before PTY write.
                 guard handler.attachedSessionId == sessionId, ctx.channel.isActive,
                       let pty = handler.attachedPTY else {
@@ -248,10 +239,26 @@ extension RelayMessageHandler {
                 // Write PTY first, then send reply to preserve ordering with binary terminal input.
                 let ctx = UnsafeTransfer(ctx)
                 Task {
-                    // Adopts `text` as the mirror — see the optimize site above.
-                    await pty.writeReplacement(bytes, adopting: text)
+                    // `.any`: Undo carries no agent snapshot to compare against —
+                    // the device is replaying text the user just saw in this box.
+                    // The mirror check still applies: while it is lost the real
+                    // line holds text the server cannot count, so the erase would
+                    // be too short and the paste would land inside the surviving
+                    // residue — the one destructive direction. Deliberately *not*
+                    // `draft.isEmpty`: a genuinely empty, known line is a
+                    // legitimate Undo target (erase nothing, paste the original
+                    // back).
+                    let replaced = await pty.replaceDraft(with: text, forAgent: .any)
                     ctx.value.eventLoop.execute { [weak handler] in
                         guard let handler, ctx.value.channel.isActive else { return }
+                        guard replaced else {
+                            RelayLogger.log(.debug, category: "optimizer", "replace_prompt refused: mirror lost")
+                            handler.sendServerMessage(
+                                .replacePromptResult(status: "failed",
+                                                     message: "Optimizer could not rewrite this prompt"),
+                                context: ctx.value)
+                            return
+                        }
                         RelayLogger.log(.debug, category: "optimizer", "replace_prompt ok text=\(text.utf8.count)B")
                         handler.sendServerMessage(.replacePromptResult(status: "ok"), context: ctx.value)
                     }

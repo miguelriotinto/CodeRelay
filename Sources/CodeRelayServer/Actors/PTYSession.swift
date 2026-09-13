@@ -15,12 +15,13 @@ public protocol PTYSessionProtocol: Actor {
     /// terminal (F11 terminal-copy → device). Cleared by `clearOutputHandler`.
     func setClipboardHandler(_ handler: @escaping @Sendable (String) -> Void)
     func write(_ data: Data)
-    /// Write a server-generated draft replacement (erase + paste) and adopt
-    /// `draft` as the new mirror in the same actor step. The erase keystrokes
-    /// would otherwise be decoded as ordinary input and, at an uncertain or lost
-    /// cursor, invalidate the very mirror the replacement just made exact.
-    /// Only the optimizer's two write sites use this.
-    func writeReplacement(_ data: Data, adopting draft: String)
+    /// Erase the mirrored line and paste `text`, sized from the mirror AS IT IS
+    /// NOW, in one actor step (no await anywhere inside). Returns false and writes
+    /// nothing when the session has terminated, the mirror is lost, or the tracked
+    /// foreground agent is no longer `agentId` (the agent the caller optimized for).
+    /// The only write path that may adopt a mirror.
+    @discardableResult
+    func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> Bool
     func resize(cols: UInt16, rows: UInt16)
     /// Best-effort current working directory of the session's shell process
     /// (the stable workspace anchor). Nil when the process is gone or the
@@ -67,6 +68,17 @@ public protocol PTYSessionProtocol: Actor {
     /// (F6). While fresh, hook state overrides screen detection. No-op when no
     /// agent is currently active.
     func applyHookState(_ hookState: AgentDetectedState)
+}
+
+// MARK: - AgentExpectation
+
+/// Which foreground agent a draft replacement is allowed to land on, checked by
+/// `replaceDraft` inside the actor. `.exactly` carries the id the caller
+/// optimized for (`nil` is a legitimate value: no agent); `.any` is for Undo,
+/// which replays text the user just saw and has no agent snapshot to compare.
+public enum AgentExpectation: Sendable, Equatable {
+    case any
+    case exactly(String?)
 }
 
 // MARK: - PTYError
@@ -760,15 +772,34 @@ public actor PTYSession: PTYSessionProtocol {
         enqueueWrite(data)
     }
 
-    /// Write a replacement produced by `DraftReplacer` and adopt its text as the
-    /// mirror. `write` feeds the erase keystrokes to the tracker first — which is
-    /// what invalidates the mirror at an uncertain cursor — and `adopt` then
-    /// states the outcome the server knows for certain. Both happen in one actor
-    /// step: this method has no `await`, so no client keystroke can interleave
-    /// between the paste and the adoption.
-    public func writeReplacement(_ data: Data, adopting draft: String) {
-        write(data)
-        draftTracker.adopt(draft)
+    /// Size, type and adopt a draft replacement in one actor step.
+    ///
+    /// Everything the decision needs is read here, inside the actor: the caller's
+    /// `promptContext` snapshot is 2-3 async hops old by now, and terminal input
+    /// reaches this actor through its own unstructured Task, so a keystroke can
+    /// land in that window. Sizing the erase from a stale draft under-counts the
+    /// real line, and adopting unconditionally then declares that shorter line
+    /// exact — the one destructive direction (spec §5.2).
+    ///
+    /// The method has no `await`, so no keystroke can interleave between the
+    /// paste and the adoption. `write` feeds the erase keystrokes through the
+    /// decoder like any input — which is what invalidates the mirror at an
+    /// uncertain cursor — and `adopt` then states the outcome the server knows
+    /// for certain: the text it actually typed, not the raw text it was handed.
+    @discardableResult
+    public func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> Bool {
+        syncTrackedAgent()
+        guard !terminated, !draftTracker.mirrorLost,
+              expectation == .any || expectation == .exactly(activityMonitor.activeAgent?.id) else {
+            return false
+        }
+        let bracketedPaste = screenModel.bracketedPasteEnabled
+        let bytes = DraftReplacer.bytes(replacing: draftTracker.draft, with: text,
+                                        bracketedPaste: bracketedPaste,
+                                        keyboardFlags: screenModel.keyboardFlags)
+        write(bytes)
+        draftTracker.adopt(DraftReplacer.effectiveText(text, bracketedPaste: bracketedPaste))
+        return true
     }
 
     /// Enqueue PTY write, bypassing the draft mirror. Used for relay-generated

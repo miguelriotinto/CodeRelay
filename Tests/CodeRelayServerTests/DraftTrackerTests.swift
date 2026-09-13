@@ -294,6 +294,9 @@ final class DraftTrackerTests: XCTestCase {
         XCTAssertEqual(t.draft.unicodeScalars.count, DraftTracker.maxScalars)
         t.apply(.text("y"))
         XCTAssertEqual(t.draft, "")
+        // Overflow is a doubt site, not a known-empty line: the box holds text the
+        // server stopped counting, so the mirror must be lost (sticky, wave D).
+        XCTAssertTrue(t.mirrorLost)
     }
 
     // MARK: C2 — clear on anything unmodelled

@@ -242,9 +242,9 @@ final class PromptRequestHandlerTests: XCTestCase {
                                            bracketedPaste: true, keyboardFlags: ctx.keyboardFlags)
         let writes = await fixture.mock.recordedWrites()
         XCTAssertEqual(writes, [expected])
-        // E3: the bytes go out through `writeReplacement`, so the mirror adopts
-        // the prompt the server just pasted instead of re-deriving it from the
-        // erase keystrokes it also wrote.
+        // E3/G1: the bytes go out through `replaceDraft`, so the mirror adopts the
+        // prompt the server just pasted instead of re-deriving it from the erase
+        // keystrokes it also wrote.
         let adopted = await fixture.mock.recordedAdoptedDrafts()
         XCTAssertEqual(adopted, ["Run `git status`, then fix the failing test."])
         let state = try await optimizeState(fixture)
@@ -388,6 +388,62 @@ final class PromptRequestHandlerTests: XCTestCase {
         XCTAssertTrue(started)
         // The agent exits while the model call is suspended.
         await fixture.mock.setMockPromptContext(context(draft: "fix the build", agentId: nil))
+        await optimizer.release(0)
+
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .optimizePromptResult(status: "failed",
+                                                     message: "Optimizer could not rewrite this prompt"))
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "a rewrite must never be typed at a prompt the tracker no longer models")
+        let state = try await optimizeState(fixture)
+        XCTAssertFalse(state.inFlight)
+        try await assertNoFurtherMessages(fixture)
+    }
+
+    /// Re-review Important 1: the mirror can go lost during the whole model call
+    /// (a Tab completion, an Up for history). The erase would then be sized from
+    /// an empty mirror, so the rewrite would land inside text the server cannot
+    /// count. The actor refuses; the handler answers `failed` and types nothing.
+    func testOptimizeWhenTheMirrorIsLostMidFlightFailsWithoutWriting() async throws {
+        let optimizer = GatedOptimizer()
+        let fixture = try await makeFixture(optimizer: optimizer)
+        addTeardownBlock { await self.cleanup(fixture) }
+        await fixture.mock.setMockPromptContext(context(draft: "fix the build", agentId: "claude"))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        let started = await poll { await optimizer.callCount() == 1 }
+        XCTAssertTrue(started)
+        // The user presses Tab while the model runs: same agent, mirror lost.
+        await fixture.mock.setMockPromptContext(context(draft: "", agentId: "claude", draftKnown: false))
+        await optimizer.release(0)
+
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .optimizePromptResult(status: "failed",
+                                                     message: "Optimizer could not rewrite this prompt"))
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "a rewrite must never be typed into a line the mirror cannot count")
+        let adopted = await fixture.mock.recordedAdoptedDrafts()
+        XCTAssertTrue(adopted.isEmpty, "a refused replacement must not adopt a mirror")
+        let state = try await optimizeState(fixture)
+        XCTAssertFalse(state.inFlight)
+        try await assertNoFurtherMessages(fixture)
+    }
+
+    /// Re-review Important 2: the agent can change *after* the handler's
+    /// mid-flight re-check and before the write lands on the actor (terminal input
+    /// and the replacement reach the actor through separate unstructured Tasks).
+    /// The expectation travels with the write, so the actor refuses at the last
+    /// possible moment. `afterReads: 2` installs the new context once the
+    /// handler's own re-read has already returned the old one.
+    func testOptimizeAgentChangeAfterTheFastPathFailsWithoutWriting() async throws {
+        let optimizer = GatedOptimizer()
+        let fixture = try await makeFixture(optimizer: optimizer)
+        addTeardownBlock { await self.cleanup(fixture) }
+        await fixture.mock.setMockPromptContext(context(draft: "fix the build", agentId: "claude"))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        let started = await poll { await optimizer.callCount() == 1 }
+        XCTAssertTrue(started)
+        await fixture.mock.setMockPromptContext(context(draft: "fix the build", agentId: nil),
+                                               afterReads: 2)
         await optimizer.release(0)
 
         let reply = try await nextServerMessage(fixture)

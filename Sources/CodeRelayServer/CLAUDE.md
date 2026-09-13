@@ -262,18 +262,30 @@ Pipeline per session, all inside the `PTYSession` actor:
   outgrown. Capped at 16 384 scalars
   (`DraftTracker.maxScalars`), checked *before* an insert, and the decoder drops a
   printable run past the same bound as one `.unknown`.
-- **A lost mirror refuses a replacement.** `PromptContext.draftKnown` carries
-  `!mirrorLost` to the handlers, and `handleReplacePrompt` answers `failed` /
-  `"Optimizer could not rewrite this prompt"` with no PTY write when it is false —
-  the guard is on `draftKnown`, *not* on an empty draft, because Undo onto a
-  genuinely empty known line is legitimate (erase nothing, paste the original).
-- **A server write adopts what it pasted.** Both optimizer write sites use
-  `PTYSession.writeReplacement(_:adopting:)`, which writes the bytes and then
-  `DraftTracker.adopt(text)` in the same actor step: the erase keystrokes would
-  otherwise flow through the decoder and lose the mirror at an uncertain cursor,
-  whereas the server knows the line is now exactly what it typed. Adoption is a
-  recovery point like a submit; a mirror lost to *user* keystrokes is not
-  recovered this way.
+- **A lost mirror refuses a replacement, and the actor is what refuses.** The
+  decision cannot live in a handler: a `promptContext` snapshot is 2–3 async hops
+  old by the time the bytes are written (for optimize, the whole model call), and
+  terminal input reaches the actor through its own unstructured `Task`, so a
+  keystroke can land in between — an erase sized from the stale draft under-counts
+  the real line. `PTYSession.replaceDraft(with:forAgent:)` therefore reads the
+  mirror itself and returns `false`, writing and adopting nothing, when the session
+  terminated, the mirror is lost, or an `.exactly(agentId)` expectation no longer
+  matches the foreground agent. **Both** `handleOptimizePrompt` (`.exactly` — the
+  agent it optimized for) and `handleReplacePrompt` (`.any` — Undo has no agent
+  snapshot) turn `false` into `failed` / `"Optimizer could not rewrite this
+  prompt"` with no PTY write. The gate is the mirror, *not* an empty draft: Undo
+  onto a genuinely empty known line is legitimate (erase nothing, paste the
+  original). `PromptContext.draftKnown` still carries `!mirrorLost` for the CLI and
+  the tests.
+- **A server write adopts what it pasted.** `replaceDraft` writes the bytes and
+  then `DraftTracker.adopt(DraftReplacer.effectiveText(text, …))` in the same actor
+  step, with no `await` in between: the erase keystrokes would otherwise flow
+  through the decoder and lose the mirror at an uncertain cursor, whereas the
+  server knows the line is now exactly what it typed. `effectiveText`, not the raw
+  text — the replacer strips control scalars and folds `\r\n`/`\n`/`\r` to spaces
+  without bracketed paste, so the raw text can be the wrong length. Adoption is a
+  recovery point like a submit; a mirror lost to *user* keystrokes is not recovered
+  this way.
 - `PromptContext` is the snapshot handed to the model: draft, agent id + display
   name, cwd, the trailing ≤40 lines / ≤4 KB of the rendered screen (only when
   both `promptOptimizerShareScreen` and the request's `shareScreen` are true),

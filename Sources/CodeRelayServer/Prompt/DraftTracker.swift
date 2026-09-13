@@ -221,6 +221,7 @@ struct DraftTracker: Sendable {
             // mirror cannot read the line, so it recovers only on the evidence of
             // text typed since the loss; otherwise the box may still be full and
             // "recovery" would restart the mirror mid-line — wave D's under-count.
+            // `key == .enter`: continuation is Enter-keyed, per §5.1.
             if mirrorLost, key == .enter, profile.newline.contains(.backslashEnter),
                !lostTailIsSafe {
                 return
