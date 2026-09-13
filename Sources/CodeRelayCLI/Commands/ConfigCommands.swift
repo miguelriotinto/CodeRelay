@@ -70,7 +70,9 @@ struct ConfigSetCommand: AsyncParsableCommand {
             "bindAll",
             "pushEnabled", "pushNotifyOnFinished",
             "apnsKeyPath", "apnsKeyId", "apnsTeamId", "apnsBundleId", "apnsUseSandbox",
-            "fcmServiceAccountPath", "fcmProjectId"
+            "fcmServiceAccountPath", "fcmProjectId",
+            "promptOptimizerEnabled", "promptOptimizerProvider", "promptOptimizerModel",
+            "promptOptimizerRegion", "promptOptimizerKeyPath", "promptOptimizerShareScreen"
         ]
         guard validKeys.contains(key) else {
             FileHandle.standardError.write(Data(
@@ -79,6 +81,10 @@ struct ConfigSetCommand: AsyncParsableCommand {
         }
 
         let typedValue = ConfigValue.infer(from: value)
+        if let message = Self.optimizerValidationError(key: key, value: typedValue) {
+            FileHandle.standardError.write(Data("Error: \(message)\n".utf8))
+            throw ExitCode.failure
+        }
         switch (key, typedValue) {
         case ("wsPort", .int(let portValue)), ("adminPort", .int(let portValue)):
             // Shared bound, not a local literal: this is a fast-path copy of the
@@ -136,6 +142,33 @@ struct ConfigSetCommand: AsyncParsableCommand {
         } catch {
             print(OutputFormatter.formatError(error, json: globals.json))
             throw ExitCode.failure
+        }
+    }
+
+    /// Client-side fast path for the promptOptimizer* keys. Returns the message
+    /// to print, or nil when the value should be shipped to the server. Mirrors
+    /// `AdminRoutes.applyConfigValue`, which remains the authority.
+    static func optimizerValidationError(key: String, value: ConfigValue) -> String? {
+        switch (key, value) {
+        case ("promptOptimizerEnabled", .bool), ("promptOptimizerShareScreen", .bool):
+            return nil
+        case ("promptOptimizerEnabled", _), ("promptOptimizerShareScreen", _):
+            return "\(key) must be true or false"
+        case ("promptOptimizerProvider", .string(let provider)):
+            return RelayConfig.optimizerProviders.contains(provider)
+                ? nil
+                : "promptOptimizerProvider must be one of: \(RelayConfig.optimizerProviders.sorted().joined(separator: ", "))"
+        case ("promptOptimizerRegion", .string(let region)):
+            return RelayConfig.isValidOptimizerRegion(region) ? nil : "promptOptimizerRegion must match [a-z0-9-]+"
+        case ("promptOptimizerKeyPath", .string(let path)):
+            guard !path.isEmpty else { return nil }
+            let expanded = NSString(string: path).expandingTildeInPath
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: expanded) { return "promptOptimizerKeyPath path not found: \(path)" }
+            if !fm.isReadableFile(atPath: expanded) { return "promptOptimizerKeyPath path exists but is not readable: \(path)" }
+            return nil
+        default:
+            return nil
         }
     }
 }

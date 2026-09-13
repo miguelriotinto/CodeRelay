@@ -421,6 +421,31 @@ enum AdminRoutes {
         case "fcmProjectId":
             guard let val = value as? String else { throw ConfigError(message: "fcmProjectId must be a string") }
             config.fcmProjectId = val.isEmpty ? nil : val
+        case "promptOptimizerEnabled":
+            guard let val = value as? Bool else { throw ConfigError(message: "promptOptimizerEnabled must be a boolean") }
+            config.promptOptimizerEnabled = val
+        case "promptOptimizerProvider":
+            guard let val = value as? String else { throw ConfigError(message: "promptOptimizerProvider must be a string") }
+            guard RelayConfig.optimizerProviders.contains(val) else {
+                throw ConfigError(message: "promptOptimizerProvider must be one of: \(RelayConfig.optimizerProviders.sorted().joined(separator: ", "))")
+            }
+            config.promptOptimizerProvider = val
+        case "promptOptimizerModel":
+            guard let val = value as? String else { throw ConfigError(message: "promptOptimizerModel must be a string") }
+            config.promptOptimizerModel = val.isEmpty ? nil : val
+        case "promptOptimizerRegion":
+            guard let val = value as? String else { throw ConfigError(message: "promptOptimizerRegion must be a string") }
+            guard RelayConfig.isValidOptimizerRegion(val) else {
+                throw ConfigError(message: "promptOptimizerRegion must match [a-z0-9-]+")
+            }
+            config.promptOptimizerRegion = val
+        case "promptOptimizerKeyPath":
+            guard let val = value as? String else { throw ConfigError(message: "promptOptimizerKeyPath must be a string") }
+            try validateReadableFileOrEmpty(val, name: "promptOptimizerKeyPath")
+            config.promptOptimizerKeyPath = val.isEmpty ? nil : val
+        case "promptOptimizerShareScreen":
+            guard let val = value as? Bool else { throw ConfigError(message: "promptOptimizerShareScreen must be a boolean") }
+            config.promptOptimizerShareScreen = val
         default:
             throw ConfigError(message: "Unknown config key: \(key)")
         }
@@ -511,6 +536,6 @@ enum AdminRoutes {
     }
 }
 
-private struct ConfigError: Error {
+struct ConfigError: Error {
     let message: String
 }
