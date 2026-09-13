@@ -267,13 +267,17 @@ Pipeline per session, all inside the `PTYSession` actor:
 
 Caps and fixed strings: draft > 4 KB → `"Prompt too long to optimize"`;
 `replace_prompt.text` > 16 KB → `"Replacement too long"`; one optimize in
-flight per connection (`"Already optimizing"`); 12 s end-to-end deadline
-(`PromptOptimizer.deadline`; `RelayMessageHandler.optimizeDeadline` and the
-admin route's `optimizeDeadline` parameter default to it) → `"Optimizer
-unavailable, try again"`; no optimizer → `status: "unconfigured"`, `"Optimizer
-not configured on the relay"`. The draft is re-read right before typing so edits
-made while the model ran are erased correctly, and a reply that lands after the
-deadline never types.
+flight per connection (`"Already optimizing"`); a 12 s deadline over context
+capture + the model call (`PromptOptimizer.deadline`;
+`RelayMessageHandler.optimizeDeadline` and the admin route's `optimizeDeadline`
+parameter default to it) → `"Optimizer unavailable, try again"`. It is **not**
+end-to-end: the handler cancels it as soon as the outcome is in, before spawning
+the PTY write, so total latency is the deadline plus write time (spec §6) — and
+it is deliberately never re-armed around the write. No optimizer → `status:
+"unconfigured"`, `"Optimizer not configured on the relay"`. The draft is re-read
+right before typing so edits made while the model ran are erased correctly (and
+if the *agent* changed under it, nothing is typed at all), and a reply that lands
+after the deadline never types.
 
 **Never log the draft, the prompt, the screen, or the key.** Handler and client
 log status, byte counts, latency and `usage.cache_read_input_tokens` at debug
@@ -285,5 +289,12 @@ Tuning loop without a phone: `claude-relay optimizer try "<draft>" [--session
 <id>] [--no-screen]` → `POST /optimizer/try` runs the same optimizer over a
 draft (with a live session's agent/cwd/screen if given) and prints the result
 without writing the PTY. Tests double the model with `FakeOptimizer`
-(`PromptRequestHandlerTests`, `WirePromptOptimizerTests`) and the HTTP layer
+(`PromptRequestHandlerTests`, `WirePromptOptimizerTests`; the doubles live in
+`Tests/CodeRelayServerTests/PromptTestDoubles.swift`) and the HTTP layer
 with a scripted `MessagesSending` (`PromptOptimizerTests`, `MessagesClientTests`).
+
+Test-coverage gap to know about: no test drives `AdminHTTPServer` over a real
+socket for `/optimizer/try`. Coverage is route-level only
+(`AdminRoutesEndpointTests` calls `AdminRoutes.handle` directly), so the
+`optimizer:` / `optimizeDeadline:` pass-through in `AdminHTTPServer.swift` is
+unverified by test — a wiring mistake there would not fail the suite.

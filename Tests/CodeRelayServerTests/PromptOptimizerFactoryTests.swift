@@ -101,61 +101,86 @@ final class PromptOptimizerFactoryTests: XCTestCase {
     }
 
     // MARK: - Log Coverage Tests
+    //
+    // `LogStore.recent(count:)` returns the LAST `count` entries, so a before/after
+    // comparison can never be positional: once the process has logged more than
+    // `count` lines, `before.count == after.count` is trivially true and
+    // `after.dropFirst(before.count)` reads a slice that has nothing to do with
+    // the new lines. These tests compare *filtered counts* over a window large
+    // enough to contain both snapshots, and — where the message carries the key
+    // path — narrow the filter to this test run's unique temp directory name.
+
+    /// Wide enough to hold both snapshots of a single test's logging.
+    private static let logWindow = 2_000
+
+    private func optimizerErrorCount(mentioning needle: String? = nil) -> Int {
+        RelayLogger.store.recent(count: Self.logWindow).filter { line in
+            guard line.contains("[ERROR]"), line.contains("[optimizer]") else { return false }
+            guard let needle else { return true }
+            return line.contains(needle)
+        }.count
+    }
+
+    private func optimizerLines(mentioning needle: String) -> [String] {
+        RelayLogger.store.recent(count: Self.logWindow).filter {
+            $0.contains("[optimizer]") && $0.contains(needle)
+        }
+    }
 
     func testDisabledConfigLogsNothing() async throws {
-        let before = RelayLogger.store.recent(count: 100)
+        // Unique to this test run, so no other suite's line can be miscounted.
+        let marker = tempDir.lastPathComponent
+        let beforeErrors = optimizerErrorCount()
+        let beforeMarked = optimizerLines(mentioning: marker).count
         var config = RelayConfig.default
         config.promptOptimizerEnabled = false
         config.promptOptimizerKeyPath = try writeKey("sk-ant-test")
         let result = try await make(config)
-        let after = RelayLogger.store.recent(count: 100)
         XCTAssertNil(result)
-        XCTAssertEqual(before.count, after.count, "Disabled config should log nothing")
+        XCTAssertEqual(optimizerErrorCount() - beforeErrors, 0, "Disabled config should log no error")
+        XCTAssertEqual(optimizerLines(mentioning: marker).count - beforeMarked, 0,
+                       "Disabled config should log nothing at all")
     }
 
     func testUnusableConfigLogsExactlyOneError() async throws {
-        let before = RelayLogger.store.recent(count: 100)
+        let marker = tempDir.lastPathComponent
+        let before = optimizerErrorCount(mentioning: marker)
         var config = RelayConfig.default
         config.promptOptimizerEnabled = true
         config.promptOptimizerKeyPath = tempDir.appendingPathComponent("missing").path
         let result = try await make(config)
-        let after = RelayLogger.store.recent(count: 100)
         XCTAssertNil(result)
-        let newLogs = after.dropFirst(before.count)
-        let errorLogs = newLogs.filter { $0.contains("[ERROR]") && $0.contains("[optimizer]") }
-        XCTAssertEqual(errorLogs.count, 1, "Unusable config should log exactly one error")
+        XCTAssertEqual(optimizerErrorCount(mentioning: marker) - before, 1,
+                       "Unusable config should log exactly one error")
     }
 
     func testInvalidRegionLogsOneError() async throws {
-        let before = RelayLogger.store.recent(count: 100)
+        // The region error carries no path, so this one counts optimizer errors.
+        let before = optimizerErrorCount()
         var config = RelayConfig.default
         config.promptOptimizerEnabled = true
         config.promptOptimizerKeyPath = try writeKey("bedrock-key")
         config.promptOptimizerProvider = "bedrock"
         config.promptOptimizerRegion = "INVALID REGION"
         let result = try await make(config)
-        let after = RelayLogger.store.recent(count: 100)
         XCTAssertNil(result)
-        let newLogs = after.dropFirst(before.count)
-        let errorLogs = newLogs.filter { $0.contains("[ERROR]") && $0.contains("[optimizer]") }
-        XCTAssertEqual(errorLogs.count, 1, "Invalid region should log exactly one error")
+        XCTAssertEqual(optimizerErrorCount() - before, 1, "Invalid region should log exactly one error")
     }
 
     func testKeyWithInteriorNewlineLogsOneErrorWithoutKey() async throws {
         let keyWithNewline = "sk-ant\ntest123"
         let path = try writeKey(keyWithNewline, mode: 0o600)
-        let before = RelayLogger.store.recent(count: 100)
+        let marker = tempDir.lastPathComponent
+        let before = optimizerErrorCount(mentioning: marker)
         var config = RelayConfig.default
         config.promptOptimizerEnabled = true
         config.promptOptimizerKeyPath = path
         let result = try await make(config)
-        let after = RelayLogger.store.recent(count: 100)
         XCTAssertNil(result)
-        let newLogs = after.dropFirst(before.count)
-        let errorLogs = newLogs.filter { $0.contains("[ERROR]") && $0.contains("[optimizer]") }
-        XCTAssertEqual(errorLogs.count, 1, "Invalid key should log exactly one error")
+        XCTAssertEqual(optimizerErrorCount(mentioning: marker) - before, 1,
+                       "Invalid key should log exactly one error")
         // Ensure the key material is not in the log.
-        for log in errorLogs {
+        for log in optimizerLines(mentioning: marker) {
             XCTAssertFalse(log.contains("sk-ant"), "Log should not contain key material")
             XCTAssertFalse(log.contains("test123"), "Log should not contain key material")
         }
@@ -164,16 +189,15 @@ final class PromptOptimizerFactoryTests: XCTestCase {
     func testDirectoryAtKeyPathLogsOneError() async throws {
         let dirPath = tempDir.appendingPathComponent("keydir").path
         try FileManager.default.createDirectory(atPath: dirPath, withIntermediateDirectories: true)
-        let before = RelayLogger.store.recent(count: 100)
+        let marker = tempDir.lastPathComponent
+        let before = optimizerErrorCount(mentioning: marker)
         var config = RelayConfig.default
         config.promptOptimizerEnabled = true
         config.promptOptimizerKeyPath = dirPath
         let result = try await make(config)
-        let after = RelayLogger.store.recent(count: 100)
         XCTAssertNil(result)
-        let newLogs = after.dropFirst(before.count)
-        let errorLogs = newLogs.filter { $0.contains("[ERROR]") && $0.contains("[optimizer]") }
-        XCTAssertEqual(errorLogs.count, 1, "Directory at keyPath should log exactly one error")
+        XCTAssertEqual(optimizerErrorCount(mentioning: marker) - before, 1,
+                       "Directory at keyPath should log exactly one error")
     }
 
     func testDefaultModelsResolveCorrectly() throws {

@@ -165,7 +165,11 @@ enum AdminRoutes {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .error("Body must be a JSON object with a \"draft\" string", status: 400)
         }
-        guard let draft = json["draft"] as? String, !draft.isEmpty else {
+        // Whitespace-only counts as empty: the WebSocket handler answers
+        // `no_draft` for the same input, so this route must not spend a model
+        // call on it either. The untrimmed draft is what goes to the model.
+        guard let draft = json["draft"] as? String,
+              !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .error("\"draft\" must be a non-empty string", status: 400)
         }
         guard draft.utf8.count <= PromptOptimizer.maxDraftBytes else {

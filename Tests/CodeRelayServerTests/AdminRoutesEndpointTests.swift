@@ -312,12 +312,69 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
         XCTAssertEqual(r.json?["error"] as? String, "Prompt too long to optimize")
     }
 
-    func testOptimizerTryTimesOutAt12Seconds() async {
+    /// Injects a 50 ms deadline — it pins the *reporting* of a deadline, not the
+    /// 12 s constant (`PromptRequestHandlerTests` pins that).
+    func testOptimizerTryReportsDeadlineAsFailedWithinTheInjectedDeadline() async {
         let suspending = FakeOptimizer(result: .success(.optimized("will never arrive")), delay: .seconds(1))
         let r = await route(.POST, "/optimizer/try", body: ["draft": "wait forever"],
                            optimizer: suspending, optimizeDeadline: .milliseconds(50))
         XCTAssertEqual(r.status, 200)
         XCTAssertEqual(r.json?["status"] as? String, "failed")
         XCTAssertEqual(r.json?["message"] as? String, "Optimizer unavailable, try again")
+    }
+
+    /// `withOptimizerDeadline` must cancel the loser without awaiting it: an
+    /// optimizer that ignores cancellation and never returns would otherwise hold
+    /// this route open forever (a task group awaits its cancelled child).
+    func testOptimizerTryDeadlineHoldsAgainstANonCooperativeOptimizer() async {
+        let started = ContinuousClock.now
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "hang forever"],
+                            optimizer: HangingOptimizer(), optimizeDeadline: .milliseconds(100))
+        let elapsed = ContinuousClock.now - started
+        XCTAssertEqual(r.status, 200)
+        XCTAssertEqual(r.json?["status"] as? String, "failed")
+        XCTAssertEqual(r.json?["message"] as? String, "Optimizer unavailable, try again")
+        XCTAssertLessThan(elapsed, .seconds(2), "the deadline must not wait on a non-cooperative optimizer")
+    }
+
+    func testOptimizerTryRejectsANonUUIDSessionId() async {
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "x", "sessionId": "not-a-uuid"],
+                            optimizer: FakeOptimizer())
+        XCTAssertEqual(r.status, 400)
+        XCTAssertEqual(r.json?["error"] as? String, "\"sessionId\" is not a UUID")
+    }
+
+    /// A whitespace-only draft is empty: the WebSocket handler answers `no_draft`
+    /// for the same input, so this route must not spend a model call on it.
+    func testOptimizerTryRejectsAWhitespaceOnlyDraft() async {
+        let optimizer = FakeOptimizer()
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "  \n"], optimizer: optimizer)
+        XCTAssertEqual(r.status, 400)
+        XCTAssertEqual(r.json?["error"] as? String, "\"draft\" must be a non-empty string")
+        let received = await optimizer.received
+        XCTAssertTrue(received.isEmpty)
+    }
+
+    /// No `shareScreen` key: the admin route defaults to true (operator-local),
+    /// unlike the wire decoder which fails closed at false.
+    func testOptimizerTryDefaultsShareScreenToTrue() async throws {
+        let manager = makeManager()
+        let optimizer = FakeOptimizer(sharesScreen: true)
+        let (_, token) = try await createTestToken()
+        let info = try await manager.createSession(tokenId: token.id, cols: 80, rows: 24)
+        guard let mock = await manager.ptySession(for: info.id) as? MockPTYSession else {
+            return XCTFail("expected MockPTYSession")
+        }
+        await mock.setMockPromptContext(PromptContext(
+            draft: "live draft", agentId: "claude", agentDisplayName: "Claude Code",
+            workingDirectory: "/tmp/repo", screenLines: ["$ swift build", "error: boom"],
+            bracketedPaste: false, keyboardFlagsRawValue: 0))
+
+        let r = await route(.POST, "/optimizer/try",
+                            body: ["draft": "probe draft", "sessionId": info.id.uuidString],
+                            manager: manager, optimizer: optimizer)
+        XCTAssertEqual(r.status, 200)
+        let seen = await optimizer.received.first
+        XCTAssertEqual(seen?.screenLines, ["$ swift build", "error: boom"])
     }
 }

@@ -41,6 +41,13 @@ extension RelayMessageHandler {
         let startedAt = Date()
 
         // Deadline task: cancels work, bumps generation, sends timeout.
+        //
+        // Two mechanisms enforce the one `PromptOptimizer.deadline`: the admin
+        // `POST /optimizer/try` route races the model call with
+        // `withOptimizerDeadline` (a Foundation async race), this path uses
+        // `eventLoop.scheduleTask`. Deliberately separate — the timeout here has
+        // to mutate handler state (`optimizeInFlight`, `optimizeGeneration`, the
+        // two task handles), and that may only happen on the event loop.
         let ctx = UnsafeTransfer(context)
         let deadlineNanos = Int64(deadline.components.seconds) * 1_000_000_000 + deadline.components.attoseconds / 1_000_000_000
         let deadlineTask = context.eventLoop.scheduleTask(in: .nanoseconds(deadlineNanos)) { [weak self] in
@@ -94,6 +101,27 @@ extension RelayMessageHandler {
                 case .optimized(let prompt):
                     // Re-read draft and prepare replacement on the same path.
                     let current = await pty.promptContext(includeScreen: false)
+                    // The foreground agent changed (or exited) while the model
+                    // ran: the tracker was reset with it, so the erase count is
+                    // zero and the rewrite would land as raw text at whatever
+                    // prompt is there now. Answer, type nothing.
+                    guard current.agentId == promptContext.agentId else {
+                        try Task.checkCancellation()
+                        ctx.value.eventLoop.execute { [weak self] in
+                            guard let handler = self, handler.optimizeGeneration == generation else { return }
+                            handler.optimizeDeadlineTask?.cancel()
+                            handler.optimizeDeadlineTask = nil
+                            handler.optimizeWorkTask = nil
+                            handler.optimizeGeneration &+= 1
+                            handler.optimizeInFlight = false
+                            RelayLogger.log(.debug, category: "optimizer", "optimize_prompt agent changed mid-flight")
+                            handler.sendServerMessage(
+                                .optimizePromptResult(status: "failed",
+                                                      message: "Optimizer could not rewrite this prompt"),
+                                context: ctx.value)
+                        }
+                        return
+                    }
                     let bytes = DraftReplacer.bytes(replacing: current.draft, with: prompt,
                                                     bracketedPaste: current.bracketedPaste,
                                                     keyboardFlags: current.keyboardFlags)
@@ -106,6 +134,13 @@ extension RelayMessageHandler {
                         handler.optimizeWorkTask = nil
                         handler.optimizeGeneration &+= 1
                         handler.optimizeInFlight = false
+                        // The PTY write below suspends, so a *new* optimize can
+                        // start (and bump the generation) before the reply hop
+                        // runs. Pin the post-bump value so this `ok` can only
+                        // resolve its own request: without it request A's late
+                        // `ok` would answer request B's waiter, which correlates
+                        // on the reply type alone.
+                        let resolvedGeneration = handler.optimizeGeneration
 
                         // Re-validate attachment before PTY write.
                         guard handler.attachedSessionId == sessionId, ctx.value.channel.isActive,
@@ -118,7 +153,8 @@ extension RelayMessageHandler {
                             await pty.write(bytes)
                             let elapsed = Int(Date().timeIntervalSince(startedAt) * 1000)
                             ctx.value.eventLoop.execute { [weak self] in
-                                guard let handler = self, ctx.value.channel.isActive else { return }
+                                guard let handler = self, handler.optimizeGeneration == resolvedGeneration,
+                                      ctx.value.channel.isActive else { return }
                                 RelayLogger.log(.debug, category: "optimizer",
                                     "optimize_prompt ok draft=\(promptContext.draft.utf8.count)B prompt=\(prompt.utf8.count)B in \(elapsed)ms")
                                 handler.sendServerMessage(.optimizePromptResult(status: "ok", original: promptContext.draft, prompt: prompt), context: ctx.value)
@@ -153,6 +189,13 @@ extension RelayMessageHandler {
         optimizeWorkTask = workTask
     }
 
+    /// `replace_prompt` has **no deadline and no single-flight guard**, unlike
+    /// `optimize_prompt`: there is no model call here, only one actor hop for the
+    /// draft snapshot plus a PTY write, so there is nothing slow to bound and
+    /// nothing expensive to serialize. The trade-off is explicit — if the PTY
+    /// actor is wedged, nothing on the server answers and the client's own 20 s
+    /// waiter expires; adding a deadline here would only re-describe that
+    /// timeout on the server side.
     func handleReplacePrompt(sessionId: UUID, text: String, context: ChannelHandlerContext) {
         guard let pty = attachedPTY, attachedSessionId == sessionId else {
             sendServerMessage(.replacePromptResult(status: "failed", message: "Session not attached"), context: context)
@@ -190,8 +233,13 @@ extension RelayMessageHandler {
                 }
             },
             onFailure: { handler, ctx, _ in
-                // `work` has no throwing step today; kept so a future PTY error still answers the waiter.
-                handler.sendServerMessage(.replacePromptResult(status: "failed", message: "Replacement failed"), context: ctx)
+                // Unreachable today: `work` has no throwing step, and
+                // `bridgeToEventLoop` requires an `onFailure`. Kept so a future
+                // throwing step still answers the waiter — with a sanctioned
+                // client string (spec §9), never a new one.
+                handler.sendServerMessage(.replacePromptResult(status: "failed",
+                                                               message: "Optimizer unavailable, try again"),
+                                          context: ctx)
             }
         )
     }
@@ -203,5 +251,9 @@ extension RelayMessageHandler {
         optimizeDeadlineTask = nil
         optimizeWorkTask = nil
         optimizeInFlight = false
+        // Cleanup resolves the request: a work Task that ignores cancellation
+        // and completes after `channelInactive` must fail its generation guard
+        // instead of writing a dead channel's PTY.
+        optimizeGeneration &+= 1
     }
 }

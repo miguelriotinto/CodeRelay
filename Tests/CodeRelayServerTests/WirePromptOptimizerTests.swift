@@ -67,8 +67,14 @@ final class WirePromptOptimizerTests: XCTestCase {
         try await client.send(.replacePrompt(sessionId: id, text: ctx.draft))
         let undoReply = try await client.waitFor(["replace_prompt_result"])
         XCTAssertEqual(undoReply, .replacePromptResult(status: "ok"))
+        // The undo erases the draft the PTY reports *now*. Against a real PTY that
+        // would be the optimized prompt just typed; the mock's context is fixed, so
+        // the erase is sized from `ctx.draft` — assert the bytes the mock's own
+        // state implies rather than only the write count.
+        let expectedUndo = DraftReplacer.bytes(replacing: ctx.draft, with: ctx.draft,
+                                               bracketedPaste: false, keyboardFlags: ctx.keyboardFlags)
         let finalWrites = await mock.recordedWrites()
-        XCTAssertEqual(finalWrites.count, 2)
+        XCTAssertEqual(finalWrites, [expected, expectedUndo])
         await client.close()
     }
 
