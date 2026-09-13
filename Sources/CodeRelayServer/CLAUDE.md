@@ -219,3 +219,70 @@ Relatedly, `attachSession` cancels any live detach-expiry timer (as `resumeSessi
 
 **Hook-based state authority (F6)**: An optional local Claude Code hook can report authoritative lifecycle state, overriding screen detection while fresh. `PTYSession` injects `CLAUDE_RELAY_SESSION_ID` + `CLAUDE_RELAY_ADMIN_PORT` into each session's shell env (admin port threaded through the default `PTYFactory` closure; the `PTYFactory` typealias is unchanged so test mocks are unaffected). The shipped hook (`Scripts/hooks/claude-relay-state-hook.sh`) POSTs `{sessionId, state}` to the localhost-only `POST /hook/state` admin route → `SessionManager.reportHookState` → `SessionActivityMonitor.applyHookState`. Hook state is trusted for a 10 s TTL (`hookStateTTL`); `updateScreenDetection` no-ops while a fresh hook state exists, then screen detection resumes automatically when it goes stale. The hook reports **state only** — agent *identity* stays owned by the foreground poll, so a hook can never assert or evict an agent. With no hook installed, behavior is identical to screen-detection-only. Install docs: `Scripts/hooks/README.md`.
 
+
+## Prompt Optimizer
+
+Spec: `docs/superpowers/specs/2026-09-13-server-prompt-optimizer-design.md`.
+Code: `Prompt/` (pure pieces) + `Network/PromptRequestHandlers.swift` (the RPCs).
+
+A device sends `optimize_prompt{sessionId, shareScreen}`; the server reads the
+draft the user has typed at the agent's input line, asks the model to rewrite
+it as a coding-agent prompt, **types the rewrite in place of the draft** (never
+submits), and answers `optimize_prompt_result{status, original, prompt}`.
+`replace_prompt{sessionId, text}` is the same typing step with client-supplied
+text and backs Undo. Both are RPCs with their own result types, so an
+unattached request is answered `status: "failed"` on that type — never with
+`.error` (see "sendAndWaitForResponse" in the root CLAUDE.md) — and the message
+is `"Session not attached"`, not `"No session attached"` (clients treat that
+exact string as a foreign detach error).
+
+Pipeline per session, all inside the `PTYSession` actor:
+
+- `KeyDecoder` turns the bytes clients write into `KeyEvent`s (text, paste,
+  Enter with modifiers in legacy / kitty-CSI-u / xterm-modifyOtherKeys form,
+  editing keys). `InputProfile` (the manifest's optional `"input"` block —
+  Task 14's probe fills it; unprobed agents get the single-line default) says
+  which Enter chords insert a newline and which submit.
+- `DraftTracker` mirrors the input line as an array of scalars plus a cursor.
+  **It clears itself on anything it cannot model** (unknown escape, Tab, history
+  Up/Down at the edges, a submit) rather than guessing: a wrong draft would make
+  the replacer erase the wrong number of characters in the user's terminal, and
+  an empty draft only costs a `no_draft` reply. Capped at 16 384 scalars.
+- `PromptContext` is the snapshot handed to the model: draft, agent id + display
+  name, cwd, the trailing ≤40 lines / ≤4 KB of the rendered screen (only when
+  both `promptOptimizerShareScreen` and the request's `shareScreen` are true),
+  and the terminal's bracketed-paste / kitty-flags state for the replacer.
+- `PromptOptimizer` builds the Messages request (system prompt with
+  `cache_control: ephemeral`, forced `deliver_prompt` tool, `max_tokens` 1024,
+  no thinking/temperature), sends it through `MessagesSending`
+  (`HTTPMessagesClient` over `PushHTTP`, 12 s, no retries) to Anthropic or
+  Bedrock, and maps the reply to `.optimized(String)` / `.passthrough` / an
+  `OptimizerError` (`refused`, `malformed`, `keyRejected`, `unavailable`,
+  `draftTooLong`).
+- `DraftReplacer` emits the bytes that erase the current draft and type the
+  replacement: Ctrl-U per line (or backspaces), then the new text wrapped in
+  bracketed paste when the terminal has it on, or the agent's newline chord
+  between lines when it does not.
+
+Caps and fixed strings: draft > 4 KB → `"Prompt too long to optimize"`;
+`replace_prompt.text` > 16 KB → `"Replacement too long"`; one optimize in
+flight per connection (`"Already optimizing"`); 12 s end-to-end deadline
+(`PromptOptimizer.deadline`; `RelayMessageHandler.optimizeDeadline` and the
+admin route's `optimizeDeadline` parameter default to it) → `"Optimizer
+unavailable, try again"`; no optimizer → `status: "unconfigured"`, `"Optimizer
+not configured on the relay"`. The draft is re-read right before typing so edits
+made while the model ran are erased correctly, and a reply that lands after the
+deadline never types.
+
+**Never log the draft, the prompt, the screen, or the key.** Handler and client
+log status, byte counts, latency and `usage.cache_read_input_tokens` at debug
+only. The key file is read once by `PromptOptimizerFactory` at startup; if it is
+missing or empty the relay logs one error line, advertises no capability and the
+wand stays disabled on every device until a restart with a fixed config.
+
+Tuning loop without a phone: `claude-relay optimizer try "<draft>" [--session
+<id>] [--no-screen]` → `POST /optimizer/try` runs the same optimizer over a
+draft (with a live session's agent/cwd/screen if given) and prints the result
+without writing the PTY. Tests double the model with `FakeOptimizer`
+(`PromptRequestHandlerTests`, `WirePromptOptimizerTests`) and the HTTP layer
+with a scripted `MessagesSending` (`PromptOptimizerTests`, `MessagesClientTests`).

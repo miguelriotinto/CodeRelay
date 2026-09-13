@@ -250,7 +250,7 @@ machine, the detector cascade, and the strict two-phase UX contract.
 
 Config stored in `~/.claude-relay/config.json`. Default ports: WS=9200, Admin=9100. On this dev machine, admin port is configured as 9100.
 
-**Config keys**: `wsPort`, `adminPort`, `detachTimeout`, `scrollbackSize`, `tlsCert`, `tlsKey`, `logLevel`, `maxSessionsPerToken` (default 50, 0 = unlimited), `bindAll` (default `true` — WebSocket server binds `0.0.0.0` and accepts connections from any interface. Set `false` to restrict to `127.0.0.1`. When `true` without TLS, startup logs a warning because tokens travel in the clear). **Push (all off/nil by default):** `pushEnabled`, `pushNotifyOnFinished` (server-wide default; per-device pref overrides), `apnsKeyPath`/`apnsKeyId`/`apnsTeamId`/`apnsBundleId`/`apnsUseSandbox`, `fcmServiceAccountPath`/`fcmProjectId`. See "Push Notifications" above.
+**Config keys**: `wsPort`, `adminPort`, `detachTimeout`, `scrollbackSize`, `tlsCert`, `tlsKey`, `logLevel`, `maxSessionsPerToken` (default 50, 0 = unlimited), `bindAll` (default `true` — WebSocket server binds `0.0.0.0` and accepts connections from any interface. Set `false` to restrict to `127.0.0.1`. When `true` without TLS, startup logs a warning because tokens travel in the clear). **Push (all off/nil by default):** `pushEnabled`, `pushNotifyOnFinished` (server-wide default; per-device pref overrides), `apnsKeyPath`/`apnsKeyId`/`apnsTeamId`/`apnsBundleId`/`apnsUseSandbox`, `fcmServiceAccountPath`/`fcmProjectId`. See "Push Notifications" above. **Prompt optimizer (off by default):** `promptOptimizerEnabled`, `promptOptimizerProvider` (`anthropic` | `bedrock`, default `anthropic`), `promptOptimizerModel` (default `claude-sonnet-5` on Anthropic, `anthropic.claude-sonnet-5` on Bedrock), `promptOptimizerRegion` (Bedrock only, default `us-east-1`), `promptOptimizerKeyPath` (file holding the API key, `chmod 600`; the key is read once at startup and never logged), `promptOptimizerShareScreen` (default `true`; the server-side gate on sending the last 40 screen lines to the model — the device has its own). The `prompt_optimizer` capability appears in `auth_success.capabilities` only when the optimizer is enabled **and** the key was readable at startup. See `Sources/CodeRelayServer/CLAUDE.md` "Prompt Optimizer".
 
 App-side (not in `config.json`, stored via `@AppStorage`): `terminalScrollbackLines` (per-app, default 5000, max 25000). The server's `RingBuffer` still replays anything that falls off this edge on reattach. Continuous-listening settings persisted via `@AppStorage` are the on/off toggle and the wake word — `turnEndSilenceTimeout` is **not** user-tunable (defaults from `SpeechProcessingOptions`).
 
@@ -350,8 +350,7 @@ client's Kotlin sources in place** — `core-protocol`, `core-net`,
 from `CodeRelayAndroid/` via `srcDirs` (spec AD-2). There is one copy of each
 shared file on disk, so an Android-side edit is a Linux build input:
 `linux.yml` triggers on both trees, and a shared-screen change must keep both
-builds green. Build with `JAVA_HOME` pointing at a JDK 21 (`~/.local/jdk` on
-the dev box; not on `PATH`) and `cmake`:
+builds green. Build with `JAVA_HOME` pointing at a JDK 21 at `/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home` (not on `PATH`), and `cmake` (the Android modules require a JDK 17 at `/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`):
 
 ```bash
 cd CodeRelayLinux && ./gradlew test            # 702 tests, real libvterm

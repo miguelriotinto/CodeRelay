@@ -15,12 +15,6 @@ final class AgentInputProfileProbeTests: XCTestCase {
         let bytes: Data
     }
 
-    private struct ProbeResult {
-        let newlineChords: [String]
-        let inset: Int?
-        let killLineAcrossLines: Bool?
-    }
-
     private static let candidates: [Candidate] = [
         Candidate(key: "shift_enter",     bytes: Data("\u{1B}[13;2u".utf8)),      // kitty CSI u
         Candidate(key: "ctrl_enter",      bytes: Data("\u{1B}[13;5u".utf8)),
