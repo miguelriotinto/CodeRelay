@@ -110,7 +110,8 @@ let adminServer = AdminHTTPServer(
     sessionManager: sessionManager, tokenStore: tokenStore,
     pairingStore: pairingStore,
     config: config,
-    rateLimiter: rateLimiter
+    rateLimiter: rateLimiter,
+    optimizer: optimizer
 )
 
 do {

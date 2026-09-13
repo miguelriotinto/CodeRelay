@@ -26,7 +26,8 @@ enum AdminRoutes {
         sessionManager: SessionManager,
         tokenStore: TokenStore,
         pairingStore: PairingCodeStore,
-        config: RelayConfig
+        config: RelayConfig,
+        optimizer: (any PromptOptimizing)? = nil
     ) async -> AdminResponse {
         let parts = uri.split(separator: "?", maxSplits: 1)
         let path = parts.first.map(String.init) ?? uri
@@ -60,6 +61,8 @@ enum AdminRoutes {
             return await handleHookState(components, body: body, sessionManager: sessionManager)
         case (.POST, "pair"):
             return await handlePairCreate(components, body: body, pairingStore: pairingStore, config: config)
+        case (.POST, "optimizer"):
+            return await handleOptimizerTry(components, body: body, sessionManager: sessionManager, optimizer: optimizer)
         default:
             return .error("Not found", status: 404)
         }
@@ -140,6 +143,55 @@ enum AdminRoutes {
             "tls": config.tlsEnabled
         ]
         return .json(payload)
+    }
+
+    // MARK: - Prompt optimizer (spec §5.6)
+
+    /// `POST /optimizer/try` — run the relay's optimizer over a draft, optionally
+    /// borrowing a live session's agent / cwd / screen, and return the outcome.
+    /// Never writes the PTY. Body: `{"draft": String, "sessionId"?: String, "shareScreen"?: Bool}`.
+    private static func handleOptimizerTry(
+        _ components: [String],
+        body: ByteBuffer?,
+        sessionManager: SessionManager,
+        optimizer: (any PromptOptimizing)?
+    ) async -> AdminResponse {
+        guard components == ["optimizer", "try"] else { return .error("Not found", status: 404) }
+        guard let optimizer else { return .error("Optimizer not configured on the relay", status: 503) }
+
+        guard let body, let data = body.getData(at: body.readerIndex, length: body.readableBytes),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .error("Body must be a JSON object with a \"draft\" string", status: 400)
+        }
+        guard let draft = json["draft"] as? String, !draft.isEmpty else {
+            return .error("\"draft\" must be a non-empty string", status: 400)
+        }
+        guard draft.utf8.count <= PromptOptimizer.maxDraftBytes else {
+            return .error(OptimizerError.draftTooLong.clientMessage, status: 400)
+        }
+        let shareScreen = json["shareScreen"] as? Bool ?? true
+
+        var context = PromptContext(draft: draft, agentId: nil, agentDisplayName: nil, workingDirectory: nil,
+                                    screenLines: [], bracketedPaste: false, keyboardFlagsRawValue: 0)
+        if let idString = json["sessionId"] as? String {
+            guard let id = UUID(uuidString: idString) else { return .error("\"sessionId\" is not a UUID", status: 400) }
+            guard let pty = await sessionManager.ptySession(for: id) else { return .error("Session not found", status: 404) }
+            let live = await pty.promptContext(includeScreen: shareScreen && optimizer.sharesScreen)
+            // The session supplies everything except the draft, which is the caller's to choose.
+            context = PromptContext(draft: draft, agentId: live.agentId, agentDisplayName: live.agentDisplayName,
+                                    workingDirectory: live.workingDirectory, screenLines: live.screenLines,
+                                    bracketedPaste: live.bracketedPaste, keyboardFlagsRawValue: live.keyboardFlagsRawValue)
+        }
+
+        do {
+            switch try await optimizer.optimize(context) {
+            case .optimized(let prompt): return .json(["status": "ok", "prompt": prompt])
+            case .passthrough: return .json(["status": "passthrough"])
+            }
+        } catch {
+            let message = (error as? OptimizerError)?.clientMessage ?? OptimizerError.unavailable.clientMessage
+            return .json(["status": "failed", "message": message])
+        }
     }
 
     // MARK: - Health & Status
