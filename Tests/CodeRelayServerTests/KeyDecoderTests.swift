@@ -239,6 +239,22 @@ final class KeyDecoderTests: XCTestCase {
         XCTAssertEqual(decode(bytes("\u{1B}[?1;2c")), [.ignored])        // DA reply
     }
 
+    /// PageUp/PageDown scroll the transcript in both measured agents and never
+    /// touch the input line, with or without a modifier field. F13… ride the same
+    /// tilde codes as F1…F12 and are just as inert. Insert is *not* in that set:
+    /// it toggles overwrite mode, which the tracker does not model.
+    func testPageKeysAndHighFunctionKeysAreIgnored() {
+        XCTAssertEqual(decode(bytes("\u{1B}[5~")), [.ignored])      // PageUp
+        XCTAssertEqual(decode(bytes("\u{1B}[6~")), [.ignored])      // PageDown
+        XCTAssertEqual(decode(bytes("\u{1B}[5;2~")), [.ignored])    // Shift+PageUp
+        XCTAssertEqual(decode(bytes("\u{1B}[25~")), [.ignored])     // F13
+        XCTAssertEqual(decode(bytes("\u{1B}[34~")), [.ignored])     // F20
+    }
+
+    func testInsertStaysUnknown() {
+        XCTAssertEqual(decode(bytes("\u{1B}[2~")), [.unknown])
+    }
+
     func testCSIParameterOverflowIsUnknownThenDecodingResumes() {
         let overlong = String(repeating: "1", count: KeyDecoder.maxCSIParameterBytes + 1)
         // The abandoned sequence's final byte is re-read in ground state, so the

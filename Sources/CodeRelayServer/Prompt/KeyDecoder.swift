@@ -268,11 +268,17 @@ struct KeyDecoder: Sendable {
             default: return .delete
             }
         case 27:
-            // xterm modifyOtherKeys: CSI 27 ; mods ; keycode ~
+            // xterm modifyOtherKeys: CSI 27 ; mods ; keycode ~ — a keycode, not a
+            // function key, which is why 27 is matched before the ranges below.
             guard fields.count >= 3, let mods = Int(fields[1]), let key = Int(fields[2]) else { return .unknown }
             return key == 13 ? .enter(modifiers(fromEncoded: mods)) : .unknown
-        case 11...24: return .ignored                           // F1…F12: inert at an input line
-        default: return .unknown                                // Insert, PageUp/Down, …
+        // PageUp/PageDown scroll the transcript and F1…F20 do nothing at an input
+        // line in both measured agents, so all of them are provably inert. No
+        // `trailingModifiers` guard: Shift+PageUp (`CSI 5;2~`) is the same scroll,
+        // and a modified F-key is still an F-key. Insert (`CSI 2~`) is *not* here —
+        // it toggles overwrite mode, which the tracker does not model.
+        case 5, 6, 11...24, 25...26, 28...34: return .ignored
+        default: return .unknown                                // Insert, unrecognised codes, …
         }
     }
 

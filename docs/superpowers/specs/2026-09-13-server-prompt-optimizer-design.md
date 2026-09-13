@@ -114,7 +114,8 @@ enum KeyEvent: Equatable {
     case control(UInt8)               // Ctrl-A … Ctrl-Z, Ctrl-_
     case alt(Character)               // ESC <char>: Alt+B/F/D/Y and friends
     case lineFeed                     // bare LF (Ctrl+J); maps to `ctrl_j`
-    case ignored                      // provably inert: mouse, DA/DSR/CPR, F-keys,
+    case ignored                      // provably inert: mouse, DA/DSR/CPR, PageUp/Down,
+                                      // F1…F20,
                                       // release events, ESC ESC, well-formed OSC/DCS
     case unknown                      // anything else — the tracker clears
 }
@@ -137,6 +138,14 @@ Decoding rules:
   arrow, home, end, and delete events. A *modified* one (`CSI 1;5D`, `CSI 3;5~`,
   …) is a word jump or word delete, neither of which the tracker models, so it
   decodes to `.unknown`. `CSI 1;1X` encodes "no modifiers" and stays a motion.
+- `CSI 5~` / `CSI 6~` (PageUp/PageDown, with or without a modifier field) and
+  tilde codes 25–34 (F13…F20, minus 27 which is xterm's modifyOtherKeys) decode
+  to `.ignored`: they scroll the transcript or do nothing at all at an input line
+  in both measured agents, the same class as F1…F12 (`CSI 11~`…`CSI 24~`).
+  `CSI 2~` (Insert) stays `.unknown` — it toggles overwrite mode, which the
+  tracker does not model — as do NUL and FS/GS/RS in the ground state. With
+  stickiness (§5.2) each of these would otherwise cost the wand until the next
+  submit.
 - Bracketed paste bodies are accumulated until `ESC[201~` and emitted once.
 - Anything else that parses as a control sequence is consumed to completion and
   emitted as `.unknown`; only the enumerated inert set above is `.ignored`. Bare
@@ -181,13 +190,28 @@ no longer be trusted.
 cannot model what happened (an `.unknown` sequence, Tab, an unmeasured Enter
 chord, Ctrl-_, an over-long insert, Up/Down off the draft, an edit at an
 uncertain cursor) it also marks the mirror *lost*, and every later event is a
-no-op until one of three things proves the real input box is empty again: a
-submit-Enter, Ctrl-C, or a foreground-agent change (`reset`). Without that,
+no-op until something proves the real input box is empty again: a submit-Enter,
+Ctrl-C, or a foreground-agent change (`reset`). Without that,
 the next keystroke would start rebuilding a short mirror over a real line that
 still holds everything typed before the clear — the under-count the replacer
 cannot survive, since it erases only as many characters as the mirror claims.
 A clear that *does* prove emptiness (submit, Ctrl-C, reset) resumes tracking
 immediately.
+
+**A bare Enter is weaker evidence than it looks.** Under a profile with
+`backslash_enter` (both shipped agents), Enter on a line ending in `\` inserts a
+newline instead of submitting, so while the mirror is lost a bare Enter recovers
+it only when the last event since the loss was typed text or a paste whose final
+scalar is not a backslash. With no typing since the loss, or with a motion or a
+chord after it, the tail is unknown and recovery waits for Ctrl-C, an agent
+change, or a server replacement (`adopt`). Profiles without `backslash_enter`
+recover on a bare Enter unconditionally, and Ctrl-C always recovers because it
+empties the box whatever it held. For the same reason a lost episode also
+distrusts the kill buffer: the agent's kill ring may have been refilled by
+whatever the tracker could not model, so the next Ctrl-Y loses the mirror
+instead of yanking a stale copy (the buffer is kept, not emptied — an empty
+mirror buffer against a full agent ring is the same under-count from the other
+side).
 
 The default profile, used when a manifest has no `input` object and for a
 plain shell, is `newline: []`, `submit: ["enter", "ctrl_enter"]`. The plan for
@@ -214,7 +238,7 @@ array of Unicode scalars (newlines included) plus a cursor:
 | `.control(0x17)` Ctrl-W, `.alt("\u{7F}")` | Delete back to previous whitespace / previous word |
 | `.alt("b")` / `.alt("f")` | Word left / right |
 | `.alt("d")` | Delete to end of word |
-| `.control(0x19)` Ctrl-Y | Re-insert the most recent Ctrl-U/K/W/Alt-D kill |
+| `.control(0x19)` Ctrl-Y | Re-insert the most recent Ctrl-U/K/W/Alt-D kill, but only while the kill buffer is still trusted (no lost episode since the kill); otherwise the mirror is lost |
 | `.control(0x03)` Ctrl-C | Clear draft |
 | `.control(0x1F)` Ctrl-_ (undo), `.alt("y")` (kill-ring cycle) | Draft unknown → clear |
 | `.up` / `.down` | See below |
@@ -239,7 +263,8 @@ go through `PTYSession.writeReplacement(_:adopting:)`, which pastes and then
 (`DraftTracker.adopt`): the line is known to be exactly what the server just
 typed, so a second wand press or an Undo works immediately. Adoption is the
 server stating a fact about its own write — a mirror lost to *user* keystrokes
-stays lost until a submit-Enter, Ctrl-C, or an agent change.
+stays lost until a provable submit-Enter (see the bare-Enter rule above), Ctrl-C,
+or an agent change.
 
 Additional rules: reset when the foreground agent changes (fed by
 `PTYSession`'s foreground poll, which also swaps the profile); cap 16 384

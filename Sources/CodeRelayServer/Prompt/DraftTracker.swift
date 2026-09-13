@@ -6,9 +6,11 @@ import Foundation
 /// navigation, unknown chords) clears the draft rather than guessing — an
 /// empty draft is a `no_draft` reply, a wrong one would be typed over. That
 /// doubt is **sticky**: `mirrorLost` holds until an event proves the real box
-/// is empty (a submit-Enter, Ctrl-C) or the agent changes (`reset`), because
-/// re-accumulating from the next keystroke onwards would under-count a real
-/// line that still holds everything typed before the clear.
+/// is empty (Ctrl-C, or a submit-Enter that cannot have been a `\`-continuation
+/// — see `lostTailIsSafe`), the agent changes (`reset`), or the server states
+/// the line itself (`adopt`), because re-accumulating from the next keystroke
+/// onwards would under-count a real line that still holds everything typed
+/// before the clear.
 struct DraftTracker: Sendable {
     static let maxScalars = 16_384
 
@@ -21,13 +23,25 @@ struct DraftTracker: Sendable {
     /// Set when the mirror can no longer be trusted. While set, `draft` is
     /// empty and every event except recovery is a no-op, because re-accumulating
     /// over an unknown real line produces exactly the under-count the replacer
-    /// cannot survive. Recovery: a submit-Enter (the box is empty for real),
-    /// Ctrl-C (both modelled agents clear the input box), or `reset(profile:)`
-    /// (agent changed).
+    /// cannot survive. Recovery: a submit-Enter that is provably not a backslash
+    /// continuation (the box is empty for real), Ctrl-C (both modelled agents
+    /// clear the input box), `reset(profile:)` (agent changed), or `adopt` (the
+    /// server just wrote the line).
     private(set) var mirrorLost = false
     private(set) var profile: InputProfile
     private var columns: Int
     private var killBuffer: [Unicode.Scalar] = []
+    /// While lost: the most recent event was typed text (or a paste) whose last
+    /// scalar is not `\`. It is the only evidence the server has that a bare
+    /// Enter on this line submits rather than continuing it — see the submit
+    /// branch of `applyEnterKey`. False whenever the mirror is not lost, so it
+    /// can never make a *known* mirror recover something it should not.
+    private var lostTailIsSafe = false
+    /// False once a lost episode has happened: the agent's kill ring may hold
+    /// text the mirror never saw, so `killBuffer` is stale bytes rather than
+    /// truth. Yanking it back would under-count the real line. Re-trusted by a
+    /// kill on a known mirror or by `reset(profile:)` (which also empties it).
+    private var killBufferTrusted = true
 
     init(profile: InputProfile, columns: Int) {
         self.profile = profile
@@ -49,6 +63,9 @@ struct DraftTracker: Sendable {
         scalars.removeAll(keepingCapacity: true)
         cursor = 0
         cursorUncertain = false
+        // Evidence about the *previous* lost episode says nothing about the next
+        // one, and both callers below end the current one.
+        lostTailIsSafe = false
     }
 
     /// The mirror no longer matches the real line and we cannot say what the
@@ -56,6 +73,9 @@ struct DraftTracker: Sendable {
     private mutating func invalidate() {
         clear()
         mirrorLost = true
+        // Deliberately not `killBuffer.removeAll()`: an empty mirror buffer
+        // against a full agent ring is the same under-count from the other side.
+        killBufferTrusted = false
     }
 
     /// The real input line is empty for certain (submitted, or Ctrl-C'd), so an
@@ -70,6 +90,7 @@ struct DraftTracker: Sendable {
     mutating func reset(profile: InputProfile) {
         knownEmpty()
         killBuffer.removeAll()
+        killBufferTrusted = true
         self.profile = profile
     }
 
@@ -90,6 +111,10 @@ struct DraftTracker: Sendable {
         cursor = new.count
         cursorUncertain = false
         mirrorLost = false
+        // The typed-tail evidence belonged to the episode this ends. Trust in the
+        // kill buffer is *not* restored: a replacement says nothing about the
+        // agent's kill ring.
+        lostTailIsSafe = false
     }
 
     mutating func setColumns(_ cols: Int) {
@@ -108,7 +133,18 @@ struct DraftTracker: Sendable {
         if mirrorLost {
             switch event {
             case .enter, .lineFeed, .control(0x03): break
-            default: return
+            // Still a no-op on the mirror, but it tells us what the *end* of the
+            // real line now is, which is what decides whether the next bare Enter
+            // submits or continues the line (see `applyEnterKey`). An empty run
+            // says nothing, so it leaves the previous verdict standing.
+            case .text(let s), .paste(let s):
+                if let last = s.unicodeScalars.last { lostTailIsSafe = last != "\\" }
+                return
+            // Motion, edits, chords, inert keys: after any of them the character
+            // before the cursor is unknown again, so the evidence expires.
+            default:
+                lostTailIsSafe = false
+                return
             }
         }
         if cursorUncertain, Self.isEdit(event) {
@@ -180,6 +216,15 @@ struct DraftTracker: Sendable {
         if profile.newline.contains(key) {
             insertNewline()
         } else if profile.submit.contains(key) {
+            // A bare Enter is a submit only when the line does not end in `\`
+            // under a profile that treats that as a continuation. While lost the
+            // mirror cannot read the line, so it recovers only on the evidence of
+            // text typed since the loss; otherwise the box may still be full and
+            // "recovery" would restart the mirror mid-line — wave D's under-count.
+            if mirrorLost, key == .enter, profile.newline.contains(.backslashEnter),
+               !lostTailIsSafe {
+                return
+            }
             knownEmpty()
         } else {
             invalidate()
@@ -207,6 +252,9 @@ struct DraftTracker: Sendable {
 
     private mutating func kill(_ range: Range<Int>) {
         guard !range.isEmpty else { return }
+        // Only reachable on a known mirror (the lost gate drops every chord that
+        // gets here), so the killed text *is* what the agent's ring now holds.
+        killBufferTrusted = true
         killBuffer = Array(scalars[range])
         scalars.removeSubrange(range)
         cursor = range.lowerBound
@@ -249,7 +297,10 @@ struct DraftTracker: Sendable {
         case 0x15: killToLineStart()                          // Ctrl-U
         case 0x0B: kill(cursor..<lineEnd())                   // Ctrl-K
         case 0x17: kill(wordStart()..<cursor)                 // Ctrl-W
-        case 0x19: insert(killBuffer)                         // Ctrl-Y
+        // Ctrl-Y: yanking a buffer the agent may have refilled while the mirror
+        // was lost would insert too little, so distrust loses the mirror instead.
+        case 0x19:
+            if killBufferTrusted { insert(killBuffer) } else { invalidate() }
         case 0x03: knownEmpty()                               // Ctrl-C: both modelled agents empty the box
         case 0x1F: invalidate()                               // Ctrl-_: undo puts unknown text back
         case 0x09: invalidate()                               // Tab: completion rewrites the line

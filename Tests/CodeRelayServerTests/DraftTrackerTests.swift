@@ -36,9 +36,11 @@ final class DraftTrackerTests: XCTestCase {
         var t = tracker(typing: "ls")
         t.apply(.enter([]))
         XCTAssertEqual(t.draft, "")
+        XCTAssertFalse(t.mirrorLost)                  // a submit proves the box is empty
         t.apply(.text("ls"))
         t.apply(.enter([.control]))
         XCTAssertEqual(t.draft, "")
+        XCTAssertFalse(t.mirrorLost)
     }
 
     func testDefaultProfileClearsOnUnboundEnterChords() {
@@ -47,6 +49,7 @@ final class DraftTrackerTests: XCTestCase {
         var t = tracker(typing: "ls")
         t.apply(.enter([.shift]))
         XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)                   // unmeasured chord: doubt is sticky
     }
 
     func testClaudeProfileNewlineChords() {
@@ -57,6 +60,7 @@ final class DraftTrackerTests: XCTestCase {
         XCTAssertEqual(t.draft, "a\nb\nc\nd")
         t.apply(.enter([]))
         XCTAssertEqual(t.draft, "")
+        XCTAssertFalse(t.mirrorLost)
     }
 
     func testBackslashEnterRemovesBackslashAndInsertsNewline() {
@@ -70,6 +74,7 @@ final class DraftTrackerTests: XCTestCase {
         var t = tracker(typing: "echo \\")
         t.apply(.enter([]))
         XCTAssertEqual(t.draft, "")
+        XCTAssertFalse(t.mirrorLost)
     }
 
     // MARK: Simple editing
@@ -109,6 +114,7 @@ final class DraftTrackerTests: XCTestCase {
         XCTAssertEqual(t.cursor, 0)
         t.apply(.control(0x19))
         XCTAssertEqual(t.draft, "hello world")
+        XCTAssertFalse(t.mirrorLost)                  // the kill buffer is still trusted
     }
 
     func testCtrlUAtLineStartRemovesNewlineOnlyWhenProfileAllows() {
@@ -150,6 +156,13 @@ final class DraftTrackerTests: XCTestCase {
             var t = tracker(typing: "abc")
             t.apply(event)
             XCTAssertEqual(t.draft, "", "\(event) should clear")
+            // Ctrl-C empties the real box, so accumulation may resume; undo and
+            // yank-pop put unknown text into it, so the doubt is sticky.
+            if case .control(0x03) = event {
+                XCTAssertFalse(t.mirrorLost, "\(event) should not be sticky")
+            } else {
+                XCTAssertTrue(t.mirrorLost, "\(event) should be sticky")
+            }
         }
     }
 
@@ -160,6 +173,7 @@ final class DraftTrackerTests: XCTestCase {
         t.apply(.up)
         XCTAssertEqual(t.draft, "")
         XCTAssertFalse(t.cursorUncertain)
+        XCTAssertTrue(t.mirrorLost)                   // history recall: unknown line
     }
 
     func testUpInsideMultiRowMovesAndMarksUncertain() {
@@ -169,9 +183,11 @@ final class DraftTrackerTests: XCTestCase {
         XCTAssertEqual(t.draft, "first line\nsecond")
         XCTAssertTrue(t.cursorUncertain)
         XCTAssertEqual(t.cursor, 6)                   // same column on row 0
+        XCTAssertFalse(t.mirrorLost)                  // in-draft motion keeps the mirror
         t.apply(.up)                                  // leaving the first row → history
         XCTAssertEqual(t.draft, "")
         XCTAssertFalse(t.cursorUncertain)
+        XCTAssertTrue(t.mirrorLost)
     }
 
     func testDownOffLastRowClears() {
@@ -179,6 +195,7 @@ final class DraftTrackerTests: XCTestCase {
         t.apply(.enter([.control])); t.apply(.text("b"))
         t.apply(.down)
         XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
     }
 
     /// The row width comes from `columns - inset`, not from `columns`: at 10
@@ -217,6 +234,7 @@ final class DraftTrackerTests: XCTestCase {
         XCTAssertEqual(t.draft, "abcdefghijkl")
         t.apply(.up)
         XCTAssertEqual(t.draft, "")                   // off the top: history recall
+        XCTAssertTrue(t.mirrorLost)
     }
 
     func testEditWhileUncertainClears() {
@@ -302,12 +320,14 @@ final class DraftTrackerTests: XCTestCase {
             var t = tracker(typing: "abc")
             t.apply(event)
             XCTAssertEqual(t.draft, "", "\(name) should clear the mirror")
+            XCTAssertTrue(t.mirrorLost, "\(name) should lose the mirror stickily")
         }
         // ctrl_enter is in neither list in the shipped claude profile — the
         // probe measured "no effect" — so it clears rather than being ignored.
         var claudeTracker = tracker(bundledClaude, typing: "abc")
         claudeTracker.apply(.enter([.control]))
         XCTAssertEqual(claudeTracker.draft, "")
+        XCTAssertTrue(claudeTracker.mirrorLost)
     }
 
     // MARK: C3 — bounded insert
@@ -317,10 +337,12 @@ final class DraftTrackerTests: XCTestCase {
         t.apply(.text(String(repeating: "x", count: 20_000)))
         XCTAssertEqual(t.draft, "")
         XCTAssertEqual(t.cursor, 0)
+        XCTAssertTrue(t.mirrorLost)
 
         var p = tracker(typing: "abc")
         p.apply(.paste(String(repeating: "y", count: 20_000)))
         XCTAssertEqual(p.draft, "")
+        XCTAssertTrue(p.mirrorLost)
     }
 
     // MARK: Kill-buffer lifecycle
@@ -444,6 +466,98 @@ final class DraftTrackerTests: XCTestCase {
         bytes.append(Data(repeating: 0x61, count: 1_100))
         bytes.append(Data("hi".utf8))
         t.apply(contentsOf: decoder.decode(bytes))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    // MARK: F1 — a bare Enter recovers only with evidence of no trailing backslash
+
+    /// Both shipped profiles list `backslash_enter` in `newline`, so a bare Enter
+    /// submits only when the real line does not end in `\`. While the mirror is
+    /// lost the server cannot see that line: with nothing typed since the loss it
+    /// has no evidence either way and must stay lost, or a continuation Enter on a
+    /// still-full box would read as a submit and re-open wave D's under-count.
+    func testEnterAfterUnknownWithoutTypingStaysLost() {
+        var t = tracker(claude, typing: "abc")
+        t.apply(.unknown)
+        t.apply(.enter([]))
+        t.apply(.text("x"))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    /// The user typed while lost and the last scalar *is* a backslash, so this
+    /// Enter is a line continuation: the box keeps everything it held.
+    func testEnterAfterTypingTrailingBackslashWhileLostStaysLost() {
+        var t = tracker(claude, typing: "abc")
+        t.apply(.unknown)
+        t.apply(.text("refactor \\"))
+        t.apply(.enter([]))
+        t.apply(.text("x"))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    /// Typed text not ending in `\` is the evidence: whatever the line held, this
+    /// Enter submitted it, so the box is empty and accumulation can resume.
+    func testEnterAfterTypingWhileLostRecovers() {
+        var t = tracker(claude, typing: "abc")
+        t.apply(.unknown)
+        t.apply(.text("fix it"))
+        t.apply(.enter([]))
+        t.apply(.text("x"))
+        XCTAssertEqual(t.draft, "x")
+        XCTAssertFalse(t.mirrorLost)
+    }
+
+    /// A motion after the typing moves the cursor off the text the server saw, so
+    /// the character before it is unknown again — the evidence expires.
+    func testMotionAfterTypingWhileLostStaysLost() {
+        var t = tracker(claude, typing: "abc")
+        t.apply(.unknown)
+        t.apply(.text("ab"))
+        t.apply(.left)
+        t.apply(.enter([]))
+        t.apply(.text("x"))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    /// Without `backslash_enter` there is no continuation to fear: a bare Enter is
+    /// a submit whatever the line ends in, so recovery stays unconditional.
+    func testProfileWithoutBackslashEnterRecoversOnBareEnter() {
+        var t = tracker(InputProfile(newline: [.ctrlEnter], submit: [.enter]), typing: "abc")
+        t.apply(.unknown)
+        t.apply(.enter([]))
+        XCTAssertFalse(t.mirrorLost)
+        t.apply(.text("x"))
+        XCTAssertEqual(t.draft, "x")
+    }
+
+    // MARK: F2 — inert keys keep the draft
+
+    /// PageDown decodes to `.ignored`, so a draft survives a scroll mid-compose.
+    func testPageDownWhileComposingKeepsTheDraft() {
+        var t = tracker(claude, typing: "abc")
+        t.apply(.ignored)
+        t.apply(.text("d"))
+        XCTAssertEqual(t.draft, "abcd")
+        XCTAssertFalse(t.mirrorLost)
+    }
+
+    // MARK: F3 — kill-buffer trust
+
+    /// The kill buffer survives a lost episode as *bytes*, but not as truth: the
+    /// agent's own ring may have been refilled by whatever the server could not
+    /// model. Yanking the mirror's stale copy would under-count the real line, so
+    /// an untrusted Ctrl-Y loses the mirror instead of inserting.
+    func testCtrlYAfterALostEpisodeLosesTheMirror() {
+        var t = tracker(typing: "abc")
+        t.apply(.control(0x17))                       // Ctrl-W: kills "abc"
+        t.apply(.control(0x09))                       // Tab: line rewritten, mirror lost
+        t.apply(.control(0x03))                       // Ctrl-C: box empty, mirror back
+        t.apply(.text("x"))
+        t.apply(.control(0x19))                       // Ctrl-Y
         XCTAssertEqual(t.draft, "")
         XCTAssertTrue(t.mirrorLost)
     }

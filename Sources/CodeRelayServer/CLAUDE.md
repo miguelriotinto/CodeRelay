@@ -251,9 +251,15 @@ Pipeline per session, all inside the `PTYSession` actor:
   (`mirrorLost`): while it is set every event is a no-op, because otherwise the
   next keystroke would rebuild a 1-scalar mirror over a real line that still
   holds everything typed before the clear, and the replacer erases only as many
-  characters as the mirror claims. Exactly three events resume tracking — a
-  submit-Enter, Ctrl-C, and `reset(profile:)` (agent changed) — since only they
-  prove the real input box is empty. Capped at 16 384 scalars
+  characters as the mirror claims. Only events that prove the real input box is
+  empty resume tracking: Ctrl-C, `reset(profile:)` (agent changed), `adopt` (a
+  server replacement), and a submit-Enter — but **a bare Enter under a profile
+  with `backslash_enter` recovers only when the last event since the loss was
+  typed text or a paste not ending in `\`**, since on a line ending in a
+  backslash that Enter inserts a newline and the box stays full. For the same
+  reason a lost episode leaves the kill buffer *kept but untrusted*: the next
+  Ctrl-Y loses the mirror instead of yanking a copy the agent's ring may have
+  outgrown. Capped at 16 384 scalars
   (`DraftTracker.maxScalars`), checked *before* an insert, and the decoder drops a
   printable run past the same bound as one `.unknown`.
 - **A lost mirror refuses a replacement.** `PromptContext.draftKnown` carries
