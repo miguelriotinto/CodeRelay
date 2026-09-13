@@ -12,7 +12,8 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
         body: [String: Any]? = nil,
         manager: SessionManager? = nil,
         config: RelayConfig = .default,
-        optimizer: (any PromptOptimizing)? = nil
+        optimizer: (any PromptOptimizing)? = nil,
+        optimizeDeadline: Duration = PromptOptimizer.deadline
     ) async -> (status: Int, json: [String: Any]?) {
         var buf: ByteBuffer?
         if let body {
@@ -31,7 +32,8 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
             tokenStore: tokenStore,
             pairingStore: PairingCodeStore(),
             config: config,
-            optimizer: optimizer
+            optimizer: optimizer,
+            optimizeDeadline: optimizeDeadline
         )
 
         let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any]
@@ -311,8 +313,9 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
     }
 
     func testOptimizerTryTimesOutAt12Seconds() async {
-        let suspending = FakeOptimizer(result: .success(.optimized("will never arrive")), delay: .seconds(20))
-        let r = await route(.POST, "/optimizer/try", body: ["draft": "wait forever"], optimizer: suspending)
+        let suspending = FakeOptimizer(result: .success(.optimized("will never arrive")), delay: .seconds(1))
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "wait forever"],
+                           optimizer: suspending, optimizeDeadline: .milliseconds(50))
         XCTAssertEqual(r.status, 200)
         XCTAssertEqual(r.json?["status"] as? String, "failed")
         XCTAssertEqual(r.json?["message"] as? String, "Optimizer unavailable, try again")

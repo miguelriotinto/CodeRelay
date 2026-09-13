@@ -27,7 +27,8 @@ enum AdminRoutes {
         tokenStore: TokenStore,
         pairingStore: PairingCodeStore,
         config: RelayConfig,
-        optimizer: (any PromptOptimizing)? = nil
+        optimizer: (any PromptOptimizing)? = nil,
+        optimizeDeadline: Duration = PromptOptimizer.deadline
     ) async -> AdminResponse {
         let parts = uri.split(separator: "?", maxSplits: 1)
         let path = parts.first.map(String.init) ?? uri
@@ -62,7 +63,7 @@ enum AdminRoutes {
         case (.POST, "pair"):
             return await handlePairCreate(components, body: body, pairingStore: pairingStore, config: config)
         case (.POST, "optimizer"):
-            return await handleOptimizerTry(components, body: body, sessionManager: sessionManager, optimizer: optimizer)
+            return await handleOptimizerTry(components, body: body, sessionManager: sessionManager, optimizer: optimizer, optimizeDeadline: optimizeDeadline)
         default:
             return .error("Not found", status: 404)
         }
@@ -154,7 +155,8 @@ enum AdminRoutes {
         _ components: [String],
         body: ByteBuffer?,
         sessionManager: SessionManager,
-        optimizer: (any PromptOptimizing)?
+        optimizer: (any PromptOptimizing)?,
+        optimizeDeadline: Duration
     ) async -> AdminResponse {
         guard components == ["optimizer", "try"] else { return .error("Not found", status: 404) }
         guard let optimizer else { return .error("Optimizer not configured on the relay", status: 503) }
@@ -184,7 +186,7 @@ enum AdminRoutes {
         }
 
         do {
-            let outcome = try await withOptimizerDeadline(.seconds(12)) {
+            let outcome = try await withOptimizerDeadline(optimizeDeadline) {
                 try await optimizer.optimize(context)
             }
             switch outcome {

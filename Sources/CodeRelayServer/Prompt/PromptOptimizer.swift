@@ -18,6 +18,8 @@ public protocol PromptOptimizing: Sendable {
 /// tool call. Stateless apart from the warn-once flag for a rejected key.
 final class PromptOptimizer: PromptOptimizing, @unchecked Sendable {
     static let maxDraftBytes = 4096
+    /// Spec §7: the model call is abandoned after this and the client gets "Optimizer unavailable, try again".
+    static let deadline: Duration = .seconds(12)
     static let toolName = "deliver_prompt"
 
     let sharesScreen: Bool

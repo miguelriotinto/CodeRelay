@@ -30,7 +30,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// The work Task for the active optimize request, cancelled on timeout.
     var optimizeWorkTask: Task<Void, Never>?
     /// End-to-end budget for context capture + model call + PTY write. Tests shorten it.
-    var optimizeDeadline: Duration = .seconds(12)
+    var optimizeDeadline: Duration = PromptOptimizer.deadline
     private var context: ChannelHandlerContext?
     private var authTimeout: Scheduled<Void>?
     private var authAttempts = 0
