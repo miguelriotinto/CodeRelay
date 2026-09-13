@@ -16,6 +16,14 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     var authenticatedTokenId: String?
     var attachedSessionId: UUID?
     var attachedPTY: (any PTYSessionProtocol)?
+    /// Nil when the relay has no usable optimizer (disabled, or key unreadable at
+    /// startup) — then `auth_success` omits the capability and `optimize_prompt`
+    /// answers `unconfigured`. Spec §8.
+    let optimizer: (any PromptOptimizing)?
+    /// One optimize per connection at a time (spec §6 "Already optimizing").
+    var optimizeInFlight = false
+    /// End-to-end budget for context capture + model call + PTY write. Tests shorten it.
+    var optimizeDeadline: Duration = .seconds(12)
     private var context: ChannelHandlerContext?
     private var authTimeout: Scheduled<Void>?
     private var authAttempts = 0
@@ -57,13 +65,15 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     init(sessionManager: SessionManager, tokenStore: TokenStore, rateLimiter: RateLimiter,
          clipboardService: ClipboardService,
          pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory),
-         pairingStore: PairingCodeStore) {
+         pairingStore: PairingCodeStore,
+         optimizer: (any PromptOptimizing)? = nil) {
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
         self.rateLimiter = rateLimiter
         self.clipboardService = clipboardService
         self.pushStore = pushStore
         self.pairingStore = pairingStore
+        self.optimizer = optimizer
     }
 
     /// This handler is installed by the WebSocket upgrade after the channel
@@ -201,7 +211,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             handlePairRequest(code: code, deviceName: deviceName, platform: platform, context: context)
         case .ping:
             sendServerMessage(.pong, context: context)
-        case .resize, .refresh, .pasteImage, .sessionRename, .sessionTerminate:
+        case .resize, .refresh, .pasteImage, .sessionRename, .sessionTerminate, .optimizePrompt, .replacePrompt:
             // Dropped, NOT answered with `.error(401)` — these are all
             // fire-and-forget, so see the unattached-request reply rule atop
             // `SessionRequestHandlers.swift`. They can reach the pre-auth window
@@ -252,12 +262,10 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                                     topic: topic, context: context)
         case .unregisterPushToken(let deviceId):
             handleUnregisterPushToken(deviceId: deviceId, context: context)
-        case .optimizePrompt:
-            // Interim until PromptRequestHandlers lands: the relay has no optimizer yet.
-            sendServerMessage(.optimizePromptResult(status: "unconfigured",
-                                                    message: "Optimizer not configured on the relay"), context: context)
-        case .replacePrompt:
-            sendServerMessage(.replacePromptResult(status: "failed", message: "Session not attached"), context: context)
+        case .optimizePrompt(let sessionId, let shareScreen):
+            handleOptimizePrompt(sessionId: sessionId, shareScreen: shareScreen, context: context)
+        case .replacePrompt(let sessionId, let text):
+            handleReplacePrompt(sessionId: sessionId, text: text, context: context)
         }
     }
 
@@ -466,7 +474,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                 RelayLogger.log(category: "auth",
                     "Auth success for token \(payload.tokenId) (protocol v\(payload.clientVersion))")
                 handler.sendServerMessage(
-                    .authSuccess(protocolVersion: CodeRelayKit.protocolVersion, tokenId: payload.tokenId),
+                    .authSuccess(protocolVersion: CodeRelayKit.protocolVersion, tokenId: payload.tokenId,
+                                 capabilities: handler.optimizer == nil ? nil : [CodeRelayKit.promptOptimizerCapability]),
                     context: ctx
                 )
             },

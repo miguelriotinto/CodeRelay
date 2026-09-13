@@ -1,6 +1,6 @@
 import Foundation
 
-enum OptimizerOutcome: Equatable, Sendable {
+public enum OptimizerOutcome: Equatable, Sendable {
     case optimized(String)
     case passthrough
 }
@@ -9,7 +9,7 @@ enum OptimizerOutcome: Equatable, Sendable {
 /// server-wide cap from `promptOptimizerShareScreen`; screen is included in
 /// the optimizer request only when both it and the client's `shareScreen` are
 /// true. The handler (Task 11) performs the AND.
-protocol PromptOptimizing: Sendable {
+public protocol PromptOptimizing: Sendable {
     var sharesScreen: Bool { get }
     func optimize(_ context: PromptContext) async throws -> OptimizerOutcome
 }

@@ -24,6 +24,7 @@ public final class WebSocketServer {
     private let config: RelayConfig
     private let pushStore: PushRegistrationStore
     private let pairingStore: PairingCodeStore
+    private let optimizer: (any PromptOptimizing)?
     private var channel: Channel?
 
     public init(group: EventLoopGroup, config: RelayConfig,
@@ -31,7 +32,8 @@ public final class WebSocketServer {
                 rateLimiter: RateLimiter = RateLimiter(maxAttempts: 10, windowSeconds: 60),
                 clipboardService: ClipboardService = DefaultClipboardService.make(),
                 pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory),
-                pairingStore: PairingCodeStore) {
+                pairingStore: PairingCodeStore,
+                optimizer: (any PromptOptimizing)? = nil) {
         self.group = group
         self.config = config
         self.sessionManager = sessionManager
@@ -40,6 +42,7 @@ public final class WebSocketServer {
         self.clipboardService = clipboardService
         self.pushStore = pushStore
         self.pairingStore = pairingStore
+        self.optimizer = optimizer
     }
 
     /// Create SSL context from configured cert and key files.
@@ -77,6 +80,7 @@ public final class WebSocketServer {
         let tokenStore = self.tokenStore
         let pushStore = self.pushStore
         let pairingStore = self.pairingStore
+        let optimizer = self.optimizer
         let rateLimiter = self.rateLimiter
         let clipboardService = self.clipboardService
         let sslContext: NIOSSLContext? = try createSSLContextIfConfigured()
@@ -93,7 +97,8 @@ public final class WebSocketServer {
                     rateLimiter: rateLimiter,
                     clipboardService: clipboardService,
                     pushStore: pushStore,
-                    pairingStore: pairingStore
+                    pairingStore: pairingStore,
+                    optimizer: optimizer
                 )
                 return channel.pipeline.addHandler(handler)
             }

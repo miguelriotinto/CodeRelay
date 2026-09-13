@@ -412,6 +412,12 @@ public actor SessionManager {
         return managed.info
     }
 
+    /// The live PTY behind `id`, or nil once the session is terminal. Used by the
+    /// admin `optimizer/try` route and by wire tests to reach the mock PTY.
+    public func ptySession(for id: UUID) -> (any PTYSessionProtocol)? {
+        sessions[id]?.ptySession
+    }
+
     /// List sessions for a specific token. Uses the cached activity state
     /// maintained via `reportActivityChange` — no PTY actor hops.
     public func listSessionsForToken(tokenId: String) -> [SessionInfo] {
