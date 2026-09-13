@@ -117,4 +117,45 @@ final class KeyDecoderTests: XCTestCase {
     func testTextFlushesBeforeControlEvent() {
         XCTAssertEqual(decode(bytes("ab\u{0D}cd")), [.text("ab"), .enter([]), .text("cd")])
     }
+
+    func testOversizedPasteFlushRetainsPartialTerminator() {
+        // A paste larger than maxPasteBytes is flushed in pieces. If the 6-byte
+        // terminator (ESC [ 2 0 1 ~) straddles the flush boundary, the last 5
+        // bytes must be retained so the terminator is still recognized.
+        var decoder = KeyDecoder()
+        var events: [KeyEvent] = []
+
+        // Start bracketed paste
+        events += decoder.decode(Data(bytes("\u{1B}[200~")))
+
+        // Fill to maxPasteBytes, then add "ESC [" to exceed the cap
+        let content = String(repeating: "a", count: KeyDecoder.maxPasteBytes)
+        events += decoder.decode(Data(content.utf8))
+        events += decoder.decode(Data([0x1B, 0x5B]))  // "ESC [" — first 2 bytes of terminator
+
+        // Now buffer is > maxPasteBytes. The decode call with the terminator start
+        // triggers the flush, which retains the last 5 bytes (3 'a's + "ESC [").
+        // Send the rest of the terminator.
+        events += decoder.decode(Data([0x32, 0x30, 0x31, 0x7E]))  // "2 0 1 ~"
+
+        // Verify: send plain text to confirm we exited paste state
+        events += decoder.decode(Data(bytes("x")))
+
+        XCTAssertEqual(events.count, 3)
+        if case .paste(let first) = events[0] {
+            // Flush fires after appending ESC (buffer = 1,048,577 bytes).
+            // Flush outputs first 1,048,572 bytes; keeps last 5 (4 'a's + ESC).
+            XCTAssertEqual(first.count, KeyDecoder.maxPasteBytes - 4)
+        } else {
+            XCTFail("Expected first event to be paste, got \(events[0])")
+        }
+        if case .paste(let second) = events[1] {
+            // After flush, buffer has "aaaaESC". Then "[201~" arrives, terminator
+            // matches and is removed, leaving "aaaa".
+            XCTAssertEqual(second, "aaaa")
+        } else {
+            XCTFail("Expected second event to be paste, got \(events[1])")
+        }
+        XCTAssertEqual(events[2], .text("x"))  // Decoder exited paste state
+    }
 }

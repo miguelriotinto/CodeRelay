@@ -44,7 +44,7 @@ struct KeyDecoder: Sendable {
     private static let maxCSIParameterBytes = 64
     /// A paste larger than this is flushed in pieces; `DraftTracker` clears
     /// past 16 384 scalars anyway.
-    private static let maxPasteBytes = 1_048_576
+    static let maxPasteBytes = 1_048_576
     private static let pasteEnd: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]  // ESC [ 2 0 1 ~
     private static let pasteStartParams: [UInt8] = [0x32, 0x30, 0x30]           // "200"
 
@@ -305,8 +305,10 @@ struct KeyDecoder: Sendable {
             pasteBuffer.removeAll()
             state = .ground
         } else if pasteBuffer.count > Self.maxPasteBytes {
-            events.append(.paste(String(decoding: pasteBuffer, as: UTF8.self)))
-            pasteBuffer.removeAll()
+            let keep = min(Self.pasteEnd.count - 1, pasteBuffer.count)
+            let flushEnd = pasteBuffer.count - keep
+            events.append(.paste(String(decoding: pasteBuffer[..<flushEnd], as: UTF8.self)))
+            pasteBuffer.removeFirst(flushEnd)
         }
     }
 }
