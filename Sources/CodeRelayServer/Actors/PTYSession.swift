@@ -434,7 +434,6 @@ public actor PTYSession: PTYSessionProtocol {
         activityMonitor.applySilenceTimeout()
     }
 
-    /// Re-enters actor isolation for the foreground process poll result.
     /// Sync the draft tracker's agent profile to the currently active agent.
     /// Called on every foreground poll and before reading the prompt context.
     private func syncTrackedAgent() {
@@ -446,6 +445,7 @@ public actor PTYSession: PTYSessionProtocol {
         }
     }
 
+    /// Re-enters actor isolation for the foreground process poll result.
     private func handleForegroundPollResult(agent: CodingAgent?) {
         guard !terminated else { return }
         activityMonitor.updateForegroundProcess(agent: agent)
