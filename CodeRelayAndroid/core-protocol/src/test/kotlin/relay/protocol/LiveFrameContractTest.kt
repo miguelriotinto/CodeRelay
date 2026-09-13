@@ -75,4 +75,20 @@ class LiveFrameContractTest {
         assertFalse(session.createdAt == 0.0, "createdAt must not collapse to 0.0 (would indicate a failed/string parse)")
         assertTrue(session.createdAt > 802628495.0 && session.createdAt < 802628496.0, "createdAt must retain its sub-second fraction")
     }
+
+    @Test fun `decodes the shared optimize_prompt_result contract fixture`() {
+        val frame = javaClass.classLoader!!
+            .getResource("captured_optimize_prompt_result.json")!!
+            .readText()
+        val decoded = MessageEnvelope.decodeServer(frame)
+        assertEquals(
+            ServerMessage.OptimizePromptResult(
+                status = "ok",
+                original = "get status and fix the failing test",
+                prompt = "Run `git status`, then fix the failing test.",
+                message = null,
+            ),
+            decoded,
+        )
+    }
 }
