@@ -91,10 +91,11 @@ final class PromptRequestHandlerTests: XCTestCase {
     }
 
     private func context(draft: String, bracketedPaste: Bool = false, screen: [String] = [],
-                         agentId: String? = "claude") -> PromptContext {
+                         agentId: String? = "claude", draftKnown: Bool = true) -> PromptContext {
         PromptContext(draft: draft, agentId: agentId, agentDisplayName: "Claude Code",
                       workingDirectory: "/tmp/repo", screenLines: screen,
-                      bracketedPaste: bracketedPaste, keyboardFlagsRawValue: 0)
+                      bracketedPaste: bracketedPaste, keyboardFlagsRawValue: 0,
+                      draftKnown: draftKnown)
     }
 
     private func send(_ message: ClientMessage, on fixture: Fixture) async throws {
@@ -241,6 +242,11 @@ final class PromptRequestHandlerTests: XCTestCase {
                                            bracketedPaste: true, keyboardFlags: ctx.keyboardFlags)
         let writes = await fixture.mock.recordedWrites()
         XCTAssertEqual(writes, [expected])
+        // E3: the bytes go out through `writeReplacement`, so the mirror adopts
+        // the prompt the server just pasted instead of re-deriving it from the
+        // erase keystrokes it also wrote.
+        let adopted = await fixture.mock.recordedAdoptedDrafts()
+        XCTAssertEqual(adopted, ["Run `git status`, then fix the failing test."])
         let state = try await optimizeState(fixture)
         XCTAssertFalse(state.inFlight)
     }
@@ -416,6 +422,8 @@ final class PromptRequestHandlerTests: XCTestCase {
                                            bracketedPaste: false, keyboardFlags: ctx.keyboardFlags)
         let writes = await fixture.mock.recordedWrites()
         XCTAssertEqual(writes, [expected])
+        let adopted = await fixture.mock.recordedAdoptedDrafts()
+        XCTAssertEqual(adopted, ["get status"])
     }
 
     func testReplaceTooLongIsRejectedBeforeTouchingThePTY() async throws {
@@ -441,6 +449,43 @@ final class PromptRequestHandlerTests: XCTestCase {
         XCTAssertEqual(reply, .replacePromptResult(status: "ok"))
         let writes = await fixture.mock.recordedWrites()
         XCTAssertEqual(writes.count, 1)
+    }
+
+    /// E2: Undo onto a line the server can no longer count would erase nothing
+    /// and paste the original into the surviving text. The only safe answer is to
+    /// refuse — one `failed` result, no PTY write.
+    func testReplaceOnLostMirrorRefusesWithoutWriting() async throws {
+        let fixture = try await makeFixture(optimizer: nil)
+        addTeardownBlock { await self.cleanup(fixture) }
+        await fixture.mock.setMockPromptContext(context(draft: "", draftKnown: false))
+        try await send(.replacePrompt(sessionId: fixture.sessionId, text: "the original draft"), on: fixture)
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .replacePromptResult(status: "failed",
+                                                   message: "Optimizer could not rewrite this prompt"))
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "a refused replace must not touch the PTY")
+        let adopted = await fixture.mock.recordedAdoptedDrafts()
+        XCTAssertTrue(adopted.isEmpty)
+        try await assertNoFurtherMessages(fixture)
+    }
+
+    /// The converse of the guard above, and the reason it is not
+    /// `draft.isEmpty`: a genuinely empty *known* line is the normal state for an
+    /// Undo right after the user cleared the box, and pasting the original back
+    /// into it is exactly right — the erase prefix is simply empty.
+    func testReplaceOnKnownEmptyDraftPastes() async throws {
+        let fixture = try await makeFixture(optimizer: nil)
+        addTeardownBlock { await self.cleanup(fixture) }
+        let ctx = context(draft: "", draftKnown: true)
+        await fixture.mock.setMockPromptContext(ctx)
+        try await send(.replacePrompt(sessionId: fixture.sessionId, text: "the original draft"), on: fixture)
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .replacePromptResult(status: "ok"))
+        let expected = DraftReplacer.bytes(replacing: "", with: "the original draft",
+                                           bracketedPaste: false, keyboardFlags: ctx.keyboardFlags)
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertEqual(writes, [expected])
+        XCTAssertTrue(String(decoding: expected, as: UTF8.self).contains("the original draft"))
     }
 
     func testUnauthenticatedReplaceIsDroppedNotAnswered() async throws {

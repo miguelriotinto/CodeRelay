@@ -15,6 +15,12 @@ public protocol PTYSessionProtocol: Actor {
     /// terminal (F11 terminal-copy → device). Cleared by `clearOutputHandler`.
     func setClipboardHandler(_ handler: @escaping @Sendable (String) -> Void)
     func write(_ data: Data)
+    /// Write a server-generated draft replacement (erase + paste) and adopt
+    /// `draft` as the new mirror in the same actor step. The erase keystrokes
+    /// would otherwise be decoded as ordinary input and, at an uncertain or lost
+    /// cursor, invalidate the very mirror the replacement just made exact.
+    /// Only the optimizer's two write sites use this.
+    func writeReplacement(_ data: Data, adopting draft: String)
     func resize(cols: UInt16, rows: UInt16)
     /// Best-effort current working directory of the session's shell process
     /// (the stable workspace anchor). Nil when the process is gone or the
@@ -678,7 +684,8 @@ public actor PTYSession: PTYSessionProtocol {
             workingDirectory: lastReportedWorkingDir ?? currentWorkingDirectory(),
             screenLines: screenLines,
             bracketedPaste: screenModel.bracketedPasteEnabled,
-            keyboardFlagsRawValue: screenModel.keyboardFlags.rawValue
+            keyboardFlagsRawValue: screenModel.keyboardFlags.rawValue,
+            draftKnown: !draftTracker.mirrorLost
         )
     }
 
@@ -751,6 +758,17 @@ public actor PTYSession: PTYSessionProtocol {
         guard !data.isEmpty else { return }
         draftTracker.apply(contentsOf: keyDecoder.decode(data))
         enqueueWrite(data)
+    }
+
+    /// Write a replacement produced by `DraftReplacer` and adopt its text as the
+    /// mirror. `write` feeds the erase keystrokes to the tracker first — which is
+    /// what invalidates the mirror at an uncertain cursor — and `adopt` then
+    /// states the outcome the server knows for certain. Both happen in one actor
+    /// step: this method has no `await`, so no client keystroke can interleave
+    /// between the paste and the adoption.
+    public func writeReplacement(_ data: Data, adopting draft: String) {
+        write(data)
+        draftTracker.adopt(draft)
     }
 
     /// Enqueue PTY write, bypassing the draft mirror. Used for relay-generated

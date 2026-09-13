@@ -256,6 +256,18 @@ Pipeline per session, all inside the `PTYSession` actor:
   prove the real input box is empty. Capped at 16 384 scalars
   (`DraftTracker.maxScalars`), checked *before* an insert, and the decoder drops a
   printable run past the same bound as one `.unknown`.
+- **A lost mirror refuses a replacement.** `PromptContext.draftKnown` carries
+  `!mirrorLost` to the handlers, and `handleReplacePrompt` answers `failed` /
+  `"Optimizer could not rewrite this prompt"` with no PTY write when it is false —
+  the guard is on `draftKnown`, *not* on an empty draft, because Undo onto a
+  genuinely empty known line is legitimate (erase nothing, paste the original).
+- **A server write adopts what it pasted.** Both optimizer write sites use
+  `PTYSession.writeReplacement(_:adopting:)`, which writes the bytes and then
+  `DraftTracker.adopt(text)` in the same actor step: the erase keystrokes would
+  otherwise flow through the decoder and lose the mirror at an uncertain cursor,
+  whereas the server knows the line is now exactly what it typed. Adoption is a
+  recovery point like a submit; a mirror lost to *user* keystrokes is not
+  recovered this way.
 - `PromptContext` is the snapshot handed to the model: draft, agent id + display
   name, cwd, the trailing ≤40 lines / ≤4 KB of the rendered screen (only when
   both `promptOptimizerShareScreen` and the request's `shareScreen` are true),

@@ -447,4 +447,53 @@ final class DraftTrackerTests: XCTestCase {
         XCTAssertEqual(t.draft, "")
         XCTAssertTrue(t.mirrorLost)
     }
+
+    // MARK: E3 — the server adopts what it pasted
+
+    /// The optimize/replace path erases and pastes at an *uncertain* cursor when
+    /// the user has pressed Up/Down inside a multi-row draft. Those keystrokes
+    /// invalidate the mirror on their way through the decoder (see
+    /// `testReplacementSequenceAtAnUncertainCursorLosesTheMirror`), and `adopt`
+    /// is the server stating the outcome it knows: the line is now exactly the
+    /// text it pasted.
+    func testAdoptRestoresCertaintyAfterUncertainCursor() {
+        var t = tracker(claude, typing: "a")
+        t.apply(.enter([.control])); t.apply(.text("b"))
+        t.apply(.up)
+        XCTAssertTrue(t.cursorUncertain)
+        t.adopt("new prompt")
+        XCTAssertEqual(t.draft, "new prompt")
+        XCTAssertFalse(t.cursorUncertain)
+        XCTAssertFalse(t.mirrorLost)
+        t.apply(.text("!"))
+        XCTAssertEqual(t.draft, "new prompt!")
+    }
+
+    /// A lost mirror swallows the replacement's own keystrokes, so only `adopt`
+    /// can state the result — and it is a recovery point like a submit, because
+    /// the server knows byte-for-byte what the line now holds.
+    func testAdoptRecoversLostMirror() {
+        var t = tracker(bundledClaude, typing: "fix the bug")
+        t.apply(.unknown)
+        XCTAssertTrue(t.mirrorLost)
+        for _ in 0..<11 { t.apply(.backspace) }
+        t.apply(.paste("optimized prompt"))
+        XCTAssertEqual(t.draft, "")
+        t.adopt("optimized prompt")
+        XCTAssertEqual(t.draft, "optimized prompt")
+        XCTAssertFalse(t.mirrorLost)
+        t.apply(.text(" now"))
+        XCTAssertEqual(t.draft, "optimized prompt now")
+    }
+
+    /// A replacement longer than the mirror can hold leaves the same doubt as an
+    /// overflowing paste: the real line holds text nobody can count.
+    func testAdoptOverCapInvalidates() {
+        var t = tracker(typing: "abc")
+        t.adopt(String(repeating: "x", count: DraftTracker.maxScalars + 1))
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+        t.apply(.text("z"))
+        XCTAssertEqual(t.draft, "")
+    }
 }

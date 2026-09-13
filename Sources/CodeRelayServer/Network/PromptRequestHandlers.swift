@@ -150,7 +150,11 @@ extension RelayMessageHandler {
                         }
                         // Write PTY first, then send reply to preserve ordering with binary terminal input.
                         Task {
-                            await pty.write(bytes)
+                            // `writeReplacement`, not `write`: the erase keystrokes
+                            // pass through the decoder like any input and would
+                            // invalidate the mirror at an uncertain cursor, so the
+                            // session adopts the prompt it just pasted instead.
+                            await pty.writeReplacement(bytes, adopting: prompt)
                             let elapsed = Int(Date().timeIntervalSince(startedAt) * 1000)
                             ctx.value.eventLoop.execute { [weak self] in
                                 guard let handler = self, handler.optimizeGeneration == resolvedGeneration,
@@ -207,14 +211,34 @@ extension RelayMessageHandler {
         }
         bridgeToEventLoop(
             context: context,
-            work: { () async throws -> Data in
+            // `nil` means refused: the draft mirror is lost, so there is no
+            // erase length to compute. Carried as an optional rather than a
+            // thrown error because it is not a failure of the work — it is the
+            // answer — and `onFailure` owns a different client string.
+            work: { () async throws -> Data? in
                 let current = await pty.promptContext(includeScreen: false)
+                // The replacement erases exactly as many characters as the mirror
+                // says the line holds. While the mirror is lost the real line holds
+                // text the server cannot count, so the erase would be too short and
+                // the paste would land inside the surviving residue — the one
+                // destructive direction. Deliberately *not* `draft.isEmpty`: a
+                // genuinely empty, known line is a legitimate Undo target (erase
+                // nothing, paste the original back).
+                guard current.draftKnown else { return nil }
                 let bytes = DraftReplacer.bytes(replacing: current.draft, with: text,
                                                 bracketedPaste: current.bracketedPaste,
                                                 keyboardFlags: current.keyboardFlags)
                 return bytes
             },
             onSuccess: { handler, ctx, bytes in
+                guard let bytes else {
+                    RelayLogger.log(.debug, category: "optimizer", "replace_prompt refused: mirror lost")
+                    handler.sendServerMessage(
+                        .replacePromptResult(status: "failed",
+                                             message: "Optimizer could not rewrite this prompt"),
+                        context: ctx)
+                    return
+                }
                 // Re-validate attachment before PTY write.
                 guard handler.attachedSessionId == sessionId, ctx.channel.isActive,
                       let pty = handler.attachedPTY else {
@@ -224,7 +248,8 @@ extension RelayMessageHandler {
                 // Write PTY first, then send reply to preserve ordering with binary terminal input.
                 let ctx = UnsafeTransfer(ctx)
                 Task {
-                    await pty.write(bytes)
+                    // Adopts `text` as the mirror — see the optimize site above.
+                    await pty.writeReplacement(bytes, adopting: text)
                     ctx.value.eventLoop.execute { [weak handler] in
                         guard let handler, ctx.value.channel.isActive else { return }
                         RelayLogger.log(.debug, category: "optimizer", "replace_prompt ok text=\(text.utf8.count)B")

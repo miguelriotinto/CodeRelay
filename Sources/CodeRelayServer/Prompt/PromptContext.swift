@@ -20,9 +20,16 @@ public struct PromptContext: Equatable, Sendable {
     /// `KittyKeyboardFlags.rawValue`. Stored raw because SwiftTerm's option
     /// set is not `Sendable` and this value crosses the actor boundary.
     public let keyboardFlagsRawValue: Int
+    /// False while the tracker's mirror is lost (see `DraftTracker.mirrorLost`):
+    /// the real input line holds text the server cannot count, so nothing may be
+    /// erased or pasted. `draft` is always `""` when this is false; the converse
+    /// does not hold — a genuinely empty line is empty *and* known, and an Undo
+    /// onto it is legitimate (erase nothing, paste the original back).
+    public let draftKnown: Bool
 
     public init(draft: String, agentId: String?, agentDisplayName: String?, workingDirectory: String?,
-                screenLines: [String], bracketedPaste: Bool, keyboardFlagsRawValue: Int) {
+                screenLines: [String], bracketedPaste: Bool, keyboardFlagsRawValue: Int,
+                draftKnown: Bool = true) {
         self.draft = draft
         self.agentId = agentId
         self.agentDisplayName = agentDisplayName
@@ -30,6 +37,7 @@ public struct PromptContext: Equatable, Sendable {
         self.screenLines = screenLines
         self.bracketedPaste = bracketedPaste
         self.keyboardFlagsRawValue = keyboardFlagsRawValue
+        self.draftKnown = draftKnown
     }
 
     public var keyboardFlags: KittyKeyboardFlags { KittyKeyboardFlags(rawValue: keyboardFlagsRawValue) }

@@ -49,6 +49,38 @@ final class PTYSessionPromptContextTests: XCTestCase {
         XCTAssertTrue(echoed, "screen never showed the echoed line")
     }
 
+    /// E1 + E3 through the real actor: an Up on a single-row draft is history
+    /// navigation, so the mirror is lost and `draftKnown` goes false — the state
+    /// in which `replace_prompt` refuses. A server-written replacement then
+    /// adopts its own text, so the very next optimize/Undo has an exact mirror
+    /// again without waiting for a submit.
+    func testWriteReplacementAdoptsTheDraftAndRestoresDraftKnown() async throws {
+        let session = try await startedSession()
+
+        await session.write(Data("echo hello".utf8))
+        var ctx = await session.promptContext(includeScreen: false)
+        XCTAssertEqual(ctx.draft, "echo hello")
+        XCTAssertTrue(ctx.draftKnown)
+
+        await session.write(Data([0x1B, 0x5B, 0x41]))          // CSI A — Up: history
+        ctx = await session.promptContext(includeScreen: false)
+        XCTAssertEqual(ctx.draft, "")
+        XCTAssertFalse(ctx.draftKnown)
+
+        let bytes = DraftReplacer.bytes(replacing: "echo hello", with: "echo bye",
+                                        bracketedPaste: ctx.bracketedPaste,
+                                        keyboardFlags: ctx.keyboardFlags)
+        await session.writeReplacement(bytes, adopting: "echo bye")
+        ctx = await session.promptContext(includeScreen: false)
+        XCTAssertEqual(ctx.draft, "echo bye")
+        XCTAssertTrue(ctx.draftKnown)
+
+        // The adopted mirror accumulates normally from here.
+        await session.write(Data("!".utf8))
+        ctx = await session.promptContext(includeScreen: false)
+        XCTAssertEqual(ctx.draft, "echo bye!")
+    }
+
     func testScreenFlagsFollowWhatTheShellPrints() async throws {
         let session = try await startedSession()
 

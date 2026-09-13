@@ -232,9 +232,14 @@ draft the tracker sets `cursorUncertain`. While it is set, `.text`,
 unknown (a sticky clear), because their position can no longer be trusted. The
 replacement encoding does not need the cursor, so a wand press straight after an
 Up/Down still rewrites the real line correctly (BS×N + DEL×N erases from either
-side of the cursor); the mirror itself does not survive that replacement,
-because those same backspaces arrive at an uncertain cursor, so the next
-optimize answers `no_draft` until the user submits.
+side of the cursor). The server's own erase keystrokes would themselves flip the
+mirror to unknown on the way through the decoder, so the two server write sites
+go through `PTYSession.writeReplacement(_:adopting:)`, which pastes and then
+**adopts** the pasted text as the mirror in the same actor step
+(`DraftTracker.adopt`): the line is known to be exactly what the server just
+typed, so a second wand press or an Undo works immediately. Adoption is the
+server stating a fact about its own write — a mirror lost to *user* keystrokes
+stays lost until a submit-Enter, Ctrl-C, or an agent change.
 
 Additional rules: reset when the foreground agent changes (fed by
 `PTYSession`'s foreground poll, which also swaps the profile); cap 16 384
@@ -481,13 +486,18 @@ the PTY. This is how the system prompt is tuned without a phone in hand.
 5. `pty.promptContext(includeScreen:)`; empty draft → `status: no_draft`.
 6. `optimize(context)` with a 12 s deadline. `passthrough` → `status: passthrough`
    with no PTY write. Failure → `status: failed` with the table message.
-7. `optimized(text)` → `pty.write(DraftReplacer.bytes(replacing: draft, with: text, …))` →
-   `status: ok, original: draft, prompt: text`.
+7. `optimized(text)` → `pty.writeReplacement(DraftReplacer.bytes(replacing: draft, with: text, …), adopting: text)` →
+   `status: ok, original: draft, prompt: text`. The write adopts `text` as the new
+   mirror (§5.2).
 
 `handleReplacePrompt(sessionId:text:)`: steps 1–2 as above, then
-`promptContext(includeScreen: false)`, write the replacement, reply
+`promptContext(includeScreen: false)`; if the mirror is lost
+(`draftKnown == false`) → `failed` with "Optimizer could not rewrite this
+prompt" and **no PTY write**, because the erase length is unknown; otherwise
+write the replacement (adopting `text`) and reply
 `replace_prompt_result{status: ok}`. `text` is capped at 16 KB; over the cap
-→ `failed`.
+→ `failed`. A genuinely empty but *known* draft is written normally — the erase
+prefix is simply empty.
 
 Both handlers always reply. They are real requests with waiters, so `.error` is
 permitted for protocol-level faults (malformed payload), but the typed statuses
@@ -662,6 +672,7 @@ history and are left alone.
 | Refusal or malformed JSON | Server → `failed` | "Optimizer could not rewrite this prompt" | no |
 | Waiter timeout (should not happen) | Client | Existing RPC-timeout handling | n/a |
 | Undo after the user typed more | Server replaces the current draft | Draft becomes the original | yes |
+| Undo while the mirror is lost | Server → `failed` | "Optimizer could not rewrite this prompt" | no |
 
 Nothing is dropped silently. Every request receives exactly one reply.
 

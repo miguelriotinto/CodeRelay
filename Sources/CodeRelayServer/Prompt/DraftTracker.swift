@@ -73,6 +73,25 @@ struct DraftTracker: Sendable {
         self.profile = profile
     }
 
+    /// The server just erased the mirrored line and pasted `draft`; the line is
+    /// now exactly `draft` with the cursor at its end. Only the two server write
+    /// sites call this — client keystrokes never do.
+    ///
+    /// This is a recovery point for the same reason a submit is: the server knows
+    /// what the line holds, so accumulating from here cannot under-count. The
+    /// erase keystrokes it wrote have already passed through `apply` and may have
+    /// left the mirror uncertain or lost — this overrides that.
+    mutating func adopt(_ draft: String) {
+        let new = Array(draft.unicodeScalars)
+        // Same doubt as an overflowing paste: the real line now holds more than
+        // the mirror is allowed to model, so nothing can be said about it.
+        guard new.count <= Self.maxScalars else { invalidate(); return }
+        scalars = new
+        cursor = new.count
+        cursorUncertain = false
+        mirrorLost = false
+    }
+
     mutating func setColumns(_ cols: Int) {
         columns = max(1, cols)
     }

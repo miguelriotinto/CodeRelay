@@ -42,6 +42,15 @@ actor MockPTYSession: PTYSessionProtocol {
 
     func write(_ data: Data) { writes.append(data) }
     func recordedWrites() -> [Data] { writes }
+    /// Every draft adopted through `writeReplacement`, in order. The bytes land
+    /// in `writes` exactly as a plain `write` would, so write assertions are
+    /// unaffected by which of the two the handler used.
+    private var adoptedDrafts: [String] = []
+    func writeReplacement(_ data: Data, adopting draft: String) {
+        write(data)
+        adoptedDrafts.append(draft)
+    }
+    func recordedAdoptedDrafts() -> [String] { adoptedDrafts }
     func setMockPromptContext(_ context: PromptContext) { mockPromptContext = context }
     func promptContext(includeScreen: Bool) -> PromptContext {
         guard includeScreen else {
@@ -50,7 +59,8 @@ actor MockPTYSession: PTYSessionProtocol {
                 agentDisplayName: mockPromptContext.agentDisplayName,
                 workingDirectory: mockPromptContext.workingDirectory, screenLines: [],
                 bracketedPaste: mockPromptContext.bracketedPaste,
-                keyboardFlagsRawValue: mockPromptContext.keyboardFlagsRawValue)
+                keyboardFlagsRawValue: mockPromptContext.keyboardFlagsRawValue,
+                draftKnown: mockPromptContext.draftKnown)
         }
         return mockPromptContext
     }
