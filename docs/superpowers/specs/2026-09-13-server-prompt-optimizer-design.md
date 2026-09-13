@@ -29,7 +29,7 @@ This spec does two things:
    draft in place. The prompt is typed, never submitted. Undo is exact.
 
 The result is one feature instead of two half-features, one API key on the
-server instead of one per device, one implementation for three clients, and an
+server instead of one per device, one implementation for four clients, and an
 optimizer that sees context no device could.
 
 ## 2. Goals and non-goals
@@ -61,11 +61,13 @@ optimizer that sees context no device could.
 |---|---|---|
 | Where the optimizer runs | Relay server, new RPC | The server owns the PTY, the screen model, the agent registry, and the cwd. One key, one implementation, three clients. |
 | Where the draft comes from | Server-side `DraftTracker` over the PTY input stream | Every keystroke for a session passes through `PTYSession.write`, whatever device typed it. Parsing a TUI screen for the input box is per-agent and fragile; the input stream is exact. |
-| Who performs the replacement | Server | It owns the PTY, knows the draft length and cursor, and its headless SwiftTerm knows whether bracketed paste is on. The replacement bytes flow through the same input path, so the tracker stays consistent. |
+| Who performs the replacement | Server | It owns the PTY, knows the draft length, and its headless SwiftTerm knows whether bracketed paste and the kitty keyboard protocol are on. The replacement bytes flow through the same input path, so the tracker stays consistent. |
 | Delivery | Typed at the input line, not submitted | The user reviews before pressing Enter. Multi-line prompts are wrapped in bracketed paste so a bare LF cannot submit in Ink-based inputs. |
-| Model provider | Anthropic Messages API body; transports for first-party and Bedrock InvokeModel | One body, two transports. Structured output and prompt caching are supported on both. The current Bedrock Converse path cannot reuse the body and is dropped. |
-| Default model | `claude-haiku-4-5` (Bedrock: `us.anthropic.claude-haiku-4-5-20251001-v1:0`), configurable | The wand is interactive; a reply in about a second matters more than marginal quality. `claude-sonnet-5` or `claude-opus-5` are one config change away. This deliberately departs from the general "default to Opus 5" guidance for the latency reason stated. |
-| Refusal and non-instruction handling | Structured JSON output with a `kind` field | Replaces the string-prefix refusal lists. The model classifies rather than the client guessing. |
+| Model provider | One Messages API client; base URL selects Anthropic first-party or Claude in Amazon Bedrock | The Bedrock Messages endpoint (`bedrock-mantle.<region>.api.aws/anthropic/v1/messages`) takes the same body, the same `anthropic-version` header, and the bearer key in the same `x-api-key` header as first-party. Only the host and the model-id prefix differ. The legacy InvokeModel/Converse path with ARN-versioned ids does not serve Sonnet 5 and is dropped. |
+| Default model | `claude-sonnet-5` (Bedrock: `anthropic.claude-sonnet-5`), configurable | Rewrite quality matters more than the extra second over Haiku, and Sonnet 5's 1 024-token cache minimum means the static system block is actually cached. `claude-opus-5` and `claude-haiku-4-5` are one config change away. |
+| Refusal and non-instruction handling | Forced tool call returning `{kind, prompt}` | The Bedrock Messages endpoint does not support `output_config` structured outputs; a forced `tool_choice` gives the same schema-shaped JSON on both providers. Replaces the string-prefix refusal lists. |
+| Draft model | Multi-line, agent-aware | Each agent manifest declares which keys insert a newline and which submit. Claude Code: backslash+Enter, Option+Enter, Shift+Enter, Ctrl+J insert; Enter submits. Unknown agents and shells: Enter submits, nothing inserts. |
+| Replacement encoding | Cursor-independent: Backspace × N, Delete × N, paste | Both keys are no-ops at the buffer edges, so over-sending is safe. The replacement depends only on the draft's length, never on where the cursor is. |
 | Speech stack | Removed on all platforms | System dictation already does the transcription; the stack was non-functional on Android and absent on Linux. |
 
 ## 4. Architecture
@@ -74,15 +76,15 @@ optimizer that sees context no device could.
  device                          relay server                              model provider
  ──────                          ────────────                              ──────────────
  keystrokes / dictation ─binary─▶ PTYSession.write ──▶ PTY
-                                   └─▶ DraftTracker (draft, cursor)
+                                   └─▶ KeyDecoder ─▶ DraftTracker (draft, cursor; profile from agent manifest)
  wand tap ── optimize_prompt ───▶ RelayMessageHandler
                                    ├─ attached? configured? draft non-empty?
                                    ├─ PTYSession.promptContext()
-                                   │    {draft, cursor, agent, cwd, screenLines, bracketedPaste}
+                                   │    {draft, agent, cwd, screenLines, bracketedPaste, keyboardFlags}
                                    ├─ PromptOptimizer.optimize(context) ── HTTPS ─▶ Messages API
                                    │                                   ◀── JSON {kind, prompt}
                                    ├─ DraftReplacer.bytes(...) ──▶ PTYSession.write ──▶ PTY
-                                   │    (BS × cursor, DEL × rest, bracketed paste of prompt)
+                                   │    (BS × N, DEL × N, bracketed paste of prompt)
                                    └─ optimize_prompt_result {status, original, prompt}
  undo tap ── replace_prompt(original) ─▶ same replacement path ─▶ replace_prompt_result
 ```
@@ -95,75 +97,168 @@ pure, unit-tested value types.
 
 All new code lives in `Sources/CodeRelayServer/Prompt/` unless noted.
 
-### 5.1 `DraftTracker` (pure value type)
+### 5.1 `KeyDecoder` (pure value type)
 
-Models the agent's single input line as an array of Unicode scalars plus a cursor
-index, fed with every byte written to the PTY. UTF-8 is decoded across chunk
-boundaries with a partial-byte carry.
+Turns the raw byte stream written to the PTY into `KeyEvent`s. It is
+agent-agnostic and handles both the legacy encoding and the kitty keyboard
+protocol, which SwiftTerm on iOS and macOS negotiates whenever the running
+program asks for it (Claude Code and OpenCode do).
 
-| Input | Effect |
+```swift
+enum KeyEvent: Equatable {
+    case text(String)                 // one or more printable scalars
+    case paste(String)                // body of ESC[200~ … ESC[201~, newlines kept
+    case enter(Modifiers)             // CR, LF, ESC CR, CSI 13[;m]u, CSI 27;m;13~
+    case backspace, delete
+    case left, right, up, down, home, end
+    case control(UInt8)               // Ctrl-A … Ctrl-Z, Ctrl-_
+    case alt(Character)               // ESC <char>: Alt+B/F/D/Y and friends
+    case ignored                      // any other CSI/SS3/OSC/DCS, release events
+}
+```
+
+Decoding rules:
+
+- UTF-8 is decoded across chunk boundaries with a partial-byte carry.
+- `LF` decodes as `.enter([.control])` so a profile can treat Ctrl+J and a
+  bare line feed identically; `CR` decodes as `.enter([])`.
+- Kitty `CSI <cp>[:alt[:base]];<mods>[:event][;<text…>]u`: press and repeat
+  events are decoded, release events are `.ignored`. When the trailing text
+  field is present it wins; otherwise the shifted alternate, then the base
+  codepoint, is the text. Codepoints 13, 127, 9, 27 map to enter, backspace,
+  tab (`.ignored`), escape (`.ignored`). Modifier bits map onto `Modifiers`.
+- `CSI 1;<mods> A/B/C/D`, `CSI H/F`, `CSI 1~/4~/7~/8~`, `CSI 3[;m]~` decode to
+  the arrow, home, end, and delete events regardless of modifiers.
+- Bracketed paste bodies are accumulated until `ESC[201~` and emitted once.
+- Anything else that parses as a control sequence is consumed to completion
+  and emitted as `.ignored`. Bare `ESC` followed by a printable is `.alt`.
+
+### 5.2 `InputProfile` and `DraftTracker` (pure value types)
+
+`InputProfile` says how an agent's input box interprets keys. It lives in the
+agent manifest (`Sources/CodeRelayServer/Resources/Agents/<id>.json`) under a
+new `input` object and is loaded by `CodingAgent`:
+
+```json
+"input": {
+  "newline": ["ctrl_enter", "alt_enter", "shift_enter", "backslash_enter"],
+  "submit":  ["enter"],
+  "killLineAcrossLines": true
+}
+```
+
+| Symbol | Keys it matches | Claude Code |
+|---|---|---|
+| `enter` | `.enter([])` from CR or `CSI 13u` | submit |
+| `ctrl_enter` | `.enter([.control])` from LF (Ctrl+J) or `CSI 13;5u` | newline |
+| `alt_enter` | `.enter([.alt])` from `ESC CR` or `CSI 13;3u` | newline |
+| `shift_enter` | `.enter([.shift])` from `CSI 13;2u` or `CSI 27;2;13~` | newline |
+| `backslash_enter` | `.text("\\")` immediately followed by `.enter([])` | newline, replacing the backslash |
+
+The default profile, used when a manifest has no `input` object and for a
+plain shell, is `newline: []`, `submit: ["enter", "ctrl_enter"]`. The plan for
+this spec probes Codex, OpenCode, Copilot, Cursor Agent, and Droid in a live
+PTY and fills their manifests; until a manifest is verified it gets the default
+profile, which degrades to single-line tracking rather than to wrong tracking.
+
+`DraftTracker` consumes `KeyEvent`s under a profile and models the draft as an
+array of Unicode scalars (newlines included) plus a cursor:
+
+| Event | Effect |
 |---|---|
-| Printable scalar | Insert at cursor, cursor += 1 |
-| `ESC[200~ … ESC[201~` | Insert body verbatim (newlines included), cursor to end of insertion |
-| BS `0x08`, DEL `0x7F` | Delete scalar before cursor |
-| `ESC[3~` | Delete scalar at cursor |
-| `ESC[D` / `ESC[C` | Cursor left / right, clamped |
-| `ESC[H`, `ESC[1~`, `0x01` (Ctrl-A) | Cursor to start |
-| `ESC[F`, `ESC[4~`, `0x05` (Ctrl-E) | Cursor to end |
-| `0x15` (Ctrl-U) | Delete from start to cursor |
-| `0x0B` (Ctrl-K) | Delete from cursor to end |
-| `0x17` (Ctrl-W), `ESC DEL` | Delete the word before the cursor |
-| CR `0x0D`, LF `0x0A` (outside a paste body), `0x03` (Ctrl-C) | Commit or cancel: clear draft, cursor 0 |
-| `ESC[A` / `ESC[B` (history recall) | Clear draft (contents unknowable) |
-| Any other CSI, SS3, OSC, or C0 byte | Parsed to completion and ignored |
+| `.text` | Insert at cursor |
+| `.paste` | Insert body verbatim, cursor to end of insertion |
+| newline per profile | Insert `\n` (for `backslash_enter`, first remove the backslash) |
+| submit per profile | Clear draft, cursor 0 |
+| `.backspace` | Delete scalar before cursor (joins lines) |
+| `.delete` | Delete scalar at cursor |
+| `.left` / `.right` | Move, clamped |
+| `.home`, `.control(0x01)` | Start of current logical line |
+| `.end`, `.control(0x05)` | End of current logical line |
+| `.control(0x15)` Ctrl-U | Delete from cursor to line start; at a line start, delete the preceding newline (Claude Code's "repeat to clear across lines") when `killLineAcrossLines` |
+| `.control(0x0B)` Ctrl-K | Delete from cursor to line end |
+| `.control(0x17)` Ctrl-W, `.alt("\u{7F}")` | Delete back to previous whitespace / previous word |
+| `.alt("b")` / `.alt("f")` | Word left / right |
+| `.alt("d")` | Delete to end of word |
+| `.control(0x19)` Ctrl-Y | Re-insert the most recent Ctrl-U/K/W/Alt-D kill |
+| `.control(0x03)` Ctrl-C | Clear draft |
+| `.control(0x1F)` Ctrl-_ (undo), `.alt("y")` (kill-ring cycle) | Draft unknown → clear |
+| `.up` / `.down` | See below |
+| `.ignored` | Nothing |
 
-Additional rules:
+**Up and Down.** In a single-row draft they recall history, so the draft is
+cleared. In a draft that spans more than one row they move the cursor between
+rows first and recall history only from the first or last row. Rows depend on
+wrapping, which the tracker approximates from the PTY width the session
+already tracks and the agent's input-box inset (Claude Code: 4 columns). The
+tracker moves the cursor by the approximated row; when the move would leave
+the first or last row it clears instead. After any Up/Down in a multi-row
+draft the tracker sets `cursorUncertain`. Uncertainty is cleared by the next
+submit, clear, or replacement; while it is set, `.text`, `.backspace`,
+`.delete`, and kill events still apply but flip the draft to unknown (clear),
+because their position can no longer be trusted. The replacement encoding does
+not need the cursor, so a wand press straight after an Up/Down still works.
 
-- Reset when the foreground agent changes (fed by `PTYSession`'s foreground poll).
-- Cap of 16 384 scalars. Beyond that the tracker clears and reports empty.
-- Deletions are counted in scalars. Ink deletes UTF-16 code units, so a draft
-  containing astral-plane characters (emoji) may leave one stray half-character
-  after replacement. Accepted for v1 and noted in the user-facing docs.
-- The tracker never sees host-side input because sessions receive input only
-  through the relay.
+Additional rules: reset when the foreground agent changes (fed by
+`PTYSession`'s foreground poll, which also swaps the profile); cap 16 384
+scalars, beyond which the tracker clears and reports empty; the tracker never
+sees host-side input because sessions receive input only through the relay.
 
-`PTYSession` owns one tracker and feeds it inside `write(_:)` under actor
-isolation. It exposes:
+`PTYSession` owns one decoder and one tracker and feeds them inside
+`write(_:)` under actor isolation. It exposes:
 
 ```swift
 struct PromptContext: Sendable {
-    let draft: String
-    let cursor: Int              // scalar index
+    let draft: String            // may contain newlines
     let agentId: String?         // CodingAgent.id, nil for a plain shell
     let agentDisplayName: String?
     let workingDirectory: String?
     let screenLines: [String]    // trailing non-empty lines, ≤ 40, ≤ 4 KB
     let bracketedPaste: Bool
+    let keyboardFlags: KittyKeyboardFlags   // SwiftTerm's, empty = legacy
 }
 func promptContext(includeScreen: Bool) -> PromptContext
 ```
 
-`TerminalScreenModel` gains `var bracketedPasteEnabled: Bool` reading SwiftTerm's
-`Terminal.bracketedPasteMode`, and `snapshot()` is reused for the screen lines.
+`TerminalScreenModel` gains `bracketedPasteEnabled` and `keyboardFlags`,
+reading SwiftTerm's `Terminal.bracketedPasteMode` and
+`Terminal.keyboardEnhancementFlags`. `snapshot()` is reused for the screen
+lines.
 
-### 5.2 `DraftReplacer` (pure)
+### 5.3 `DraftReplacer` (pure)
 
 ```swift
-static func bytes(replacing draftScalarCount: Int, cursor: Int,
-                  with text: String, bracketedPaste: Bool) -> Data
+static func bytes(replacing draft: String, with text: String,
+                  bracketedPaste: Bool, keyboardFlags: KittyKeyboardFlags) -> Data
 ```
 
-Emits `BS × cursor`, then `ESC[3~ × (count − cursor)`, then the text. With
-bracketed paste on, the text is wrapped in `ESC[200~ … ESC[201~` verbatim. With it
-off, every newline is replaced by a single space so nothing can submit. No cursor
-movement is sent, so the sequence is correct regardless of where the cursor is.
-The bytes pass through `PTYSession.write`, so the tracker ends with
-`draft == text`, `cursor == text.count`.
+Let `N` be the UTF-16 length of `draft`. The encoder emits Backspace × N, then
+Delete × N, then the new text. Backspace at the start of the buffer and Delete
+at its end are no-ops in Claude Code, Ink inputs, zsh, and bash, so:
 
-Ink collapses long pastes into a `[Pasted text #1 +N lines]` placeholder in its
-display. The content is still in the input buffer and is submitted normally.
+- the cursor position does not matter: whatever is before the cursor is
+  removed by the backspaces and whatever is after it by the deletes;
+- an agent that counts UTF-16 units (Ink) and one that counts scalars both end
+  with an empty buffer, because UTF-16 length ≥ scalar count;
+- in a multi-line draft, Backspace at a line start joins lines, so newlines
+  are consumed like any other unit.
 
-### 5.3 `PromptOptimizer`
+Backspace and Delete are encoded in the dialect the program negotiated: legacy
+`0x7F` and `ESC[3~` when `keyboardFlags` is empty, `CSI 127u` and `ESC[3~`
+under kitty flags. The server implements this tiny encoder itself; SwiftTerm's
+`KittyKeyboardEncoder` is internal to its view layer.
+
+With bracketed paste on, the text is wrapped in `ESC[200~ … ESC[201~`
+verbatim, newlines included, which Claude Code accepts as multi-line input.
+With it off, every newline is replaced by a single space so nothing can
+submit. The bytes pass through `PTYSession.write`, so the tracker ends with
+`draft == text`, cursor at the end, `cursorUncertain == false`.
+
+Ink collapses pastes longer than 800 characters or three lines into a
+`[Pasted text #1 +N lines]` placeholder in its display. The content is still
+in the input buffer and is submitted normally.
+
+### 5.4 `PromptOptimizer`
 
 ```swift
 protocol PromptOptimizing: Sendable {
@@ -176,7 +271,7 @@ Builds one Messages API request and parses the structured reply. It is
 constructed once in `main.swift` from `RelayConfig` and injected into
 `RelayMessageHandler`; `nil` means unconfigured.
 
-**Request body (identical on both transports):**
+**Request body (identical on both providers):**
 
 ```json
 {
@@ -186,32 +281,34 @@ constructed once in `main.swift` from `RelayConfig` and injected into
     {"type": "text", "text": "<static system prompt + three examples>",
      "cache_control": {"type": "ephemeral"}}
   ],
-  "messages": [{"role": "user", "content": "<context block>\n\n<draft block>"}],
-  "output_config": {
-    "format": {
-      "type": "json_schema",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "kind":   {"type": "string", "enum": ["instruction", "passthrough"]},
-          "prompt": {"type": "string"}
-        },
-        "required": ["kind", "prompt"],
-        "additionalProperties": false
-      }
+  "tools": [{
+    "name": "deliver_prompt",
+    "description": "Return the rewritten prompt, or the draft unchanged with kind=passthrough.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "kind":   {"type": "string", "enum": ["instruction", "passthrough"]},
+        "prompt": {"type": "string"}
+      },
+      "required": ["kind", "prompt"],
+      "additionalProperties": false
     }
-  }
+  }],
+  "tool_choice": {"type": "tool", "name": "deliver_prompt"},
+  "messages": [{"role": "user", "content": "<context block>\n\n<draft block>"}]
 }
 ```
 
-On Bedrock the body additionally carries `"anthropic_version": "bedrock-2023-05-31"`.
-No `thinking` block is sent. No `temperature`.
+A forced tool call is used instead of `output_config` structured outputs
+because the Bedrock Messages endpoint does not support the latter and the
+body must be identical on both providers. No `thinking` block is sent (forced
+tool choice and thinking are mutually exclusive anyway). No `temperature`.
 
-The `cache_control` marker is included so that models with a low minimum
-cacheable prefix reuse the system block. The system block is roughly 1 200
-tokens. Haiku 4.5's minimum is 4 096, so caching is a no-op on the default
-model; Sonnet 5 (1 024) and Opus 5 (512) cache it. `usage.cache_read_input_tokens`
-is logged at debug so the effect is observable.
+The `cache_control` marker caches the static system block, which is roughly
+1 200 tokens. Sonnet 5's minimum cacheable prefix is 1 024 tokens and Opus 5's
+is 512, so both cache it; Haiku 4.5's is 4 096, so on that model the marker is
+a harmless no-op. `usage.cache_read_input_tokens` is logged at debug so the
+effect is observable.
 
 **Context block** sent in the user turn, in this order and with these tags:
 
@@ -260,37 +357,49 @@ Three few-shot pairs live in the same block: a one-line fix that stays one
 line; a multi-part refactor where "this test" is resolved from the screen; and a
 passthrough of a bare `ls -la`.
 
-**Response parsing.** The first `text` content block is parsed as JSON against
-the schema. `stop_reason == "refusal"` or a schema mismatch is a `failed`
-outcome with a generic message; the raw body is never surfaced to the client.
+**Response parsing.** The first `tool_use` content block named
+`deliver_prompt` supplies `input.kind` and `input.prompt`, validated against
+the schema (unknown `kind`, missing `prompt`, or extra keys → `failed`).
+`stop_reason == "refusal"`, no tool-use block, or a schema mismatch is a
+`failed` outcome with a generic message; the raw body is never surfaced to the
+client.
 
-### 5.4 `ModelTransport`
+### 5.5 `MessagesClient`
 
 ```swift
-protocol ModelTransport: Sendable {
+struct MessagesEndpoint: Sendable { let baseURL: URL; let defaultModel: String }
+protocol MessagesSending: Sendable {
     func send(body: Data) async throws -> Data   // response body
 }
 ```
 
-- `AnthropicTransport`: `POST https://api.anthropic.com/v1/messages`, headers
-  `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`.
-- `BedrockTransport`: `POST https://bedrock-runtime.<region>.amazonaws.com/model/<modelId>/invoke`,
-  headers `Authorization: Bearer <key>`, `content-type: application/json`. This
-  keeps the bearer-token (Bedrock API key) scheme the current client code uses.
+One HTTP implementation, two endpoint values chosen by `promptOptimizerProvider`:
 
-Both use `PushHTTP` (AsyncHTTPClient) for the request: its 64 KB response cap,
-redaction, and retry behaviour are wanted here. The optimizer constructs its own
-instance with `requestTimeout: .seconds(12)` through the existing initializer
-parameter; `PushHTTP` itself is unchanged. Its policy already fits: ≤ 2 retries
-on 429 and 5xx, every other 4xx terminal. The 12 s deadline in §5.6 bounds the
-whole call including retries, so a retried request cannot outlive the waiter.
+| Provider | `POST` URL | Default model | Key |
+|---|---|---|---|
+| `anthropic` | `https://api.anthropic.com/v1/messages` | `claude-sonnet-5` | Anthropic API key |
+| `bedrock` | `https://bedrock-mantle.<region>.api.aws/anthropic/v1/messages` | `anthropic.claude-sonnet-5` | Bedrock bearer token (Bedrock API key) |
+
+Both send the headers `x-api-key: <key>`, `anthropic-version: 2023-06-01`,
+`content-type: application/json`. The Bedrock endpoint documents the bearer
+token in `x-api-key` for the plain-HTTP path; SigV4 signing is not implemented
+in v1 and is listed as a follow-up. A configured model on Bedrock must carry
+the `anthropic.` prefix; `config set` rejects one that does not.
+
+The client uses `PushHTTP` (AsyncHTTPClient) for the request: its 64 KB
+response cap, redaction, and retry behaviour are wanted here. The optimizer
+constructs its own instance with `requestTimeout: .seconds(12)` through the
+existing initializer parameter; `PushHTTP` itself is unchanged. Its policy
+already fits: ≤ 2 retries on 429 and 5xx, every other 4xx terminal. The 12 s
+deadline in §5.7 bounds the whole call including retries, so a retried request
+cannot outlive the waiter.
 
 Errors are mapped to a small `OptimizerError` enum. Messages that reach the
 client are fixed strings from a table, never provider bodies. The key never
 appears in any log line; `PushHTTP.redact` already strips `Bearer` tokens and
 the `x-api-key` header is not part of the logged body.
 
-### 5.5 Configuration and CLI
+### 5.6 Configuration and CLI
 
 New `RelayConfig` keys, all optional, decoded with defaults like the push keys:
 
@@ -298,8 +407,8 @@ New `RelayConfig` keys, all optional, decoded with defaults like the push keys:
 |---|---|---|---|
 | `promptOptimizerEnabled` | Bool | `false` | bool |
 | `promptOptimizerProvider` | String | `"anthropic"` | `anthropic` or `bedrock` |
-| `promptOptimizerModel` | String | provider default (see §3) | non-empty |
-| `promptOptimizerRegion` | String | `"us-east-1"` | non-empty, `[a-z0-9-]+` |
+| `promptOptimizerModel` | String | provider default (see §5.5) | non-empty; on `bedrock` must start with `anthropic.` |
+| `promptOptimizerRegion` | String | `"us-east-1"` | non-empty, `[a-z0-9-]+`; used only by `bedrock` |
 | `promptOptimizerKeyPath` | String? | `nil` | readable regular file; startup logs a warning if mode is not `0600` |
 | `promptOptimizerShareScreen` | Bool | `true` | bool |
 
@@ -319,7 +428,7 @@ It runs the same `PromptOptimizer` against a real session's context through a
 new admin route `POST /optimizer/try` and prints the outcome. It never writes to
 the PTY. This is how the system prompt is tuned without a phone in hand.
 
-### 5.6 RPC handling in `RelayMessageHandler`
+### 5.7 RPC handling in `RelayMessageHandler`
 
 `handleOptimizePrompt(sessionId:shareScreen:)`:
 
@@ -335,7 +444,7 @@ the PTY. This is how the system prompt is tuned without a phone in hand.
 5. `pty.promptContext(includeScreen:)`; empty draft → `status: no_draft`.
 6. `optimize(context)` with a 12 s deadline. `passthrough` → `status: passthrough`
    with no PTY write. Failure → `status: failed` with the table message.
-7. `optimized(text)` → `pty.write(DraftReplacer.bytes(...))` →
+7. `optimized(text)` → `pty.write(DraftReplacer.bytes(replacing: draft, with: text, …))` →
    `status: ok, original: draft, prompt: text`.
 
 `handleReplacePrompt(sessionId:text:)`: steps 1–2 as above, then
@@ -542,17 +651,28 @@ Nothing is dropped silently. Every request receives exactly one reply.
 
 **Server (Swift, both platforms)**
 
-- `DraftTrackerTests`: every row of the §5.1 table, chunk-split UTF-8, paste
-  bodies with newlines, history recall clearing, the 16 KB cap, foreground reset.
-- `DraftReplacerTests`: byte-exact goldens for cursor at start, middle, end;
-  bracketed on and off; newline collapsing.
-- `PromptOptimizerTests`: golden request bodies for both transports (cache
-  marker, schema, context block ordering, screen omitted when not shared,
-  Bedrock `anthropic_version`), response parsing for `instruction`,
-  `passthrough`, refusal, malformed JSON, 401, 5xx, timeout; draft cap.
+- `KeyDecoderTests`: every decoding rule in §5.1, chunk-split UTF-8 and
+  chunk-split escape sequences, kitty press/repeat/release, text-field and
+  alternate-codepoint forms, `CSI 27;2;13~`, bracketed paste bodies.
+- `InputProfileTests`: manifest decoding, default profile when `input` is
+  absent, unknown symbol rejected at load.
+- `DraftTrackerTests`: every row of the §5.2 table under the Claude Code
+  profile and the default profile; backslash+Enter consuming the backslash;
+  Ctrl-U across lines; Up/Down in single-row vs multi-row drafts and the
+  `cursorUncertain` transitions; the 16 KB cap; foreground reset swapping the
+  profile.
+- `DraftReplacerTests`: byte-exact goldens for legacy and kitty encodings,
+  bracketed paste on and off, multi-line drafts, emoji (UTF-16 count),
+  newline collapsing.
+- `PromptOptimizerTests`: golden request bodies for both providers (cache
+  marker, forced tool choice and schema, context block ordering, screen
+  omitted when not shared), response parsing for `instruction`,
+  `passthrough`, refusal, missing tool block, schema mismatch, 401, 5xx,
+  timeout; draft cap.
 - `PTYSessionPromptContextTests`: feed a screen, type a draft, assert
-  `promptContext()`; bracketed-paste flag follows `CSI ?2004h/l`.
-- `RelayMessageHandlerTests`: every status in §5.6 including the "Session not
+  `promptContext()`; bracketed-paste flag follows `CSI ?2004h/l`; keyboard
+  flags follow `CSI > 1 u` / `CSI < u`.
+- `RelayMessageHandlerTests`: every status in §5.7 including the "Session not
   attached" wording, in-flight guard, capability advertisement in `auth_success`.
 - `WireRequestReplyTests`: `optimize_prompt` and `replace_prompt` round trips
   with a mock `PromptOptimizing` on macOS and Linux.
@@ -573,18 +693,26 @@ WhisperKit checkout; Xcode builds of both apps; `./gradlew test` in
 
 **Manual, per platform** — dictate with the system key into a Claude Code
 session, tap the wand, verify replacement and Undo; repeat with the cursor
-moved mid-draft; repeat in a plain zsh prompt with bracketed paste on and in
-`cat` with it off; run `claude-relay optimizer try` against the same session.
-Android verification is on the user's phone from a GitHub release APK.
+moved mid-draft; repeat with a three-line draft entered with Shift+Enter on
+macOS and backslash+Enter on iOS; repeat after pressing Up inside that draft;
+repeat in a plain zsh prompt with bracketed paste on and in `cat` with it off;
+run `claude-relay optimizer try` against the same session. Android
+verification is on the user's phone from a GitHub release APK.
+
+**Agent probing (plan 1)** — for each agent manifest, start the agent in a
+probe PTY, send each candidate newline sequence, and read the screen model to
+confirm whether it inserted a newline or submitted; record the result in the
+manifest's `input` object with a comment naming the agent version probed.
 
 ## 12. Rollout and plan decomposition
 
 Four implementation plans, each independently shippable, in this order:
 
-1. **Server optimizer and protocol.** `DraftTracker`, `DraftReplacer`,
-   `PromptContext`, `PromptOptimizer`, both transports, config, CLI `try`,
-   handlers, `protocolVersion` 2, Swift and Kotlin protocol types and fixtures.
-   Ships behind `promptOptimizerEnabled=false`; no client change needed.
+1. **Server optimizer and protocol.** `KeyDecoder`, `InputProfile` and the
+   agent-manifest probing, `DraftTracker`, `DraftReplacer`, `PromptContext`,
+   `PromptOptimizer`, `MessagesClient`, config, CLI `try`, handlers,
+   `protocolVersion` 2, Swift and Kotlin protocol types and fixtures. Ships
+   behind `promptOptimizerEnabled=false`; no client change needed.
 2. **iOS and macOS.** Speech removal, `WandButton`, coordinator methods,
    settings, migrations, entitlement, project files, `Package.swift` cleanup,
    docs. One PR; the removal and the addition cannot be split because the
@@ -600,15 +728,19 @@ ignores unknown optional fields in `auth_success`.
 
 ## 13. Known limits and risks
 
-- **Single-line tracker.** Claude Code's backslash-Enter or Shift+Enter newline
-  arrives as a CR and is treated as a commit, so a hand-typed multi-line draft
-  optimizes only its last line. Pasted multi-line drafts work because paste
-  bodies keep their newlines. Fix, if wanted later: recognise Claude Code's
-  specific newline key sequence per agent.
-- **Astral-plane characters** may leave a half-character on replacement in Ink
-  (§5.1).
-- **Dictation refinement.** iOS dictation revises earlier words by deleting and
-  reinserting; those arrive as backspaces and text and are modelled. If a
+- **History recall from inside a multi-row draft.** Up on the first row or
+  Down on the last row of a multi-row draft recalls history, and the tracker
+  can only approximate which row the cursor is on. If a recall happened, the
+  next wand press replaces the recalled text with the optimized version of the
+  draft the tracker last knew, possibly leaving a tail when the recalled entry
+  was longer. Undo restores the known draft, not the recalled entry. Rare:
+  it needs a deliberate history navigation inside a multi-line prompt.
+- **Unverified agent profiles.** Until an agent's `input` object has been
+  probed, its newline keys are unknown and tracking is single-line for that
+  agent. The plan probes all six shipped manifests; a new agent added later
+  starts with the default profile.
+- **Dictation refinement.** iOS dictation revises earlier words by deleting
+  and reinserting; those arrive as backspaces and text and are modelled. If a
   keyboard uses `setMarkedText` in a way SwiftTerm converts to something other
   than backspaces, the tracker could drift. The manual test matrix covers iOS
   and macOS dictation explicitly.
@@ -616,5 +748,8 @@ ignores unknown optional fields in `auth_success`.
   The optimizer targets agent prompts, not shell commands, and the model is
   told to pass shell commands through, so the exposure is a wrong replacement
   count in a case the user would not use the wand for.
+- **Bedrock authentication** is bearer-token only in v1. Accounts that block
+  long-lived bearer tokens by policy need SigV4 signing, which is a follow-up
+  on `MessagesClient` (swift-crypto has the HMAC primitives).
 - **Prompt quality** is only as good as the system prompt; `optimizer try`
   exists so it can be tuned against real sessions before and after release.
