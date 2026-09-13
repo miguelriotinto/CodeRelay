@@ -36,6 +36,10 @@ public protocol PTYSessionProtocol: Actor {
     func getActivityState() -> ActivityState
     func getActiveAgent() -> CodingAgent?
     func getAgentState() -> AgentDetectedState?
+    /// The tracked draft plus the terminal facts the prompt optimizer needs.
+    /// `includeScreen: false` leaves `screenLines` empty (the screen is never
+    /// rendered when the operator or the request opted out).
+    func promptContext(includeScreen: Bool) -> PromptContext
     func getTitle() -> String?
     /// Activity updates carry a monotonic `revision`. Downstream observers
     /// that cross isolation boundaries drop updates whose revision is older
@@ -116,6 +120,11 @@ public actor PTYSession: PTYSessionProtocol {
     private let activityMonitor: SessionActivityMonitor
     private let screenModel: TerminalScreenModel
     private let stateDetector: AgentStateDetector
+    /// Prompt optimizer: mirror of the agent's input line, fed from `write`.
+    private var keyDecoder = KeyDecoder()
+    private var draftTracker: DraftTracker
+    /// Foreground agent the tracker's profile belongs to; nil = plain shell.
+    private var trackedAgentId: String?
     /// Shared box to bridge the monitor's synchronous onChange callback into the actor.
     /// The monitor captures this box (not `self`) so the closure doesn't require `self` to be fully initialized.
     private let activityCallbackBox = ActivityCallbackBox()
@@ -397,6 +406,7 @@ public actor PTYSession: PTYSessionProtocol {
         )
         self.screenModel = TerminalScreenModel(cols: cols, rows: rows)
         self.stateDetector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        self.draftTracker = DraftTracker(profile: .default, columns: Int(cols))
     }
 
     /// Activate the dispatch source that reads PTY output.
@@ -426,6 +436,11 @@ public actor PTYSession: PTYSessionProtocol {
     private func handleForegroundPollResult(agent: CodingAgent?) {
         guard !terminated else { return }
         activityMonitor.updateForegroundProcess(agent: agent)
+        let foregroundAgentId = activityMonitor.activeAgent?.id
+        if foregroundAgentId != trackedAgentId {
+            trackedAgentId = foregroundAgentId
+            draftTracker.reset(profile: foregroundAgentId.map { stateDetector.inputProfile(for: $0) } ?? .default)
+        }
         // Screen detection only runs while an agent is active. Snapshot the
         // emulated grid and evaluate the agent's manifest, then arbitrate.
         if let agent = activityMonitor.activeAgent {
@@ -639,6 +654,22 @@ public actor PTYSession: PTYSessionProtocol {
         activityMonitor.activeAgent
     }
 
+    public func promptContext(includeScreen: Bool) -> PromptContext {
+        let agent = activityMonitor.activeAgent
+        let screenLines = includeScreen
+            ? PromptContext.trailingScreenLines(screenModel.snapshot().text)
+            : []
+        return PromptContext(
+            draft: draftTracker.draft,
+            agentId: agent?.id,
+            agentDisplayName: agent?.displayName,
+            workingDirectory: currentWorkingDirectory(),
+            screenLines: screenLines,
+            bracketedPaste: screenModel.bracketedPasteEnabled,
+            keyboardFlagsRawValue: screenModel.keyboardFlags.rawValue
+        )
+    }
+
     /// Returns the fine-grained agent state detected from the screen, if any.
     public func getAgentState() -> AgentDetectedState? {
         activityMonitor.agentState
@@ -706,6 +737,7 @@ public actor PTYSession: PTYSessionProtocol {
     public func write(_ data: Data) {
         guard !terminated else { return }
         guard !data.isEmpty else { return }
+        draftTracker.apply(contentsOf: keyDecoder.decode(data))
         writeQueue.append(QueuedWrite(data: data, offset: 0))
         writeQueueBytes += data.count
         capWriteQueue()
@@ -788,6 +820,7 @@ public actor PTYSession: PTYSessionProtocol {
         currentCols = cols
         currentRows = rows
         screenModel.resize(cols: cols, rows: rows)
+        draftTracker.setColumns(Int(cols))
         _ = relay_set_winsize(masterFD, rows, cols)
     }
 

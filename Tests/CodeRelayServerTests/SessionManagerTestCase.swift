@@ -35,7 +35,25 @@ actor MockPTYSession: PTYSessionProtocol {
         clipboardHandler = nil
         clearOutputHandlerCallCount += 1
     }
-    func write(_ data: Data) {}
+    private var writes: [Data] = []
+    private var mockPromptContext = PromptContext(
+        draft: "", agentId: nil, agentDisplayName: nil, workingDirectory: nil,
+        screenLines: [], bracketedPaste: false, keyboardFlagsRawValue: 0)
+
+    func write(_ data: Data) { writes.append(data) }
+    func recordedWrites() -> [Data] { writes }
+    func setMockPromptContext(_ context: PromptContext) { mockPromptContext = context }
+    func promptContext(includeScreen: Bool) -> PromptContext {
+        guard includeScreen else {
+            return PromptContext(
+                draft: mockPromptContext.draft, agentId: mockPromptContext.agentId,
+                agentDisplayName: mockPromptContext.agentDisplayName,
+                workingDirectory: mockPromptContext.workingDirectory, screenLines: [],
+                bracketedPaste: mockPromptContext.bracketedPaste,
+                keyboardFlagsRawValue: mockPromptContext.keyboardFlagsRawValue)
+        }
+        return mockPromptContext
+    }
     func resize(cols: UInt16, rows: UInt16) {}
     /// Test hook: settable cwd returned by `currentWorkingDirectory()`.
     var mockCwd: String?

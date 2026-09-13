@@ -107,4 +107,23 @@ final class TerminalScreenModelTests: XCTestCase {
         let flood = Data(repeating: 0, count: 0) + Data(String(repeating: "\u{1B}[6n", count: 5000).utf8)
         XCTAssertLessThanOrEqual(model.feed(flood).count, TerminalScreenModel.maxResponseBytesPerFeed)
     }
+
+    func testBracketedPasteModeTracksDECSET2004() {
+        let model = TerminalScreenModel(cols: 80, rows: 24)
+        XCTAssertFalse(model.bracketedPasteEnabled)
+        _ = model.feed(Data("\u{1B}[?2004h".utf8))
+        XCTAssertTrue(model.bracketedPasteEnabled)
+        _ = model.feed(Data("\u{1B}[?2004l".utf8))
+        XCTAssertFalse(model.bracketedPasteEnabled)
+    }
+
+    func testKeyboardFlagsTrackKittyPushAndPop() {
+        let model = TerminalScreenModel(cols: 80, rows: 24)
+        XCTAssertTrue(model.keyboardFlags.isEmpty)
+        _ = model.feed(Data("\u{1B}[>9u".utf8))          // disambiguate | reportAllKeys
+        XCTAssertTrue(model.keyboardFlags.contains(.disambiguate))
+        XCTAssertTrue(model.keyboardFlags.contains(.reportAllKeys))
+        _ = model.feed(Data("\u{1B}[<u".utf8))
+        XCTAssertTrue(model.keyboardFlags.isEmpty)
+    }
 }
