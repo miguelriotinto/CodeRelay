@@ -54,9 +54,12 @@ enum PromptOptimizerFactory {
 
         let client = HTTPClient(eventLoopGroupProvider: .shared(group))
         httpClient = client
-        // maxRetries 0: the handler's 12 s deadline already bounds the call; a
-        // retried 10 s request would blow straight through it.
-        let http = PushHTTP(client: client, requestTimeout: .seconds(12), maxRetries: 0)
+        // One deadline for the whole call: the request timeout is derived from
+        // `PromptOptimizer.deadline`, so the two can never drift apart.
+        // maxRetries 0 for the same reason — a retry would blow through it.
+        let http = PushHTTP(client: client,
+                            requestTimeout: .seconds(PromptOptimizer.deadline.components.seconds),
+                            maxRetries: 0)
         let model = config.promptOptimizerModel ?? endpoint.defaultModel
         RelayLogger.log(category: "optimizer",
             "Prompt optimizer enabled (provider=\(config.promptOptimizerProvider) model=\(model) "

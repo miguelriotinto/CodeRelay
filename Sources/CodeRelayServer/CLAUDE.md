@@ -247,7 +247,9 @@ Pipeline per session, all inside the `PTYSession` actor:
   **It clears itself on anything it cannot model** (unknown escape, Tab, history
   Up/Down at the edges, a submit) rather than guessing: a wrong draft would make
   the replacer erase the wrong number of characters in the user's terminal, and
-  an empty draft only costs a `no_draft` reply. Capped at 16 384 scalars.
+  an empty draft only costs a `no_draft` reply. Capped at 16 384 scalars
+  (`DraftTracker.maxScalars`), checked *before* an insert, and the decoder drops a
+  printable run past the same bound as one `.unknown`.
 - `PromptContext` is the snapshot handed to the model: draft, agent id + display
   name, cwd, the trailing ≤40 lines / ≤4 KB of the rendered screen (only when
   both `promptOptimizerShareScreen` and the request's `shareScreen` are true),
@@ -284,6 +286,15 @@ log status, byte counts, latency and `usage.cache_read_input_tokens` at debug
 only. The key file is read once by `PromptOptimizerFactory` at startup; if it is
 missing or empty the relay logs one error line, advertises no capability and the
 wand stays disabled on every device until a restart with a fixed config.
+
+Two operational notes for the first live deployment:
+- The key is read **once at startup**, and a Bedrock bearer token expires within
+  12 h — so rotating the key file on a Bedrock relay requires a restart, not just
+  a rewrite. Symptom on the device is `"Optimizer key rejected on the relay"`.
+- The cached prefix (tools + system prompt) measures ≈950–1050 tokens against
+  Sonnet 5's 1 024-token minimum cacheable prefix, i.e. right on the edge. Check
+  the debug `cache_read_input_tokens` counter on the second call of a session; if
+  it reads zero, pad the static system prompt rather than assuming caching works.
 
 Tuning loop without a phone: `claude-relay optimizer try "<draft>" [--session
 <id>] [--no-screen]` → `POST /optimizer/try` runs the same optimizer over a

@@ -136,7 +136,9 @@ final class PromptOptimizer: PromptOptimizing, @unchecked Sendable {
         let outcome: OptimizerOutcome
         switch kind {
         case "passthrough":
-            guard input["prompt"] == nil else { throw OptimizerError.malformed }
+            // A prompt alongside kind=passthrough is redundant, not malformed:
+            // the model said "send it as typed", so send it as typed and drop
+            // the extra field rather than failing the whole optimize.
             outcome = .passthrough
         case "optimized":
             guard let prompt = input["prompt"] as? String,

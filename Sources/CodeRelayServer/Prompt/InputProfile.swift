@@ -6,6 +6,12 @@ enum InputKey: String, Codable, CaseIterable, Sendable {
     case ctrlEnter = "ctrl_enter"
     case altEnter = "alt_enter"
     case shiftEnter = "shift_enter"
+    /// Bare LF (0x0A) — Ctrl+J, and what terminals without the kitty keyboard
+    /// protocol send for Ctrl+Enter. Separate from `ctrlEnter` because the live
+    /// probe measured them differently: claude 2.1.270 and codex 0.154.0 both
+    /// insert a newline for LF and do nothing at all for `CSI 13;5u`.
+    /// Never produced by `forEnter` — `KeyEvent.lineFeed` maps to it directly.
+    case ctrlJ = "ctrl_j"
     /// A literal backslash immediately followed by plain Enter (Claude Code's `\⏎`).
     case backslashEnter = "backslash_enter"
 

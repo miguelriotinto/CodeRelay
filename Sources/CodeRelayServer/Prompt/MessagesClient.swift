@@ -69,6 +69,10 @@ struct HTTPMessagesClient: MessagesSending {
             // in a header, never in the thrown description.
             throw OptimizerError.unavailable
         }
+        if response.status != 200 {
+            // Status only — the body can quote the draft back at us.
+            RelayLogger.log(.debug, category: "optimizer", "messages HTTP \(response.status)")
+        }
         switch response.status {
         case 200: return response.body
         case 401, 403: throw OptimizerError.keyRejected

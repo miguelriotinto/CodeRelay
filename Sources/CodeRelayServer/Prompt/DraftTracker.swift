@@ -70,7 +70,14 @@ struct DraftTracker: Sendable {
         case .down: moveRow(by: 1)
         case .control(let byte): handleControl(byte)
         case .alt(let ch): handleAlt(ch)
+        // Provably inert at an input line (mouse reports, terminal replies,
+        // F-keys, key releases) — the draft is untouched.
         case .ignored: break
+        // Unclassifiable: the mirror can no longer be trusted. Under-counting
+        // the draft is the one destructive direction (the replacer would erase
+        // too little and paste into the residue), so drop it.
+        case .unknown: clear()
+        case .lineFeed: applyEnterKey(.ctrlJ)
         }
     }
 
@@ -96,10 +103,19 @@ struct DraftTracker: Sendable {
             insertNewline()
             return
         }
-        guard let key = InputKey.forEnter(mods) else { return }
+        guard let key = InputKey.forEnter(mods) else { clear(); return }
+        applyEnterKey(key)
+    }
+
+    /// An Enter-family key resolved to a manifest symbol. A key in neither list
+    /// is a chord this agent's behaviour was never measured for — it may well
+    /// have inserted a newline or submitted, so the mirror is no longer sound.
+    private mutating func applyEnterKey(_ key: InputKey) {
         if profile.newline.contains(key) {
             insertNewline()
         } else if profile.submit.contains(key) {
+            clear()
+        } else {
             clear()
         }
     }
@@ -113,9 +129,11 @@ struct DraftTracker: Sendable {
 
     private mutating func insert(_ new: [Unicode.Scalar]) {
         guard !new.isEmpty else { return }
+        // Checked *before* inserting: a client frame may carry 10 MB, and the
+        // mirror would be cleared straight afterwards anyway.
+        guard scalars.count + new.count <= Self.maxScalars else { clear(); return }
         scalars.insert(contentsOf: new, at: cursor)
         cursor += new.count
-        if scalars.count > Self.maxScalars { clear() }
     }
 
     private mutating func kill(_ range: Range<Int>) {
@@ -164,7 +182,11 @@ struct DraftTracker: Sendable {
         case 0x17: kill(wordStart()..<cursor)                 // Ctrl-W
         case 0x19: insert(killBuffer)                         // Ctrl-Y
         case 0x03, 0x1F: clear()                              // Ctrl-C, Ctrl-_
-        default: break
+        case 0x09: clear()                                    // Tab: completion rewrites the line
+        case 0x0C: break                                      // Ctrl-L: redraw only, draft intact
+        // Ctrl-P/N (history), Ctrl-R (search), Ctrl-T (transpose), Ctrl-O, …
+        // every one of them can change the line in a way this does not model.
+        default: clear()
         }
     }
 
@@ -175,7 +197,7 @@ struct DraftTracker: Sendable {
         case "d": kill(cursor..<wordEnd())
         case "\u{7F}": kill(wordStart()..<cursor)
         case "y": clear()
-        default: break
+        default: clear()      // Alt-<anything else> is an unmodelled agent binding
         }
     }
 
