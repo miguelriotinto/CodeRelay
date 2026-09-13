@@ -24,7 +24,6 @@ struct DraftTracker: Sendable {
     }
 
     var draft: String { String(String.UnicodeScalarView(scalars)) }
-    var isEmpty: Bool { scalars.isEmpty }
 
     mutating func clear() {
         scalars.removeAll(keepingCapacity: true)
