@@ -46,4 +46,21 @@ final class DraftReplacerTests: XCTestCase {
         let out = DraftReplacer.bytes(replacing: "", with: "hi", bracketedPaste: false, keyboardFlags: [])
         XCTAssertEqual(string(out), "hi")
     }
+
+    func testBracketedPasteStripsEscapeSoPasteEndCannotBeForged() {
+        let out = DraftReplacer.bytes(replacing: "", with: "a\u{1B}[201~\rb", bracketedPaste: true, keyboardFlags: [])
+        XCTAssertEqual(string(out), "\(esc)[200~a[201~\rb\(esc)[201~")
+        let escCount = out.filter { $0 == 0x1B }.count
+        XCTAssertEqual(escCount, 2, "Only the wrapper ESCs should remain")
+    }
+
+    func testControlBytesAreStrippedButTabAndNewlinesSurviveInsideBracket() {
+        let out = DraftReplacer.bytes(replacing: "", with: "x\u{07}\u{00}\ty\n\u{7F}z", bracketedPaste: true, keyboardFlags: [])
+        XCTAssertEqual(string(out), "\(esc)[200~x\ty\nz\(esc)[201~")
+    }
+
+    func testFlatPathAlsoStripsEscape() {
+        let out = DraftReplacer.bytes(replacing: "", with: "a\u{1B}[3~b\rc", bracketedPaste: false, keyboardFlags: [])
+        XCTAssertEqual(string(out), "a[3~b c")
+    }
 }
