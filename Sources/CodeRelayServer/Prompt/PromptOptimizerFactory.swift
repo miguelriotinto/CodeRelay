@@ -1,0 +1,81 @@
+import Foundation
+import NIOCore
+import AsyncHTTPClient
+import CodeRelayKit
+
+/// Builds the relay's `PromptOptimizing` once at startup (spec §8).
+///
+/// Nil means "no capability": disabled (silent), or enabled but unusable — in
+/// which case exactly one error-level line names the reason. The decision is not
+/// revisited at runtime; fixing the config means restarting the relay.
+enum PromptOptimizerFactory {
+
+    enum KeyError: Error, CustomStringConvertible {
+        case unreadable(String)
+        case empty(String)
+
+        var description: String {
+            switch self {
+            case .unreadable(let path): return "promptOptimizerKeyPath not readable: \(path)"
+            case .empty(let path): return "promptOptimizerKeyPath is empty: \(path)"
+            }
+        }
+    }
+
+    static func make(config: RelayConfig, group: EventLoopGroup,
+                     out httpClient: inout HTTPClient?) -> (any PromptOptimizing)? {
+        guard config.promptOptimizerEnabled else { return nil }
+
+        guard let keyPath = config.promptOptimizerKeyPath, !keyPath.isEmpty else {
+            RelayLogger.log(.error, category: "optimizer",
+                "promptOptimizerEnabled is true but promptOptimizerKeyPath is not set; optimizer disabled")
+            return nil
+        }
+
+        let apiKey: String
+        let endpoint: MessagesEndpoint
+        do {
+            apiKey = try readKey(atPath: keyPath)
+            endpoint = try MessagesEndpoint.resolve(provider: config.promptOptimizerProvider,
+                                                    region: config.promptOptimizerRegion)
+        } catch let error as OptimizerError {
+            RelayLogger.log(.error, category: "optimizer", "\(error.clientMessage): \(error); optimizer disabled")
+            return nil
+        } catch {
+            RelayLogger.log(.error, category: "optimizer", "\(error); optimizer disabled")
+            return nil
+        }
+
+        let client = HTTPClient(eventLoopGroupProvider: .shared(group))
+        httpClient = client
+        // maxRetries 0: the handler's 12 s deadline already bounds the call; a
+        // retried 10 s request would blow straight through it.
+        let http = PushHTTP(client: client, requestTimeout: .seconds(12), maxRetries: 0)
+        let model = config.promptOptimizerModel ?? endpoint.defaultModel
+        RelayLogger.log(category: "optimizer",
+            "Prompt optimizer enabled (provider=\(config.promptOptimizerProvider) model=\(model) "
+            + "shareScreen=\(config.promptOptimizerShareScreen))")
+        return PromptOptimizer(
+            client: HTTPMessagesClient(http: http, endpoint: endpoint, apiKey: apiKey),
+            model: model,
+            sharesScreen: config.promptOptimizerShareScreen)
+    }
+
+    /// Reads and trims the API key. Logs (but proceeds) when the file is
+    /// readable by others. Never logs the key itself.
+    static func readKey(atPath path: String) throws -> String {
+        let expanded = NSString(string: path).expandingTildeInPath
+        guard let data = FileManager.default.contents(atPath: expanded) else {
+            throw KeyError.unreadable(path)
+        }
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: expanded),
+           let mode = (attrs[.posixPermissions] as? NSNumber)?.int16Value,
+           mode & 0o077 != 0 {
+            RelayLogger.log(.error, category: "optimizer",
+                "promptOptimizerKeyPath \(path) is readable by others (mode \(String(mode, radix: 8))); chmod 600 it")
+        }
+        let key = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { throw KeyError.empty(path) }
+        return key
+    }
+}

@@ -93,12 +93,17 @@ if config.pushEnabled, let sender = PushSenderFactory.make(config: config, group
     RelayLogger.log(category: "server", "Push notifications enabled")
 }
 
+// Prompt optimizer (spec §8): decided once here; nil ⇒ no capability advertised.
+var optimizerHTTPClient: HTTPClient?
+let optimizer = PromptOptimizerFactory.make(config: config, group: group, out: &optimizerHTTPClient)
+
 let wsServer = WebSocketServer(
     group: group, config: config,
     sessionManager: sessionManager, tokenStore: tokenStore,
     rateLimiter: rateLimiter,
     pushStore: pushStore,
-    pairingStore: pairingStore
+    pairingStore: pairingStore,
+    optimizer: optimizer
 )
 let adminServer = AdminHTTPServer(
     group: group, port: config.adminPort,
@@ -167,6 +172,7 @@ observerPurgeTask.cancel()
 terminalSessionPurgeTask.cancel()
 pushReapTask?.cancel()
 if let pushHTTPClient { try? await pushHTTPClient.shutdown() }
+if let optimizerHTTPClient { try? await optimizerHTTPClient.shutdown() }
 
 // Race the graceful-shutdown path against a 10s timer. If the normal
 // teardown stalls (e.g. a stuck PTY terminate), fall through to the forced
