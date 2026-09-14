@@ -1,5 +1,12 @@
 {
   "id": "codex",
+  "input": {
+    "newline": ["shift_enter", "alt_enter", "backslash_enter", "ctrl_j"],
+    "submit": ["enter"],
+    "killLineAcrossLines": true,
+    "inset": 3,
+    "probedWith": "codex-cli 0.154.0 on 2026-09-13"
+  },
   "rules": [
     { "id": "osc_title_blocked", "state": "blocked", "priority": 1100, "region": "osc_title", "visible_blocker": true, "contains": ["Action Required"] },
     { "id": "osc_title_working", "state": "working", "priority": 1050, "region": "osc_title", "visible_working": true, "regex": ["(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)"] },

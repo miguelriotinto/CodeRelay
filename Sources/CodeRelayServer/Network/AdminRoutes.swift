@@ -26,7 +26,9 @@ enum AdminRoutes {
         sessionManager: SessionManager,
         tokenStore: TokenStore,
         pairingStore: PairingCodeStore,
-        config: RelayConfig
+        config: RelayConfig,
+        optimizer: (any PromptOptimizing)? = nil,
+        optimizeDeadline: Duration = PromptOptimizer.deadline
     ) async -> AdminResponse {
         let parts = uri.split(separator: "?", maxSplits: 1)
         let path = parts.first.map(String.init) ?? uri
@@ -60,6 +62,8 @@ enum AdminRoutes {
             return await handleHookState(components, body: body, sessionManager: sessionManager)
         case (.POST, "pair"):
             return await handlePairCreate(components, body: body, pairingStore: pairingStore, config: config)
+        case (.POST, "optimizer"):
+            return await handleOptimizerTry(components, body: body, sessionManager: sessionManager, optimizer: optimizer, optimizeDeadline: optimizeDeadline)
         default:
             return .error("Not found", status: 404)
         }
@@ -140,6 +144,64 @@ enum AdminRoutes {
             "tls": config.tlsEnabled
         ]
         return .json(payload)
+    }
+
+    // MARK: - Prompt optimizer (spec §5.6)
+
+    /// `POST /optimizer/try` — run the relay's optimizer over a draft, optionally
+    /// borrowing a live session's agent / cwd / screen, and return the outcome.
+    /// Never writes the PTY. Body: `{"draft": String, "sessionId"?: String, "shareScreen"?: Bool}`.
+    private static func handleOptimizerTry(
+        _ components: [String],
+        body: ByteBuffer?,
+        sessionManager: SessionManager,
+        optimizer: (any PromptOptimizing)?,
+        optimizeDeadline: Duration
+    ) async -> AdminResponse {
+        guard components == ["optimizer", "try"] else { return .error("Not found", status: 404) }
+        guard let optimizer else { return .error("Optimizer not configured on the relay", status: 503) }
+
+        guard let body, let data = body.getData(at: body.readerIndex, length: body.readableBytes),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .error("Body must be a JSON object with a \"draft\" string", status: 400)
+        }
+        // Whitespace-only counts as empty: the WebSocket handler answers
+        // `no_draft` for the same input, so this route must not spend a model
+        // call on it either. The untrimmed draft is what goes to the model.
+        guard let draft = json["draft"] as? String,
+              !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .error("\"draft\" must be a non-empty string", status: 400)
+        }
+        guard draft.utf8.count <= PromptOptimizer.maxDraftBytes else {
+            return .error(OptimizerError.draftTooLong.clientMessage, status: 400)
+        }
+        // The wire decoder defaults to false (fail-closed for a device, ClientMessage.swift); the admin route defaults to true because it is operator-local and the CLI always sends the flag explicitly.
+        let shareScreen = json["shareScreen"] as? Bool ?? true
+
+        var context = PromptContext(draft: draft, agentId: nil, agentDisplayName: nil, workingDirectory: nil,
+                                    screenLines: [], bracketedPaste: false, keyboardFlagsRawValue: 0)
+        if let idString = json["sessionId"] as? String {
+            guard let id = UUID(uuidString: idString) else { return .error("\"sessionId\" is not a UUID", status: 400) }
+            guard let pty = await sessionManager.ptySession(for: id) else { return .error("Session not found", status: 404) }
+            let live = await pty.promptContext(includeScreen: shareScreen && optimizer.sharesScreen)
+            // The session supplies everything except the draft, which is the caller's to choose.
+            context = PromptContext(draft: draft, agentId: live.agentId, agentDisplayName: live.agentDisplayName,
+                                    workingDirectory: live.workingDirectory, screenLines: live.screenLines,
+                                    bracketedPaste: live.bracketedPaste, keyboardFlagsRawValue: live.keyboardFlagsRawValue)
+        }
+
+        do {
+            let outcome = try await withOptimizerDeadline(optimizeDeadline) {
+                try await optimizer.optimize(context)
+            }
+            switch outcome {
+            case .optimized(let prompt): return .json(["status": "ok", "prompt": prompt])
+            case .passthrough: return .json(["status": "passthrough"])
+            }
+        } catch {
+            let message = (error as? OptimizerError)?.clientMessage ?? OptimizerError.unavailable.clientMessage
+            return .json(["status": "failed", "message": message])
+        }
     }
 
     // MARK: - Health & Status
@@ -421,6 +483,31 @@ enum AdminRoutes {
         case "fcmProjectId":
             guard let val = value as? String else { throw ConfigError(message: "fcmProjectId must be a string") }
             config.fcmProjectId = val.isEmpty ? nil : val
+        case "promptOptimizerEnabled":
+            guard let val = value as? Bool else { throw ConfigError(message: "promptOptimizerEnabled must be a boolean") }
+            config.promptOptimizerEnabled = val
+        case "promptOptimizerProvider":
+            guard let val = value as? String else { throw ConfigError(message: "promptOptimizerProvider must be a string") }
+            guard RelayConfig.optimizerProviders.contains(val) else {
+                throw ConfigError(message: "promptOptimizerProvider must be one of: \(RelayConfig.optimizerProviders.sorted().joined(separator: ", "))")
+            }
+            config.promptOptimizerProvider = val
+        case "promptOptimizerModel":
+            guard let val = value as? String else { throw ConfigError(message: "promptOptimizerModel must be a string") }
+            config.promptOptimizerModel = val.isEmpty ? nil : val
+        case "promptOptimizerRegion":
+            guard let val = value as? String else { throw ConfigError(message: "promptOptimizerRegion must be a string") }
+            guard RelayConfig.isValidOptimizerRegion(val) else {
+                throw ConfigError(message: "promptOptimizerRegion must match [a-z0-9-]+")
+            }
+            config.promptOptimizerRegion = val
+        case "promptOptimizerKeyPath":
+            guard let val = value as? String else { throw ConfigError(message: "promptOptimizerKeyPath must be a string") }
+            try validateReadableFileOrEmpty(val, name: "promptOptimizerKeyPath")
+            config.promptOptimizerKeyPath = val.isEmpty ? nil : val
+        case "promptOptimizerShareScreen":
+            guard let val = value as? Bool else { throw ConfigError(message: "promptOptimizerShareScreen must be a boolean") }
+            config.promptOptimizerShareScreen = val
         default:
             throw ConfigError(message: "Unknown config key: \(key)")
         }
@@ -511,6 +598,6 @@ enum AdminRoutes {
     }
 }
 
-private struct ConfigError: Error {
+struct ConfigError: Error {
     let message: String
 }

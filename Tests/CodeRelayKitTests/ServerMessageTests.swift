@@ -193,7 +193,9 @@ final class ServerMessageTests: ProtocolTestCase {
             .pong,
             .pushTokenAck(accepted: true),
             .clipboardUpdate(sessionId: id, text: "copied from terminal"),
-            .error(code: 500, message: "internal")
+            .error(code: 500, message: "internal"),
+            .optimizePromptResult(status: "ok", original: "o", prompt: "p"),
+            .replacePromptResult(status: "ok")
         ]
 
         for original in messages {
@@ -552,7 +554,7 @@ final class ServerMessageTests: ProtocolTestCase {
         XCTAssertNil((obj["payload"] as? [String: Any])?["tokenId"])
 
         let decoded = try decoder.decode(MessageEnvelope.self, from: data)
-        guard case .server(.authSuccess(_, let tokenId)) = decoded else {
+        guard case .server(.authSuccess(_, let tokenId, _)) = decoded else {
             XCTFail("Expected .authSuccess"); return
         }
         XCTAssertNil(tokenId)

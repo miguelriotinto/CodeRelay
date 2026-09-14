@@ -16,6 +16,23 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     var authenticatedTokenId: String?
     var attachedSessionId: UUID?
     var attachedPTY: (any PTYSessionProtocol)?
+    /// Nil when the relay has no usable optimizer (disabled, or key unreadable at
+    /// startup) — then `auth_success` omits the capability and `optimize_prompt`
+    /// answers `unconfigured`. Spec §8.
+    let optimizer: (any PromptOptimizing)?
+    /// One optimize per connection at a time (spec §6 "Already optimizing").
+    var optimizeInFlight = false
+    /// Generation counter for optimize requests. Incremented on each new request.
+    /// Marks a request as resolved when incremented by completion/timeout.
+    var optimizeGeneration: UInt64 = 0
+    /// The scheduled deadline task for the active optimize request, cancelled on completion.
+    var optimizeDeadlineTask: Scheduled<Void>?
+    /// The work Task for the active optimize request, cancelled on timeout.
+    var optimizeWorkTask: Task<Void, Never>?
+    /// Budget for context capture + the model call. It is cancelled once the
+    /// outcome is in, before the PTY write is spawned, so the write happens
+    /// outside it (spec §6: a 12 s model deadline plus write time). Tests shorten it.
+    var optimizeDeadline: Duration = PromptOptimizer.deadline
     private var context: ChannelHandlerContext?
     private var authTimeout: Scheduled<Void>?
     private var authAttempts = 0
@@ -57,13 +74,15 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     init(sessionManager: SessionManager, tokenStore: TokenStore, rateLimiter: RateLimiter,
          clipboardService: ClipboardService,
          pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory),
-         pairingStore: PairingCodeStore) {
+         pairingStore: PairingCodeStore,
+         optimizer: (any PromptOptimizing)? = nil) {
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
         self.rateLimiter = rateLimiter
         self.clipboardService = clipboardService
         self.pushStore = pushStore
         self.pairingStore = pairingStore
+        self.optimizer = optimizer
     }
 
     /// This handler is installed by the WebSocket upgrade after the channel
@@ -131,6 +150,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         let remote = context.remoteAddress?.description ?? "unknown"
         RelayLogger.log(category: "connection", "WebSocket disconnected from \(remote)")
         authTimeout?.cancel()
+        cleanupOptimizeState()
         cleanupSession()
         self.context = nil
     }
@@ -201,14 +221,13 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             handlePairRequest(code: code, deviceName: deviceName, platform: platform, context: context)
         case .ping:
             sendServerMessage(.pong, context: context)
-        case .resize, .refresh, .pasteImage, .sessionRename, .sessionTerminate:
-            // Dropped, NOT answered with `.error(401)` — these are all
-            // fire-and-forget, so see the unattached-request reply rule atop
-            // `SessionRequestHandlers.swift`. They can reach the pre-auth window
-            // because they bypass the client's RPC chain entirely: a terminal view
-            // that lays out while `auth_request` is still on the wire sends its
-            // resize immediately, and a 401 here would resolve the `authenticate`
-            // waiter with someone else's error.
+        case .resize, .refresh, .pasteImage, .sessionRename, .sessionTerminate, .optimizePrompt, .replacePrompt:
+            // Dropped, NOT answered with `.error(401)` — an error here would
+            // resolve the client's `authenticate` waiter with someone else's
+            // error. They can reach the pre-auth window because they bypass the
+            // client's RPC chain entirely: a terminal view that lays out while
+            // `auth_request` is still on the wire sends its resize immediately,
+            // and optimize/replace can be fired by the user before auth completes.
             RelayLogger.log(.debug, category: "session",
                             "pre-auth \(message.typeString) dropped")
         default:
@@ -252,6 +271,10 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                                     topic: topic, context: context)
         case .unregisterPushToken(let deviceId):
             handleUnregisterPushToken(deviceId: deviceId, context: context)
+        case .optimizePrompt(let sessionId, let shareScreen):
+            handleOptimizePrompt(sessionId: sessionId, shareScreen: shareScreen, context: context)
+        case .replacePrompt(let sessionId, let text):
+            handleReplacePrompt(sessionId: sessionId, text: text, context: context)
         }
     }
 
@@ -460,7 +483,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                 RelayLogger.log(category: "auth",
                     "Auth success for token \(payload.tokenId) (protocol v\(payload.clientVersion))")
                 handler.sendServerMessage(
-                    .authSuccess(protocolVersion: CodeRelayKit.protocolVersion, tokenId: payload.tokenId),
+                    .authSuccess(protocolVersion: CodeRelayKit.protocolVersion, tokenId: payload.tokenId,
+                                 capabilities: handler.optimizer == nil ? nil : [CodeRelayKit.promptOptimizerCapability]),
                     context: ctx
                 )
             },

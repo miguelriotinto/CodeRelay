@@ -111,4 +111,10 @@ final class TerminalScreenModel {
             oscProgress: delegate.oscProgress
         )
     }
+
+    /// True while the foreground program has bracketed paste enabled (`CSI ?2004h`).
+    var bracketedPasteEnabled: Bool { terminal.bracketedPasteMode }
+
+    /// The kitty keyboard-protocol flags currently pushed by the foreground program.
+    var keyboardFlags: KittyKeyboardFlags { terminal.keyboardEnhancementFlags }
 }

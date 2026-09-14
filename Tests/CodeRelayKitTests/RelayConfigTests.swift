@@ -181,4 +181,51 @@ final class RelayConfigTests: XCTestCase {
         config.tlsKey = ""
         XCTAssertFalse(config.tlsEnabled, "empty paths → false")
     }
+
+    // MARK: - Prompt optimizer keys
+
+    func testOptimizerDefaults() {
+        let config = RelayConfig.default
+        XCTAssertFalse(config.promptOptimizerEnabled)
+        XCTAssertEqual(config.promptOptimizerProvider, "anthropic")
+        XCTAssertNil(config.promptOptimizerModel)
+        XCTAssertEqual(config.promptOptimizerRegion, "us-east-1")
+        XCTAssertNil(config.promptOptimizerKeyPath)
+        XCTAssertTrue(config.promptOptimizerShareScreen)
+    }
+
+    func testOptimizerKeysRoundTripThroughCustomDecoder() throws {
+        let json = """
+        {"promptOptimizerEnabled":true,"promptOptimizerProvider":"bedrock",\
+        "promptOptimizerModel":"anthropic.claude-sonnet-5","promptOptimizerRegion":"eu-west-1",\
+        "promptOptimizerKeyPath":"/k.txt","promptOptimizerShareScreen":false}
+        """
+        let config = try decoder.decode(RelayConfig.self, from: Data(json.utf8))
+        XCTAssertTrue(config.promptOptimizerEnabled)
+        XCTAssertEqual(config.promptOptimizerProvider, "bedrock")
+        XCTAssertEqual(config.promptOptimizerModel, "anthropic.claude-sonnet-5")
+        XCTAssertEqual(config.promptOptimizerRegion, "eu-west-1")
+        XCTAssertEqual(config.promptOptimizerKeyPath, "/k.txt")
+        XCTAssertFalse(config.promptOptimizerShareScreen)
+
+        let encoded = try JSONEncoder().encode(config)
+        let again = try decoder.decode(RelayConfig.self, from: encoded)
+        XCTAssertEqual(again.promptOptimizerProvider, "bedrock")
+        XCTAssertFalse(again.promptOptimizerShareScreen)
+    }
+
+    func testConfigWithoutOptimizerKeysStillDecodes() throws {
+        let config = try decoder.decode(RelayConfig.self, from: Data(#"{"wsPort":9200}"#.utf8))
+        XCTAssertFalse(config.promptOptimizerEnabled)
+        XCTAssertTrue(config.promptOptimizerShareScreen)
+    }
+
+    func testOptimizerValidators() {
+        XCTAssertEqual(RelayConfig.optimizerProviders, ["anthropic", "bedrock"])
+        XCTAssertTrue(RelayConfig.isValidOptimizerRegion("us-east-1"))
+        XCTAssertTrue(RelayConfig.isValidOptimizerRegion("ap-southeast-2"))
+        XCTAssertFalse(RelayConfig.isValidOptimizerRegion(""))
+        XCTAssertFalse(RelayConfig.isValidOptimizerRegion("us-east-1/evil"))
+        XCTAssertFalse(RelayConfig.isValidOptimizerRegion("US-EAST-1"))
+    }
 }

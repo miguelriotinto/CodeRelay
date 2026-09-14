@@ -77,4 +77,38 @@ struct AgentStateRule: Codable {
 struct AgentManifest: Codable {
     let id: String
     let rules: [AgentStateRule]
+    /// Input-line profile for the prompt optimizer's draft tracker. Optional;
+    /// a missing block means the plain-shell `InputProfile.default`.
+    let input: InputProfile?
+
+    init(id: String, rules: [AgentStateRule], input: InputProfile? = nil) {
+        self.id = id
+        self.rules = rules
+        self.input = input
+    }
+
+    /// Hand-written so a malformed `"input"` block in a user override cannot
+    /// take the manifest's `rules` down with it: state detection is the primary
+    /// job, the draft tracker degrades to the plain-shell profile.
+    /// (`try?` over `decodeIfPresent` cannot express this — Swift flattens the
+    /// double optional, so "absent" and "malformed" both read as nil and the
+    /// malformed case would go unlogged.)
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        rules = try c.decode([AgentStateRule].self, forKey: .rules)
+        if c.contains(.input) {
+            do {
+                input = try c.decode(InputProfile.self, forKey: .input)
+            } catch {
+                input = nil
+                // The id comes from the manifest we just decoded, not from user
+                // free text; the error is not logged (it can quote the file).
+                RelayLogger.log(.error, category: "detection",
+                                "agent manifest \(id): invalid \"input\" block ignored")
+            }
+        } else {
+            input = nil
+        }
+    }
 }

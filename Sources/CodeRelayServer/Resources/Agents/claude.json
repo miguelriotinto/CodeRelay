@@ -1,5 +1,12 @@
 {
   "id": "claude",
+  "input": {
+    "newline": ["shift_enter", "alt_enter", "backslash_enter", "ctrl_j"],
+    "submit": ["enter"],
+    "killLineAcrossLines": true,
+    "inset": 4,
+    "probedWith": "claude 2.1.270 (Claude Code) on 2026-09-13"
+  },
   "rules": [
     { "id": "osc_title_working", "state": "working", "priority": 1100, "region": "osc_title", "visible_working": true, "regex": ["^[\\u2800-\\u28FF] "] },
     { "id": "btw_overlay_working", "state": "working", "priority": 975, "region": "bottom_non_empty_lines(5)", "visible_working": true, "line_regex": ["^\\s*/btw(?:\\s|$)", "(?i)esc to close\\s*$"] },

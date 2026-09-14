@@ -35,7 +35,60 @@ actor MockPTYSession: PTYSessionProtocol {
         clipboardHandler = nil
         clearOutputHandlerCallCount += 1
     }
-    func write(_ data: Data) {}
+    private var writes: [Data] = []
+    private var mockPromptContext = PromptContext(
+        draft: "", agentId: nil, agentDisplayName: nil, workingDirectory: nil,
+        screenLines: [], bracketedPaste: false, keyboardFlagsRawValue: 0)
+
+    func write(_ data: Data) { writes.append(data) }
+    func recordedWrites() -> [Data] { writes }
+    /// Every draft adopted through `replaceDraft`, in order. Its bytes land in
+    /// `writes` exactly as a plain `write` would, so write assertions do not care
+    /// which path produced them.
+    private var adoptedDrafts: [String] = []
+    /// Mirrors `PTYSession.replaceDraft`'s contract against `mockPromptContext`:
+    /// `draftKnown == false` stands in for a lost mirror, and `.exactly` compares
+    /// the tracked agent. A refusal writes nothing and adopts nothing.
+    @discardableResult
+    func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> Bool {
+        guard !terminated, mockPromptContext.draftKnown else { return false }
+        if case .exactly(let expected) = expectation, expected != mockPromptContext.agentId { return false }
+        let bytes = DraftReplacer.bytes(replacing: mockPromptContext.draft, with: text,
+                                        bracketedPaste: mockPromptContext.bracketedPaste,
+                                        keyboardFlags: mockPromptContext.keyboardFlags)
+        write(bytes)
+        adoptedDrafts.append(DraftReplacer.effectiveText(text, bracketedPaste: mockPromptContext.bracketedPaste))
+        return true
+    }
+    func recordedAdoptedDrafts() -> [String] { adoptedDrafts }
+    func setMockPromptContext(_ context: PromptContext) { mockPromptContext = context }
+    /// Test hook: install `context` only once `promptContext` has been read
+    /// `afterReads` times, so a test can change what the actor sees *after* a
+    /// handler's mid-flight re-check has already run.
+    func setMockPromptContext(_ context: PromptContext, afterReads: Int) {
+        deferredContext = (afterReads, context)
+    }
+    private var promptContextReads = 0
+    private var deferredContext: (afterReads: Int, context: PromptContext)?
+    func promptContext(includeScreen: Bool) -> PromptContext {
+        promptContextReads += 1
+        defer {
+            if let deferred = deferredContext, promptContextReads >= deferred.afterReads {
+                mockPromptContext = deferred.context
+                deferredContext = nil
+            }
+        }
+        guard includeScreen else {
+            return PromptContext(
+                draft: mockPromptContext.draft, agentId: mockPromptContext.agentId,
+                agentDisplayName: mockPromptContext.agentDisplayName,
+                workingDirectory: mockPromptContext.workingDirectory, screenLines: [],
+                bracketedPaste: mockPromptContext.bracketedPaste,
+                keyboardFlagsRawValue: mockPromptContext.keyboardFlagsRawValue,
+                draftKnown: mockPromptContext.draftKnown)
+        }
+        return mockPromptContext
+    }
     func resize(cols: UInt16, rows: UInt16) {}
     /// Test hook: settable cwd returned by `currentWorkingDirectory()`.
     var mockCwd: String?

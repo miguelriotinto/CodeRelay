@@ -180,7 +180,7 @@ public final class SessionController: ObservableObject {
         )
 
         switch response {
-        case .authSuccess(let serverProtocolVersion, let serverTokenId):
+        case .authSuccess(let serverProtocolVersion, let serverTokenId, _):
             let serverVersion = serverProtocolVersion ?? 0
             if serverVersion < CodeRelayKit.minProtocolVersion {
                 isAuthenticated = false

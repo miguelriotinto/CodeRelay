@@ -15,6 +15,13 @@ public protocol PTYSessionProtocol: Actor {
     /// terminal (F11 terminal-copy → device). Cleared by `clearOutputHandler`.
     func setClipboardHandler(_ handler: @escaping @Sendable (String) -> Void)
     func write(_ data: Data)
+    /// Erase the mirrored line and paste `text`, sized from the mirror AS IT IS
+    /// NOW, in one actor step (no await anywhere inside). Returns false and writes
+    /// nothing when the session has terminated, the mirror is lost, or the tracked
+    /// foreground agent is no longer `agentId` (the agent the caller optimized for).
+    /// The only write path that may adopt a mirror.
+    @discardableResult
+    func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> Bool
     func resize(cols: UInt16, rows: UInt16)
     /// Best-effort current working directory of the session's shell process
     /// (the stable workspace anchor). Nil when the process is gone or the
@@ -36,6 +43,10 @@ public protocol PTYSessionProtocol: Actor {
     func getActivityState() -> ActivityState
     func getActiveAgent() -> CodingAgent?
     func getAgentState() -> AgentDetectedState?
+    /// The tracked draft plus the terminal facts the prompt optimizer needs.
+    /// `includeScreen: false` leaves `screenLines` empty (the screen is never
+    /// rendered when the operator or the request opted out).
+    func promptContext(includeScreen: Bool) -> PromptContext
     func getTitle() -> String?
     /// Activity updates carry a monotonic `revision`. Downstream observers
     /// that cross isolation boundaries drop updates whose revision is older
@@ -57,6 +68,17 @@ public protocol PTYSessionProtocol: Actor {
     /// (F6). While fresh, hook state overrides screen detection. No-op when no
     /// agent is currently active.
     func applyHookState(_ hookState: AgentDetectedState)
+}
+
+// MARK: - AgentExpectation
+
+/// Which foreground agent a draft replacement is allowed to land on, checked by
+/// `replaceDraft` inside the actor. `.exactly` carries the id the caller
+/// optimized for (`nil` is a legitimate value: no agent); `.any` is for Undo,
+/// which replays text the user just saw and has no agent snapshot to compare.
+public enum AgentExpectation: Sendable, Equatable {
+    case any
+    case exactly(String?)
 }
 
 // MARK: - PTYError
@@ -116,6 +138,11 @@ public actor PTYSession: PTYSessionProtocol {
     private let activityMonitor: SessionActivityMonitor
     private let screenModel: TerminalScreenModel
     private let stateDetector: AgentStateDetector
+    /// Prompt optimizer: mirror of the agent's input line, fed from `write`.
+    private var keyDecoder = KeyDecoder()
+    private var draftTracker: DraftTracker
+    /// Foreground agent the tracker's profile belongs to; nil = plain shell.
+    private var trackedAgentId: String?
     /// Shared box to bridge the monitor's synchronous onChange callback into the actor.
     /// The monitor captures this box (not `self`) so the closure doesn't require `self` to be fully initialized.
     private let activityCallbackBox = ActivityCallbackBox()
@@ -169,7 +196,9 @@ public actor PTYSession: PTYSessionProtocol {
     private var activityHandler: (@Sendable (ActivityState, CodingAgent?, AgentDetectedState?, String?, UInt64) -> Void)?
     /// Callback for working-directory changes, fired from the foreground poll.
     private var workingDirHandler: (@Sendable (String) -> Void)?
-    /// Last cwd we reported, to fire the handler only on change.
+    /// Last cwd cached from the foreground poll. Used by `promptContext` to avoid
+    /// running the process-table walk on the actor; updated on every poll, but the
+    /// handler is fired only on change.
     private var lastReportedWorkingDir: String?
     private var terminated: Bool = false
     private var foregroundPollTimer: DispatchSourceTimer?
@@ -397,6 +426,7 @@ public actor PTYSession: PTYSessionProtocol {
         )
         self.screenModel = TerminalScreenModel(cols: cols, rows: rows)
         self.stateDetector = AgentStateDetector(manifests: AgentStateDetector.loadBundled())
+        self.draftTracker = DraftTracker(profile: .default, columns: Int(cols))
     }
 
     /// Activate the dispatch source that reads PTY output.
@@ -422,10 +452,22 @@ public actor PTYSession: PTYSessionProtocol {
         activityMonitor.applySilenceTimeout()
     }
 
+    /// Sync the draft tracker's agent profile to the currently active agent.
+    /// Called on every foreground poll and before reading the prompt context.
+    private func syncTrackedAgent() {
+        let foregroundAgentId = activityMonitor.activeAgent?.id
+        if foregroundAgentId != trackedAgentId {
+            trackedAgentId = foregroundAgentId
+            keyDecoder = KeyDecoder()
+            draftTracker.reset(profile: foregroundAgentId.map { stateDetector.inputProfile(for: $0) } ?? .default)
+        }
+    }
+
     /// Re-enters actor isolation for the foreground process poll result.
     private func handleForegroundPollResult(agent: CodingAgent?) {
         guard !terminated else { return }
         activityMonitor.updateForegroundProcess(agent: agent)
+        syncTrackedAgent()
         // Screen detection only runs while an agent is active. Snapshot the
         // emulated grid and evaluate the agent's manifest, then arbitrate.
         if let agent = activityMonitor.activeAgent {
@@ -433,11 +475,13 @@ public actor PTYSession: PTYSessionProtocol {
             let detection = stateDetector.detect(agentId: agent.id, snapshot: snapshot)
             activityMonitor.updateScreenDetection(detection, now: Date())
         }
-        // Track cwd changes (e.g. `cd`) even without an activity change.
-        if let handler = workingDirHandler, let cwd = currentWorkingDirectory(),
-           cwd != lastReportedWorkingDir {
-            lastReportedWorkingDir = cwd
-            handler(cwd)
+        // Cache cwd unconditionally so promptContext avoids the process-table walk;
+        // notify the handler only on change.
+        if let cwd = currentWorkingDirectory() {
+            if cwd != lastReportedWorkingDir {
+                lastReportedWorkingDir = cwd
+                workingDirHandler?(cwd)
+            }
         }
     }
 
@@ -590,7 +634,7 @@ public actor PTYSession: PTYSessionProtocol {
         // answer is never itself a query, so it generates nothing further.
         let queryAnswers = screenModel.feed(data)
         if !queryAnswers.isEmpty {
-            write(queryAnswers)
+            enqueueWrite(queryAnswers)
         }
         // Everything client-bound — the live forward AND the replayable history —
         // gets the queries stripped, so neither path can provoke a late answer.
@@ -637,6 +681,24 @@ public actor PTYSession: PTYSessionProtocol {
     /// Returns the coding agent currently running in this session, if any.
     public func getActiveAgent() -> CodingAgent? {
         activityMonitor.activeAgent
+    }
+
+    public func promptContext(includeScreen: Bool) -> PromptContext {
+        syncTrackedAgent()
+        let agent = activityMonitor.activeAgent
+        let screenLines = includeScreen
+            ? PromptContext.trailingScreenLines(screenModel.snapshot().text)
+            : []
+        return PromptContext(
+            draft: draftTracker.draft,
+            agentId: agent?.id,
+            agentDisplayName: agent?.displayName,
+            workingDirectory: lastReportedWorkingDir ?? currentWorkingDirectory(),
+            screenLines: screenLines,
+            bracketedPaste: screenModel.bracketedPasteEnabled,
+            keyboardFlagsRawValue: screenModel.keyboardFlags.rawValue,
+            draftKnown: !draftTracker.mirrorLost
+        )
     }
 
     /// Returns the fine-grained agent state detected from the screen, if any.
@@ -706,6 +768,43 @@ public actor PTYSession: PTYSessionProtocol {
     public func write(_ data: Data) {
         guard !terminated else { return }
         guard !data.isEmpty else { return }
+        draftTracker.apply(contentsOf: keyDecoder.decode(data))
+        enqueueWrite(data)
+    }
+
+    /// Size, type and adopt a draft replacement in one actor step.
+    ///
+    /// Everything the decision needs is read here, inside the actor: the caller's
+    /// `promptContext` snapshot is 2-3 async hops old by now, and terminal input
+    /// reaches this actor through its own unstructured Task, so a keystroke can
+    /// land in that window. Sizing the erase from a stale draft under-counts the
+    /// real line, and adopting unconditionally then declares that shorter line
+    /// exact — the one destructive direction (spec §5.2).
+    ///
+    /// The method has no `await`, so no keystroke can interleave between the
+    /// paste and the adoption. `write` feeds the erase keystrokes through the
+    /// decoder like any input — which is what invalidates the mirror at an
+    /// uncertain cursor — and `adopt` then states the outcome the server knows
+    /// for certain: the text it actually typed, not the raw text it was handed.
+    @discardableResult
+    public func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> Bool {
+        syncTrackedAgent()
+        guard !terminated, !draftTracker.mirrorLost,
+              expectation == .any || expectation == .exactly(activityMonitor.activeAgent?.id) else {
+            return false
+        }
+        let bracketedPaste = screenModel.bracketedPasteEnabled
+        let bytes = DraftReplacer.bytes(replacing: draftTracker.draft, with: text,
+                                        bracketedPaste: bracketedPaste,
+                                        keyboardFlags: screenModel.keyboardFlags)
+        write(bytes)
+        draftTracker.adopt(DraftReplacer.effectiveText(text, bracketedPaste: bracketedPaste))
+        return true
+    }
+
+    /// Enqueue PTY write, bypassing the draft mirror. Used for relay-generated
+    /// bytes (terminal-query answers) that are not user input.
+    private func enqueueWrite(_ data: Data) {
         writeQueue.append(QueuedWrite(data: data, offset: 0))
         writeQueueBytes += data.count
         capWriteQueue()
@@ -788,6 +887,7 @@ public actor PTYSession: PTYSessionProtocol {
         currentCols = cols
         currentRows = rows
         screenModel.resize(cols: cols, rows: rows)
+        draftTracker.setColumns(Int(cols))
         _ = relay_set_winsize(masterFD, rows, cols)
     }
 

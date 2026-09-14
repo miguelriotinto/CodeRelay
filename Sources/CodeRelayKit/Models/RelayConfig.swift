@@ -70,6 +70,33 @@ public struct RelayConfig: Codable, Sendable {
     public var fcmServiceAccountPath: String?
     public var fcmProjectId: String?
 
+    // MARK: Prompt optimizer (off by default; see docs/superpowers/specs/2026-09-13-server-prompt-optimizer-design.md)
+
+    /// Master switch. The `prompt_optimizer` capability is only advertised when
+    /// this is true AND the key file is readable at startup.
+    public var promptOptimizerEnabled: Bool
+    /// `"anthropic"` (api.anthropic.com) or `"bedrock"` (Bedrock Mantle, Anthropic-compatible).
+    public var promptOptimizerProvider: String
+    /// Model id override. nil → the provider's default (`claude-sonnet-5` /
+    /// `anthropic.claude-sonnet-5`).
+    public var promptOptimizerModel: String?
+    /// AWS region, used only by the bedrock provider.
+    public var promptOptimizerRegion: String
+    /// File holding the API key (Anthropic key or Bedrock bearer token), one line.
+    public var promptOptimizerKeyPath: String?
+    /// Server-wide cap on screen sharing; a client's `shareScreen` can only narrow it.
+    public var promptOptimizerShareScreen: Bool
+
+    public static let optimizerProviders: Set<String> = ["anthropic", "bedrock"]
+
+    /// AWS region ids are lowercase letters, digits and hyphens. Anything else
+    /// would be interpolated into a hostname, so it is rejected at write time.
+    public static func isValidOptimizerRegion(_ region: String) -> Bool {
+        !region.isEmpty && region.unicodeScalars.allSatisfy {
+            ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-"
+        }
+    }
+
     // MARK: - Initializer
 
     public init(
@@ -90,7 +117,13 @@ public struct RelayConfig: Codable, Sendable {
         apnsBundleId: String? = nil,
         apnsUseSandbox: Bool = false,
         fcmServiceAccountPath: String? = nil,
-        fcmProjectId: String? = nil
+        fcmProjectId: String? = nil,
+        promptOptimizerEnabled: Bool = false,
+        promptOptimizerProvider: String = "anthropic",
+        promptOptimizerModel: String? = nil,
+        promptOptimizerRegion: String = "us-east-1",
+        promptOptimizerKeyPath: String? = nil,
+        promptOptimizerShareScreen: Bool = true
     ) {
         self.wsPort = wsPort
         self.adminPort = adminPort
@@ -110,6 +143,12 @@ public struct RelayConfig: Codable, Sendable {
         self.apnsUseSandbox = apnsUseSandbox
         self.fcmServiceAccountPath = fcmServiceAccountPath
         self.fcmProjectId = fcmProjectId
+        self.promptOptimizerEnabled = promptOptimizerEnabled
+        self.promptOptimizerProvider = promptOptimizerProvider
+        self.promptOptimizerModel = promptOptimizerModel
+        self.promptOptimizerRegion = promptOptimizerRegion
+        self.promptOptimizerKeyPath = promptOptimizerKeyPath
+        self.promptOptimizerShareScreen = promptOptimizerShareScreen
     }
 
     // MARK: - Computed Properties
@@ -151,6 +190,8 @@ public struct RelayConfig: Codable, Sendable {
         case pushEnabled, pushNotifyOnFinished
         case apnsKeyPath, apnsKeyId, apnsTeamId, apnsBundleId, apnsUseSandbox
         case fcmServiceAccountPath, fcmProjectId
+        case promptOptimizerEnabled, promptOptimizerProvider, promptOptimizerModel
+        case promptOptimizerRegion, promptOptimizerKeyPath, promptOptimizerShareScreen
     }
 
     public init(from decoder: Decoder) throws {
@@ -177,5 +218,11 @@ public struct RelayConfig: Codable, Sendable {
         self.apnsUseSandbox = try c.decodeIfPresent(Bool.self, forKey: .apnsUseSandbox) ?? false
         self.fcmServiceAccountPath = try c.decodeIfPresent(String.self, forKey: .fcmServiceAccountPath)
         self.fcmProjectId = try c.decodeIfPresent(String.self, forKey: .fcmProjectId)
+        self.promptOptimizerEnabled = try c.decodeIfPresent(Bool.self, forKey: .promptOptimizerEnabled) ?? false
+        self.promptOptimizerProvider = try c.decodeIfPresent(String.self, forKey: .promptOptimizerProvider) ?? "anthropic"
+        self.promptOptimizerModel = try c.decodeIfPresent(String.self, forKey: .promptOptimizerModel)
+        self.promptOptimizerRegion = try c.decodeIfPresent(String.self, forKey: .promptOptimizerRegion) ?? "us-east-1"
+        self.promptOptimizerKeyPath = try c.decodeIfPresent(String.self, forKey: .promptOptimizerKeyPath)
+        self.promptOptimizerShareScreen = try c.decodeIfPresent(Bool.self, forKey: .promptOptimizerShareScreen) ?? true
     }
 }
