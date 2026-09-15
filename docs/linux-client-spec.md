@@ -23,6 +23,9 @@ Android carries a documented deferral that Linux can trivially clear (mouse repo
   favour of the relay-side prompt optimizer (the wand in the shared
   `WorkspaceScreen`), so there is nothing to inherit. Voice input is the desktop's
   own dictation into the terminal.
+- **Optimizer accelerator + Bedrock keyring scrub.** Deferred to Plan 4: the desktop
+  has no Ctrl+Shift+O binding for the wand yet, and `TokenStore` still carries the
+  now-unused Bedrock account.
 - **Push notifications.** Deliberately replaced, not ported — see §6.5.
 - **Server changes.** The wire protocol, admin API, and pairing flow are untouched.
   This client is additive.
@@ -161,7 +164,7 @@ implementations must satisfy exactly — the shared modules call them by these n
 | Android | Lines | Linux replacement | Notes |
 |---|---|---|---|
 | `SavedConnectionStore(Context)` — DataStore | 102 | JSON at `$XDG_CONFIG_HOME/coderelay/servers.json` | Same `loadAll/saveAll/add/delete` API; same `WireJson` encoding, so the on-disk format matches Android's stored string |
-| `TokenStore(Context)` — EncryptedSharedPreferences | 86 | **Secret Service** (D-Bus) via `libsecret`, keyed by connection UUID | Relay tokens and the Bedrock key must never hit disk in plaintext. Fallback: refuse to store, surface an error — never silently downgrade |
+| `TokenStore(Context)` — EncryptedSharedPreferences | 86 | **Secret Service** (D-Bus) via `libsecret`, keyed by connection UUID | Relay tokens must never hit disk in plaintext. The Bedrock half (`BEDROCK_ACCOUNT`) is dead code pending the Plan 4 scrub. Fallback: refuse to store, surface an error — never silently downgrade |
 | `SessionOwnershipStore` — SharedPreferences | 123 | JSON at `$XDG_STATE_HOME/coderelay/ownership.json` | Non-secret; device-scoped names + agent map |
 | `DeviceIdentifier` — ANDROID_ID | 100 | Generated UUID persisted at `$XDG_STATE_HOME/coderelay/device-id` | Matches Android's accepted divergence from `identifierForVendor` |
 | `AndroidConnectivitySource` | 84 | `LinuxConnectivitySource` — NetworkManager over D-Bus, polling fallback | Implements the existing `ConnectivitySource` interface; `NetworkObserver` is already pure |
@@ -416,7 +419,7 @@ cleanly when their secrets are absent, so a dry-run tag push is harmless.
 | Notifications on agent finished / needs input | **Full**, different transport | D-Bus, not FCM (AD-4) |
 | Clipboard bridging (OSC 52 host→device) | **Exceeds** | Decoded locally from the byte stream (the server passes OSC 52 writes through); active session only |
 | Image paste (device→host) | **Exceeds** | Ctrl+Shift+V with an image on the clipboard sends `paste_image`, as macOS Cmd+V does |
-| Settings: all 14 keys + Bedrock token | **Full** | Secret Service for the token |
+| Settings: the 10 shared keys (incl. `shareScreenWithOptimizer`) | **Full** | Bedrock token gone with the speech stack (§1.1); Secret Service still holds relay tokens |
 | Scrollback / font size / naming theme | **Full** | |
 | TLS / cleartext scoping | **Full** | AD-5 |
 | Auto-connect | **Full** | |

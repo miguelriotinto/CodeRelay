@@ -185,7 +185,9 @@ The app requests:
 - `POST_NOTIFICATIONS` (API 33+) — agent-activity push notifications. The app is
   fully usable without them.
 
-Both are user-initiated and have graceful no-permission paths. Voice input is the
+`CAMERA` is user-initiated; `POST_NOTIFICATIONS` is requested once at launch
+(`MainActivity.onCreate`) and is never re-prompted. Both have graceful
+no-permission paths. Voice input is the
 keyboard's own dictation; the app no longer requests the microphone. Document this
 in the listing and in the in-app permission rationale prompts.
 

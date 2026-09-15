@@ -1,6 +1,5 @@
 package relay.feature.settings
 
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import relay.protocol.SessionNamingTheme
 
@@ -30,13 +29,9 @@ import relay.protocol.SessionNamingTheme
  * (If settings import from another device is ever added, the migrations become
  * relevant again — and the shared `AppSettingsMigrations` is pure Kotlin, so it
  * can be pulled in at that point without a rewrite.)
- *
- * @param scope retained for API symmetry with the Android class (which owns hot
- *   StateFlow mirrors on it); `PreferenceStore` already has its own.
  */
 class AppSettings(
     private val prefs: PreferenceStore,
-    @Suppress("unused") private val scope: CoroutineScope,
 ) {
 
     // ---- the 10 persisted preferences ----

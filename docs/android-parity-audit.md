@@ -80,10 +80,10 @@ Bedrock secret and the six speech settings instead. Android adds one key,
 | ProcessedText + SpeechPostProcessor chain | **PASS** | word<2/silence short-circuit, never-throws, branch order exact |
 | CloudPromptEnhancer (Bedrock Converse) | **PASS** (network device-deferred) | modelId/512/0.3/15s, Bearer-redaction, 18+6 refusal detection |
 | TurnEndDetector + heuristic + raceTurnEnd | **PASS** | classifier-authoritative, INFERENCE_TIMED_OUT-on-timer |
-| ContinuousListeningEngine + OnDeviceSpeechEngine | **PASS** | strict two-phase red-handshake, armed 4s timeout, 176-test state machine |
+| ContinuousListeningEngine + OnDeviceSpeechEngine | **PASS (code since deleted)** | strict two-phase red-handshake, armed 4s timeout, 176-test state machine |
 | SpeechModelStore (2 downloads / 3 bundled ONNX) | **PASS** (download runtime device-deferred) | Qwen ≈0.5GB + ggml small.en; resumable + cloud fallback |
-| ContinuousListeningService (FG-service microphone) | **PASS** (runtime device-deferred) | foregroundServiceType=microphone + notification + permission flow |
-| MicButton dual-mode | **PASS** | PTT tap / continuous + long-press one-shot; state-driven color; haptics wired (§4) |
+| ContinuousListeningService (FG-service microphone) | **PASS (code since deleted)** | foregroundServiceType=microphone + notification + permission flow |
+| MicButton dual-mode | **PASS (code since deleted)** | PTT tap / continuous + long-press one-shot; state-driven color; haptics wired (the wand inherited that wiring — see §4) |
 | **whisper.cpp / llama.cpp JNI inference** | **DEFERRED** | no CMake in env; documented stubs degrade gracefully (§5) |
 | **Silero VAD / SmartTurn ONNX detectors** | **DEFERRED (gated to M4)** | built + compile-verified, NOT wired into `makeDefault` until the parity gate passes (§5) |
 
@@ -108,10 +108,9 @@ Bedrock secret and the six speech settings instead. Android adds one key,
 These are gated on resources absent from the build environment. Each is documented inline in the
 code and was an explicit, accepted deferral during M1–M3.
 
-### Needs the Termux engine vendored + a device
-- **Real VT terminal view (M1 Task 17):** `RelayTermuxView`/`TermuxTerminalEngine` adapter (Termux
-  isn't on Maven Central; see `terminal/TERMUX_INTEGRATION.md`). The text-fallback engine drives the
-  real byte path meanwhile. **Copy/paste + image-paste + hardware key-repeat** ride on this.
+### Needs a device
+- **Copy/paste + image-paste + hardware key-repeat** verification on the shipped ConnectBot
+  `termlib` terminal (the text-fallback engine it replaced is gone).
 
 ### Needs a device/emulator (on-device acceptance — M4 Tasks 2,4,5,6,7)
 - **Hardware keyboard + key-repeat + clipboard paste** verification.

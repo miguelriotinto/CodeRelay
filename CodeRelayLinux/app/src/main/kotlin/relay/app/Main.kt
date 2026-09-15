@@ -786,10 +786,7 @@ class AppEnvironment private constructor(
                 // Absent on a non-Omarchy desktop; the terminal then keeps
                 // TerminalPalette's built-in colours.
                 themeWatcher = OmarchyThemeWatcher(scope),
-                settings = AppSettings(
-                    prefs = PreferenceStore(scope = scope),
-                    scope = scope,
-                ),
+                settings = AppSettings(prefs = PreferenceStore(scope = scope)),
                 clipboard = DesktopClipboard(),
             )
             return environment
