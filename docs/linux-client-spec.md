@@ -19,10 +19,10 @@ Android carries a documented deferral that Linux can trivially clear (mouse repo
 
 ### 1.1 Non-goals
 
-- **On-device speech.** Android's `WhisperTranscriber.transcribe` is a stub that throws
-  `ModelNotLoaded`; the Silero/SmartTurn ONNX detectors are built but not wired into
-  `makeDefault`. Linux inherits that state. The pure-Kotlin pipeline ports; the
-  inference layer stays absent. Tracked as a follow-on, not part of parity.
+- **On-device speech.** None. The Android speech stack was removed in 2026-09 in
+  favour of the relay-side prompt optimizer (the wand in the shared
+  `WorkspaceScreen`), so there is nothing to inherit. Voice input is the desktop's
+  own dictation into the terminal.
 - **Push notifications.** Deliberately replaced, not ported — see §6.5.
 - **Server changes.** The wire protocol, admin API, and pairing flow are untouched.
   This client is additive.
@@ -169,7 +169,7 @@ implementations must satisfy exactly — the shared modules call them by these n
 | `Haptics.kt` | 120 | **Deleted.** No-op | No haptics on desktop |
 | `QrScannerScreen` (CameraX + ML Kit, `AndroidView`) | 332 | `PairWithHostSheet` — typed 8-char code + paste `coderelay://pair` URL | `PairingCode.normalize` already accepts hyphens/lowercase. Webcam scanning deferred |
 | `MainActivity` / `RelayApplication` / nav graph | ~700 | Compose Desktop `Window`, tray icon, menu bar, `NavHost` (CMP navigation) | |
-| `ContinuousListeningService` (FG service) | 176 | **Deleted.** No foreground-service concept | Speech is out of scope (§1.1) |
+| `ContinuousListeningService` (FG service) | 176 | **Deleted.** No foreground-service concept | Removed from Android too (§1.1) |
 
 ### 4.1 Not a seam — ports unchanged
 
@@ -421,7 +421,7 @@ cleanly when their secrets are absent, so a dry-run tag push is harmless.
 | TLS / cleartext scoping | **Full** | AD-5 |
 | Auto-connect | **Full** | |
 | Haptics | **N/A** | No desktop equivalent |
-| On-device speech / wake word | **Deferred** | Inherited from Android (§1.1) |
+| On-device speech / wake word | **N/A** | Removed everywhere; the wand replaces it (§1.1) |
 | Keyboard shortcuts, tray rollup, close-to-tray, single instance | **Exceeds** | §5 — from the macOS client; tray mirrors `MenuBarDropdown` |
 | Local scrollback, selection, paste, mouse clicks, cursor shapes | **Exceeds** | Desktop terminal table stakes; real-libvterm tests in `linux-terminal` |
 | Desktop notifications with click-to-focus | **Exceeds** | AD-4; `notify-send --action` |
@@ -460,9 +460,7 @@ paste calls the existing `RelayConnection.sendPasteImage`.
 
 Carried from Android, explicitly **not** solved here:
 
-1. **whisper.cpp / llama.cpp inference** — stubs that degrade gracefully.
-2. **Silero VAD / SmartTurn ONNX detectors** — built, not wired into `makeDefault`.
-3. **Camera QR scanning** — replaced by typed code + URL paste, which is arguably better
+1. **Camera QR scanning** — replaced by typed code + URL paste, which is arguably better
    on a desktop.
 
 ---

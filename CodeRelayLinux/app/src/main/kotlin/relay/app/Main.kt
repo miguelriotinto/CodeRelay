@@ -195,6 +195,7 @@ private fun runApp(
     val fontSizeIsSet by settings.terminalFontSizeIsSet.collectAsState()
     val fontSize by settings.terminalFontSize.collectAsState()
     val scrollbackLines by settings.terminalScrollbackLines.collectAsState()
+    val shareScreen by settings.shareScreenWithOptimizer.collectAsState()
 
     fun raiseWindow() {
         windowVisible = true
@@ -574,6 +575,9 @@ private fun runApp(
                             // `loadingAttachable` so a double click fires one fetch.
                             onAttach = { fetchAttachable(active) },
                             onShareQr = { id -> shareSessionId = id },
+                            // The device-side gate on sending the last 40 screen lines
+                            // with optimize_prompt (spec §7.1); the relay has its own.
+                            shareScreen = shareScreen,
                             // Haptics are a no-op on desktop; passed for API parity.
                             hapticsEnabled = false,
                             sidebarToggleRequests = sidebarToggles,

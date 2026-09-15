@@ -9,9 +9,9 @@ versioning, and signing-from-env wiring) already lives in the repo:
   with a debug-signing fallback for headless/CI builds, and the version
   (`versionCode` / `versionName` — that file is the single source of truth;
   bump it per release as described in step 3 below).
-- `app/proguard-rules.pro` — R8 keep rules for kotlinx.serialization, ONNX
-  Runtime (JNI), OkHttp/Okio, ML Kit / CameraX, and coroutines. **Do not weaken
-  these without re-verifying on a device** (see the runtime caveat below).
+- `app/proguard-rules.pro` — R8 keep rules for kotlinx.serialization, termlib
+  (JNI), OkHttp/Okio, ML Kit / CameraX, and coroutines. **Do not weaken these
+  without re-verifying on a device** (see the runtime caveat below).
 
 Everything below requires credentials/secrets that are **not** in the repo: the
 upload keystore and a Google Play Console account.
@@ -128,7 +128,7 @@ Because R8 strips at build time but stripping bugs only surface at **runtime**,
 install the *minified* release build on a real device and exercise:
 - saved-server load + add/edit (exercises `ConnectionConfig` JSON round-trip),
 - the session list (exercises `SessionInfo` deserialization),
-- on-device speech (exercises the ONNX Runtime JNI bridge),
+- a terminal session (exercises the termlib libvterm JNI bridge),
 - the QR scanner (exercises ML Kit barcode + CameraX).
 A serializer/native symbol stripped by a too-aggressive rule would crash here,
 not at build time.
@@ -156,33 +156,38 @@ labels). For this app:
 
 | Data type | Collected? | Shared? | Notes |
 |-----------|-----------|---------|-------|
-| **Microphone / audio** | Used on-device only | No | On-device speech-to-text (WhisperKit/ONNX). Audio is **not** uploaded or transmitted off-device; it is processed locally and discarded. |
 | **Camera / images** | Used on-device only | No | QR-code scanning to add a server (ML Kit barcode, on-device). No images stored or sent. |
 | Personal/financial/location/contacts | None | — | Not collected. |
 
 Declare:
 - **No data sold.**
 - **No data shared** with third parties.
-- **On-device processing** for mic + camera (no off-device transmission).
+- **On-device processing** for the camera (no off-device transmission).
 - Data is **not** required to be collected (the app's core is a terminal relay;
-  speech + QR are optional conveniences).
+  QR scanning is an optional convenience).
+- The **prompt optimizer** sends the draft you typed at the agent's input line —
+  and, if "Share terminal screen with the optimizer" is on (the default), the
+  last 40 lines of the terminal screen — to *your own relay*, which forwards them
+  to the model provider the relay operator configured. Nothing goes to a
+  third party the user did not set up; the setting is per device.
 
 > Note: unlike iOS, Play has **no** `ITSAppUsesNonExemptEncryption` /
 > export-compliance toggle in the AAB metadata. The privacy story is captured
-> entirely by the Data Safety form above (mic on-device, camera on-device, no
+> entirely by the Data Safety form above (camera on-device, optimizer traffic goes only to the user's relay, no
 > sharing/selling). TLS (`wss://`) usage needs no special encryption export
 > declaration for Play.
 
 ## 7. Permissions rationale
 
 The app requests:
-- `RECORD_AUDIO` — on-device voice input (push-to-talk + continuous listening).
-  Requested at first use; the app is fully usable by typing if denied.
 - `CAMERA` — scanning a QR code to add a server connection. Requested at first
   use of the QR scanner; servers can always be added manually if denied.
+- `POST_NOTIFICATIONS` (API 33+) — agent-activity push notifications. The app is
+  fully usable without them.
 
-Both are user-initiated, on-device only, and have graceful no-permission paths.
-Document this in the listing and in the in-app permission rationale prompts.
+Both are user-initiated and have graceful no-permission paths. Voice input is the
+keyboard's own dictation; the app no longer requests the microphone. Document this
+in the listing and in the in-app permission rationale prompts.
 
 ## 8. Release tracks (promote progressively)
 
