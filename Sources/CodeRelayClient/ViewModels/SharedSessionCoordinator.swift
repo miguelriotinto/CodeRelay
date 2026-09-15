@@ -1097,6 +1097,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         recoveryTask?.cancel()
         recoveryTask = nil
         authCoordinator.invalidate()
+        clearOptimizerUndo()
+        dismissOptimizerNotice()
         if activeSessionId != nil {
             Task {
                 do {

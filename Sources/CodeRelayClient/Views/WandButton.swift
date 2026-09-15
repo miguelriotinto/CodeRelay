@@ -13,6 +13,9 @@ public struct WandButton: View {
     private let size: CGFloat
     private let fill: Color
     private let onTap: (() -> Void)?
+    #if os(macOS)
+    @Environment(\.controlActiveState) private var controlActiveState
+    #endif
 
     /// - Parameters:
     ///   - shareScreen: the device's "Share terminal screen with the optimizer"
@@ -63,7 +66,13 @@ public struct WandButton: View {
         }
         .animation(.easeInOut(duration: 0.15), value: coordinator.optimizerNotice)
         .animation(.easeInOut(duration: 0.15), value: coordinator.optimizerUndo)
+        // Hardware shortcut (F12 on this Mac, cmd+ctrl+M on iOS). Constrained to
+        // the key window on macOS: each window has its own coordinator, and one
+        // global notification would otherwise rewrite every window's draft.
         .onReceive(NotificationCenter.default.publisher(for: .optimizePromptShortcut)) { _ in
+            #if os(macOS)
+            guard controlActiveState == .key else { return }
+            #endif
             trigger()
         }
     }

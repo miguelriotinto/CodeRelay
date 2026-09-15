@@ -19,7 +19,6 @@ struct ActiveTerminalView: View {
     /// Driven by `TerminalReloadFade`.
     @State private var reloadCover: Double = 0
     @ObservedObject private var settings = AppSettings.shared
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {

@@ -16,7 +16,7 @@ var products: [Product] = [
     .library(name: "CodeRelayKit", targets: ["CodeRelayKit"]),
 ]
 
-var dependencies: [Package.Dependency] = [
+let dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
     // Terminal QR codes: CoreImage on Apple platforms, this pure-Swift encoder
     // on Linux (see TerminalQRRenderer). Declared unconditionally so the

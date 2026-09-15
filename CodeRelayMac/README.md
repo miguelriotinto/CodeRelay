@@ -74,7 +74,7 @@ Observers are registered via `NSWorkspace.willSleepNotification` / `didWakeNotif
 CodeRelayMac/
   CodeRelayMacApp.swift           -- @main App with Window, MenuBarExtra, Settings scenes
   AppDelegate.swift                 -- NSApplicationDelegate: lifecycle, sleep/wake, window hiding
-  CodeRelayMac.entitlements       -- Mic, camera, network-client entitlements
+  CodeRelayMac.entitlements       -- Camera, network-client, sandboxing, file access, push entitlements
   Info.plist                        -- NSAppTransportSecurity (allows ws://) + CFBundleURLTypes
   Models/
     AppSettings.swift               -- User preferences (@AppStorage)

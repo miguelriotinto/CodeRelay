@@ -271,4 +271,14 @@ final class SharedSessionCoordinatorOptimizerTests: XCTestCase {
         XCTAssertEqual(coordinator.optimizerNotice, "Session not attached")
         XCTAssertNil(coordinator.optimizerUndo)
     }
+
+    func testTearDownClearsOptimizerState() async throws {
+        try await inject()
+        respondToOptimize(.optimizePromptResult(status: "ok", original: "a", prompt: "b", message: nil))
+        await coordinator.optimizePrompt(shareScreen: true)
+        XCTAssertNotNil(coordinator.optimizerUndo)
+        coordinator.tearDown()
+        XCTAssertNil(coordinator.optimizerUndo)
+        XCTAssertNil(coordinator.optimizerNotice)
+    }
 }

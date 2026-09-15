@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import CodeRelayClient
 
 struct MainWindow: View {

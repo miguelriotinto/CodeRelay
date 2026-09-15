@@ -10,18 +10,20 @@ final class AppSettingsSpeechRemovalTests: XCTestCase {
 
     private var defaults: UserDefaults!
     private var modelsDir: URL!
+    private var suiteName: String!
 
     override func setUp() {
         super.setUp()
-        let suite = "AppSettingsSpeechRemovalTests.\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
+        suiteName = "AppSettingsSpeechRemovalTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
         modelsDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("SpeechRemoval-\(UUID().uuidString)/Models", isDirectory: true)
     }
 
     override func tearDown() {
         try? FileManager.default.removeItem(at: modelsDir.deletingLastPathComponent())
+        defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
         super.tearDown()
     }

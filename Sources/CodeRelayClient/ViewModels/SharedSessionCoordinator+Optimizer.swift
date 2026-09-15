@@ -30,6 +30,11 @@ public struct OptimizerUndo: Equatable, Sendable {
 
 extension SharedSessionCoordinator {
 
+    /// The first relay protocol version that carries `optimize_prompt` /
+    /// `replace_prompt` (spec §7.1). Deliberately NOT `CodeRelayKit.protocolVersion`:
+    /// that is the version *this client* speaks and will move; the gate must not.
+    public static let optimizerMinimumProtocolVersion = 2
+
     /// The button is tappable. Availability is deliberately *not* part of this:
     /// an unavailable wand is drawn dimmed and a tap shows the hint (spec §9).
     public var isWandEnabled: Bool {
@@ -54,7 +59,7 @@ extension SharedSessionCoordinator {
             optimizerAvailability = .unknown
             return
         }
-        if controller.serverProtocolVersion < 2 {
+        if controller.serverProtocolVersion < Self.optimizerMinimumProtocolVersion {
             optimizerAvailability = .serverTooOld
         } else if controller.serverCapabilities.contains(CodeRelayKit.promptOptimizerCapability) {
             optimizerAvailability = .available
@@ -69,8 +74,8 @@ extension SharedSessionCoordinator {
 
         // Fast path: show hint immediately for known-unavailable relays without
         // entering .optimizing or making any network call.
-        if optimizerAvailability == .serverTooOld || optimizerAvailability == .unconfigured {
-            showOptimizerNotice(wandHint ?? "")
+        if let hint = wandHint {
+            showOptimizerNotice(hint)
             return
         }
 

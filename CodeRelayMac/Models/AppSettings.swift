@@ -1,5 +1,4 @@
 import SwiftUI
-import Combine
 import CodeRelayClient
 
 @MainActor
@@ -31,7 +30,6 @@ final class AppSettings: ObservableObject {
     @AppStorage("com.clauderelay.mac.autoConnectEnabled") var autoConnectEnabled = false
     @AppStorage("com.clauderelay.mac.pushNotificationsEnabled") var pushNotificationsEnabled = true
     @AppStorage("com.clauderelay.mac.pushNotifyOnFinished") var pushNotifyOnFinished = false
-
 
     @AppStorage("com.clauderelay.mac.terminalFontSize") var terminalFontSize: Double = 12
 
