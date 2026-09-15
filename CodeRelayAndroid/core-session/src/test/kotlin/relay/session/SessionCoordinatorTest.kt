@@ -1400,7 +1400,6 @@ class SessionCoordinatorTest {
 
     @Test
     fun `connect derives optimizer availability from auth_success`() = runTest {
-        val dispatcher = StandardTestDispatcher(testScheduler)
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
@@ -1430,6 +1429,8 @@ class SessionCoordinatorTest {
         assertNull(coord.optimizerUndo.value)
         assertNull(coord.optimizerNotice.value)
         coord.tearDown()
+        assertNull(coord.optimizerUndo.value)
+        assertNull(coord.optimizerNotice.value)
     }
 
     @Test

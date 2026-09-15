@@ -170,8 +170,12 @@ class PromptOptimizerControllerTest {
     }
 
     @Test
-    fun `ok without an original shows Optimized and arms no undo`() = runTest {
+    fun `ok without an original shows Optimized and clears any previous undo`() = runTest {
         val h = Harness(this)
+        // Arm an undo first.
+        h.controller.optimizePrompt(shareScreen = true)
+        assertEquals(OptimizerUndo(sessionA, "original"), h.controller.undo.value)
+        // A second optimize with Ok(null) clears it.
         h.optimizeResult = { OptimizeOutcome.Ok(null) }
         h.controller.optimizePrompt(shareScreen = true)
         assertNull(h.controller.undo.value)
@@ -179,7 +183,7 @@ class PromptOptimizerControllerTest {
     }
 
     @Test
-    fun `switching sessions mid-optimize does not arm undo for the new session`() = runTest {
+    fun `undo is keyed by the captured session regardless of a mid-flight switch`() = runTest {
         val h = Harness(this)
         val gate = CompletableDeferred<OptimizeOutcome>()
         h.optimizeResult = { gate.await() }
@@ -188,6 +192,16 @@ class PromptOptimizerControllerTest {
         h.activeSession = sessionB
         gate.complete(OptimizeOutcome.Ok("original"))
         job.join()
+        // The undo is armed for session A (the captured sessionId), not B.
+        assertEquals(OptimizerUndo(sessionA, "original"), h.controller.undo.value)
+        // Undo while B is active sends nothing and keeps the undo.
+        h.controller.undoOptimize()
+        assertTrue(h.replaceCalls.isEmpty())
+        assertEquals(OptimizerUndo(sessionA, "original"), h.controller.undo.value)
+        // Switch back to A and the undo now goes through.
+        h.activeSession = sessionA
+        h.controller.undoOptimize()
+        assertEquals(listOf(sessionA to "original"), h.replaceCalls)
         assertNull(h.controller.undo.value)
     }
 
@@ -374,5 +388,34 @@ class PromptOptimizerControllerTest {
         advanceTimeBy(PromptOptimizerController.UNDO_WINDOW_MS + 1L)
         runCurrent() // must not throw or resurrect anything
         assertNull(h.controller.undo.value)
+    }
+
+    @Test
+    fun `cancel prevents optimize reply from arming undo or showing notice`() = runTest {
+        val h = Harness(this)
+        val gate = CompletableDeferred<OptimizeOutcome>()
+        h.optimizeResult = { gate.await() }
+        val job = launch { h.controller.optimizePrompt(shareScreen = true) }
+        runCurrent()
+        h.controller.cancel()
+        gate.complete(OptimizeOutcome.Ok("original"))
+        job.join()
+        assertNull(h.controller.undo.value)
+        assertNull(h.controller.notice.value)
+        assertEquals(OptimizerState.IDLE, h.controller.state.value)
+    }
+
+    @Test
+    fun `cancel prevents failed optimize from showing notice`() = runTest {
+        val h = Harness(this)
+        val gate = CompletableDeferred<OptimizeOutcome>()
+        h.optimizeResult = { gate.await() }
+        val job = launch { h.controller.optimizePrompt(shareScreen = true) }
+        runCurrent()
+        h.controller.cancel()
+        gate.complete(OptimizeOutcome.Failed("Optimizer unavailable"))
+        job.join()
+        assertNull(h.controller.notice.value)
+        assertEquals(OptimizerState.IDLE, h.controller.state.value)
     }
 }

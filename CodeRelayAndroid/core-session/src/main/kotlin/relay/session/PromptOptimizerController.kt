@@ -76,6 +76,7 @@ class PromptOptimizerController(
 
     private var undoExpiry: Job? = null
     private var noticeExpiry: Job? = null
+    private var cancelled = false
 
     /** Tappable: not mid-RPC, not recovering, and there is a session to optimize. */
     val isWandEnabled: Boolean
@@ -116,17 +117,20 @@ class PromptOptimizerController(
         _state.value = OptimizerState.OPTIMIZING
         try {
             ensureAuthenticated()
+            if (cancelled) return
             refreshAvailability()
             wandHint?.let { showNotice(it); return }
 
             var outcome: OptimizeOutcome? = null
             withAuth { outcome = optimize(sessionId, shareScreen) }
+            if (cancelled) return
             when (val result = outcome) {
                 is OptimizeOutcome.Ok -> {
                     val original = result.original
-                    if (original != null && activeSessionId() == sessionId) {
+                    if (original != null) {
                         armUndo(OptimizerUndo(sessionId, original))
-                    } else if (original == null) {
+                    } else {
+                        clearUndo()
                         showNotice(OptimizerStrings.OPTIMIZED)
                     }
                 }
@@ -154,10 +158,12 @@ class PromptOptimizerController(
         val armed = _undo.value ?: return
         if (armed.sessionId != activeSessionId()) return
 
+        dismissNotice()
         _state.value = OptimizerState.OPTIMIZING
         try {
             var outcome: ReplaceOutcome? = null
             withAuth { outcome = replace(armed.sessionId, armed.original) }
+            if (cancelled) return
             when (val result = outcome) {
                 ReplaceOutcome.Ok -> clearUndo()
                 is ReplaceOutcome.Failed -> showNotice(result.message)
@@ -180,11 +186,13 @@ class PromptOptimizerController(
 
     /** Teardown: drop the chip and the toast and stop their timers. */
     fun cancel() {
+        cancelled = true
         clearUndo()
         dismissNotice()
     }
 
     private fun showNotice(text: String) {
+        if (cancelled) return
         noticeExpiry?.cancel()
         _notice.value = text
         noticeExpiry = scope.launch {
@@ -194,6 +202,7 @@ class PromptOptimizerController(
     }
 
     private fun armUndo(undo: OptimizerUndo) {
+        if (cancelled) return
         undoExpiry?.cancel()
         _undo.value = undo
         undoExpiry = scope.launch {
