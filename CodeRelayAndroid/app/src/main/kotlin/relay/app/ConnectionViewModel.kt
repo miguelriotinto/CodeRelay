@@ -105,6 +105,7 @@ class ConnectionViewModel : ViewModel() {
         _activeSession.value = null
         if (session != null) {
             session.scope.launch {
+                FcmTokenBridge.onTokenRefreshed = null
                 session.coordinator.tearDown()
                 session.scope.cancel()
             }

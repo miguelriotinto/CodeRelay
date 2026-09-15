@@ -50,9 +50,6 @@ private class SessionOwnershipAdapter(
  *  - **Ownership adapter** wrapping `SessionOwnershipStore(context, deviceId)`.
  *  - **Connection-quality provider** polling `RelayConnection.connectionQuality`.
  *  - **Binary input sink** `RelayConnection.sendBinary` for raw terminal keystrokes.
- *
- * The factory holds the [connection] so the host can poll quality / send binary
- * and so [SessionCoordinator.tearDown] can disconnect it on leave.
  */
 class ConnectionSession private constructor(
     val coordinator: SessionCoordinator,

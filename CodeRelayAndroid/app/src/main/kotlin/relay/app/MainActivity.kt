@@ -1,13 +1,17 @@
 package relay.app
 
+import android.Manifest
 import android.content.Intent
 import android.graphics.Color as AndroidColor
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -57,6 +61,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var networkObserver: NetworkObserver
 
     /**
+     * POST_NOTIFICATIONS runtime request (API 33+). Push (F1) needs the grant; the
+     * result feeds [FcmTokenBridge] so a live session re-syncs its registration.
+     */
+    private val notificationPermissionLauncher: ActivityResultLauncher<String> =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            FcmTokenBridge.setPermissionGranted(granted)
+            if (granted) FcmTokenBridge.onTokenRefreshed?.invoke()
+        }
+
+    /**
      * The most recent session id parsed from a `coderelay://session/<uuid>`
      * deep link, or null. The nav graph collects this on workspace entry, calls
      * `SessionCoordinator.attachRemoteSession(id)`, then clears it via
@@ -93,6 +107,10 @@ class MainActivity : ComponentActivity() {
         connectivitySource = AndroidConnectivitySource(this)
         networkObserver = NetworkObserver(connectivitySource)
         connectivitySource.start()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !PushSync.notificationsGranted(this)) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         // Resolve the auto-connect target (CodeRelayApp.swift auto-connect): when
         // enabled AND lastConnectedServerId resolves to a saved bookmark.
@@ -203,7 +221,8 @@ class MainActivity : ComponentActivity() {
         // Then try session link (coderelay://session/<uuid>).
         val sessionId = DeepLinks.parseSessionId(data)
         if (sessionId == null) {
-            Log.w(TAG, "Ignoring unparseable deep link: $data")
+            val uri = intent.data
+            Log.w(TAG, "Ignoring unparseable deep link: ${uri?.scheme}://${uri?.host}${uri?.path}")
             return
         }
         Log.i(TAG, "Deep link → pending session $sessionId")
