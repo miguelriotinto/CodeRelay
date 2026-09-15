@@ -211,7 +211,9 @@ jobs:
         with:
           ref: ${{ needs.resolve-version.outputs.tag }}
 
-      # Must match the toolchain Package.resolved was resolved with; see ci.yml.
+      # Pinned so the Linux resolve is reproducible; see ci.yml. The diff step
+      # below enforces the invariant: no job may rewrite the committed
+      # Package.resolved.
       - name: Install Swift
         uses: swift-actions/setup-swift@v2
         with:

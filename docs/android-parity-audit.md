@@ -55,6 +55,11 @@ All present in `feature-settings/.../AppSettings.kt` (DataStore) + `SettingsScre
 
 Both iOS migrations ported (shortcut-modifier string→flags; legacy plaintext Bedrock→Keychain with
 read-back-confirm). Bedrock token correctly in EncryptedSharedPreferences, not DataStore.
+**As of 2026-09 the Apple clients no longer migrate the Bedrock secret — they *delete* it:** the
+iOS Bedrock→Keychain migration was removed with the speech stack, and `SpeechRemovalMigration`
+now scrubs the Keychain item, the legacy speech defaults and the model directories on first
+launch. Android's port of that scrub is Plan 3; until then the row above describes Android's
+own state, not a shared one.
 
 ## 3. Speech feature inventory (M3)
 

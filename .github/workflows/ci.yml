@@ -25,10 +25,11 @@ jobs:
 
       - name: Select newest Xcode 26
         run: |
-          # Package.resolved was resolved with Swift 6.2 (Xcode 26); several pins
-          # declare swift-tools-version 6.2. An older toolchain cannot load those
-          # manifests and silently re-resolves the graph downward — which the
-          # Package.resolved diff step below then fails, by design.
+          # Runs the newest Xcode 26.x present on the runner image. The float is
+          # deliberate: image minors are retired without notice, so pinning one
+          # would trade a toolchain surprise for a "no such Xcode" surprise.
+          # Several pins declare swift-tools-version 6.2, so a 26.x toolchain is
+          # the floor for loading their manifests at all.
           XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
@@ -49,8 +50,11 @@ jobs:
         run: swift build
 
       - name: Package.resolved is unchanged after the macOS resolve
-        # Same guard as the linux-server job: a toolchain older than the pins'
-        # swift-tools-version would silently re-resolve the graph downward.
+        # No job may rewrite the committed Package.resolved. If a toolchain bump
+        # changes SwiftPM's serialisation of the file (format version,
+        # originHash) or the resolved versions, re-resolve locally with that
+        # toolchain and commit the result in its own change — never let CI's
+        # copy win.
         run: git diff --exit-code -- Package.resolved
 
       - name: swift test
@@ -76,10 +80,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Must match the toolchain Package.resolved was resolved with (current
-      # Xcode). Several pins declare swift-tools-version 6.1/6.2, and a Linux
-      # toolchain that cannot load those manifests silently re-resolves the
-      # graph downward — which the diff step below then fails, by design.
+      # Pinned (not floating like the macOS job, which takes whatever Xcode the
+      # image ships) so the Linux resolve is reproducible; the pins declare
+      # swift-tools-version up to 6.2, which this toolchain can load. The diff
+      # step below enforces the actual invariant: no job may rewrite the
+      # committed Package.resolved.
       - name: Install Swift
         uses: swift-actions/setup-swift@v2
         with:
@@ -134,6 +139,12 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
+      # The workspace copy is what a TestFlight archive resolves against, and
+      # xcodebuild is free to rewrite it. Same rule as the root file: CI never
+      # gets to change the committed pins.
+      - name: Workspace Package.resolved is unchanged after the build
+        run: git diff --exit-code -- CodeRelay.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
   mac-build:
     name: macOS app build
     # macos-26: the macOS app's toolbar uses macOS 26 SDK APIs (ToolbarSpacer,
@@ -171,3 +182,9 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      # The workspace copy is what a TestFlight archive resolves against, and
+      # xcodebuild is free to rewrite it. Same rule as the root file: CI never
+      # gets to change the committed pins.
+      - name: Workspace Package.resolved is unchanged after the build
+        run: git diff --exit-code -- CodeRelay.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

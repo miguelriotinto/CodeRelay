@@ -162,6 +162,7 @@ by `CodeRelayAppTests/TerminalSwipeScrollTests`.
 
 - **RTT tracking**: Sliding window of 6 measurements → `ConnectionQuality` enum (excellent/good/poor/veryPoor/disconnected) based on median RTT + success rate. All RTT append + window-cap + failure-counter bookkeeping is centralized in the private `recordRTT` helper — every call site is guaranteed to enforce the cap
 - **Death detection**: 3 consecutive ping failures triggers `onSendFailed`, which the coordinator handles via `handleForegroundTransition`
+- **RPC timeout is a death signal too**: an `sendAndWaitForResponse` timeout marks the socket desynchronized *and* calls `connection.markConnectionDead()` in the same breath, both guarded by `connection.generation == sentGeneration` so a timeout belonging to an already-replaced socket cannot kill the live one (commit `7b394f2`). Poisoning a socket and giving it up are one event: marking without replacing was a 16-minute silent wedge, because pings are not RPCs, so the keepalive kept succeeding and both repair paths test the transport
 - **Recovery ownership**: Only the coordinator (`SharedSessionCoordinator`) drives recovery. `forceReconnect()` deliberately does NOT enable auto-reconnect to prevent competing recovery loops
 - **Recovery defer idempotency**: `handleForegroundTransition` uses a single outer `defer` guarded by `if isRecovering`. A mid-flight cancellation at any `await` (e.g., inside backoff sleep) still clears `isRecovering`, `suppressAllViewModelSends`, and `lastRecoveryEndedAt`. Without this, a cancelled recovery could strand `isRecovering=true` and permanently block future recoveries
 - **Alive short-circuit**: If the connection is already alive when foreground fires (scenePhase `.active`, rotation, notification), transition skips the recovery path entirely and only calls `fetchSessions()`
@@ -232,7 +233,9 @@ above: `SessionController.isForeignError` (Swift + Kotlin) refuses to let an
 `.error` whose message is exactly `"No session attached"` resolve any waiter
 other than `detach`'s. Deliberately one exact string — dropping anything
 *unrecognized* would hang the waiter to its 10 s timeout, and a timeout poisons
-the socket (`desyncedGeneration`), which is worse than surfacing a wrong error.
+the socket (`desyncedGeneration`) **and now tears it down**
+(`markConnectionDead()`, generation-guarded — see "Connection Health"), which is
+worse than surfacing a wrong error.
 
 ### Prompt Optimizer (client side)
 
@@ -244,12 +247,20 @@ config hint unless the relay advertises `prompt_optimizer` on protocol v2),
 `optimizerState` (`optimizing` only for one RPC), `optimizerUndo` (10 s,
 one-shot `replace_prompt` of the original) and `optimizerNotice` (4 s toast).
 `optimize_prompt` / `replace_prompt` use a 20 s waiter
-(`SessionController.optimizerTimeout`); everything else keeps 10 s. All copy is
+(`SessionController.optimizerTimeout`); everything else keeps 10 s. Because
+replies carry no request ids, `sendAndWaitForResponse` chains RPCs through
+`previousRPC`, so a 12–20 s optimize **serialises every other RPC behind it**
+by design — a session-tab tap during an optimize appears to hang for the
+model's full latency. Nothing times out spuriously (each waiter's timer starts
+after its `send`); it is a latency artefact, not a bug. All copy is
 in `OptimizerStrings`. The hardware shortcut (`recordingShortcut*` settings,
 `RecordingShortcutMonitor` on macOS) now posts `.optimizePromptShortcut`.
 Voice input is the OS's own dictation into the terminal; the apps no longer
 ship a speech stack, and `SpeechRemovalMigration` scrubs the old settings,
-the Bedrock keychain item and the model directory once per install.
+the Bedrock keychain item and **both** model directories once per install — the
+old `SpeechModelStore` folder *and* WhisperKit's `Documents/huggingface`
+download base, which is where the Whisper weights actually landed (it was
+called with no `downloadBase`).
 
 ## Configuration
 

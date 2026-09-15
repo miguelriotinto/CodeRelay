@@ -53,9 +53,10 @@ Closing the main window keeps the app running in the menu bar. Click the menu ba
 
 `Cmd+,` opens a tabbed settings window:
 
-- **General** — session naming theme (Game of Thrones / Viking / Star Wars / Dune / Lord of the Rings), terminal font size, **terminal scrollback lines** (default 5000, configurable up to 25000; lower = less RAM, higher = more in-client history), "Show window on launch" toggle, "Launch at login" toggle (uses `SMAppService` on macOS 13+).
-- **Optimizer Shortcut** — keyboard shortcut to trigger the server-side prompt optimizer.
-- **Servers** — embedded server list for CRUD.
+- **General** — session naming theme (Game of Thrones / Viking / Star Wars / Dune / Lord of the Rings), terminal font size, **terminal scrollback lines** (default 5000, configurable up to 25000; lower = less RAM, higher = more in-client history), "Show window on launch" toggle, "Launch at login" toggle (uses `SMAppService` on macOS 13+). It also holds two optimizer sections: **Prompt Optimizer** — the "Share terminal screen with the optimizer" toggle (default on; the footer states what is sent) — and **Optimizer Shortcut** — the keyboard shortcut that triggers the wand.
+- **About** — version and build information.
+
+Servers are managed in their own window (`ServerListWindow`), not in a Preferences tab.
 
 ## Foreground Recovery
 
@@ -89,7 +90,7 @@ CodeRelayMac/
     AddEditServerView.swift         -- Server config form (sheet)
     SessionSidebarView.swift        -- Session list with activity indicators
     TerminalContainerView.swift     -- NSViewRepresentable SwiftTerm wrapper + PasteAwareTerminalView
-    SettingsView.swift              -- Preferences (General/Optimizer Shortcut/Servers tabs)
+    SettingsView.swift              -- Preferences (General/About tabs; General holds the optimizer share-screen toggle + shortcut)
     StatusBarView.swift             -- Bottom connection/activity bar
     MenuBarDropdown.swift           -- Menu bar icon dropdown view
     QRCodePopover.swift             -- QR code generation popover

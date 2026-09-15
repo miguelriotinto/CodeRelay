@@ -238,6 +238,24 @@ Configuration is stored at `~/.claude-relay/config.json`:
 - `apnsUseSandbox` - Target the APNs sandbox host, for development builds (default: `false`)
 - `fcmServiceAccountPath` / `fcmProjectId` - Firebase service-account JSON path and project id for Android delivery
 
+**Prompt optimizer options** (off by default):
+- `promptOptimizerEnabled` - Master switch for the wand (default: `false`)
+- `promptOptimizerProvider` - `anthropic` | `bedrock` (default: `anthropic`)
+- `promptOptimizerModel` - default `claude-sonnet-5` on Anthropic, `anthropic.claude-sonnet-5` on Bedrock
+- `promptOptimizerRegion` - Bedrock only (default: `us-east-1`)
+- `promptOptimizerKeyPath` - File holding the API key, `chmod 600`; the key is read once at startup and never logged
+- `promptOptimizerShareScreen` - The server-side gate on sending the last 40 screen lines to the model (default: `true`); the device has its own toggle
+
+`promptOptimizer*` changes take effect only after a relay restart — the key is read once at startup, so `config set promptOptimizerEnabled true` alone leaves the capability absent:
+
+```bash
+claude-relay config set promptOptimizerEnabled true
+claude-relay config set promptOptimizerKeyPath ~/.claude-relay/optimizer.key   # chmod 600
+claude-relay restart                                 # the key is read once, at startup
+```
+
+**What leaves the host when you use the optimizer:** the draft you typed and its working directory are always sent to the configured model provider — that is the point of the feature. When the per-device toggle "Share terminal screen with the optimizer" *and* the server-side `promptOptimizerShareScreen` kill switch are both on, up to the last 40 lines of the terminal screen are sent as well; turning either one off stops that. Nothing about the draft, the working directory or the screen is logged, at any log level, and the API key is never sent to clients.
+
 A corrupt `config.json` is tolerated: the server logs to stderr and falls back to `RelayConfig.default` so launchd-managed services stay up. App-side, `terminalScrollbackLines` (iOS + macOS Settings, default 5000, max 25000) controls the client's in-memory terminal history independent of the server's ring buffer.
 
 ### TLS Configuration
