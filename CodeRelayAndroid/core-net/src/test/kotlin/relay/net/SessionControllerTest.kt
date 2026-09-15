@@ -39,7 +39,7 @@ import java.util.concurrent.Executors
  * instead of the assertion under test. Insertion order is preserved (rather than
  * switching to a `ConcurrentHashMap`) because the fan-out-order tests depend on it.
  */
-private class FakeConnection(
+internal class FakeConnection(
     var autoRespond: ((ClientMessage) -> ServerMessage?)? = null,
 ) : ConnectionSurface {
     @Volatile
