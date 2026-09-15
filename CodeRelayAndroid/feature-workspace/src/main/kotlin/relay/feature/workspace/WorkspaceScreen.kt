@@ -334,6 +334,9 @@ fun WorkspaceScreen(
                         // the coordinator; the button only refuses DISABLED/OPTIMIZING.
                         onWandTap = { haptics.lightTap(); scope.launch { coordinator.optimizePrompt(shareScreen) } },
                         onUndoTap = { haptics.lightTap(); scope.launch { coordinator.undoOptimize() } },
+                        // Tap-to-dismiss the toast, as on iOS/macOS: a notice must
+                        // never be the reason an Undo chip goes unseen.
+                        onNoticeDismiss = { coordinator.dismissOptimizerNotice() },
                     )
                 },
                 redrawToken = redrawToken,

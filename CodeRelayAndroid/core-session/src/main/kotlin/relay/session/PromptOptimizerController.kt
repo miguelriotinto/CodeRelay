@@ -41,7 +41,7 @@ data class OptimizerUndo(val sessionId: UUID, val original: String)
  *  - *Available* = protocol ≥ [PromptOptimizerProtocol.MIN_PROTOCOL_VERSION]
  *    **and** the [PromptOptimizerProtocol.CAPABILITY] capability. Unavailable is
  *    still *tappable*: the tap shows the hint instead of an RPC.
- *  - *Enabled* = [OptimizerState.IDLE] ∧ ¬recovering ∧ an active session.
+ *  - *Enabled* = ¬cancelled ∧ [OptimizerState.IDLE] ∧ ¬recovering ∧ an active session.
  *  - Undo is one-shot, keyed by session, lives [UNDO_WINDOW_MS], and is cleared
  *    **only** by a successful `replace_prompt`, by expiry, or by a later
  *    successful optimize. A failed optimize or a failed undo keeps it, so the
@@ -78,9 +78,19 @@ class PromptOptimizerController(
     private var noticeExpiry: Job? = null
     private var cancelled = false
 
-    /** Tappable: not mid-RPC, not recovering, and there is a session to optimize. */
+    /**
+     * Tappable: not cancelled, not mid-RPC, not recovering, and there is a session
+     * to optimize.
+     *
+     * `!cancelled` is defence in depth, and it is the gate rather than a check
+     * after the awaits: the composable dies with the screen, but a programmatic
+     * tap (a window-level accelerator, as the Linux client that compiles this file
+     * will have) on a torn-down coordinator would otherwise reach
+     * [ensureAuthenticated] and open a fresh `auth_request` on it. Mirrors
+     * `SharedSessionCoordinator+Optimizer.swift`'s `!isTornDown`.
+     */
     val isWandEnabled: Boolean
-        get() = _state.value == OptimizerState.IDLE && !isRecovering() && activeSessionId() != null
+        get() = !cancelled && _state.value == OptimizerState.IDLE && !isRecovering() && activeSessionId() != null
 
     val isAvailable: Boolean
         get() = _availability.value == OptimizerAvailability.AVAILABLE
@@ -130,8 +140,15 @@ class PromptOptimizerController(
                     if (original != null) {
                         armUndo(OptimizerUndo(sessionId, original))
                     } else {
+                        // The relay rewrote the draft but was not tracking what it
+                        // replaced, so there is nothing to put back: any older undo
+                        // is stale.
                         clearUndo()
-                        showNotice(OptimizerStrings.OPTIMIZED)
+                        // Session switched mid-optimize: the reply belongs to a
+                        // session the user is no longer looking at. No undo, and no
+                        // toast either — it would read as this session's result
+                        // (`SharedSessionCoordinator+Optimizer.swift`:114-118).
+                        if (activeSessionId() == sessionId) showNotice(OptimizerStrings.OPTIMIZED)
                     }
                 }
                 OptimizeOutcome.NoDraft -> showNotice(OptimizerStrings.NO_DRAFT)

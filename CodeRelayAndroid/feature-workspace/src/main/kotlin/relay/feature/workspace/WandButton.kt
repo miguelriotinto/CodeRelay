@@ -27,6 +27,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import relay.net.OptimizerStrings
@@ -74,6 +75,29 @@ object WandButtonLogic {
     /** Whether a tap reaches the coordinator. DIMMED is tappable on purpose: the tap is how the user learns why. */
     fun isTappable(visual: WandVisual): Boolean =
         visual == WandVisual.READY || visual == WandVisual.DIMMED
+
+    /** What sits above the wand. Both halves can be present at once — see [overlayContent]. */
+    data class OverlayContent(val notice: String?, val showUndo: Boolean)
+
+    /**
+     * The overlay's content decision. A notice does **not** suppress the Undo
+     * chip: the two live on independent timers (4 s vs 10 s) that do not start
+     * together, so hiding the chip behind a late toast could retire it unseen and
+     * the pre-optimize draft — the user's only copy — would be gone. Swift renders
+     * both side by side (`WandButton.swift:41-65`); this renders them stacked.
+     */
+    fun overlayContent(notice: String?, undoVisible: Boolean): OverlayContent =
+        OverlayContent(notice = notice, showUndo = undoVisible)
+
+    /**
+     * TalkBack state for the wand, or null when the visual carries no state worth
+     * announcing (READY, and DIMMED whose explanation is the tap's own toast).
+     */
+    fun stateDescription(visual: WandVisual): String? = when (visual) {
+        WandVisual.OPTIMIZING -> "Optimizing"
+        WandVisual.DISABLED -> "Unavailable"
+        WandVisual.READY, WandVisual.DIMMED -> null
+    }
 }
 
 /**
@@ -104,8 +128,19 @@ fun WandButton(
             .size(44.dp)
             .clip(CircleShape)
             .background(container)
-            .clickable(enabled = tappable, onClick = onTap)
-            .semantics { contentDescription = OptimizerStrings.WAND_LABEL },
+            .clickable(
+                enabled = tappable,
+                onClickLabel = OptimizerStrings.WAND_LABEL,
+                role = Role.Button,
+                onClick = onTap,
+            )
+            .semantics {
+                contentDescription = OptimizerStrings.WAND_LABEL
+                // Without this a screen-reader user hears "Optimize Prompt" with
+                // no sign that a 20 s optimize is running, or that the button is
+                // inert because there is no session.
+                WandButtonLogic.stateDescription(visual)?.let { stateDescription = it }
+            },
         contentAlignment = Alignment.Center,
     ) {
         if (visual == WandButtonLogic.WandVisual.OPTIMIZING) {
@@ -126,11 +161,15 @@ fun WandButton(
 }
 
 /**
- * The wand plus whatever sits above it: the "Optimized · Undo" chip (10 s, tap =
- * one-shot undo) or the 4 s notice toast. Anchor it bottom-end over the terminal.
+ * The wand plus whatever sits above it: the 4 s notice toast (top, tap =
+ * dismiss) and the "Optimized · Undo" chip (10 s, tap = one-shot undo). Anchor
+ * it bottom-end over the terminal.
  *
- * When both a notice and an undo are present the notice wins — it is the newer
- * information and expires first, after which the chip shows again.
+ * A notice and an undo can be on screen together, exactly as in Swift
+ * (`WandButton.swift:41-65`): the two timers are independent, so suppressing the
+ * chip while a toast is up could let the undo window expire unseen and discard
+ * the user's original draft. The decision itself is
+ * [WandButtonLogic.overlayContent], so it is JVM-testable.
  */
 @Composable
 fun OptimizerOverlay(
@@ -139,35 +178,38 @@ fun OptimizerOverlay(
     notice: String?,
     onWandTap: () -> Unit,
     onUndoTap: () -> Unit,
+    onNoticeDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val content = WandButtonLogic.overlayContent(notice = notice, undoVisible = undoVisible)
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
-        when {
-            notice != null -> {
-                OptimizerNotice(notice)
-                Spacer(Modifier.height(8.dp))
-            }
-            undoVisible -> {
-                UndoChip(onUndoTap)
-                Spacer(Modifier.height(8.dp))
-            }
+        content.notice?.let { text ->
+            OptimizerNotice(text, onDismiss = onNoticeDismiss)
+            Spacer(Modifier.height(8.dp))
+        }
+        if (content.showUndo) {
+            // Same predicate as the wand: while a second optimize is in flight an
+            // undo tap would be dropped by the controller with no feedback, so the
+            // chip dims instead of silently no-opping (Swift disables it too).
+            UndoChip(onTap = onUndoTap, enabled = WandButtonLogic.isTappable(visual))
+            Spacer(Modifier.height(8.dp))
         }
         WandButton(visual = visual, onTap = onWandTap)
     }
 }
 
 @Composable
-private fun UndoChip(onTap: () -> Unit) {
+private fun UndoChip(onTap: () -> Unit, enabled: Boolean) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.inverseSurface)
-            .clickable(role = Role.Button, onClick = onTap)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onTap)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(
             text = OptimizerStrings.OPTIMIZED + " · " + OptimizerStrings.UNDO,
-            color = MaterialTheme.colorScheme.inverseOnSurface,
+            color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = if (enabled) 1f else 0.4f),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
         )
@@ -175,12 +217,15 @@ private fun UndoChip(onTap: () -> Unit) {
 }
 
 @Composable
-private fun OptimizerNotice(text: String) {
+private fun OptimizerNotice(text: String, onDismiss: () -> Unit) {
     Box(
         modifier = Modifier
             .widthIn(max = 320.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.inverseSurface)
+            // Tap-to-dismiss, like Swift's notice chip: without it a 4 s toast
+            // cannot be cleared early and can outlive what it sits next to.
+            .clickable(role = Role.Button, onClick = onDismiss)
             .padding(horizontal = 14.dp, vertical = 8.dp)
             .semantics { liveRegion = LiveRegionMode.Polite },
     ) {

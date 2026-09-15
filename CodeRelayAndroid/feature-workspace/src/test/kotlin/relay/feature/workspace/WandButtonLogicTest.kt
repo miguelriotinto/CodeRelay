@@ -2,6 +2,7 @@ package relay.feature.workspace
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import relay.feature.workspace.WandButtonLogic.WandVisual
@@ -13,9 +14,10 @@ import java.util.UUID
 /**
  * The wand's pure state → visual mapping (spec §7.1): disabled while optimizing /
  * recovering / with no session, dimmed-but-tappable when the relay lacks the
- * optimizer, and the Undo chip only for the session that was optimized. The
- * Composable rendering itself is compile-only here; these functions are what the
- * overlay reads.
+ * optimizer, and the Undo chip only for the session that was optimized, plus the
+ * overlay's content decision (a notice and the chip coexist). The Composable
+ * rendering itself is compile-only here; these functions are what the overlay
+ * reads.
  */
 class WandButtonLogicTest {
 
@@ -121,5 +123,49 @@ class WandButtonLogicTest {
         assertTrue(WandButtonLogic.isTappable(WandVisual.DIMMED))
         assertFalse(WandButtonLogic.isTappable(WandVisual.DISABLED))
         assertFalse(WandButtonLogic.isTappable(WandVisual.OPTIMIZING))
+    }
+
+    // MARK: - overlayContent()
+
+    @Test
+    fun `a notice never hides the undo chip`() {
+        // The regression this pins: the notice and the undo run on independent
+        // timers (4 s vs 10 s, started at different moments), so suppressing the
+        // chip behind a late toast could retire the 10 s window unseen and throw
+        // away the user's pre-optimize draft.
+        val content = WandButtonLogic.overlayContent(notice = "Optimizer unavailable", undoVisible = true)
+        assertEquals("Optimizer unavailable", content.notice)
+        assertTrue(content.showUndo)
+    }
+
+    @Test
+    fun `notice only`() {
+        val content = WandButtonLogic.overlayContent(notice = "Nothing to optimize", undoVisible = false)
+        assertEquals("Nothing to optimize", content.notice)
+        assertFalse(content.showUndo)
+    }
+
+    @Test
+    fun `undo only`() {
+        val content = WandButtonLogic.overlayContent(notice = null, undoVisible = true)
+        assertNull(content.notice)
+        assertTrue(content.showUndo)
+    }
+
+    @Test
+    fun `neither`() {
+        val content = WandButtonLogic.overlayContent(notice = null, undoVisible = false)
+        assertNull(content.notice)
+        assertFalse(content.showUndo)
+    }
+
+    // MARK: - stateDescription()
+
+    @Test
+    fun `only optimizing and disabled announce a state`() {
+        assertEquals("Optimizing", WandButtonLogic.stateDescription(WandVisual.OPTIMIZING))
+        assertEquals("Unavailable", WandButtonLogic.stateDescription(WandVisual.DISABLED))
+        assertNull(WandButtonLogic.stateDescription(WandVisual.READY))
+        assertNull(WandButtonLogic.stateDescription(WandVisual.DIMMED))
     }
 }

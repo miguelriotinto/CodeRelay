@@ -406,6 +406,49 @@ class PromptOptimizerControllerTest {
     }
 
     @Test
+    fun `cancel disables the wand so a later tap sends nothing at all`() = runTest {
+        // The reply-side guards are not enough: a programmatic tap after teardown
+        // would otherwise reach ensureAuthenticated() and open a fresh auth_request
+        // plus a 20 s RPC on an invalidated coordinator (Swift's !isTornDown).
+        val h = Harness(this)
+        h.controller.optimizePrompt(shareScreen = true)
+        val armed = h.controller.undo.value
+        assertEquals(OptimizerUndo(sessionA, "original"), armed)
+        h.controller.cancel()
+        assertFalse(h.controller.isWandEnabled)
+
+        h.optimizeCalls.clear()
+        h.replaceCalls.clear()
+        val authCallsBefore = h.ensureAuthCalls
+
+        h.controller.optimizePrompt(shareScreen = true)
+        h.controller.undoOptimize()
+
+        assertTrue(h.optimizeCalls.isEmpty())
+        assertTrue(h.replaceCalls.isEmpty())
+        assertEquals(authCallsBefore, h.ensureAuthCalls)
+        assertEquals(OptimizerState.IDLE, h.controller.state.value)
+        assertNull(h.controller.notice.value)
+    }
+
+    @Test
+    fun `ok without an original shows no toast when the session switched mid-flight`() = runTest {
+        val h = Harness(this)
+        val gate = CompletableDeferred<OptimizeOutcome>()
+        h.optimizeResult = { gate.await() }
+        val job = launch { h.controller.optimizePrompt(shareScreen = true) }
+        runCurrent()
+        h.activeSession = sessionB
+        gate.complete(OptimizeOutcome.Ok(null))
+        job.join()
+        // "Optimized" over session B would read as B's result, and there is no
+        // original to undo either.
+        assertNull(h.controller.notice.value)
+        assertNull(h.controller.undo.value)
+        assertEquals(OptimizerState.IDLE, h.controller.state.value)
+    }
+
+    @Test
     fun `cancel prevents failed optimize from showing notice`() = runTest {
         val h = Harness(this)
         val gate = CompletableDeferred<OptimizeOutcome>()
