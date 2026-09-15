@@ -107,15 +107,19 @@ jobs:
   ios-build:
     # Builds for the iOS *device* SDK (not simulator): the same build plan
     # TestFlight archives go through, so this is the signal we actually care
-    # about — "does what we ship compile?"
+    # about — "does what we ship compile?" Runs on the same Xcode 26 the
+    # committed pins were resolved with, so the workspace Package.resolved
+    # guard below is meaningful (a 6.1 toolchain prunes 6.2-tools packages).
     name: iOS app build (device SDK)
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 16
+      - name: Select newest Xcode 26
         run: |
-          XCODE=$(ls -d /Applications/Xcode_16.*.app 2>/dev/null | sort -V | tail -1)
+          # macos-26 ships Xcode 26.x, whose SDK the committed pins were
+          # resolved with. Pick the highest 26.x available.
+          XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version

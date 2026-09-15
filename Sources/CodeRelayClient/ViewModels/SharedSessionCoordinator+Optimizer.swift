@@ -151,7 +151,11 @@ extension SharedSessionCoordinator {
     /// existing undo too. One-shot-ness does not depend on the early clear: the
     /// `isWandEnabled` guard plus `optimizerState = .optimizing` already block a
     /// double tap, and not clearing leaves the 10 s expiry task running, so the
-    /// chip still disappears on its original schedule.
+    /// chip still disappears on its original schedule. The expiry task keeps
+    /// running during the in-flight `replace_prompt` (so a failed undo cannot
+    /// extend the window), which means an undo tapped at the very end of the
+    /// window whose reply is slow or fails can find the chip already expired;
+    /// that is accepted rather than re-arming.
     public func undoOptimize() async {
         guard isWandEnabled, let undo = optimizerUndo, undo.sessionId == activeSessionId else { return }
         optimizerState = .optimizing
@@ -193,6 +197,7 @@ extension SharedSessionCoordinator {
     func armOptimizerUndo(_ undo: OptimizerUndo) {
         optimizerUndoTask?.cancel()
         optimizerUndo = undo
+        optimizerUndoArmCount += 1
         let window = optimizerUndoWindow
         optimizerUndoTask = Task { [weak self] in
             try? await Task.sleep(for: window)

@@ -5,7 +5,7 @@ import CodeRelayClient
 /// Shortcut-dispatch diagnostics. `.debug` so it costs nothing in release:
 /// this fires on a hot, user-triggered path and `NSLog` would write every time.
 /// Never carries draft or prompt text — only that a shortcut matched.
-private let shortcutLog = Logger(subsystem: "com.coderelay.mac", category: "RecordingShortcut")
+private let shortcutLog = Logger(subsystem: "com.coderelay.client", category: "RecordingShortcut")
 
 /// Posts `.optimizePromptShortcut` when the user's configured shortcut is pressed
 /// (spec §7.2 — the former speech-recording shortcut now triggers the wand; the

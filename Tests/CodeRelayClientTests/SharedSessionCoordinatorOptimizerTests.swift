@@ -284,15 +284,12 @@ final class SharedSessionCoordinatorOptimizerTests: XCTestCase {
     /// `optimizerUndo` is the only copy of what the user typed, so a failed
     /// replace must not consume it — and must not extend its window either.
     func testUndoFailureKeepsTheChipSoTheUserCanRetry() async throws {
-        coordinator.optimizerUndoWindow = .milliseconds(500)
+        coordinator.optimizerUndoWindow = .seconds(5)
         try await inject()
         respondToOptimize(.optimizePromptResult(status: "ok", original: "the original", prompt: "rewrite", message: nil))
         await coordinator.optimizePrompt(shareScreen: true)
         XCTAssertNotNil(coordinator.optimizerUndo)
 
-        // Spend most of the 500 ms window before failing, so a re-armed task
-        // would be provably visible at the last assertion below.
-        try await Task.sleep(for: .milliseconds(350))
         conn.autoRespond = { m in
             if case .replacePrompt = m { return .replacePromptResult(status: "failed", message: "Draft mirror lost") }
             return nil
@@ -319,23 +316,19 @@ final class SharedSessionCoordinatorOptimizerTests: XCTestCase {
     /// The 10 s window is not restarted by a failed undo: the chip disappears on
     /// the schedule the optimize set, not on the failure's.
     func testFailedUndoDoesNotExtendTheUndoWindow() async throws {
-        coordinator.optimizerUndoWindow = .milliseconds(500)
+        coordinator.optimizerUndoWindow = .seconds(5)
         try await inject()
         respondToOptimize(.optimizePromptResult(status: "ok", original: "the original", prompt: "rewrite", message: nil))
         await coordinator.optimizePrompt(shareScreen: true)
+        XCTAssertEqual(coordinator.optimizerUndoArmCount, 1)
 
-        try await Task.sleep(for: .milliseconds(350))
         conn.autoRespond = { m in
             if case .replacePrompt = m { return .replacePromptResult(status: "failed", message: "Draft mirror lost") }
             return nil
         }
         await coordinator.undoOptimize()
-        XCTAssertNotNil(coordinator.optimizerUndo, "still inside the original window")
-
-        // t ≈ 650 ms: past the original 500 ms deadline, but well short of the
-        // ~850 ms a window re-armed at the failure would have run to.
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertNil(coordinator.optimizerUndo, "the window must not have been extended")
+        XCTAssertEqual(coordinator.optimizerUndoArmCount, 1, "failed undo must not re-arm")
+        XCTAssertNotNil(coordinator.optimizerUndo, "chip kept")
     }
 
     /// `undoOptimize` gates on the same `isWandEnabled` the wand does, so a

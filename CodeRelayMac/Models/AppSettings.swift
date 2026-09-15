@@ -76,7 +76,11 @@ final class AppSettings: ObservableObject {
     /// called `WhisperKit.download(variant:progressCallback:)` with **no**
     /// `downloadBase`, and WhisperKit's HubApi defaults that to
     /// `Documents/huggingface` — not the directory above. A few hundred MB, and
-    /// this migration is the only remaining code path that can delete it.
+    /// this migration is the only remaining code path that can delete it. The
+    /// path is safe to delete recursively only because the app is sandboxed
+    /// (`com.apple.security.app-sandbox` in `CodeRelayMac.entitlements`) so
+    /// `.documentDirectory` resolves inside the app container, not the user's
+    /// real `~/Documents`.
     static var legacyWhisperHubDirectory: URL {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documents.appendingPathComponent("huggingface", isDirectory: true)

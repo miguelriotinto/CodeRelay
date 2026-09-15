@@ -122,6 +122,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     public var optimizerNoticeDuration: Duration = .seconds(4)
     var optimizerUndoTask: Task<Void, Never>?
     var optimizerNoticeTask: Task<Void, Never>?
+    /// Test seam: how many times the undo window has been (re)armed this coordinator lifetime.
+    var optimizerUndoArmCount = 0
 
     /// Subscription that republishes `activityCoordinator.objectWillChange`
     /// onto this parent so SwiftUI views observing the parent `@ObservedObject`
