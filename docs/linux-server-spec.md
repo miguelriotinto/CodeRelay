@@ -465,10 +465,10 @@ for a future source package.
 
 ### 11.2 CI
 
-A `linux-server` job in `ci.yml` on `ubuntu-latest` with `swift-actions/setup-swift`:
-`swift build`, `swift test`, then `git diff --exit-code Package.resolved` **is not**
-run — instead the job restores the file after resolution so the AD-1 hazard cannot fail
-a build, and a separate check greps that the committed pins still include `whisperkit`.
+A `linux-server` job in `ci.yml` on `ubuntu-latest` with `swift-actions/setup-swift`
+(Swift 6.2, so the pinned manifests load): `swift build`, then
+`git diff --exit-code -- Package.resolved` — the AD-1 hazard now fails the build if
+the Linux resolve changes any pin — then `swift test`.
 `release.yml` gains `build-linux-server`, producing the §10.2 tarball.
 
 ---

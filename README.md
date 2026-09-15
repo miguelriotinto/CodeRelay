@@ -361,7 +361,7 @@ CodeRelay/
 │   ├── core-session/           # SessionCoordinator, RecoveryController, NetworkObserver (pure-JVM)
 │   ├── core-storage/           # Token / ownership / saved-connection stores
 │   ├── terminal/               # VT100 terminal (ConnectBot termlib) + session view model
-│   ├── speech/                 # On-device speech pipeline (Whisper/LLM, mirrors CodeRelaySpeech)
+│   ├── speech/                 # Android on-device speech pipeline (Whisper/LLM)
 │   ├── feature-servers|workspace|settings/  # Compose UI features
 │   └── app/                    # Nav graph, MainActivity, connection wiring
 ├── Tests/
