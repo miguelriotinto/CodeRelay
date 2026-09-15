@@ -5,7 +5,6 @@ import CodeRelayClient
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
-    @State private var showTokenRequired = false
     @State private var isCapturing = false
     @State private var capturedFlags: UIKeyModifierFlags = []
     @State private var capturedKey: String = ""
@@ -13,47 +12,6 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Toggle("Smart Cleanup", isOn: $settings.smartCleanupEnabled)
-                    Toggle("Prompt Enhancement", isOn: $settings.promptEnhancementEnabled)
-                    Toggle("Continuous Listening", isOn: $settings.continuousListeningEnabled)
-
-                    if settings.continuousListeningEnabled {
-                        HStack {
-                            Text("Wake Word")
-                            Spacer()
-                            Text(settings.wakeWord.capitalized).foregroundStyle(.secondary)
-                        }
-
-                        Text("Continuous listening uses on-device AI to detect when you've finished speaking.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("Speech to Text")
-                } footer: {
-                    Text(speechFooterText)
-                }
-
-                if settings.promptEnhancementEnabled {
-                    Section {
-                        SecureField("Bearer Token", text: $settings.bedrockBearerToken)
-                            .textContentType(.password)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                        TextField("Region", text: $settings.bedrockRegion)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                    } header: {
-                        Text("AWS Bedrock")
-                    } footer: {
-                        Text(
-                            "Prompt Enhancement uses Claude Haiku on AWS Bedrock. "
-                            + "Paste your bearer token to enable cloud-based prompt rewriting."
-                        )
-                    }
-                }
-
                 Section {
                     Toggle("Auto Connect", isOn: $settings.autoConnectEnabled)
                 } header: {
@@ -75,7 +33,7 @@ struct SettingsView: View {
                          : "Turn on to be notified when an agent is blocked or finishes, even when the app is in the background.")
                 }
 
-                Section("General") {
+                Section {
                     Toggle("Haptic Feedback", isOn: $settings.hapticFeedbackEnabled)
                     Picker("Session Names", selection: $settings.sessionNamingTheme) {
                         ForEach(SessionNamingTheme.allCases) { theme in
@@ -97,10 +55,15 @@ struct SettingsView: View {
                         Text("10,000 lines").tag(10_000)
                         Text("25,000 lines").tag(25_000)
                     }
+                    Toggle(OptimizerStrings.shareScreenToggle, isOn: $settings.shareScreenWithOptimizer)
+                } header: {
+                    Text("General")
+                } footer: {
+                    Text(OptimizerStrings.shareScreenFooter)
                 }
 
                 Section {
-                    Toggle("Recording Shortcut", isOn: $settings.recordingShortcutEnabled)
+                    Toggle("Optimizer Shortcut", isOn: $settings.recordingShortcutEnabled)
                     if settings.recordingShortcutEnabled {
                         if isCapturing {
                             VStack(spacing: 8) {
@@ -154,7 +117,7 @@ struct SettingsView: View {
                         if settings.recordingShortcutKey.isEmpty {
                             Text("Tap Set and press a modifier + letter key combination (e.g. ⌘⌥R).")
                         } else {
-                            Text("Press \(settings.shortcutDisplayString) to toggle speech recording when a hardware keyboard is connected.")
+                            Text("Press \(settings.shortcutDisplayString) to optimize the prompt when a hardware keyboard is connected.")
                         }
                     }
                 }
@@ -168,32 +131,9 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { handleDone() }
+                    Button("Done") { dismiss() }
                 }
             }
-            .alert("Bearer Key is Required", isPresented: $showTokenRequired) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Prompt Enhancement requires an AWS Bedrock bearer token. Please paste your token or disable Prompt Enhancement.")
-            }
-        }
-    }
-
-    private func handleDone() {
-        if settings.promptEnhancementEnabled && settings.bedrockBearerToken.trimmingCharacters(in: .whitespaces).isEmpty {
-            showTokenRequired = true
-        } else {
-            dismiss()
-        }
-    }
-
-    private var speechFooterText: String {
-        if settings.promptEnhancementEnabled {
-            return "Transcribed speech is sent to Claude Haiku on AWS Bedrock and rewritten as an optimized prompt."
-        } else if settings.smartCleanupEnabled {
-            return "Filler words are removed and punctuation is fixed locally on-device before pasting into the terminal."
-        } else {
-            return "Raw transcription is pasted directly into the terminal with no processing."
         }
     }
 
