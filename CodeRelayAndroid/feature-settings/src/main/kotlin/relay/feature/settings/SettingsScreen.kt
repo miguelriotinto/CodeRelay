@@ -46,7 +46,10 @@ import relay.protocol.SessionNamingTheme
  *
  * Reads/writes through [AppSettings] (DataStore). Each toggle/picker collects its
  * backing [kotlinx.coroutines.flow.StateFlow] and calls the matching `set…`
- * mutator. The five sections mirror the iOS `Form` sections exactly:
+ * mutator. The five sections are the ones iOS has minus **Notifications**
+ * (Android hardcodes those prefs in `PushSync`), reordered to put Prompt Optimizer
+ * first — iOS's order is Connection → Notifications → General → Prompt Optimizer →
+ * Optimizer Shortcut → About:
  *  1. **Prompt Optimizer** — "Share terminal screen with the optimizer" (spec §7.1).
  *  2. **Connection** — Auto Connect.
  *  3. **General** — Haptic Feedback, Session-Names theme, Terminal Font Size
@@ -59,7 +62,8 @@ import relay.protocol.SessionNamingTheme
  * @param visibleSections which sections to render. Defaults to all five; a host
  *   without the underlying capability (the Linux desktop client has no hardware
  *   shortcut capture) hides the sections whose toggles would otherwise persist a
- *   value nothing reads.
+ *   value nothing reads. Android hides **Keyboard Shortcuts** for exactly that
+ *   reason: no Android host reads `recordingShortcut*`.
  * @param hapticFeedbackAvailable whether to show the Haptic Feedback toggle; a
  *   desktop has no vibrator.
  */

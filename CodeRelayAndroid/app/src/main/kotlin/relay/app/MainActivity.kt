@@ -108,7 +108,13 @@ class MainActivity : ComponentActivity() {
         networkObserver = NetworkObserver(connectivitySource)
         connectivitySource.start()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !PushSync.notificationsGranted(this)) {
+        // First creation only. A display change (Huawei Fold outer↔inner) restarts
+        // the Activity despite our configChanges, as does a process-death restore, and
+        // re-prompting a user who already declined is what locks the OS into auto-deny.
+        if (savedInstanceState == null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !PushSync.notificationsGranted(this)
+        ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 

@@ -438,6 +438,12 @@ private fun SettingsRoute(
         buildNumber = buildNumber,
         onDone = onDone,
         modifier = Modifier.fillMaxSize(),
+        // No Android host reads `recordingShortcut*` (the Apple clients do, via
+        // RecordingShortcutMonitor / RelayTerminalView), so rendering the section
+        // would advertise an "Optimizer Shortcut" that does nothing when pressed.
+        // The Linux client omits it for the same reason.
+        visibleSections = relay.feature.settings.SettingsSection.entries.toSet() -
+            relay.feature.settings.SettingsSection.KEYBOARD_SHORTCUTS,
     )
 }
 

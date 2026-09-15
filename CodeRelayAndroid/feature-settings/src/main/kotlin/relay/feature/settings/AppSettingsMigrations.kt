@@ -19,9 +19,11 @@ import androidx.datastore.preferences.core.stringPreferencesKey
  * hook the M1 `SavedConnectionStore` carries — so a future backup/restore or
  * cross-platform import that seeds the legacy key migrates identically to iOS.
  *
- * The speech-removal scrub is the opposite case: shipped Android builds up to
- * 0.3-m50 **did** write the speech settings and the Bedrock token, so
- * [REMOVED_SPEECH_KEYS] must stay in place for as long as such installs can update.
+ * The speech-removal scrub is the opposite case: every shipped build before the
+ * speech removal **did** write the speech settings and the Bedrock token (the build
+ * that removes them is the one this comment ships in — `versionName` is deliberately
+ * untouched by that change), so [REMOVED_SPEECH_KEYS] must stay in place for as long
+ * as such installs can update.
  */
 object AppSettingsMigrations {
 

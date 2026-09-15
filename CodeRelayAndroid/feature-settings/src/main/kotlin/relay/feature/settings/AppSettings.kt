@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
@@ -33,9 +34,11 @@ fun interface BedrockSecretDeleter {
  * App-wide user settings, ported from `AppSettings.swift`.
  *
  * iOS persists these via SwiftUI `@AppStorage` (UserDefaults). The Android analog
- * is a single Preferences [DataStore] (`app_settings`) holding **exactly the 10
- * keys** the iOS `AppSettings` exposes, each surfaced here as a [StateFlow] plus a
- * `set…` mutator.
+ * is a single Preferences [DataStore] (`app_settings`) holding **the 10 keys this
+ * client persists** — a subset of iOS's twelve, which additionally carries the two
+ * push prefs (`pushNotificationsEnabled`, `pushNotifyOnFinished`; Android hardcodes
+ * those in `PushSync`). Key *names* match iOS verbatim. Each is surfaced here as a
+ * [StateFlow] plus a `set…` mutator.
  *
  * ## The 10 DataStore keys (defaults match AppSettings.swift)
  *  1. `hapticFeedbackEnabled`      = true
@@ -53,7 +56,7 @@ fun interface BedrockSecretDeleter {
  * `bedrockRegion`, `continuousListeningEnabled`, `wakeWord`, and the legacy
  * plaintext `bedrockBearerToken`) plus the Bedrock credential in the secure
  * [TokenStore] are **scrubbed on every launch** by [removeSpeechSettings]
- * (spec §10) — shipped builds up to 0.3-m50 wrote them.
+ * (spec §10) — every shipped build before the speech removal wrote them.
  *
  * @param scope a long-lived scope (the host injects an application-scoped one);
  *   owns the StateFlow hot mirrors and the startup migrations.
@@ -71,12 +74,22 @@ class AppSettings(
     }
 
     /**
-     * Best-effort forward migrations. The shortcut one is a no-op on any real
-     * Android install (see [AppSettingsMigrations]); the speech scrub runs every launch.
+     * Best-effort forward migrations, in launch order: the speech scrub first, then
+     * the shortcut one (a no-op on any real Android install — see
+     * [AppSettingsMigrations]).
+     *
+     * The order and the guard are both load-bearing. `app_settings` is created with
+     * no `corruptionHandler`, so a malformed file makes **every** DataStore read
+     * throw for the life of the install. Running the shortcut migration first, and
+     * unguarded, would then (a) skip the Bedrock secret delete forever — on exactly
+     * the devices whose DataStore is broken, which is what "secret first" exists to
+     * survive — and (b) let the exception escape this `scope.launch` into the
+     * default uncaught handler, killing the process during `MainActivity.onCreate`.
      */
     private suspend fun runMigrations() {
-        migrateShortcutIfNeeded()
         removeSpeechSettings()
+        runCatching { migrateShortcutIfNeeded() }
+            .onFailure { if (it is CancellationException) throw it }
     }
 
     /**
@@ -104,13 +117,16 @@ class AppSettings(
      */
     private suspend fun removeSpeechSettings() {
         // Secret first: it is the higher-value item and must not wait on DataStore health.
+        // `runCatching` catches Throwable, so each half rethrows CancellationException:
+        // absorbing it would let a cancelled scope keep running the next statement.
         runCatching { withContext(Dispatchers.IO) { secretDeleter.deleteBedrockToken() } }
+            .onFailure { if (it is CancellationException) throw it }
         runCatching {
             val prefs = dataStore.data.first()
             if (AppSettingsMigrations.REMOVED_SPEECH_KEYS.any { prefs.contains(it) }) {
                 dataStore.edit { AppSettingsMigrations.scrubSpeechKeys(it) }
             }
-        }
+        }.onFailure { if (it is CancellationException) throw it }
     }
 
     // MARK: - StateFlow mirrors + setters (the 10 keys)
@@ -196,10 +212,17 @@ class AppSettings(
          * [scope]. The DataStore is the single process-wide `app_settings` instance.
          */
         fun create(context: Context, scope: CoroutineScope): AppSettings {
-            val tokenStore = TokenStore(context.applicationContext)
+            val app = context.applicationContext
             return AppSettings(
-                dataStore = context.applicationContext.appSettingsDataStore,
-                secretDeleter = BedrockSecretDeleter { tokenStore.deleteBedrockToken() },
+                dataStore = app.appSettingsDataStore,
+                // Constructed *inside* the lambda on purpose: `TokenStore`'s
+                // constructor runs `EncryptedSharedPreferences.create` (MasterKey
+                // unwrap + a synchronous prefs read), and `create` is called from
+                // `MainActivity.onCreate` on the main thread. The lambda runs inside
+                // `removeSpeechSettings`' `withContext(Dispatchers.IO)` hop, so the
+                // expensive half moves off main too — the delete is now this class's
+                // only use of the store.
+                secretDeleter = BedrockSecretDeleter { TokenStore(app).deleteBedrockToken() },
                 scope = scope,
             )
         }
