@@ -21,12 +21,12 @@ Android counterparts, all 6 settings sections + 14 `@AppStorage` keys are presen
 workspace status-bar elements are wired, and the speech layer's logic is a verified byte-for-byte
 port. **No genuine missing features and no over-builds were found** — every gap is a *documented,
 intentional deferral* gated on a resource this build environment lacks (a device/emulator, a Mac
-with `coremltools`, the Termux engine vendoring, or Play credentials).
+with `coremltools`, or Play credentials).
 
 **The launch gate is CLEAR for the headless engineering scope.** It is **NOT** ship-ready for the
 public Play Store launch until the **device/Mac/human deferral ledger (§5)** is completed — those
 are real, required steps (the ONNX parity gate, on-device acceptance, accessibility/TalkBack pass,
-the real Termux terminal, JNI model inference, and the Play Console release), not optional polish.
+JNI model inference, and the Play Console release), not optional polish.
 
 ---
 
@@ -37,7 +37,7 @@ the real Termux terminal, JNI model inference, and the Play Console release), no
 | `ServerListView` | `ServersScreen.kt` | **PASS** | LazyColumn, live/offline dot, pull-to-refresh, swipe edit/delete, empty-state, Settings gear, CleartextPolicy-gated connect |
 | `AddEditServerView` | `AddEditServerSheet.kt` | **PASS** | name/host/port/TLS/masked-token, host validation, delete-confirm dialog |
 | `WorkspaceView` | `WorkspaceScreen.kt` | **PASS** | adaptive 840dp split (sidebar | terminal / compact drawer), recovery overlay (phase + cancel + BackHandler) |
-| `ActiveTerminalView` | `TerminalHost.kt` + status bar | **PASS** (terminal render DEFERRED) | All status-bar elements present (§4); VT rendering uses a text-fallback engine pending the Termux binding (§5) |
+| `ActiveTerminalView` | `TerminalHost.kt` + status bar | **PASS** (terminal render DEFERRED) | All status-bar elements present (§4); VT rendering is the shipped ConnectBot `termlib` engine; on-device verification pending (§5) |
 | `SessionSidebarView` | `SessionSidebar.kt` | **PASS** | new/attach, state badges + ActivityDot, rename dialog, swipe-delete, long-press menu (rename / share QR), pull-to-refresh |
 | `SettingsView` | `SettingsScreen.kt` | **PASS** | all 6 sections (§2) |
 | `SplashScreenView` | `SplashScreen.kt` | **PASS** | 3-phase scale/fade animation matches iOS; preload hook on dismiss |
@@ -101,7 +101,7 @@ Bedrock secret and the six speech settings instead. Android adds one key,
 | Auto-connect | **PASS** | RelayNavGraph (awaits persisted settings via `.first()`) |
 | Device identifier | **PASS (accepted divergence)** | generated persisted UUID vs iOS identifierForVendor (§5) |
 | Haptics (gated by hapticFeedbackEnabled) | **PASS** | Haptics.kt — ~11 iOS sites wired (wand, keyboard, toggles, tabs); QR-scan ungated to match iOS |
-| **Hardware key-repeat / copy-paste / image-paste** | **DEFERRED** | bound to the deferred Termux VT view (text-fallback has no clipboard) (§5) |
+| **Hardware key-repeat / copy-paste / image-paste** | **DEFERRED** | on-device verification on the shipped `termlib` terminal pending (§5) |
 
 ## 5. Deferred-work ledger (REQUIRED before public launch — not optional polish)
 

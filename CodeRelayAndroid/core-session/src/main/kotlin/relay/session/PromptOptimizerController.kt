@@ -76,7 +76,7 @@ class PromptOptimizerController(
 
     private var undoExpiry: Job? = null
     private var noticeExpiry: Job? = null
-    private var cancelled = false
+    @Volatile private var cancelled = false
 
     /**
      * Tappable: not cancelled, not mid-RPC, not recovering, and there is a session
