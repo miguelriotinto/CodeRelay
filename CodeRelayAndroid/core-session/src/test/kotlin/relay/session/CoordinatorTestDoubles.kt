@@ -41,7 +41,7 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
     private val subscribers = ConcurrentHashMap<UUID, (ServerMessage) -> Unit>()
 
     /** Override to fail a specific op (e.g. attach) — return the error to throw via response. */
-    var responder: (ClientMessage) -> ServerMessage? = { defaultResponse(it) }
+    var responder: (ClientMessage) -> ServerMessage? = { defaultResponseFor(it) }
 
     /**
      * Awaited between logging an RPC and delivering its response — lets a
@@ -80,7 +80,7 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
         }
     }
 
-    private fun defaultResponse(message: ClientMessage): ServerMessage? = when (message) {
+    internal fun defaultResponseFor(message: ClientMessage): ServerMessage? = when (message) {
         is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(protocolVersion = 1, tokenId = myTokenId)
         is ClientMessage.SessionCreate -> ServerMessage.SessionCreated(NEW_SESSION_ID, 80u, 24u)
         is ClientMessage.SessionAttach -> ServerMessage.SessionAttached(message.sessionId, "running")

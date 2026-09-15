@@ -174,6 +174,9 @@ class SessionCoordinator(
     /** Auth surface: single-flight authenticate + withAuth retry-once. */
     val authCoordinator: AuthCoordinator
 
+    /** The magic-wand state machine (spec §7.1). Built in `init`, after [authCoordinator]. */
+    private val promptOptimizer: PromptOptimizerController
+
     /** Live agent / awaiting-input / stolen state. */
     val activityCoordinator: ActivityCoordinator
 
@@ -267,6 +270,27 @@ class SessionCoordinator(
     val sessionAttachFailed: StateFlow<Boolean> get() = recoveryController.sessionAttachFailed
     val autoRecoverySuspended: StateFlow<Boolean> get() = recoveryController.autoRecoverySuspended
 
+    // MARK: - Prompt optimizer (delegated to PromptOptimizerController, spec §7.1)
+
+    val optimizerAvailability: StateFlow<OptimizerAvailability> get() = promptOptimizer.availability
+    val optimizerState: StateFlow<OptimizerState> get() = promptOptimizer.state
+    val optimizerUndo: StateFlow<OptimizerUndo?> get() = promptOptimizer.undo
+    val optimizerNotice: StateFlow<String?> get() = promptOptimizer.notice
+    /** Tappable now: idle, not recovering, a session is active. */
+    val isWandEnabled: Boolean get() = promptOptimizer.isWandEnabled
+    /** The relay advertises `prompt_optimizer` on protocol ≥ 2. */
+    val isOptimizerAvailable: Boolean get() = promptOptimizer.isAvailable
+    /** Hint toast for an unavailable wand, else null. */
+    val wandHint: String? get() = promptOptimizer.wandHint
+
+    /** The wand tap (spec §7.1). [shareScreen] is the device's `shareScreenWithOptimizer` setting. */
+    suspend fun optimizePrompt(shareScreen: Boolean) = promptOptimizer.optimizePrompt(shareScreen)
+
+    /** The Undo chip tap: one-shot `replace_prompt` of the pre-optimize original. */
+    suspend fun undoOptimize() = promptOptimizer.undoOptimize()
+
+    fun dismissOptimizerNotice() = promptOptimizer.dismissNotice()
+
     // MARK: - Activity state (delegated to ActivityCoordinator)
 
     val agentSessions: StateFlow<Map<UUID, String>> get() = activityCoordinator.agentSessions
@@ -321,9 +345,27 @@ class SessionCoordinator(
 
     init {
         authCoordinator = AuthCoordinator(
-            authenticate = { sessionController.authenticate(token) },
+            authenticate = {
+                sessionController.authenticate(token)
+                // Every path to an authenticated socket goes through here (handshake,
+                // recovery re-auth, withAuth retry), so the wand's availability is
+                // always derived from the socket it will actually use.
+                promptOptimizer.refreshAvailability()
+            },
             isAuthValid = { sessionController.isAuthValid },
             resetAuth = { sessionController.resetAuth() },
+        )
+        promptOptimizer = PromptOptimizerController(
+            scope = scope,
+            ensureAuthenticated = { authCoordinator.ensureAuthenticated() },
+            withAuth = { body -> authCoordinator.withAuth { body() } },
+            isAuthenticated = { sessionController.isAuthenticated },
+            serverProtocolVersion = { sessionController.serverProtocolVersion },
+            serverCapabilities = { sessionController.serverCapabilities },
+            activeSessionId = { _activeSessionId.value },
+            isRecovering = { recoveryController.isRecovering.value },
+            optimize = { id, share -> sessionController.optimizePrompt(id, share) },
+            replace = { id, text -> sessionController.replacePrompt(id, text) },
         )
         activityCoordinator = ActivityCoordinator(persistence = ownershipStore)
 
@@ -1366,6 +1408,7 @@ class SessionCoordinator(
         handshake.invalidate()
         recoveryController.cancel()
         authCoordinator.cancelInFlight()
+        promptOptimizer.cancel()
         subscriberId?.let { connection.removeSubscriber(it) }
         subscriberId = null
         connection.onTerminalOutput = null

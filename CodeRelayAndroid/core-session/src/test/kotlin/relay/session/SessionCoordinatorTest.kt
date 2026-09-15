@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import relay.net.ConnectionSurface
+import relay.net.OptimizerStrings
 import relay.net.SessionController
 import relay.net.SessionException
 import relay.protocol.ActivityState
@@ -1390,5 +1391,66 @@ class SessionCoordinatorTest {
         val result = SessionCoordinator.computeActiveSessions(all)
 
         assertEquals(listOf(survivor), result.map { it.id })
+    }
+
+    // -------------------------------------------------------------------------
+    // PROMPT OPTIMIZER: availability is derived from auth_success after connect,
+    // and tearDown drops the undo/notice state.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `connect derives optimizer availability from auth_success`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val store = FakeOwnershipStore(log)
+        surface.responder = { message ->
+            if (message is ClientMessage.AuthRequest) {
+                ServerMessage.AuthSuccess(protocolVersion = 2, tokenId = "tok", capabilities = listOf("prompt_optimizer"))
+            } else {
+                surface.defaultResponseFor(message)
+            }
+        }
+        val coord = SessionCoordinator(
+            scope = this,
+            connection = conn,
+            sessionController = SessionController(surface),
+            token = "tok",
+            ownershipStore = store,
+            config = config,
+        )
+        assertEquals(OptimizerAvailability.UNKNOWN, coord.optimizerAvailability.value)
+
+        coord.connect()
+        advanceUntilIdle()
+
+        assertEquals(OptimizerAvailability.AVAILABLE, coord.optimizerAvailability.value)
+        assertEquals(OptimizerState.IDLE, coord.optimizerState.value)
+        assertNull(coord.optimizerUndo.value)
+        assertNull(coord.optimizerNotice.value)
+        coord.tearDown()
+    }
+
+    @Test
+    fun `an old server marks the optimizer too old`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val store = FakeOwnershipStore(log)
+        // The default responder answers auth_success with protocolVersion = 1.
+        val coord = SessionCoordinator(
+            scope = this,
+            connection = conn,
+            sessionController = SessionController(surface),
+            token = "tok",
+            ownershipStore = store,
+            config = config,
+        )
+        coord.connect()
+        advanceUntilIdle()
+        assertEquals(OptimizerAvailability.SERVER_TOO_OLD, coord.optimizerAvailability.value)
+        assertEquals(OptimizerStrings.UPDATE_RELAY_HINT, coord.wandHint)
+        coord.tearDown()
     }
 }
