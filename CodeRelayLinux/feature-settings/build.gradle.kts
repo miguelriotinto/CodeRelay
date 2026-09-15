@@ -37,6 +37,8 @@ sourceSets {
 dependencies {
     api(project(":shared-protocol"))
     api(project(":linux-storage"))
+    // OptimizerStrings for the share-screen toggle; same reason as the Android module.
+    implementation(project(":shared-net"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
 

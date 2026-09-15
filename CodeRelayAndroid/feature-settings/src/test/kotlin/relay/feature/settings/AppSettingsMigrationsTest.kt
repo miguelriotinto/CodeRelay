@@ -1,16 +1,18 @@
 package relay.feature.settings
 
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.mutablePreferencesOf
+import androidx.datastore.preferences.core.stringPreferencesKey
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Pure-JVM tests for the two `AppSettings` migration decisions ported from
- * `AppSettings.swift`. The DataStore round-trip + secure-store I/O are
- * instrumented/device tests (DEFERRED — no emulator); the load-bearing logic here
- * is exercised headless.
+ * Pure-JVM tests for the `AppSettings` migrations: the legacy shortcut-modifier
+ * mapping ported from `AppSettings.swift`, and the speech-removal scrub (spec §10).
+ * The DataStore round-trip + secure-store I/O are instrumented/device tests
+ * (DEFERRED — no emulator); the load-bearing logic here is exercised headless.
  */
 class AppSettingsMigrationsTest {
 
@@ -52,61 +54,56 @@ class AppSettingsMigrationsTest {
         )
     }
 
-    // MARK: - Bedrock-migration decision (AppSettings.swift:82-97)
+    // MARK: - Speech-removal scrub (spec §10)
 
     @Test
-    fun `no legacy value is a no-op`() {
-        assertInstanceOf(
-            AppSettingsMigrations.BedrockMigrationDecision.NoOp::class.java,
-            AppSettingsMigrations.decideBedrockMigration(legacy = null, secureExisting = null),
-        )
-        assertInstanceOf(
-            AppSettingsMigrations.BedrockMigrationDecision.NoOp::class.java,
-            AppSettingsMigrations.decideBedrockMigration(legacy = "", secureExisting = "secure"),
-        )
-    }
-
-    @Test
-    fun `legacy present but secure already set just scrubs the legacy copy`() {
-        assertInstanceOf(
-            AppSettingsMigrations.BedrockMigrationDecision.DeleteLegacyOnly::class.java,
-            AppSettingsMigrations.decideBedrockMigration(legacy = "legacy", secureExisting = "already-there"),
+    fun `removed speech keys are exactly the six the speech stack wrote`() {
+        // Names are the iOS @AppStorage keys verbatim (they were shared for import
+        // round-trips), plus the legacy plaintext Bedrock token key.
+        assertEquals(
+            listOf(
+                "smartCleanupEnabled",
+                "promptEnhancementEnabled",
+                "bedrockRegion",
+                "continuousListeningEnabled",
+                "wakeWord",
+                "bedrockBearerToken",
+            ),
+            AppSettingsMigrations.REMOVED_SPEECH_KEYS.map { it.name },
         )
     }
 
     @Test
-    fun `legacy present and secure empty writes then confirms`() {
-        val decision = AppSettingsMigrations.decideBedrockMigration(legacy = "tok-123", secureExisting = null)
-        assertInstanceOf(AppSettingsMigrations.BedrockMigrationDecision.WriteThenConfirm::class.java, decision)
-        assertEquals("tok-123", (decision as AppSettingsMigrations.BedrockMigrationDecision.WriteThenConfirm).token)
-    }
+    fun `scrub removes every speech key and nothing else`() {
+        val prefs = mutablePreferencesOf(
+            booleanPreferencesKey("smartCleanupEnabled") to true,
+            booleanPreferencesKey("promptEnhancementEnabled") to true,
+            stringPreferencesKey("bedrockRegion") to "eu-west-1",
+            booleanPreferencesKey("continuousListeningEnabled") to true,
+            stringPreferencesKey("wakeWord") to "computer",
+            stringPreferencesKey("bedrockBearerToken") to "legacy-plaintext",
+            // Survivors:
+            booleanPreferencesKey("hapticFeedbackEnabled") to false,
+            booleanPreferencesKey("shareScreenWithOptimizer") to false,
+            stringPreferencesKey("recordingShortcutKey") to "r",
+        )
 
-    // MARK: - Read-back confirmation (AppSettings.swift:92-94)
+        AppSettingsMigrations.scrubSpeechKeys(prefs)
 
-    @Test
-    fun `scrub only when read-back matches the written value`() {
-        assertTrue(AppSettingsMigrations.shouldScrubLegacyAfterWrite(wrote = "tok", reread = "tok"))
-        assertFalse(AppSettingsMigrations.shouldScrubLegacyAfterWrite(wrote = "tok", reread = "different"))
-        // A failed write surfaced as a null re-read must NOT scrub the legacy copy.
-        assertFalse(AppSettingsMigrations.shouldScrubLegacyAfterWrite(wrote = "tok", reread = null))
-    }
-
-    // MARK: - Read with legacy fallback (AppSettings.swift:106-109)
-
-    @Test
-    fun `secure value wins when non-empty`() {
-        assertEquals("secure", AppSettingsMigrations.loadBedrockTokenWithFallback(secure = "secure", legacy = "legacy"))
-    }
-
-    @Test
-    fun `falls back to legacy when secure is empty or null`() {
-        assertEquals("legacy", AppSettingsMigrations.loadBedrockTokenWithFallback(secure = "", legacy = "legacy"))
-        assertEquals("legacy", AppSettingsMigrations.loadBedrockTokenWithFallback(secure = null, legacy = "legacy"))
+        AppSettingsMigrations.REMOVED_SPEECH_KEYS.forEach { key ->
+            assertFalse(prefs.contains(key), "expected ${key.name} to be removed")
+        }
+        assertEquals(false, prefs[booleanPreferencesKey("hapticFeedbackEnabled")])
+        assertEquals(false, prefs[booleanPreferencesKey("shareScreenWithOptimizer")])
+        assertEquals("r", prefs[stringPreferencesKey("recordingShortcutKey")])
+        assertEquals(3, prefs.asMap().size)
     }
 
     @Test
-    fun `empty string when neither is set (treated as not configured)`() {
-        assertEquals("", AppSettingsMigrations.loadBedrockTokenWithFallback(secure = null, legacy = null))
-        assertEquals("", AppSettingsMigrations.loadBedrockTokenWithFallback(secure = "", legacy = null))
+    fun `scrub is a no-op on a clean store`() {
+        val prefs = mutablePreferencesOf(booleanPreferencesKey("autoConnectEnabled") to true)
+        AppSettingsMigrations.scrubSpeechKeys(prefs)
+        assertTrue(prefs.contains(booleanPreferencesKey("autoConnectEnabled")))
+        assertEquals(1, prefs.asMap().size)
     }
 }

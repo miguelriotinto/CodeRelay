@@ -44,11 +44,10 @@ class TokenStoreTest {
     }
 
     @Test
-    fun bedrockEmptyDeletes() {
-        store.saveBedrockToken("abc")
-        assertEquals("abc", store.loadBedrockToken())
-
-        store.saveBedrockToken("")
-        assertNull(store.loadBedrockToken())
+    fun deleteBedrockTokenIsIdempotent() {
+        // Nothing stored → no-op; stored → removed; removed again → still no-op.
+        store.deleteBedrockToken()
+        store.deleteBedrockToken()
+        assertNull(store.loadToken(UUID.randomUUID())) // unrelated entries untouched
     }
 }

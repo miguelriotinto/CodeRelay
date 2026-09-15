@@ -43,11 +43,10 @@ dependencies {
     api(project(":core-protocol"))
     implementation(project(":core-storage"))
 
-    // :speech — currentSpeechOptions() returns a SpeechProcessingOptions snapshot
-    // for the PTT / continuous engines, so the type is part of this module's API.
-    api(project(":speech"))
+    // :core-net — OptimizerStrings, so the share-screen toggle's copy is defined once.
+    implementation(project(":core-net"))
 
-    // DataStore backs the 14 typed settings keys.
+    // DataStore backs the 10 typed settings keys.
     implementation(libs.datastore.preferences)
 
     implementation(platform(libs.androidx.compose.bom))

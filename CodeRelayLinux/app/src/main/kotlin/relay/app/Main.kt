@@ -624,10 +624,12 @@ private fun runApp(
                             buildNumber = BuildInfo.BUILD,
                             onDone = { showSettings = false },
                             modifier = Modifier.fillMaxSize(),
-                            // No speech engine and no recording shortcut on this
-                            // platform; their toggles would persist values nothing
-                            // reads. Haptics likewise.
+                            // No hardware-shortcut capture on this platform; its
+                            // toggle would persist a value nothing reads. Haptics
+                            // likewise. The optimizer section stays: the desktop
+                            // renders the same magic-wand button.
                             visibleSections = setOf(
+                                SettingsSection.PROMPT_OPTIMIZER,
                                 SettingsSection.CONNECTION,
                                 SettingsSection.GENERAL,
                                 SettingsSection.ABOUT,
@@ -782,7 +784,6 @@ class AppEnvironment private constructor(
                 themeWatcher = OmarchyThemeWatcher(scope),
                 settings = AppSettings(
                     prefs = PreferenceStore(scope = scope),
-                    tokenStore = tokens,
                     scope = scope,
                 ),
                 clipboard = DesktopClipboard(),
