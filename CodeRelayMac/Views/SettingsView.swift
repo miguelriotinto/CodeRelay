@@ -1,7 +1,6 @@
 import SwiftUI
 import Combine
 import CodeRelayClient
-import CodeRelaySpeech
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -22,9 +21,6 @@ struct SettingsView: View {
             TabView {
                 GeneralSettingsTab()
                     .tabItem { Label("General", systemImage: "gear") }
-
-                SpeechSettingsTab()
-                    .tabItem { Label("Speech", systemImage: "mic") }
 
                 AboutSettingsTab()
                     .tabItem { Label("About", systemImage: "info.circle") }
@@ -148,7 +144,19 @@ private struct GeneralSettingsTab: View {
                     }
                 }
 
-                SettingsSectionHeader(title: "Recording Shortcut")
+                SettingsSectionHeader(title: "Prompt Optimizer")
+                SettingsGroup {
+                    SettingsGroupRow(showDivider: false) {
+                        Text(OptimizerStrings.shareScreenToggle)
+                        Spacer()
+                        Toggle("", isOn: $settings.shareScreenWithOptimizer)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+                }
+                SettingsSectionFooter(text: OptimizerStrings.shareScreenFooter)
+
+                SettingsSectionHeader(title: "Optimizer Shortcut")
                 SettingsGroup {
                     SettingsGroupRow {
                         Text("Enable shortcut")
@@ -199,7 +207,7 @@ private struct GeneralSettingsTab: View {
                         ? "Press a modifier + letter combination (e.g. ⌘⌥R), then click Set."
                         : settings.recordingShortcutKey.isEmpty
                             ? "Click Change to assign a shortcut."
-                            : "Press \(settings.shortcutDisplayString) to toggle speech recording.")
+                            : "Press \(settings.shortcutDisplayString) to optimize the prompt.")
                 }
 
                 SettingsSectionHeader(title: "Notifications")
@@ -319,130 +327,6 @@ private struct GeneralSettingsTab: View {
             return mods.isEmpty ? "Press keys..." : mods + "..."
         }
         return mods + capturedKey.uppercased()
-    }
-}
-
-// MARK: - Speech
-
-private struct SpeechSettingsTab: View {
-    @StateObject private var settings = AppSettings.shared
-    @StateObject private var store = SpeechModelStore.shared
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                SettingsSectionHeader(title: "Models")
-                SettingsGroup {
-                    if store.modelsReady {
-                        SettingsGroupRow {
-                            Label("Models downloaded", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Spacer()
-                        }
-                        SettingsGroupRow(showDivider: false) {
-                            Button("Delete Models") {
-                                store.deleteModels()
-                            }
-                            Spacer()
-                        }
-                    } else {
-                        SettingsGroupRow(showDivider: false) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Speech models need to be downloaded before first use (~1 GB).")
-                                    .foregroundStyle(.secondary)
-                                Button(store.downloadProgress == nil ? "Download Models" : "Downloading...") {
-                                    Task { try? await store.downloadAllModels() }
-                                }
-                                .disabled(store.downloadProgress != nil)
-                                if let progress = store.downloadProgress {
-                                    ProgressView(value: progress)
-                                }
-                            }
-                            Spacer()
-                        }
-                    }
-                }
-
-                SettingsSectionHeader(title: "Speech to Text")
-                SettingsGroup {
-                    SettingsGroupRow {
-                        Text("Smart cleanup (local LLM)")
-                        Spacer()
-                        Toggle("", isOn: $settings.smartCleanupEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                    SettingsGroupRow(showDivider: false) {
-                        Text("Prompt enhancement (Bedrock Haiku)")
-                        Spacer()
-                        Toggle("", isOn: $settings.promptEnhancementEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                }
-                SettingsSectionFooter(text: speechFooterText)
-
-                SettingsSectionHeader(title: "Continuous Listening")
-                SettingsGroup {
-                    SettingsGroupRow(showDivider: settings.continuousListeningEnabled) {
-                        Text("Enable continuous listening")
-                        Spacer()
-                        Toggle("", isOn: $settings.continuousListeningEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                    if settings.continuousListeningEnabled {
-                        SettingsGroupRow(showDivider: false) {
-                            Text("Wake word")
-                            Spacer()
-                            Text(settings.wakeWord.capitalized)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                SettingsSectionFooter(text: settings.continuousListeningEnabled
-                    ? "Say the wake word to start a new utterance. "
-                    + "On-device AI detects when you've finished speaking. Audio stays on-device."
-                    : "When enabled, the mic stays open and transcribes utterances "
-                    + "starting with the wake word.")
-
-                if settings.promptEnhancementEnabled {
-                    SettingsSectionHeader(title: "AWS Bedrock")
-                    SettingsGroup {
-                        SettingsGroupRow {
-                            Text("Bearer Token")
-                            Spacer()
-                            SecureField("", text: $settings.bedrockBearerToken)
-                                .textContentType(.password)
-                                .frame(maxWidth: 250)
-                        }
-                        SettingsGroupRow(showDivider: false) {
-                            Text("Region")
-                            Spacer()
-                            TextField("", text: $settings.bedrockRegion)
-                                .frame(maxWidth: 250)
-                        }
-                    }
-                    SettingsSectionFooter(
-                        text: "Prompt Enhancement uses Claude Haiku on AWS Bedrock. "
-                            + "Paste your bearer token to enable cloud-based prompt rewriting."
-                    )
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
-        }
-        .background(.black)
-    }
-
-    private var speechFooterText: String {
-        if settings.promptEnhancementEnabled {
-            return "Transcribed speech is sent to Claude Haiku on AWS Bedrock and rewritten as an optimized prompt."
-        } else if settings.smartCleanupEnabled {
-            return "Filler words are removed and punctuation is fixed locally on-device before pasting into the terminal."
-        } else {
-            return "Raw transcription is pasted directly into the terminal with no processing."
-        }
     }
 }
 

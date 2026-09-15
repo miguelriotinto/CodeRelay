@@ -1,81 +1,17 @@
 import SwiftUI
 import Combine
 import CodeRelayClient
-import CodeRelaySpeech
 
 @MainActor
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     private init() {
-        migrateBedrockTokenIfNeeded()
-        // Seed from the Keychain (or legacy UserDefaults if migration failed).
-        self.bedrockBearerToken = loadBedrockTokenWithFallback()
-        // Debounce Keychain writes so rapid keystrokes collapse into a single
-        // save. `dropFirst()` skips the seed value we just wrote above.
-        $bedrockBearerToken
-            .dropFirst()
-            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
-            .sink { token in
-                try? AuthManager.shared.saveBedrockToken(token)
-            }
-            .store(in: &bedrockTokenSubscriptions)
-    }
-
-    /// Legacy `UserDefaults` key that held the Bedrock token before the
-    /// Keychain migration. Also read as a fallback when Keychain ops fail.
-    static let legacyBedrockKey = "com.clauderelay.mac.bedrockBearerToken"
-
-    private func migrateBedrockTokenIfNeeded() {
-        Self.migrateBedrockToken(
-            defaults: UserDefaults.standard,
-            legacyKey: Self.legacyBedrockKey,
-            keychainLoad: { try AuthManager.shared.loadBedrockToken() },
-            keychainSave: { try AuthManager.shared.saveBedrockToken($0) }
+        AppSettings.migrateSpeechRemoval(
+            defaults: .standard,
+            modelsDirectory: AppSettings.legacySpeechModelsDirectory,
+            deleteBedrockToken: { try AuthManager.shared.deleteBedrockToken() }
         )
-    }
-
-    private func loadBedrockTokenWithFallback() -> String {
-        Self.loadBedrockToken(
-            defaults: UserDefaults.standard,
-            legacyKey: Self.legacyBedrockKey,
-            keychainLoad: { try AuthManager.shared.loadBedrockToken() }
-        )
-    }
-
-    /// Pure migration helper. See iOS `AppSettings.migrateBedrockToken` for
-    /// the rationale — identical behaviour; only the legacy key differs.
-    static func migrateBedrockToken(
-        defaults: UserDefaults,
-        legacyKey: String,
-        keychainLoad: () throws -> String?,
-        keychainSave: (String) throws -> Void
-    ) {
-        guard let legacy = defaults.string(forKey: legacyKey),
-              !legacy.isEmpty else { return }
-        if let existing = try? keychainLoad(), !existing.isEmpty {
-            defaults.removeObject(forKey: legacyKey)
-            return
-        }
-        do {
-            try keychainSave(legacy)
-            if let reread = try? keychainLoad(), reread == legacy {
-                defaults.removeObject(forKey: legacyKey)
-            }
-        } catch {
-            // Keep legacy copy so the user's token isn't lost.
-        }
-    }
-
-    static func loadBedrockToken(
-        defaults: UserDefaults,
-        legacyKey: String,
-        keychainLoad: () throws -> String?
-    ) -> String {
-        if let keychain = try? keychainLoad(), !keychain.isEmpty {
-            return keychain
-        }
-        return defaults.string(forKey: legacyKey) ?? ""
     }
 
     /// UUID string of the last-used server, for auto-reconnect on launch.
@@ -96,20 +32,6 @@ final class AppSettings: ObservableObject {
     @AppStorage("com.clauderelay.mac.pushNotificationsEnabled") var pushNotificationsEnabled = true
     @AppStorage("com.clauderelay.mac.pushNotifyOnFinished") var pushNotifyOnFinished = false
 
-    @AppStorage("com.clauderelay.mac.smartCleanupEnabled") var smartCleanupEnabled = true
-    @AppStorage("com.clauderelay.mac.promptEnhancementEnabled") var promptEnhancementEnabled = false
-    @AppStorage("com.clauderelay.mac.continuousListeningEnabled") var continuousListeningEnabled = false
-    @AppStorage("com.clauderelay.mac.wakeWord") var wakeWord: String = "claude"
-    @AppStorage("com.clauderelay.mac.bedrockRegion") var bedrockRegion = "us-east-1"
-
-    /// Bedrock bearer token, persisted in the Keychain. Seeded at init;
-    /// writes are debounced 500 ms before the Keychain save fires so rapid
-    /// typing in a `SecureField` collapses into one write. Returns `""`
-    /// when the Keychain is empty — callers treat empty as "not configured".
-    @Published var bedrockBearerToken: String = ""
-
-    /// Combine subscription store for the debounced Keychain save.
-    private var bedrockTokenSubscriptions = Set<AnyCancellable>()
 
     @AppStorage("com.clauderelay.mac.terminalFontSize") var terminalFontSize: Double = 12
 
@@ -123,13 +45,48 @@ final class AppSettings: ObservableObject {
     var recordingShortcutModifiers: Int = Int(NSEvent.ModifierFlags([.command, .option]).rawValue)
     @AppStorage("com.clauderelay.mac.recordingShortcutKey") var recordingShortcutKey = ""
 
-    func currentSpeechOptions() -> SpeechProcessingOptions {
-        SpeechProcessingOptions(
-            smartCleanupEnabled: smartCleanupEnabled,
-            promptEnhancementEnabled: promptEnhancementEnabled,
-            bedrockBearerToken: bedrockBearerToken,
-            bedrockRegion: bedrockRegion,
-            wakeWord: wakeWord
+    // MARK: - Prompt optimizer (spec §7.1)
+
+    /// Sent as `shareScreen` on every `optimize_prompt`. Per device, default on.
+    @AppStorage("com.clauderelay.mac.shareScreenWithOptimizer") var shareScreenWithOptimizer = true
+
+    // MARK: - Speech-removal migration (spec §7.2)
+
+    static let speechRemovalMigrationKey = "com.clauderelay.mac.speechRemovalMigrationDone"
+
+    /// Every `@AppStorage` key the speech feature ever wrote on macOS, plus the
+    /// old `SpeechModelStore` ready flag.
+    static let legacySpeechDefaultsKeys = [
+        "com.clauderelay.mac.smartCleanupEnabled",
+        "com.clauderelay.mac.promptEnhancementEnabled",
+        "com.clauderelay.mac.continuousListeningEnabled",
+        "com.clauderelay.mac.wakeWord",
+        "com.clauderelay.mac.bedrockRegion",
+        "com.clauderelay.mac.bedrockBearerToken",
+        "com.clauderelay.mac.whisperDownloaded",
+    ]
+
+    /// Where `SpeechModelStore` kept downloaded weights on macOS.
+    static var legacySpeechModelsDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base
+            .appendingPathComponent("ClaudeRelay", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+    }
+
+    /// macOS wiring of the shared one-time cleanup (see `SpeechRemovalMigration`).
+    @discardableResult
+    static func migrateSpeechRemoval(
+        defaults: UserDefaults,
+        modelsDirectory: URL,
+        deleteBedrockToken: () throws -> Void
+    ) -> Bool {
+        SpeechRemovalMigration.run(
+            defaults: defaults,
+            doneKey: speechRemovalMigrationKey,
+            legacyKeys: legacySpeechDefaultsKeys,
+            modelsDirectory: modelsDirectory,
+            deleteBedrockToken: deleteBedrockToken
         )
     }
 }

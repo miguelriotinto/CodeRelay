@@ -1,6 +1,10 @@
 import AppKit
+import CodeRelayClient
 
-/// Posts `.toggleSpeechRecording` when the user's configured shortcut is pressed.
+/// Posts `.optimizePromptShortcut` when the user's configured shortcut is pressed
+/// (spec §7.2 — the former speech-recording shortcut now triggers the wand; the
+/// class and the `recordingShortcut*` settings keep their names so existing
+/// bindings survive the upgrade).
 ///
 /// Uses a local `NSEvent.addLocalMonitorForEvents` monitor, which fires BEFORE
 /// `performKeyEquivalent:` dispatches menu shortcuts. That means the configured
@@ -8,7 +12,7 @@ import AppKit
 /// menu commands — our monitor sees and consumes them first.
 ///
 /// The monitor is paused whenever `KeyCaptureInterceptor` is mid-capture (so the
-/// user's key presses during "Change" flow don't accidentally trigger recording).
+/// user's key presses during the "Change" flow don't trigger the optimizer).
 @MainActor
 final class RecordingShortcutMonitor {
     static let shared = RecordingShortcutMonitor()
@@ -50,14 +54,13 @@ final class RecordingShortcutMonitor {
 
         guard eventKey == savedKey, eventMods == savedMods else { return event }
 
-        NSLog("[RecordingShortcut] matched — posting toggleSpeechRecording")
-        NotificationCenter.default.post(name: .toggleSpeechRecording, object: nil)
+        NSLog("[RecordingShortcut] matched — posting optimizePromptShortcut")
+        NotificationCenter.default.post(name: .optimizePromptShortcut, object: nil)
         return nil // consume
     }
 }
 
 extension Notification.Name {
-    static let toggleSpeechRecording = Notification.Name("toggleSpeechRecording")
     static let showServerList = Notification.Name("com.coderelay.mac.showServerList")
     static let connectToServer = Notification.Name("com.coderelay.mac.connectToServer")
 }
