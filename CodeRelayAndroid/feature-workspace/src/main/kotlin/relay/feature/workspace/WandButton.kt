@@ -22,7 +22,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -159,7 +162,7 @@ private fun UndoChip(onTap: () -> Unit) {
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.inverseSurface)
-            .clickable(onClick = onTap)
+            .clickable(role = Role.Button, onClick = onTap)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(
@@ -178,7 +181,8 @@ private fun OptimizerNotice(text: String) {
             .widthIn(max = 320.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.inverseSurface)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
     ) {
         Text(
             text = text,
