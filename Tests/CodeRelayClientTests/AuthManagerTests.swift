@@ -62,43 +62,28 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(try manager.loadToken(for: idB), "token-b")
     }
 
-    // MARK: - Bedrock token (C-25)
-
-    func testBedrockTokenSaveAndLoad() throws {
-        try manager.saveBedrockToken("aws-bedrock-secret")
-        XCTAssertEqual(try manager.loadBedrockToken(), "aws-bedrock-secret")
-    }
-
-    func testBedrockTokenLoadReturnsNilWhenMissing() throws {
-        XCTAssertNil(try manager.loadBedrockToken())
-    }
-
-    func testBedrockTokenSaveEmptyDeletes() throws {
-        try manager.saveBedrockToken("existing")
-        try manager.saveBedrockToken("")
-        XCTAssertNil(try manager.loadBedrockToken())
-    }
-
-    func testBedrockTokenOverwrite() throws {
-        try manager.saveBedrockToken("old")
-        try manager.saveBedrockToken("new")
-        XCTAssertEqual(try manager.loadBedrockToken(), "new")
-    }
+    // MARK: - Legacy Bedrock secret
 
     func testBedrockTokenDeleteIsIdempotent() {
         XCTAssertNoThrow(try manager.deleteBedrockToken())
         XCTAssertNoThrow(try manager.deleteBedrockToken())
     }
 
-    /// The Bedrock token uses a fixed account string, so it must not collide
-    /// with a per-connection token whose UUID stringification happens to be
-    /// the same — that's a real worry only if someone refactors the account
-    /// computation. Belt-and-braces.
-    func testBedrockTokenIsolatedFromPerConnectionTokens() throws {
-        try manager.saveBedrockToken("bedrock-secret")
-        try manager.saveToken("conn-secret", for: testId)
-        XCTAssertEqual(try manager.loadBedrockToken(), "bedrock-secret")
-        XCTAssertEqual(try manager.loadToken(for: testId), "conn-secret")
+    /// A pre-upgrade install has the Bedrock secret under the fixed account;
+    /// the migration's delete must actually remove it, not just not throw.
+    func testDeleteBedrockTokenRemovesTheLegacySecret() throws {
+        let service = "com.coderemote.relay" // AuthManager's private keychain service
+        try keychain.add(service: service, account: AuthManager.bedrockAccount, data: Data("old-secret".utf8))
+        try manager.deleteBedrockToken()
+        XCTAssertNil(try keychain.get(service: service, account: AuthManager.bedrockAccount))
+    }
+
+    /// The migration's delete must surface a keychain failure rather than
+    /// swallowing it — a silent failure would leave the legacy secret behind.
+    func testDeleteBedrockTokenPropagatesUnderlyingStoreError() {
+        let throwing = ThrowingKeychainStore(error: AuthManagerError.keychainError(status: -25300))
+        let mgr = AuthManager(keychain: throwing)
+        XCTAssertThrowsError(try mgr.deleteBedrockToken())
     }
 
     // MARK: - Error propagation
@@ -111,14 +96,12 @@ final class AuthManagerTests: XCTestCase {
         let throwing = ThrowingKeychainStore(error: AuthManagerError.keychainError(status: -25300))
         let mgr = AuthManager(keychain: throwing)
         XCTAssertThrowsError(try mgr.loadToken(for: testId))
-        XCTAssertThrowsError(try mgr.loadBedrockToken())
     }
 
     func testSavePropagatesUnderlyingStoreError() {
         let throwing = ThrowingKeychainStore(error: AuthManagerError.keychainError(status: -25300))
         let mgr = AuthManager(keychain: throwing)
         XCTAssertThrowsError(try mgr.saveToken("x", for: testId))
-        XCTAssertThrowsError(try mgr.saveBedrockToken("x"))
     }
 }
 

@@ -83,11 +83,8 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           # Build ONLY the two server products (matches Formula/clauderelay.rb).
-          # A bare `swift build` compiles the whole package — including
-          # CodeRelaySpeech → WhisperKit, which the server does not use and
-          # which fails to compile on the CI runner's toolchain (@retroactive /
-          # MLState, and older swift-jinja tools-version conflicts). Scoping to
-          # the products SPM only compiles their dependency subgraph.
+          # A bare `swift build` compiles the whole package; scoping to the
+          # products means SPM only compiles their dependency subgraph.
           if [ "$ARCH" = "x86_64" ]; then
             swift build -c release --disable-sandbox -Xswiftc -cross-module-optimization --triple x86_64-apple-macosx --product claude-relay-server --product claude-relay
           else
@@ -271,8 +268,8 @@ jobs:
           mkdir -p dist/out
           tar czf "dist/out/claude-relay-${TAG_NAME}-linux-x86_64.tar.gz" -C "$STAGE" .
 
-      - name: Package.resolved is unchanged (macOS superset preserved)
-        run: git checkout -- Package.resolved 2>/dev/null || true
+      - name: Package.resolved is unchanged after the Linux resolve
+        run: git diff --exit-code -- Package.resolved
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

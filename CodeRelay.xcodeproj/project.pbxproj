@@ -16,13 +16,12 @@
 		19510D829FEA25DDFA9F2157 /* KeyCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6C08F3358A1896291225B83 /* KeyCaptureView.swift */; };
 		1A6B6636A991BA53161D901B /* AddEditServerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7F4D875CD3FF65E067E646D /* AddEditServerView.swift */; };
 		1B42A2DD6655114FD59C359D /* CodeRelayApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 182C005C24C6294954821730 /* CodeRelayApp.swift */; };
-		1B9AA31CAEB2A2F65812F430 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 91C67EB7E180478C971D296B /* SwiftTerm */; };
 		1D19D8B964094914141377E5 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917DBD18EA67BBD605CA1766 /* SettingsView.swift */; };
 		1EB6A9EDD3096D6DFF7992CA /* QRCodeComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD79B7A885914DFF752D2179 /* QRCodeComponents.swift */; };
 		22809ECBA2EC7298B6F062E6 /* KeyCaptureInterceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C05C1B0CCB8EFB46D499F4A /* KeyCaptureInterceptor.swift */; };
 		22E9C3DC9FB07A2985640660 /* SelectAllOnBeginEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */; };
 		29E42E9BE2B5383AA5137A26 /* AppSettingsSpeechRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA2B78194726A22344FEB41 /* AppSettingsSpeechRemovalTests.swift */; };
-		377425D89A5D4F801F053F88 /* CodeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = 32238D67CEB0756F56B3E2C2 /* CodeRelaySpeech */; };
+		377425D89A5D4F801F053F88 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 91C67EB7E180478C971D296B /* SwiftTerm */; };
 		3AD2C7ED0F0C4903F9541B7A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4362FA67F25B8ABD904774A9 /* Assets.xcassets */; };
 		3BF3D4E1966454FDBC693F3E /* CodeRelayClient in Frameworks */ = {isa = PBXBuildFile; productRef = C73B67C3B1302EB50D05397D /* CodeRelayClient */; };
 		3C01AF545C145E1F47E2E571 /* AddEditServerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D40B83590E3F91399DC24BD /* AddEditServerView.swift */; };
@@ -46,17 +45,15 @@
 		8528C7880F07B1CAE00D37AA /* KeyboardAccessory.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA3B4510FFFD5755BE62CE4D /* KeyboardAccessory.swift */; };
 		8607DE4CBC28666FC17F4F9A /* AppSettingsSpeechRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC5B4D48BD29AC9E2BE00E0 /* AppSettingsSpeechRemovalTests.swift */; };
 		8B822D63AEEF3769114EF05D /* AlertFieldSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */; };
-		8FB9F1150D3FE9629A1E0DB6 /* CodeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = 177A1547F423385ACD6A5450 /* CodeRelaySpeech */; };
-		9319D93BDEE2E0F8110C743D /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = C0BA279E101C46CD4C9E8DA0 /* SwiftTerm */; };
+		8FB9F1150D3FE9629A1E0DB6 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = C0BA279E101C46CD4C9E8DA0 /* SwiftTerm */; };
 		948A803581BF09D54A82AF35 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC6DB3C97F9D884F7FA21ED /* PairingViewModel.swift */; };
 		9B8FCED16295ABFC21084712 /* ActiveTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E9DA3201E71F50165B91F5 /* ActiveTerminalView.swift */; };
 		9EAE3BDE8C9AE361EF9F3D71 /* MenuBarDropdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = D130F01F66F52B7E7E56E837 /* MenuBarDropdown.swift */; };
 		A52BDEE2BDFB2BA67CA64288 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE76025239CFE171AEC352E2 /* AppCommands.swift */; };
 		B1E5AF4AD4DF9F246EFC5C05 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070B78556144927C4A84E00 /* SettingsView.swift */; };
 		B255A26627FADB404566CD01 /* RelayTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 932D11B48F0BE56805CBE758 /* RelayTerminalView.swift */; };
-		B36A3BC57F4A163A4D4A7325 /* CodeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = CB81C989DBD66B9F439A5571 /* CodeRelaySpeech */; };
+		B36A3BC57F4A163A4D4A7325 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 94E14A8D8A42F96B0E2E0701 /* SwiftTerm */; };
 		B560E8B503C7CD244BF9B997 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38421A166AFF766050FDADC2 /* AppSettings.swift */; };
-		B64C89088373705D3B9328ED /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 94E14A8D8A42F96B0E2E0701 /* SwiftTerm */; };
 		B730C7991753987697101B78 /* CodeRelayIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */; };
 		BD22B1489C449A3C4DC16E70 /* AddEditServerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B33AE8EE6C033A2403B7BF3 /* AddEditServerViewModel.swift */; };
 		C1FA5FD912E80166B21BD571 /* RecordingShortcutMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37919AA6CC39F799BBAF73DB /* RecordingShortcutMonitor.swift */; };
@@ -68,7 +65,6 @@
 		D9CEA37AF583C181BADFF2BE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AA229F172065DCCAABD4EE1 /* AppDelegate.swift */; };
 		DC3CC606AD220E28964BE57C /* QRCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C08E1E10ABEC111CA605BE4 /* QRCodeSheet.swift */; };
 		E14796A9326B97964792E6F9 /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 994105C8A15882C51A1E9D63 /* TerminalPalette.swift */; };
-		E1822BFC45771E1D5D4CEA42 /* CodeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = EE82728E904F42A2EBB9F376 /* CodeRelaySpeech */; };
 		E4B007465A6886711AE4ECA6 /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C01CE54946F1BF877D94BFE /* PairWithHostSheet.swift */; };
 		E4D5925EEA80E36AD808183A /* ServerListWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 822211CDC993EFDD413DDB0E /* ServerListWindow.swift */; };
 		E56E770B9D4E9803B723749F /* CodeRelayClient in Frameworks */ = {isa = PBXBuildFile; productRef = 813FEDD64E4C31122044AC88 /* CodeRelayClient */; };
@@ -177,7 +173,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				EBC76ABC98C120AC31CEC402 /* CodeRelayClient in Frameworks */,
-				E1822BFC45771E1D5D4CEA42 /* CodeRelaySpeech in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -185,8 +180,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				377425D89A5D4F801F053F88 /* CodeRelaySpeech in Frameworks */,
-				1B9AA31CAEB2A2F65812F430 /* SwiftTerm in Frameworks */,
+				377425D89A5D4F801F053F88 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -195,8 +189,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3BF3D4E1966454FDBC693F3E /* CodeRelayClient in Frameworks */,
-				B36A3BC57F4A163A4D4A7325 /* CodeRelaySpeech in Frameworks */,
-				B64C89088373705D3B9328ED /* SwiftTerm in Frameworks */,
+				B36A3BC57F4A163A4D4A7325 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -205,8 +198,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E56E770B9D4E9803B723749F /* CodeRelayClient in Frameworks */,
-				8FB9F1150D3FE9629A1E0DB6 /* CodeRelaySpeech in Frameworks */,
-				9319D93BDEE2E0F8110C743D /* SwiftTerm in Frameworks */,
+				8FB9F1150D3FE9629A1E0DB6 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -419,7 +411,6 @@
 			name = CodeRelayMac;
 			packageProductDependencies = (
 				813FEDD64E4C31122044AC88 /* CodeRelayClient */,
-				177A1547F423385ACD6A5450 /* CodeRelaySpeech */,
 				C0BA279E101C46CD4C9E8DA0 /* SwiftTerm */,
 			);
 			productName = CodeRelayMac;
@@ -441,7 +432,6 @@
 			name = CodeRelayApp;
 			packageProductDependencies = (
 				C73B67C3B1302EB50D05397D /* CodeRelayClient */,
-				CB81C989DBD66B9F439A5571 /* CodeRelaySpeech */,
 				94E14A8D8A42F96B0E2E0701 /* SwiftTerm */,
 			);
 			productName = CodeRelayApp;
@@ -463,7 +453,6 @@
 			name = CodeRelayMacTests;
 			packageProductDependencies = (
 				E8C74211FF5057CB56B37194 /* CodeRelayClient */,
-				EE82728E904F42A2EBB9F376 /* CodeRelaySpeech */,
 			);
 			productName = CodeRelayMacTests;
 			productReference = 7596942A365DC1BC26A481E2 /* CodeRelayMacTests.xctest */;
@@ -483,7 +472,6 @@
 			);
 			name = CodeRelayAppTests;
 			packageProductDependencies = (
-				32238D67CEB0756F56B3E2C2 /* CodeRelaySpeech */,
 				91C67EB7E180478C971D296B /* SwiftTerm */,
 			);
 			productName = CodeRelayAppTests;
@@ -669,7 +657,6 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -849,8 +836,6 @@
 				INFOPLIST_FILE = CodeRelayApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Code[Relay] uses speech recognition to convert voice input to terminal commands.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -882,7 +867,6 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -909,8 +893,6 @@
 				INFOPLIST_FILE = CodeRelayApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Code[Relay] uses speech recognition to convert voice input to terminal commands.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -1033,14 +1015,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		177A1547F423385ACD6A5450 /* CodeRelaySpeech */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeRelaySpeech;
-		};
-		32238D67CEB0756F56B3E2C2 /* CodeRelaySpeech */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeRelaySpeech;
-		};
 		813FEDD64E4C31122044AC88 /* CodeRelayClient */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CodeRelayClient;
@@ -1064,17 +1038,9 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = CodeRelayClient;
 		};
-		CB81C989DBD66B9F439A5571 /* CodeRelaySpeech */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeRelaySpeech;
-		};
 		E8C74211FF5057CB56B37194 /* CodeRelayClient */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CodeRelayClient;
-		};
-		EE82728E904F42A2EBB9F376 /* CodeRelaySpeech */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeRelaySpeech;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
