@@ -108,12 +108,9 @@ Bedrock secret and the six speech settings instead. Android adds one key,
 These are gated on resources absent from the build environment. Each is documented inline in the
 code and was an explicit, accepted deferral during M1–M3.
 
-### Needs a device
-- **Copy/paste + image-paste + hardware key-repeat** verification on the shipped ConnectBot
-  `termlib` terminal (the text-fallback engine it replaced is gone).
-
 ### Needs a device/emulator (on-device acceptance — M4 Tasks 2,4,5,6,7)
-- **Hardware keyboard + key-repeat + clipboard paste** verification.
+- **Hardware keyboard + key-repeat + clipboard/image paste** verification on the shipped ConnectBot
+  `termlib` terminal (the text-fallback engine it replaced is gone).
 - **Accessibility / TalkBack pass:** main buttons have `contentDescription`; a full TalkBack
   navigation + announcement-order + dynamic-type audit needs a device (PARTIAL → must complete).
 - **Animations/haptics felt** side-by-side with iOS (the *buzz* and motion; the wiring is done).
