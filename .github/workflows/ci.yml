@@ -16,18 +16,20 @@ concurrency:
 jobs:
   swift:
     name: swift build + test + lint
-    runs-on: macos-15
-    # The full suite runs in ~20s; a healthy job finishes in a few minutes.
-    # Cap the job so a hung test fails fast (~15 min) instead of stalling
-    # toward GitHub's 6h default.
+    runs-on: macos-26
+    # A healthy job finishes in a few minutes. Cap it so a hung test fails fast
+    # (~15 min) instead of stalling toward GitHub's 6h default.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 16
+      - name: Select newest Xcode 26
         run: |
-          # macos-15 ships multiple Xcode versions; pick the highest 16.x available.
-          XCODE=$(ls -d /Applications/Xcode_16.*.app 2>/dev/null | sort -V | tail -1)
+          # Package.resolved was resolved with Swift 6.2 (Xcode 26); several pins
+          # declare swift-tools-version 6.2. An older toolchain cannot load those
+          # manifests and silently re-resolves the graph downward — which the
+          # Package.resolved diff step below then fails, by design.
+          XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
@@ -36,9 +38,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .build
-          key: spm-${{ runner.os }}-xcode16-${{ hashFiles('Package.resolved') }}
+          key: spm-${{ runner.os }}-xcode26-${{ hashFiles('Package.resolved') }}
           restore-keys: |
-            spm-${{ runner.os }}-xcode16-
+            spm-${{ runner.os }}-xcode26-
 
       - name: Swift version
         run: swift --version
@@ -46,10 +48,14 @@ jobs:
       - name: swift build
         run: swift build
 
+      - name: Package.resolved is unchanged after the macOS resolve
+        # Same guard as the linux-server job: a toolchain older than the pins'
+        # swift-tools-version would silently re-resolve the graph downward.
+        run: git diff --exit-code -- Package.resolved
+
       - name: swift test
-        # Serial mode emits per-test XCTest counts that are visible in CI logs.
-        # The full suite currently runs in ~5 s; parallel's speed win doesn't
-        # justify losing the per-test output.
+        # Serial mode emits per-test XCTest counts that are visible in CI logs;
+        # parallel's speed win doesn't justify losing the per-test output.
         run: swift test
 
       - name: SwiftLint
