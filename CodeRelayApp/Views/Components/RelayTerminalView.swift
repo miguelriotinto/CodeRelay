@@ -91,8 +91,8 @@ class RelayTerminalView: TerminalView {
                     ? UIKeyModifierFlags(rawValue: flagsRaw)
                     : [.command, .alternate]
                 let cmd = UIKeyCommand(input: key, modifierFlags: flags,
-                                       action: #selector(handleRecordingShortcut))
-                cmd.discoverabilityTitle = "Toggle Recording"
+                                       action: #selector(handleOptimizeShortcut))
+                cmd.discoverabilityTitle = OptimizerStrings.wandLabel
                 commands.append(cmd)
             }
         }
@@ -100,8 +100,10 @@ class RelayTerminalView: TerminalView {
         return commands
     }
 
-    @objc private func handleRecordingShortcut() {
-        NotificationCenter.default.post(name: .toggleSpeechRecording, object: nil)
+    /// Hardware-keyboard shortcut → the wand (spec §7.2). The storage keys keep
+    /// their `recordingShortcut*` names so users' existing bindings survive.
+    @objc private func handleOptimizeShortcut() {
+        NotificationCenter.default.post(name: .optimizePromptShortcut, object: nil)
     }
 
     // MARK: - Output

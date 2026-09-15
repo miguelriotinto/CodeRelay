@@ -1,5 +1,7 @@
 # Settings Page + Prompt Improvement Toggle — Design Spec
 
+> **Superseded (2026-09-14):** on-device voice transcription was removed from the iOS and macOS apps by `docs/superpowers/specs/2026-09-13-server-prompt-optimizer-design.md`. Kept for history only.
+
 **Date:** 2026-04-10
 **Status:** Approved
 

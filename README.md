@@ -19,9 +19,7 @@ A remote terminal relay server and CLI over WebSocket, enabling secure terminal 
 - **Push notifications** - Optional APNs/FCM alerts when an agent finishes or needs input, coalesced per workspace (off by default)
 - **Clipboard bridging** - Two-way: device→host image paste, and host→device via OSC 52, so tmux/vim/kitty copies land on the device clipboard
 - **Workspace rollups** - Sessions group by git root in the sidebar with an aggregate status badge
-- **On-device speech engine** - Offline speech-to-text via WhisperKit (CoreML/ANE) with LLM text cleanup (iOS + macOS)
-- **Continuous listening** - Optional always-on mode with a wake word ("Claude"), on-device VAD and turn-end detection
-- **Cloud prompt enhancement** - Optional rewriting of transcriptions into clear prompts via Bedrock Haiku
+- **Prompt optimizer** - The wand button (or the keyboard shortcut you used for recording) asks the relay to rewrite whatever you have typed at the agent's input line into a well-structured coding-agent prompt. The relay types the rewrite for you and never presses Enter; a 10-second Undo puts your original back. Enable it on the relay with `claude-relay config set promptOptimizerEnabled true` plus an API key file (see Configuration). To dictate, use your device's own dictation into the terminal — the apps no longer ship a speech engine.
 - **Admin API** - Localhost-only HTTP API for service management and monitoring (64 KB request body cap)
 - **Config validation** - Two-layer validation: CLI client-side (fails fast on typos/bad values) + server-side (authoritative)
 - **Per-token session cap** - Configurable `maxSessionsPerToken` (default 50) prevents runaway clients from exhausting server resources
@@ -36,7 +34,6 @@ The macOS server/CLI and the two Apple clients are built from one Swift package;
 - **CodeRelayCLI** - Command-line interface for managing tokens, sessions, and service
 - **CodeRelayKit** - Shared library with protocol definitions, utilities, and `CodingAgent` registry
 - **CodeRelayClient** - Swift client library for building custom clients (includes shared `SessionCoordinating` protocol and `SessionNaming` helpers)
-- **CodeRelaySpeech** - Cross-platform on-device speech pipeline shared by both Apple apps (WhisperKit + LLM cleanup + `SpeechEngineState`)
 - **CodeRelayApp** - iOS application with terminal emulation
 - **CodeRelayMac** - Native macOS application with menu-bar persistence and full feature parity with iOS (both apps ship as **Code[Relay]**)
 
@@ -241,6 +238,24 @@ Configuration is stored at `~/.claude-relay/config.json`:
 - `apnsUseSandbox` - Target the APNs sandbox host, for development builds (default: `false`)
 - `fcmServiceAccountPath` / `fcmProjectId` - Firebase service-account JSON path and project id for Android delivery
 
+**Prompt optimizer options** (off by default):
+- `promptOptimizerEnabled` - Master switch for the wand (default: `false`)
+- `promptOptimizerProvider` - `anthropic` | `bedrock` (default: `anthropic`)
+- `promptOptimizerModel` - default `claude-sonnet-5` on Anthropic, `anthropic.claude-sonnet-5` on Bedrock
+- `promptOptimizerRegion` - Bedrock only (default: `us-east-1`)
+- `promptOptimizerKeyPath` - File holding the API key, `chmod 600`; the key is read once at startup and never logged
+- `promptOptimizerShareScreen` - The server-side gate on sending the last 40 screen lines to the model (default: `true`); the device has its own toggle
+
+`promptOptimizer*` changes take effect only after a relay restart — the key is read once at startup, so `config set promptOptimizerEnabled true` alone leaves the capability absent:
+
+```bash
+claude-relay config set promptOptimizerEnabled true
+claude-relay config set promptOptimizerKeyPath ~/.claude-relay/optimizer.key   # chmod 600
+claude-relay restart                                 # the key is read once, at startup
+```
+
+**What leaves the host when you use the optimizer:** the draft you typed and its working directory are always sent to the configured model provider — that is the point of the feature. When the per-device toggle "Share terminal screen with the optimizer" *and* the server-side `promptOptimizerShareScreen` kill switch are both on, up to the last 40 lines of the terminal screen are sent as well; turning either one off stops that. Nothing about the draft, the working directory or the screen is logged, at any log level, and the API key is never sent to clients.
+
 A corrupt `config.json` is tolerated: the server logs to stderr and falls back to `RelayConfig.default` so launchd-managed services stay up. App-side, `terminalScrollbackLines` (iOS + macOS Settings, default 5000, max 25000) controls the client's in-memory terminal history independent of the server's ring buffer.
 
 ### TLS Configuration
@@ -309,13 +324,10 @@ actors (`SessionManager`, `TokenStore`, `PTYSession` via `MockPTYSession`,
 `SessionActivityMonitor`, `RateLimiter`, `RingBuffer`, `LogStore`,
 `AdminRoutes` endpoints, config validation), the client (auth coordinator,
 saved connections, session naming, session ownership, terminal view model +
-LRU cache, recovery controller, WebSocket integration round-trip), the CLI
-(output formatter, admin client), and the speech pipeline
-(`CodeRelaySpeechTests` — text cleaning, wake-word matching, turn-end
-heuristics, and other UIKit/Keychain-free units). Tests that require
-UIKit/AppKit or the Keychain live in the Xcode test bundles
-(`CodeRelayAppTests` on iOS) — build the `CodeRelayApp` scheme and run
-tests in Xcode to exercise them.
+LRU cache, recovery controller, WebSocket integration round-trip), and the CLI
+(output formatter, admin client). Tests that require UIKit/AppKit or the
+Keychain live in the Xcode test bundles (`CodeRelayAppTests` on iOS) — build
+the `CodeRelayApp` scheme and run tests in Xcode to exercise them.
 
 Contributions that add a new public API or a new branch should come with a
 test in the corresponding `Tests/<Module>Tests/` directory (or
@@ -351,8 +363,7 @@ CodeRelay/
 │   │   ├── Protocols/          # SessionCoordinating protocol
 │   │   ├── Helpers/            # SessionNaming, SavedConnectionStore, NetworkMonitor, DeviceIdentifier
 │   │   ├── ViewModels/         # SharedSessionCoordinator, TerminalViewModel, ServerStatusChecker
-│   │   └── Views/              # Shared UI atoms: ConnectionQualityDot, ActivityDot, AgentColorPalette
-│   └── CodeRelaySpeech/      # Cross-platform on-device speech pipeline (WhisperKit + LLM + SpeechEngineState)
+│   │   └── Views/              # Shared UI atoms: ConnectionQualityDot, ActivityDot, AgentColorPalette, WandButton
 ├── CodeRelayApp/             # iOS application (SwiftUI, XcodeGen-managed)
 │   ├── Views/                  # SwiftUI views + components
 │   ├── ViewModels/             # Observable view models
@@ -368,16 +379,15 @@ CodeRelay/
 │   ├── core-session/           # SessionCoordinator, RecoveryController, NetworkObserver (pure-JVM)
 │   ├── core-storage/           # Token / ownership / saved-connection stores
 │   ├── terminal/               # VT100 terminal (ConnectBot termlib) + session view model
-│   ├── speech/                 # On-device speech pipeline (Whisper/LLM, mirrors CodeRelaySpeech)
+│   ├── speech/                 # Android on-device speech pipeline (Whisper/LLM)
 │   ├── feature-servers|workspace|settings/  # Compose UI features
 │   └── app/                    # Nav graph, MainActivity, connection wiring
 ├── Tests/
 │   ├── CodeRelayKitTests/    # Protocol, CodingAgent, ActivityState, SessionState, TokenGenerator, ConnectionQuality, RelayConfig, MessageEnvelope
 │   ├── CodeRelayServerTests/ # SessionManager, TokenStore, RateLimiter, RingBuffer, ConfigValidation, ActivityMonitor, AdminRoutesEndpoint
 │   ├── CodeRelayCLITests/    # OutputFormatter, AdminClient
-│   ├── CodeRelayClientTests/ # Auth, Connection, SessionNaming, TerminalViewModel, LRU cache, RecoveryController
-│   └── CodeRelaySpeechTests/ # TextCleaner, WakeWordDetector, turn-end heuristics, speech post-processing
-├── CodeRelayAppTests/        # iOS app unit tests (AppSettings, SpeechEngineState, WhisperHallucination, TextCleaner, OnDeviceSpeechEngine)
+│   └── CodeRelayClientTests/ # Auth, Connection, SessionNaming, TerminalViewModel, LRU cache, RecoveryController
+├── CodeRelayAppTests/        # iOS app unit tests (AppSettings, terminal swipe scroll)
 ├── Formula/
 │   └── clauderelay.rb          # Homebrew formula
 ├── docs/                       # Design specs and implementation plans
@@ -472,7 +482,6 @@ All responses are JSON. Token creation returns `201 Created`; all other successe
 - Session isolation prevents cross-session access; `maxSessionsPerToken` caps fork-bomb risk per token
 - IP-based rate limiting on failed authentication attempts (LRU-capped tracking dictionary to bound memory under scanning traffic)
 - Server-side config validation prevents invalid/dangerous values; CLI validates client-side before forwarding
-- Bearer tokens in speech/Bedrock error bodies are redacted before logging
 - Configure firewall rules if exposing ports externally
 
 ### Folder Permissions

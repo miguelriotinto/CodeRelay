@@ -57,6 +57,29 @@ final class RelayConnectionTests: XCTestCase {
         XCTAssertEqual(connection.generation, 0)
     }
 
+    // MARK: - Marking a socket dead
+
+    /// `markConnectionDead()` is the response to "this socket can never be used
+    /// again" — from the quality monitor's three failed pings, and now also from
+    /// `SessionController` when an RPC timeout leaves a request outstanding that
+    /// no reply can be matched to. Both need the same three effects, and the
+    /// generation bump is the one that matters most: it is what lifts the
+    /// controller's desync marker, so a socket cannot be poisoned and kept.
+    func testMarkConnectionDeadBumpsGenerationAndReportsTheFailure() {
+        let connection = RelayConnection()
+        var sendFailedCount = 0
+        connection.onSendFailed = { sendFailedCount += 1 }
+
+        let before = connection.generation
+        connection.markConnectionDead()
+
+        XCTAssertEqual(connection.generation, before &+ 1, "a dead socket must not stay current")
+        XCTAssertEqual(connection.state, .disconnected)
+        XCTAssertEqual(connection.connectionQuality, .disconnected,
+                       "the quality indicator must stop claiming a usable connection")
+        XCTAssertEqual(sendFailedCount, 1, "the coordinator owns recovery and has to be told")
+    }
+
     // MARK: - Disconnect Resets State
 
     func testDisconnectResetsQualityToDisconnected() {

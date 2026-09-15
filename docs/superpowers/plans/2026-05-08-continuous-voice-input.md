@@ -1,5 +1,7 @@
 # Continuous Voice Input Implementation Plan
 
+> **Superseded (2026-09-14):** on-device voice transcription was removed from the iOS and macOS apps by `docs/superpowers/specs/2026-09-13-server-prompt-optimizer-design.md`. Kept for history only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace push-to-talk with always-on microphone listening that wakes on "Claude", records until the speaker finishes (detected via Silero VAD + Smart-Turn classifier), then transcribes → cleans → outputs to the active terminal session.

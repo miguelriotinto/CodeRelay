@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 import UserNotifications
 import CodeRelayClient
-import CodeRelaySpeech
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -34,14 +33,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
-    }
-
-    /// Release the llama.cpp LLM before AppKit calls exit(). Without this, the
-    /// llama `std::vector<unique_ptr<ggml_metal_device>>` static destructor runs
-    /// while a background Metal resource-set init task is still sleeping, which
-    /// triggers ggml_abort() during teardown.
-    func applicationWillTerminate(_ notification: Notification) {
-        TextCleaner.shared.unload()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

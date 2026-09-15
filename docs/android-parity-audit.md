@@ -44,19 +44,26 @@ codex=teal, default=teal), `SessionTabs` (numbered, agent-colored, awaiting-flas
 
 All present in `feature-settings/.../AppSettings.kt` (DataStore) + `SettingsScreen.kt`:
 
-| Section | Controls | Status |
-|---|---|---|
-| Speech-to-Text | Smart Cleanup, Prompt Enhancement, Continuous Listening, wake-word edit | **PASS** |
-| AWS Bedrock | masked bearer token (TokenStore, 500ms-debounced `.dropFirst()` write), region, "token required" validation alert | **PASS** |
-| Connection | Auto-Connect | **PASS** |
-| General | Haptic Feedback, Naming-theme picker (6 themes), Font Size stepper (8–16), Scrollback picker (1k/5k/10k/25k) | **PASS** |
-| Keyboard Shortcuts | recording-shortcut toggle + KeyEvent.META_* key capture | **PASS** |
-| About | version/build from BuildConfig | **PASS** |
+| Section | Controls | Status | iOS/macOS Status |
+|---|---|---|---|
+| Speech-to-Text | Smart Cleanup, Prompt Enhancement, Continuous Listening, wake-word edit | **PASS** | Removed — replaced by the server-side prompt optimizer (wand) |
+| AWS Bedrock | masked bearer token (TokenStore, 500ms-debounced `.dropFirst()` write), region, "token required" validation alert | **PASS** | Removed — replaced by the server-side prompt optimizer (wand) |
+| Connection | Auto-Connect | **PASS** | — |
+| General | Haptic Feedback, Naming-theme picker (6 themes), Font Size stepper (8–16), Scrollback picker (1k/5k/10k/25k) | **PASS** | — |
+| Keyboard Shortcuts | recording-shortcut toggle + KeyEvent.META_* key capture | **PASS** | Optimizer Shortcut |
+| About | version/build from BuildConfig | **PASS** | — |
 
 Both iOS migrations ported (shortcut-modifier string→flags; legacy plaintext Bedrock→Keychain with
 read-back-confirm). Bedrock token correctly in EncryptedSharedPreferences, not DataStore.
+**As of 2026-09 the Apple clients no longer migrate the Bedrock secret — they *delete* it:** the
+iOS Bedrock→Keychain migration was removed with the speech stack, and `SpeechRemovalMigration`
+now scrubs the Keychain item, the legacy speech defaults and the model directories on first
+launch. Android's port of that scrub is Plan 3; until then the row above describes Android's
+own state, not a shared one.
 
 ## 3. Speech feature inventory (M3)
+
+**Note:** iOS/macOS apps removed on-device speech features in 2026-09 and replaced them with the server-side prompt optimizer. Android retains the speech pipeline.
 
 | Feature | Status | Notes |
 |---|---|---|

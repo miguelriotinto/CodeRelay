@@ -16,20 +16,21 @@ concurrency:
 jobs:
   swift:
     name: swift build + test + lint
-    runs-on: macos-15
-    # The full suite runs in ~20s; a healthy job finishes in a few minutes
-    # (incl. the WhisperKit/swift-syntax compile). Cap the job so a hung test
-    # fails fast (~15 min) instead of stalling toward GitHub's 6h default.
+    runs-on: macos-26
+    # A healthy job finishes in a few minutes. Cap it so a hung test fails fast
+    # (~15 min) instead of stalling toward GitHub's 6h default.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 16
+      - name: Select newest Xcode 26
         run: |
-          # macos-15 ships multiple Xcode versions; pick the highest 16.x available.
-          # swift-syntax 602.0.0 (pulled via WhisperKit → swift-transformers) needs
-          # Swift 6.1+, which ships with Xcode 16.3.
-          XCODE=$(ls -d /Applications/Xcode_16.*.app 2>/dev/null | sort -V | tail -1)
+          # Runs the newest Xcode 26.x present on the runner image. The float is
+          # deliberate: image minors are retired without notice, so pinning one
+          # would trade a toolchain surprise for a "no such Xcode" surprise.
+          # Several pins declare swift-tools-version 6.2, so a 26.x toolchain is
+          # the floor for loading their manifests at all.
+          XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
@@ -38,9 +39,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .build
-          key: spm-${{ runner.os }}-xcode16-${{ hashFiles('Package.resolved') }}
+          key: spm-${{ runner.os }}-xcode26-${{ hashFiles('Package.resolved') }}
           restore-keys: |
-            spm-${{ runner.os }}-xcode16-
+            spm-${{ runner.os }}-xcode26-
 
       - name: Swift version
         run: swift --version
@@ -48,10 +49,17 @@ jobs:
       - name: swift build
         run: swift build
 
+      - name: Package.resolved is unchanged after the macOS resolve
+        # No job may rewrite the committed Package.resolved. If a toolchain bump
+        # changes SwiftPM's serialisation of the file (format version,
+        # originHash) or the resolved versions, re-resolve locally with that
+        # toolchain and commit the result in its own change — never let CI's
+        # copy win.
+        run: git diff --exit-code -- Package.resolved
+
       - name: swift test
-        # Serial mode emits per-test XCTest counts that are visible in CI logs.
-        # The full suite currently runs in ~5 s; parallel's speed win doesn't
-        # justify losing the per-test output.
+        # Serial mode emits per-test XCTest counts that are visible in CI logs;
+        # parallel's speed win doesn't justify losing the per-test output.
         run: swift test
 
       - name: SwiftLint
@@ -62,19 +70,25 @@ jobs:
 
   linux-server:
     # The server, CLI and Kit build and test on Linux — the whole premise of
-    # docs/linux-server-spec.md. The Apple client libraries are excluded from the
-    # build there (Package.swift, AD-1), so this job proves the ported server
-    # against the SAME test suite the macOS job runs, plus the Linux seam tests.
+    # docs/linux-server-spec.md. The Apple client library (CodeRelayClient) is
+    # not declared there (Package.swift, AD-1), so this job proves the ported
+    # server against the SAME test suite the macOS job runs, plus the Linux
+    # seam tests.
     name: linux server build + test
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
 
+      # Pinned (not floating like the macOS job, which takes whatever Xcode the
+      # image ships) so the Linux resolve is reproducible; the pins declare
+      # swift-tools-version up to 6.2, which this toolchain can load. The diff
+      # step below enforces the actual invariant: no job may rewrite the
+      # committed Package.resolved.
       - name: Install Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: '6.0'
+          swift-version: '6.2'
 
       # forkpty(3) lives in libutil; wl-clipboard/xclip are runtime optionals
       # the clipboard tests inject around, so they are not needed here.
@@ -84,36 +98,28 @@ jobs:
       - name: swift build
         run: swift build
 
-      # Resolving on Linux drops the pins for whisperkit / llm.swift /
-      # swift-syntax (AD-1). Package.resolved must stay the macOS superset, so
-      # restore whatever resolution rewrote and assert the pins survive rather
-      # than committing a Linux-only file.
-      - name: Package.resolved is unchanged (macOS superset preserved)
-        run: |
-          git checkout -- Package.resolved 2>/dev/null || true
-          for pkg in whisperkit llm.swift swift-syntax; do
-            grep -q "\"identity\" : \"$pkg\"" Package.resolved \
-              || { echo "Package.resolved lost the $pkg pin — do not commit a Linux-resolved copy"; exit 1; }
-          done
+      - name: Package.resolved is unchanged after the Linux resolve
+        run: git diff --exit-code -- Package.resolved
 
       - name: swift test
         run: swift test
 
   ios-build:
-    # Builds for the iOS *device* SDK (not simulator). The simulator build
-    # plan mis-resolves LLM.swift's swift-syntax-based macros against the
-    # iphonesimulator SDK, producing "no such module '_SwiftSyntaxCShims'".
-    # The device build uses the same plan TestFlight archives go through,
-    # so this is the signal we actually care about: "does what we ship
-    # compile?"
+    # Builds for the iOS *device* SDK (not simulator): the same build plan
+    # TestFlight archives go through, so this is the signal we actually care
+    # about — "does what we ship compile?" Runs on the same Xcode 26 the
+    # committed pins were resolved with, so the workspace Package.resolved
+    # guard below is meaningful (a 6.1 toolchain prunes 6.2-tools packages).
     name: iOS app build (device SDK)
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 16
+      - name: Select newest Xcode 26
         run: |
-          XCODE=$(ls -d /Applications/Xcode_16.*.app 2>/dev/null | sort -V | tail -1)
+          # macos-26 ships Xcode 26.x, whose SDK the committed pins were
+          # resolved with. Pick the highest 26.x available.
+          XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
@@ -136,6 +142,12 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      # The workspace copy is what a TestFlight archive resolves against, and
+      # xcodebuild is free to rewrite it. Same rule as the root file: CI never
+      # gets to change the committed pins.
+      - name: Workspace Package.resolved is unchanged after the build
+        run: git diff --exit-code -- CodeRelay.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
   mac-build:
     name: macOS app build
@@ -174,3 +186,9 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      # The workspace copy is what a TestFlight archive resolves against, and
+      # xcodebuild is free to rewrite it. Same rule as the root file: CI never
+      # gets to change the committed pins.
+      - name: Workspace Package.resolved is unchanged after the build
+        run: git diff --exit-code -- CodeRelay.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

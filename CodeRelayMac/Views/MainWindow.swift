@@ -1,13 +1,7 @@
 import SwiftUI
-import AppKit
 import CodeRelayClient
-import CodeRelaySpeech
 
 struct MainWindow: View {
-    @StateObject private var speechEngine = OnDeviceSpeechEngine()
-    @StateObject private var continuousEngine = ContinuousListeningEngine.makeDefault(
-        options: AppSettings.shared.currentSpeechOptions()
-    )
     @ObservedObject private var settings = AppSettings.shared
     @State private var coordinator: SessionCoordinator?
     @State private var showServerList = false
@@ -18,8 +12,6 @@ struct MainWindow: View {
             if let coordinator {
                 WorkspaceView(
                     coordinator: coordinator,
-                    speechEngine: speechEngine,
-                    continuousEngine: continuousEngine,
                     settings: settings
                 )
             } else if let failure = loadFailure {
@@ -38,7 +30,6 @@ struct MainWindow: View {
         }
         .background(.black)
         .task { await presentServerList() }
-        .onAppear { speechEngine.preloadInBackground() }
         .sheet(isPresented: $showServerList) {
             NavigationStack {
                 ServerListWindow { config in
@@ -110,8 +101,6 @@ struct MainWindow: View {
 
 private struct WorkspaceView: View {
     @ObservedObject var coordinator: SessionCoordinator
-    @ObservedObject var speechEngine: OnDeviceSpeechEngine
-    @ObservedObject var continuousEngine: ContinuousListeningEngine
     @ObservedObject var settings: AppSettings
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showQRPopover = false
@@ -121,16 +110,6 @@ private struct WorkspaceView: View {
     /// hides it behind opaque black while the server's copy is swapped in.
     /// Driven by `TerminalReloadFade`.
     @State private var reloadCover: Double = 0
-
-    private var optionsHash: String {
-        let s = settings
-        return [
-            "\(s.continuousListeningEnabled)",
-            "\(s.smartCleanupEnabled)",
-            "\(s.promptEnhancementEnabled)",
-            s.wakeWord
-        ].joined(separator: "|")
-    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -173,7 +152,7 @@ private struct WorkspaceView: View {
             // (macOS 26) break the shared glass so QR and the name get their own
             // pills.
             ToolbarItem(placement: .primaryAction) { serversToolbarButton }
-            ToolbarItem(placement: .primaryAction) { micToolbarButton }
+            ToolbarItem(placement: .primaryAction) { wandToolbarButton }
             if #available(macOS 26.0, *) {
                 ToolbarSpacer(.fixed, placement: .primaryAction)
                 ToolbarItem(placement: .primaryAction) { qrToolbarButton }
@@ -199,29 +178,6 @@ private struct WorkspaceView: View {
         .toolbarBackground(.black, for: .windowToolbar)
         .toolbarBackground(.visible, for: .windowToolbar)
         .focusedValue(\.sidebarVisibility, $columnVisibility)
-        .task(id: optionsHash) {
-            continuousEngine.onUtteranceReady = { text in
-                guard let id = coordinator.activeSessionId,
-                      let vm = coordinator.viewModel(for: id) else { return }
-                vm.sendInput(text)
-            }
-            continuousEngine.updateOptions(settings.currentSpeechOptions())
-            if settings.continuousListeningEnabled {
-                await continuousEngine.enable()
-            } else {
-                await continuousEngine.disable()
-            }
-        }
-        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in
-            Task { await continuousEngine.disable() }
-        }
-        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
-            Task {
-                if settings.continuousListeningEnabled {
-                    await continuousEngine.enable()
-                }
-            }
-        }
         .sheet(isPresented: $coordinator.showQRScanner) {
             QRScannerSheet(coordinator: coordinator)
         }
@@ -282,13 +238,12 @@ private struct WorkspaceView: View {
         }
     }
 
-    private var micToolbarButton: some View {
-        MacMicButton(
-            engine: speechEngine,
+    private var wandToolbarButton: some View {
+        WandButton(
             coordinator: coordinator,
-            hasActiveSession: coordinator.activeSessionId != nil,
-            continuousEngine: continuousEngine,
-            settings: settings
+            shareScreen: settings.shareScreenWithOptimizer,
+            size: 26,
+            fill: Color.gray.opacity(0.5)
         )
     }
 
@@ -398,209 +353,3 @@ private struct FailureView: View {
     }
 }
 
-// MARK: - Mic Button (matches iOS styling)
-
-private struct MacMicButton: View {
-    @ObservedObject var engine: OnDeviceSpeechEngine
-    let coordinator: SessionCoordinator?
-    let hasActiveSession: Bool
-    @ObservedObject var continuousEngine: ContinuousListeningEngine
-    @ObservedObject var settings: AppSettings
-    @State private var showDownloadAlert = false
-    @State private var continuousPausedByUser = false
-
-    private var activeProgress: Double? {
-        engine.modelStore.downloadProgress ?? engine.modelLoadProgress
-    }
-
-    var body: some View {
-        Button(action: handleTap) {
-            Group {
-                if let progress = activeProgress {
-                    progressRing(progress)
-                } else {
-                    Image(systemName: effectiveIcon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
-                }
-            }
-            .frame(width: 26, height: 26)
-            .background(effectiveBackgroundColor)
-            .clipShape(Circle())
-            .animation(.easeInOut(duration: 0.2), value: effectiveBackgroundColor)
-        }
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.3).onEnded { _ in
-                guard settings.continuousListeningEnabled else { return }
-                beginTemporaryPTT()
-            }
-        )
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .help(engine.state.description)
-        .alert("Download Speech Models?", isPresented: $showDownloadAlert) {
-            Button("Download") {
-                Task { await engine.prepareModels() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("On-device voice recognition requires a one-time download (~1 GB). This enables offline, private speech-to-text.")
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleSpeechRecording)) { _ in
-            guard !isDisabled else { return }
-            handleTap()
-        }
-    }
-
-    private func progressRing(_ progress: Double) -> some View {
-        ZStack {
-            Circle()
-                .stroke(Color.gray.opacity(0.4), lineWidth: 2)
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(Color.white, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .animation(.linear(duration: 0.3), value: progress)
-        }
-        .frame(width: 16, height: 16)
-    }
-
-    private func handleTap() {
-        if settings.continuousListeningEnabled {
-            handleContinuousTap()
-        } else {
-            handlePTTTap()
-        }
-    }
-
-    private func handleContinuousTap() {
-        if continuousEngine.state == .idle {
-            continuousPausedByUser = false
-            Task { await continuousEngine.enable() }
-        } else {
-            continuousPausedByUser = true
-            Task { await continuousEngine.disable() }
-        }
-    }
-
-    private func beginTemporaryPTT() {
-        Task {
-            await continuousEngine.disable()
-            await performOneShotPTT()
-            if settings.continuousListeningEnabled && !continuousPausedByUser {
-                await continuousEngine.enable()
-            }
-        }
-    }
-
-    private func performOneShotPTT() async {
-        if !engine.modelsReady {
-            await MainActor.run { showDownloadAlert = true }
-            return
-        }
-        await engine.startRecording()
-        try? await Task.sleep(for: .seconds(2))
-        let text = await engine.stopAndProcess(options: settings.currentSpeechOptions())
-        if let text, !text.isEmpty,
-           let coordinator,
-           let id = coordinator.activeSessionId,
-           let vm = coordinator.viewModel(for: id) {
-            vm.sendInput(text)
-        }
-    }
-
-    private func handlePTTTap() {
-        switch engine.state {
-        case .idle:
-            guard engine.modelsReady else {
-                showDownloadAlert = true
-                return
-            }
-            Task { await engine.startRecording() }
-        case .recording:
-            Task {
-                let text = await engine.stopAndProcess(options: settings.currentSpeechOptions())
-                if let text, !text.isEmpty,
-                   let coordinator,
-                   let id = coordinator.activeSessionId,
-                   let vm = coordinator.viewModel(for: id) {
-                    vm.sendInput(text)
-                }
-            }
-        case .error:
-            engine.cancel()
-        default:
-            break
-        }
-    }
-
-    private var isDisabled: Bool {
-        switch engine.state {
-        case .loadingModel, .transcribing, .cleaning:
-            return true
-        default:
-            return !hasActiveSession || activeProgress != nil
-        }
-    }
-
-    // MARK: - Unified icon & color
-
-    private var effectiveIcon: String {
-        if settings.continuousListeningEnabled {
-            switch continuousEngine.state {
-            case .idle:
-                return "mic"
-            case .listening, .detectingWakeWord:
-                return "waveform"
-            case .armed, .recording, .detectingTurnEnd:
-                return "mic.fill"
-            case .transcribing:
-                return "waveform"
-            case .cleaning:
-                return "sparkles"
-            case .outputting:
-                return "text.bubble"
-            case .error:
-                return "mic"
-            }
-        } else {
-            switch engine.state {
-            case .idle, .loadingModel: return "mic"
-            case .recording: return "mic.fill"
-            case .transcribing: return "waveform"
-            case .cleaning: return "sparkles"
-            case .error: return "mic"
-            }
-        }
-    }
-
-    private var effectiveBackgroundColor: Color {
-        if settings.continuousListeningEnabled {
-            switch continuousEngine.state {
-            case .idle:
-                return Color.gray.opacity(0.5)
-            case .listening, .detectingWakeWord:
-                return Color.blue.opacity(0.8)
-            case .armed, .recording, .detectingTurnEnd:
-                return Color.red.opacity(0.8)
-            case .transcribing, .cleaning:
-                return Color.yellow.opacity(0.8)
-            case .outputting:
-                return Color.yellow.opacity(0.8)
-            case .error:
-                return Color.red.opacity(0.8)
-            }
-        } else {
-            switch engine.state {
-            case .idle, .loadingModel:
-                return Color.green.opacity(0.8)
-            case .recording:
-                return Color.red.opacity(0.8)
-            case .transcribing, .cleaning:
-                return Color.yellow.opacity(0.8)
-            case .error:
-                return Color.red.opacity(0.8)
-            }
-        }
-    }
-}

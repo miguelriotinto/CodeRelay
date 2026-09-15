@@ -48,23 +48,22 @@ CodeRelayApp/
     WorkspaceView.swift             -- NavigationSplitView: sidebar + terminal
     SessionSidebarView.swift        -- Session list sidebar
     ActiveTerminalView.swift        -- Outer orchestration + session tab bar (slim host)
-    SettingsView.swift              -- App settings screen (theme, scrollback lines, speech, shortcuts)
+    SettingsView.swift              -- App settings screen (theme, scrollback lines, shortcuts)
     QRCodeSheet.swift               -- Full-screen QR code sheet for session sharing
     QRScannerView.swift             -- QR code scanner via AVFoundation camera
     Components/
       KeyboardAccessory.swift       -- Extra key row above keyboard
       KeyCaptureView.swift          -- Live key combination capture
-      MicButton.swift               -- Speech-to-text mic + recording state
       QRCodeComponents.swift        -- QRCodeGenerator + QRCodeOverlay for session sharing
       RelayTerminalView.swift       -- SwiftTerm UIViewRepresentable wrapper (uses terminalScrollbackLines)
 ```
 
 Shared types that previously lived here (`TerminalViewModel`, `ServerStatusChecker`,
 `SavedConnectionStore`, `NetworkMonitor`, `ActivityDot`, `ConnectionQualityDot`,
-`AgentColorPalette`, speech pipeline) now live in `Sources/CodeRelayClient/`
-(Views/ + ViewModels/ + Helpers/) and `Sources/CodeRelaySpeech/`.
+`AgentColorPalette`, `WandButton`) now live in `Sources/CodeRelayClient/`
+(Views/ + ViewModels/ + Helpers/).
 
 `ActiveTerminalView` was split into three focused components
-(`MicButton`, `QRCodeComponents`, `RelayTerminalView`) in the 2026-05-04
+(`WandButton`, `QRCodeComponents`, `RelayTerminalView`) in the 2026-05-04
 review-driven refactor pass; the outer file now holds only the session tab
 bar and orchestration.

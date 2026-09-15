@@ -21,6 +21,14 @@ public protocol ConnectionSurface: AnyObject {
 
     func send(_ message: ClientMessage) async throws
 
+    /// Abandon the current socket, because it can never be used again: bump the
+    /// generation, drop the transport, and report the failure so the coordinator
+    /// can drive recovery. Called by the controller when an RPC timeout leaves a
+    /// request outstanding that no future reply can be matched to — poisoning a
+    /// socket and giving it up are the same event, and this is the only moment
+    /// anything knows about it.
+    func markConnectionDead()
+
     @discardableResult
     func addServerMessageSubscriber(_ handler: @escaping (ServerMessage) -> Void) -> UUID
     func removeSubscriber(_ id: UUID)
@@ -82,6 +90,14 @@ public final class SessionController: ObservableObject {
     /// token-scoped list" from "genuinely moved to another token".
     @Published public private(set) var tokenId: String?
 
+    /// `protocolVersion` the server reported in `auth_success` (0 when it sent
+    /// none — a pre-versioning relay). Reset on re-auth.
+    @Published public private(set) var serverProtocolVersion: Int = 0
+
+    /// `capabilities` the server reported in `auth_success` (empty when none).
+    /// `CodeRelayKit.promptOptimizerCapability` here means the wand may be used.
+    @Published public private(set) var serverCapabilities: Set<String> = []
+
     /// The connection generation when auth was established. Used to detect stale auth
     /// after the WebSocket reconnects (server sees a fresh unauthenticated handler).
     public private(set) var authenticatedGeneration: UInt64 = 0
@@ -113,18 +129,27 @@ public final class SessionController: ObservableObject {
     /// later RPC on it throws `connectionDesynchronized` until it is replaced.
     /// Keying on the generation makes that self-expiring — any reconnect
     /// (`connect()` or `markConnectionDead()`) bumps it, and a fresh socket
-    /// cannot carry the old one's in-flight reply. `SessionHandshake` recovers
-    /// without a special case: its catch-all already does `resetAuth()` +
-    /// `disconnect()` and retries, which is exactly the required response.
+    /// cannot carry the old one's in-flight reply.
+    ///
+    /// The timeout that sets this ALSO calls `connection.markConnectionDead()`,
+    /// so the replacement is requested at the same instant rather than left to
+    /// whichever path notices first. It used to be left: the comment here said
+    /// `SessionHandshake` recovers without a special case, via its catch-all's
+    /// `resetAuth()` + `disconnect()` + retry. That is true and it is not
+    /// enough, because nothing was making the handshake run — see the teardown's
+    /// comment in `awaitResponse` for the incident.
     private var desyncedGeneration: UInt64?
 
     /// Whether the CURRENT socket is desynchronized — no RPC can run on it and
-    /// only replacing it will help. Private, unlike the Kotlin port's public
-    /// equivalent: there, the recovery layer has to consult it because its
-    /// alive-restore path would otherwise loop on an unusable socket. Swift has
-    /// no such path — `restoreSession` is only ever reached after a successful
-    /// `forceReconnect()`, whose generation bump has already cleared this — and
-    /// the handshake's catch-all cures it by disconnecting and retrying.
+    /// only replacing it will help.
+    ///
+    /// Normally false the moment it is set, because the teardown that
+    /// accompanies it bumps the generation. It stays as the controller's own
+    /// backstop: "a desynchronized socket carries no further RPC" is this type's
+    /// guarantee, and it must not depend on the transport honouring a request to
+    /// replace itself. Private, unlike the Kotlin port's public equivalent — its
+    /// recovery layer consults the flag instead of the socket being given up at
+    /// the poison site. Same invariant, different mechanics.
     private var isDesynchronized: Bool {
         desyncedGeneration == connection.generation
     }
@@ -134,12 +159,20 @@ public final class SessionController: ObservableObject {
     /// path without a 10-second wall-clock wait — production always takes the
     /// default.
     private let responseTimeout: Duration
+    /// Waiter for `optimize_prompt` / `replace_prompt` — the relay is calling a
+    /// model, so these get 20 s (spec §7.1) while every other RPC keeps 10 s.
+    private let optimizerTimeout: Duration
 
     // MARK: - Init
 
-    public init(connection: any ConnectionSurface, responseTimeout: Duration = .seconds(10)) {
+    public init(
+        connection: any ConnectionSurface,
+        responseTimeout: Duration = .seconds(10),
+        optimizerTimeout: Duration = .seconds(20)
+    ) {
         self.connection = connection
         self.responseTimeout = responseTimeout
+        self.optimizerTimeout = optimizerTimeout
     }
 
     // MARK: - Authentication
@@ -169,6 +202,11 @@ public final class SessionController: ObservableObject {
     public func resetAuth() {
         isAuthenticated = false
         sessionId = nil
+        // The next relay may be a different one (or the same one with its
+        // optimizer key removed), so what the previous `auth_success` reported
+        // must not be readable while unauthenticated.
+        serverProtocolVersion = 0
+        serverCapabilities = []
     }
 
     /// Sends an authentication request and waits for the server response.
@@ -180,7 +218,7 @@ public final class SessionController: ObservableObject {
         )
 
         switch response {
-        case .authSuccess(let serverProtocolVersion, let serverTokenId, _):
+        case .authSuccess(let serverProtocolVersion, let serverTokenId, let capabilities):
             let serverVersion = serverProtocolVersion ?? 0
             if serverVersion < CodeRelayKit.minProtocolVersion {
                 isAuthenticated = false
@@ -189,6 +227,8 @@ public final class SessionController: ObservableObject {
                     serverVersion: serverVersion
                 )
             }
+            self.serverProtocolVersion = serverProtocolVersion ?? 0
+            self.serverCapabilities = Set(capabilities ?? [])
             isAuthenticated = true
             authenticatedGeneration = connection.generation
             // nil against older servers; the coordinator's reconcile falls back
@@ -331,6 +371,57 @@ public final class SessionController: ObservableObject {
         }
     }
 
+    // MARK: - Prompt optimizer (spec §6)
+
+    /// The toast text for a `failed` status. An **empty** `message` is treated
+    /// exactly like an absent one: it is non-nil, so it would set
+    /// `optimizerNotice = ""` and draw an empty toast capsule.
+    private static func optimizerFailureMessage(_ message: String?) -> String {
+        guard let message, !message.isEmpty else { return OptimizerStrings.couldNotRewrite }
+        return message
+    }
+
+    /// Ask the relay to rewrite the draft at the agent's input line. The relay
+    /// types the rewrite itself; the reply only tells us how it went.
+    public func optimizePrompt(sessionId: UUID, shareScreen: Bool) async throws -> OptimizeOutcome {
+        let response = try await sendAndWaitForResponse(
+            .optimizePrompt(sessionId: sessionId, shareScreen: shareScreen),
+            expected: ["optimize_prompt_result"],
+            timeout: optimizerTimeout
+        )
+        switch response {
+        case .optimizePromptResult(let status, let original, _, let message):
+            switch status {
+            case "ok": return .ok(original: original)
+            case "no_draft": return .noDraft
+            case "passthrough": return .passthrough
+            case "unconfigured": return .unconfigured
+            default: return .failed(message: Self.optimizerFailureMessage(message))
+            }
+        case .error(_, let message):
+            throw SessionError.unexpectedResponse(message)
+        default:
+            throw SessionError.unexpectedResponse(response.typeString)
+        }
+    }
+
+    /// Put `text` back at the input line (Undo). Same waiter as optimize.
+    public func replacePrompt(sessionId: UUID, text: String) async throws -> ReplaceOutcome {
+        let response = try await sendAndWaitForResponse(
+            .replacePrompt(sessionId: sessionId, text: text),
+            expected: ["replace_prompt_result"],
+            timeout: optimizerTimeout
+        )
+        switch response {
+        case .replacePromptResult(let status, let message):
+            return status == "ok" ? .ok : .failed(message: Self.optimizerFailureMessage(message))
+        case .error(_, let message):
+            throw SessionError.unexpectedResponse(message)
+        default:
+            throw SessionError.unexpectedResponse(response.typeString)
+        }
+    }
+
     // MARK: - Internal Helpers
 
     /// Serializes request-response RPCs: **at most one may be outstanding on a
@@ -369,12 +460,13 @@ public final class SessionController: ObservableObject {
     /// back in.
     private func sendAndWaitForResponse(
         _ message: ClientMessage,
-        expected: Set<String>
+        expected: Set<String>,
+        timeout: Duration? = nil
     ) async throws -> ServerMessage {
         let predecessor = previousRPC
         let rpc = Task { @MainActor [self] in
             _ = await predecessor?.result
-            return try await awaitResponse(message, expected: expected)
+            return try await awaitResponse(message, expected: expected, timeout: timeout)
         }
         previousRPC = rpc
         defer {
@@ -409,7 +501,8 @@ public final class SessionController: ObservableObject {
     /// inherit the hazard.
     private func awaitResponse(
         _ message: ClientMessage,
-        expected: Set<String>
+        expected: Set<String>,
+        timeout: Duration? = nil
     ) async throws -> ServerMessage {
         // A previous RPC on this socket timed out, so it still owes a reply that
         // this waiter would happily accept. Refuse until the socket is replaced.
@@ -465,7 +558,7 @@ public final class SessionController: ObservableObject {
                 return
             }
 
-            let timeout = responseTimeout
+            let timeout = timeout ?? self.responseTimeout
             guard_.timeoutTask = Task { @MainActor [weak self, guard_] in
                 // `try await`, NOT `try?`: `ResumeGuard.resume` cancels this task
                 // when the reply lands, and a cancelled `Task.sleep` throws
@@ -492,7 +585,31 @@ public final class SessionController: ObservableObject {
                 // lets a `CancellationException` escape instead, so it poisons in
                 // a `finally` covering both paths. Same invariant, different
                 // mechanics; don't "align" one to the other without re-checking.
-                if let self { desyncedGeneration = sentGeneration }
+                if let self {
+                    desyncedGeneration = sentGeneration
+                    // ...and give the socket up, in the same breath. Marking it
+                    // without replacing it was a 16-minute silent wedge on macOS
+                    // (reported 2026-09-12): nothing else looks. Pings are not
+                    // RPCs, so the keepalive kept succeeding, `onSendFailed`
+                    // never fired and the quality indicator read "Excellent"
+                    // while every request failed before reaching the wire; and
+                    // both repair paths test the TRANSPORT — the recovery
+                    // controller's `isAlive()` short-circuit and the handshake's
+                    // `state != .connected` check — which was honestly reporting
+                    // a healthy socket. A foregrounded Mac emits no
+                    // wake/foreground/network signal, so neither ran at all: the
+                    // app typed into a session it was no longer attached to (the
+                    // server drops unattached input silently, by design) until
+                    // the server's read-idle reaper hung up 16 minutes later.
+                    //
+                    // Generation-guarded for the same reason the marker is: if a
+                    // reconnect already intervened, this timeout belongs to a
+                    // socket that is already gone, and killing the live one
+                    // would turn one dead request into an outage.
+                    if connection.generation == sentGeneration {
+                        connection.markConnectionDead()
+                    }
+                }
                 guard_.resume(throwing: SessionError.timeout)
             }
         }

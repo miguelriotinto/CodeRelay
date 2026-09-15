@@ -25,11 +25,11 @@ swift run claude-relay optimizer try "<draft>" [--session <uuid>] [--no-screen] 
 
 Note: Service commands are top-level (`claude-relay stop`), while token/session/config/log commands are grouped (`claude-relay token create`, `claude-relay session list`, etc.).
 
-**iOS app**: Open `CodeRelay.xcodeproj` in Xcode, Cmd+R. After changing CodeRelayClient, CodeRelaySpeech, or CodeRelayKit sources, rebuild the iOS app in Xcode to pick up changes.
+**iOS app**: Open `CodeRelay.xcodeproj` in Xcode, Cmd+R. After changing CodeRelayClient or CodeRelayKit sources, rebuild the iOS app in Xcode to pick up changes.
 
 **Launchd**: Plist at `~/Library/LaunchAgents/com.claude.relay.plist`. The `load` command locates the server binary via a fallback chain: sibling of the CLI binary, `/opt/homebrew/bin/`, `/usr/local/bin/`, `~/.claude-relay/bin/`.
 
-**Linux server**: the same `CodeRelayServer`/`CodeRelayCLI`/`CodeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the two Apple client libraries (`CodeRelayClient`, `CodeRelaySpeech`) and their deps (WhisperKit, LLM.swift) are not declared. `swift build && swift test` run there (834 tests). The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). **Do not commit a Linux-resolved `Package.resolved`** — resolving on Linux drops the whisperkit/llm.swift/swift-syntax pins; keep the macOS superset (CI restores it). The `linux-server` CI job builds and tests on Ubuntu.
+**Linux server**: the same `CodeRelayServer`/`CodeRelayCLI`/`CodeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the Apple client library (`CodeRelayClient`) is not declared. `swift build && swift test` run there (1372 tests). The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). CI fails if the Linux resolve changes `Package.resolved`. The `linux-server` CI job builds and tests on Ubuntu.
 
 ## Release Process
 
@@ -40,15 +40,14 @@ Use `/coderelay-deploy [ios|android|mac|server|all]` to build, publish, and veri
 
 ## Architecture
 
-Six SPM targets + iOS app + macOS app (both XcodeGen-managed via `project.yml`):
+Five SPM targets + iOS app + macOS app (both XcodeGen-managed via `project.yml`):
 
 - **CPTYShim** — C shim for `forkpty` used by PTYSession.
 - **CodeRelayKit** — Shared library: wire-protocol models, config, and the pluggable `CodingAgent` registry. Used by all other targets.
 - **CodeRelayServer** — NIO-based server: `WebSocketServer` (port 9200, optional TLS via NIO-SSL) + `AdminHTTPServer` (port 9100, localhost-only). Actor-based (`SessionManager`, `TokenStore`, `PTYSession`). `RelayMessageHandler` holds a **shared static `JSONEncoder`/`JSONDecoder` — a single pair across all connections**.
 - **CodeRelayCLI** — ArgumentParser CLI (`claude-relay`): token/session/config/service/log management. Talks to the admin HTTP API; `AdminClient` requests timeout at 10 s (127.0.0.1-only).
 - **CodeRelayClient** — URLSessionWebSocketTask client: transport, session lifecycle, cross-platform coordination, auth. Also hosts the shared UI atoms under `Views/` used by both apps.
-- **CodeRelaySpeech** — Cross-platform on-device speech pipeline shared by both apps. iOS-only APIs (`AVAudioSession`, `UIApplication` memory-warning observer) are guarded by `#if canImport(UIKit)`; storage paths/keys are `#if os(iOS)`-branched **to preserve existing user downloads**.
-- **CodeRelayApp/** — iOS SwiftUI app (not in SPM, uses Xcode project). Depends on CodeRelayClient + CodeRelaySpeech + SwiftTerm.
+- **CodeRelayApp/** — iOS SwiftUI app (not in SPM, uses Xcode project). Depends on CodeRelayClient + SwiftTerm.
 - **CodeRelayMac/** — macOS SwiftUI app (not in SPM, uses Xcode project). Menu-bar persistent, single-window with sidebar + native tab support, full iOS feature parity.
 
 ### Wire Protocol
@@ -163,6 +162,7 @@ by `CodeRelayAppTests/TerminalSwipeScrollTests`.
 
 - **RTT tracking**: Sliding window of 6 measurements → `ConnectionQuality` enum (excellent/good/poor/veryPoor/disconnected) based on median RTT + success rate. All RTT append + window-cap + failure-counter bookkeeping is centralized in the private `recordRTT` helper — every call site is guaranteed to enforce the cap
 - **Death detection**: 3 consecutive ping failures triggers `onSendFailed`, which the coordinator handles via `handleForegroundTransition`
+- **RPC timeout is a death signal too**: an `sendAndWaitForResponse` timeout marks the socket desynchronized *and* calls `connection.markConnectionDead()` in the same breath, both guarded by `connection.generation == sentGeneration` so a timeout belonging to an already-replaced socket cannot kill the live one (commit `7b394f2`). Poisoning a socket and giving it up are one event: marking without replacing was a 16-minute silent wedge, because pings are not RPCs, so the keepalive kept succeeding and both repair paths test the transport
 - **Recovery ownership**: Only the coordinator (`SharedSessionCoordinator`) drives recovery. `forceReconnect()` deliberately does NOT enable auto-reconnect to prevent competing recovery loops
 - **Recovery defer idempotency**: `handleForegroundTransition` uses a single outer `defer` guarded by `if isRecovering`. A mid-flight cancellation at any `await` (e.g., inside backoff sleep) still clears `isRecovering`, `suppressAllViewModelSends`, and `lastRecoveryEndedAt`. Without this, a cancelled recovery could strand `isRecovering=true` and permanently block future recoveries
 - **Alive short-circuit**: If the connection is already alive when foreground fires (scenePhase `.active`, rotation, notification), transition skips the recovery path entirely and only calls `fetchSessions()`
@@ -195,7 +195,6 @@ Named caps across the stack:
 - `LogStore` — compacts at 5 % overshoot above `maxEntries` (not +1000)
 - `AdminHTTPServer.maxRequestBodyBytes` — 64 KB (returns 413)
 - `TerminalViewModel.pendingOutputByteLimit` — 4 MB client-side (logs once-per-session on first drop)
-- `AudioCaptureSession.maximumDuration` — 300 s (5 min) auto-stop to cap `Float`-sample memory growth
 - `SharedSessionCoordinator` terminal-cache — LRU-bounded at 8 sessions
 - `PushRegistrationStore` — `maxPerToken` (20) + `maxTotal` (5 k) registrations, TTL-reaped (90 d), atomic `0o600` write
 - `PushDispatcher` — `previousSessionState`/`lastRevision` capped at 4 k sessions, debounce map at 2 k groups (age-reaped)
@@ -234,19 +233,34 @@ above: `SessionController.isForeignError` (Swift + Kotlin) refuses to let an
 `.error` whose message is exactly `"No session attached"` resolve any waiter
 other than `detach`'s. Deliberately one exact string — dropping anything
 *unrecognized* would hang the waiter to its 10 s timeout, and a timeout poisons
-the socket (`desyncedGeneration`), which is worse than surfacing a wrong error.
+the socket (`desyncedGeneration`) **and now tears it down**
+(`markConnectionDead()`, generation-guarded — see "Connection Health"), which is
+worse than surfacing a wrong error.
 
-### Speech Layer Concurrency
+### Prompt Optimizer (client side)
 
-`TextCleaner` is `@MainActor`-isolated (not `@unchecked Sendable`). All real callers (`OnDeviceSpeechEngine`, `CodeRelayApp.preloadSpeechModels`, macOS `AppDelegate.applicationWillTerminate`) are or must be main-actor-isolated. This enforces "no concurrent `clean()`/`unload()`" at compile time instead of by convention.
-
-`CloudPromptEnhancer` takes an optional `modelId` at init (defaults to the current Haiku inference profile; override for newer models). Error bodies are JSON-parsed for clean messages, and free-form bodies have `Bearer <token>` redacted before logging.
-
-### Continuous Listening Pipeline
-
-Always-on listening with a wake word, parallel to the push-to-talk
-`OnDeviceSpeechEngine`. See `Sources/CodeRelaySpeech/CLAUDE.md` for the state
-machine, the detector cascade, and the strict two-phase UX contract.
+The magic-wand button (`WandButton` in CodeRelayClient, hosted by both apps
+where the mic used to be) is a thin renderer over `SharedSessionCoordinator`'s
+optimizer state: `optimizerAvailability` (derived from `auth_success`'s
+`protocolVersion` and `capabilities` — the wand is dimmed and a tap shows the
+config hint unless the relay advertises `prompt_optimizer` on protocol v2),
+`optimizerState` (`optimizing` only for one RPC), `optimizerUndo` (10 s,
+one-shot `replace_prompt` of the original) and `optimizerNotice` (4 s toast).
+`optimize_prompt` / `replace_prompt` use a 20 s waiter
+(`SessionController.optimizerTimeout`); everything else keeps 10 s. Because
+replies carry no request ids, `sendAndWaitForResponse` chains RPCs through
+`previousRPC`, so a 12–20 s optimize **serialises every other RPC behind it**
+by design — a session-tab tap during an optimize appears to hang for the
+model's full latency. Nothing times out spuriously (each waiter's timer starts
+after its `send`); it is a latency artefact, not a bug. All copy is
+in `OptimizerStrings`. The hardware shortcut (`recordingShortcut*` settings,
+`RecordingShortcutMonitor` on macOS) now posts `.optimizePromptShortcut`.
+Voice input is the OS's own dictation into the terminal; the apps no longer
+ship a speech stack, and `SpeechRemovalMigration` scrubs the old settings,
+the Bedrock keychain item and **both** model directories once per install — the
+old `SpeechModelStore` folder *and* WhisperKit's `Documents/huggingface`
+download base, which is where the Whisper weights actually landed (it was
+called with no `downloadBase`).
 
 ## Configuration
 
@@ -254,7 +268,7 @@ Config stored in `~/.claude-relay/config.json`. Default ports: WS=9200, Admin=91
 
 **Config keys**: `wsPort`, `adminPort`, `detachTimeout`, `scrollbackSize`, `tlsCert`, `tlsKey`, `logLevel`, `maxSessionsPerToken` (default 50, 0 = unlimited), `bindAll` (default `true` — WebSocket server binds `0.0.0.0` and accepts connections from any interface. Set `false` to restrict to `127.0.0.1`. When `true` without TLS, startup logs a warning because tokens travel in the clear). **Push (all off/nil by default):** `pushEnabled`, `pushNotifyOnFinished` (server-wide default; per-device pref overrides), `apnsKeyPath`/`apnsKeyId`/`apnsTeamId`/`apnsBundleId`/`apnsUseSandbox`, `fcmServiceAccountPath`/`fcmProjectId`. See "Push Notifications" above. **Prompt optimizer (off by default):** `promptOptimizerEnabled`, `promptOptimizerProvider` (`anthropic` | `bedrock`, default `anthropic`), `promptOptimizerModel` (default `claude-sonnet-5` on Anthropic, `anthropic.claude-sonnet-5` on Bedrock), `promptOptimizerRegion` (Bedrock only, default `us-east-1`), `promptOptimizerKeyPath` (file holding the API key, `chmod 600`; the key is read once at startup and never logged), `promptOptimizerShareScreen` (default `true`; the server-side gate on sending the last 40 screen lines to the model — the device has its own). `promptOptimizer*` changes take effect only after a relay restart — the key is read once at startup, so `config set promptOptimizerEnabled true` alone leaves the capability absent. The `prompt_optimizer` capability appears in `auth_success.capabilities` only when the optimizer is enabled **and** the key was readable at startup. See `Sources/CodeRelayServer/CLAUDE.md` "Prompt Optimizer".
 
-App-side (not in `config.json`, stored via `@AppStorage`): `terminalScrollbackLines` (per-app, default 5000, max 25000). The server's `RingBuffer` still replays anything that falls off this edge on reattach. Continuous-listening settings persisted via `@AppStorage` are the on/off toggle and the wake word — `turnEndSilenceTimeout` is **not** user-tunable (defaults from `SpeechProcessingOptions`).
+App-side (not in `config.json`, stored via `@AppStorage`): `terminalScrollbackLines` (per-app, default 5000, max 25000). The server's `RingBuffer` still replays anything that falls off this edge on reattach. `shareScreenWithOptimizer` (per device, default on) is sent as `shareScreen` on every `optimize_prompt`.
 
 ## Device Pairing (F11, second half)
 

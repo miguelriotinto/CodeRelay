@@ -104,42 +104,16 @@ public final class AuthManager: Sendable {
         try keychain.delete(service: service, account: connectionId.uuidString)
     }
 
-    // MARK: - Bedrock bearer token (C-25)
+    // MARK: - Legacy Bedrock secret
 
-    /// Account key used for the Bedrock bearer token entry. Kept as a
-    /// well-known string so both apps hit the same Keychain item and a future
-    /// sharing / preferences-migration flow can look it up without reflection.
-    private var bedrockAccount: String { "com.clauderelay.bedrock.bearerToken" }
-
-    /// Saves the Bedrock bearer token to the Keychain. Empty string deletes
-    /// the entry.
-    public func saveBedrockToken(_ token: String) throws {
-        if token.isEmpty {
-            try deleteBedrockToken()
-            return
-        }
-        guard let data = token.data(using: .utf8) else {
-            throw AuthManagerError.encodingFailed
-        }
-        try? keychain.delete(service: service, account: bedrockAccount)
-        try keychain.add(service: service, account: bedrockAccount, data: data)
-    }
-
-    /// Loads the Bedrock bearer token from the Keychain, or returns `nil` if
-    /// no entry exists.
-    public func loadBedrockToken() throws -> String? {
-        guard let data = try keychain.get(service: service, account: bedrockAccount) else {
-            return nil
-        }
-        guard let token = String(data: data, encoding: .utf8) else {
-            throw AuthManagerError.decodingFailed
-        }
-        return token
-    }
+    /// Keychain account the removed speech feature used for its AWS Bedrock
+    /// bearer token. Kept only so `deleteBedrockToken()` can scrub it on the
+    /// first launch after the upgrade (spec §7.2); nothing writes it anymore.
+    static let bedrockAccount = "com.clauderelay.bedrock.bearerToken"
 
     /// Deletes the Bedrock bearer token Keychain entry. No-op when absent.
     public func deleteBedrockToken() throws {
-        try keychain.delete(service: service, account: bedrockAccount)
+        try keychain.delete(service: service, account: Self.bedrockAccount)
     }
 }
 

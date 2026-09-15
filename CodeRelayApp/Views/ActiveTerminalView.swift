@@ -1,7 +1,6 @@
 import SwiftUI
 import CodeRelayClient
 import CodeRelayKit
-import CodeRelaySpeech
 import GameController
 
 /// Detail pane: thin toolbar + terminal + optional key bar.
@@ -19,12 +18,7 @@ struct ActiveTerminalView: View {
     /// hides it behind opaque black while the server's copy is swapped in.
     /// Driven by `TerminalReloadFade`.
     @State private var reloadCover: Double = 0
-    @StateObject private var speechEngine = OnDeviceSpeechEngine()
-    @StateObject private var continuousEngine = ContinuousListeningEngine.makeDefault(
-        options: AppSettings.shared.currentSpeechOptions()
-    )
     @ObservedObject private var settings = AppSettings.shared
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -57,18 +51,20 @@ struct ActiveTerminalView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .onAppear {
-                speechEngine.preloadInBackground()
-            }
 
-            // Floating buttons: mic + keyboard toggle (only when a terminal session is active)
+            // Floating buttons: wand + keyboard toggle (only when a terminal session is active)
             if coordinator.activeSessionId != nil {
                 HStack(spacing: 10) {
-                    MicButton(
-                        engine: speechEngine,
-                        settings: settings,
+                    WandButton(
                         coordinator: coordinator,
-                        continuousEngine: continuousEngine
+                        shareScreen: settings.shareScreenWithOptimizer,
+                        size: 44,
+                        fill: Color.gray.opacity(0.5),
+                        onTap: {
+                            if settings.hapticFeedbackEnabled {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                        }
                     )
 
                     Button {
@@ -183,31 +179,12 @@ struct ActiveTerminalView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: coordinator.activeSessionId) { _, _ in
             showQROverlay = false
-            speechEngine.cancel()
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase != .active {
-                speechEngine.cancel()
-            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidConnect)) { _ in
             hasHardwareKeyboard = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidDisconnect)) { _ in
             hasHardwareKeyboard = GCKeyboard.coalesced != nil
-        }
-        .alert(
-            "Speech Error",
-            isPresented: Binding(
-                get: { if case .error = speechEngine.state { return true } else { return false } },
-                set: { _ in }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            if case .error(let msg) = speechEngine.state {
-                Text(msg)
-            }
         }
         .alert("Rename Session", isPresented: $showRenameAlert) {
             TextField("Name", text: $renameText)
@@ -220,19 +197,6 @@ struct ActiveTerminalView: View {
             Button("Cancel", role: .cancel) {}
         }
         .selectAllOnBeginEditing(while: showRenameAlert)
-        .task(id: optionsHash) {
-            continuousEngine.onUtteranceReady = { text in
-                guard let id = coordinator.activeSessionId,
-                      let vm = coordinator.viewModel(for: id) else { return }
-                vm.sendInput(text)
-            }
-            continuousEngine.updateOptions(settings.currentSpeechOptions())
-            if settings.continuousListeningEnabled && scenePhase == .active {
-                await continuousEngine.enable()
-            } else {
-                await continuousEngine.disable()
-            }
-        }
         .overlay {
             if showQROverlay, let id = coordinator.activeSessionId {
                 QRCodeOverlay(
@@ -242,17 +206,6 @@ struct ActiveTerminalView: View {
                 )
             }
         }
-    }
-
-    private var optionsHash: String {
-        let s = settings
-        return [
-            "\(s.continuousListeningEnabled)",
-            "\(s.smartCleanupEnabled)",
-            "\(s.promptEnhancementEnabled)",
-            s.wakeWord,
-            "\(scenePhase)"
-        ].joined(separator: "|")
     }
 
     /// True when any active session's tab should be flashing — a blocked or
@@ -432,7 +385,6 @@ private struct SessionTab: View {
 extension Notification.Name {
     static let terminalRequestFocus = Notification.Name("terminalRequestFocus")
     static let terminalResignFocus = Notification.Name("terminalResignFocus")
-    static let toggleSpeechRecording = Notification.Name("toggleSpeechRecording")
 }
 
 // MARK: - Session Uptime

@@ -21,8 +21,7 @@ since their last release tag and confirm the skip list with the user.
    `cd CodeRelayAndroid && ./gradlew testDebugUnitTest`.
 3. Diff each platform's paths against its last release tag to decide what
    needs shipping (`Sources/` + `Formula/` → server; `CodeRelayApp/`,
-   `CodeRelayClient`, `CodeRelaySpeech`, `CodeRelayKit` → iOS/mac;
-   `CodeRelayAndroid/` → android).
+   `CodeRelayClient`, `CodeRelayKit` → iOS/mac; `CodeRelayAndroid/` → android).
 
 ## 2. Version bumps (only platforms being shipped)
 

@@ -405,7 +405,14 @@ public final class RelayConnection: ObservableObject {
     /// Marks the current connection as dead: cancels the websocket, bumps generation
     /// so stale callbacks are rejected, and notifies the coordinator. The coordinator
     /// owns recovery — this class never self-reconnects.
-    private func markConnectionDead() {
+    ///
+    /// Two things call it, and the second is why it isn't private: the quality
+    /// monitor's three-failed-pings detector above, and `SessionController` when
+    /// an RPC timeout desynchronizes the socket. That second case is invisible
+    /// from here — pings are not RPCs, so a desynchronized socket goes on
+    /// answering every ping while refusing every request — so the controller has
+    /// to be the one to say it.
+    public func markConnectionDead() {
         keepaliveTask?.cancel()
         keepaliveTask = nil
         resolvePendingPong(gotPong: false)
