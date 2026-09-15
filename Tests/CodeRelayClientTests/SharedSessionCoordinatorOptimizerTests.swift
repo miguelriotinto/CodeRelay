@@ -103,6 +103,15 @@ final class SharedSessionCoordinatorOptimizerTests: XCTestCase {
         await coordinator.optimizePrompt(shareScreen: true)
         XCTAssertEqual(coordinator.optimizerNotice, OptimizerStrings.updateRelayHint)
         XCTAssertFalse(conn.sentTypes.contains("optimize_prompt"))
+        XCTAssertEqual(coordinator.optimizerState, .idle)
+    }
+
+    func testTapWhileUnavailableNeverEntersOptimizing() async throws {
+        try await inject(capabilities: [])
+        XCTAssertEqual(coordinator.optimizerAvailability, .unconfigured)
+        await coordinator.optimizePrompt(shareScreen: true)
+        XCTAssertEqual(coordinator.optimizerState, .idle, "Must stay idle when unavailable")
+        XCTAssertEqual(coordinator.optimizerNotice, OptimizerStrings.configHint)
     }
 
     // MARK: - optimize → ok → Undo
@@ -179,6 +188,31 @@ final class SharedSessionCoordinatorOptimizerTests: XCTestCase {
         await coordinator.optimizePrompt(shareScreen: true)
         XCTAssertNil(coordinator.optimizerUndo)
         XCTAssertNil(coordinator.optimizerNotice)
+    }
+
+    func testFailedRetryKeepsExistingUndo() async throws {
+        try await inject()
+        respondToOptimize(.optimizePromptResult(status: "ok", original: "the original", prompt: "rewrite #1", message: nil))
+        await coordinator.optimizePrompt(shareScreen: true)
+        let firstUndo = coordinator.optimizerUndo
+        XCTAssertEqual(firstUndo, OptimizerUndo(sessionId: sessionId, original: "the original"))
+
+        respondToOptimize(.optimizePromptResult(status: "failed", original: nil, prompt: nil, message: "Something broke"))
+        await coordinator.optimizePrompt(shareScreen: true)
+
+        XCTAssertEqual(coordinator.optimizerUndo, firstUndo, "Failed retry must keep the original undo")
+        XCTAssertEqual(coordinator.optimizerNotice, "Something broke")
+
+        conn.autoRespond = { m in
+            if case .replacePrompt(let id, let text) = m {
+                XCTAssertEqual(id, self.sessionId)
+                XCTAssertEqual(text, "the original", "Undo must still send the true original")
+                return .replacePromptResult(status: "ok", message: nil)
+            }
+            return nil
+        }
+        await coordinator.undoOptimize()
+        XCTAssertNil(coordinator.optimizerUndo, "Undo is one-shot")
     }
 
     // MARK: - Toasts

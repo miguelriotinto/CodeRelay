@@ -66,9 +66,16 @@ extension SharedSessionCoordinator {
     /// Wand tap. Never throws: every outcome becomes state or a toast.
     public func optimizePrompt(shareScreen: Bool) async {
         guard isWandEnabled, let sessionId = activeSessionId else { return }
+
+        // Fast path: show hint immediately for known-unavailable relays without
+        // entering .optimizing or making any network call.
+        if optimizerAvailability == .serverTooOld || optimizerAvailability == .unconfigured {
+            showOptimizerNotice(wandHint ?? "")
+            return
+        }
+
         optimizerState = .optimizing
         defer { optimizerState = .idle }
-        clearOptimizerUndo()
 
         do {
             _ = try await ensureAuthenticated()
@@ -91,6 +98,8 @@ extension SharedSessionCoordinator {
             case .ok(let original):
                 if let original, activeSessionId == sessionId {
                     armOptimizerUndo(OptimizerUndo(sessionId: sessionId, original: original))
+                } else {
+                    clearOptimizerUndo()
                 }
             case .noDraft:
                 showOptimizerNotice(OptimizerStrings.noDraft)
