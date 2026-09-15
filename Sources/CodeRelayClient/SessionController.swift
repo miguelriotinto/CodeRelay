@@ -90,6 +90,14 @@ public final class SessionController: ObservableObject {
     /// token-scoped list" from "genuinely moved to another token".
     @Published public private(set) var tokenId: String?
 
+    /// `protocolVersion` the server reported in `auth_success` (0 when it sent
+    /// none — a pre-versioning relay). Reset on re-auth.
+    @Published public private(set) var serverProtocolVersion: Int = 0
+
+    /// `capabilities` the server reported in `auth_success` (empty when none).
+    /// `CodeRelayKit.promptOptimizerCapability` here means the wand may be used.
+    @Published public private(set) var serverCapabilities: Set<String> = []
+
     /// The connection generation when auth was established. Used to detect stale auth
     /// after the WebSocket reconnects (server sees a fresh unauthenticated handler).
     public private(set) var authenticatedGeneration: UInt64 = 0
@@ -151,12 +159,20 @@ public final class SessionController: ObservableObject {
     /// path without a 10-second wall-clock wait — production always takes the
     /// default.
     private let responseTimeout: Duration
+    /// Waiter for `optimize_prompt` / `replace_prompt` — the relay is calling a
+    /// model, so these get 20 s (spec §7.1) while every other RPC keeps 10 s.
+    private let optimizerTimeout: Duration
 
     // MARK: - Init
 
-    public init(connection: any ConnectionSurface, responseTimeout: Duration = .seconds(10)) {
+    public init(
+        connection: any ConnectionSurface,
+        responseTimeout: Duration = .seconds(10),
+        optimizerTimeout: Duration = .seconds(20)
+    ) {
         self.connection = connection
         self.responseTimeout = responseTimeout
+        self.optimizerTimeout = optimizerTimeout
     }
 
     // MARK: - Authentication
@@ -197,7 +213,7 @@ public final class SessionController: ObservableObject {
         )
 
         switch response {
-        case .authSuccess(let serverProtocolVersion, let serverTokenId, _):
+        case .authSuccess(let serverProtocolVersion, let serverTokenId, let capabilities):
             let serverVersion = serverProtocolVersion ?? 0
             if serverVersion < CodeRelayKit.minProtocolVersion {
                 isAuthenticated = false
@@ -206,6 +222,8 @@ public final class SessionController: ObservableObject {
                     serverVersion: serverVersion
                 )
             }
+            self.serverProtocolVersion = serverProtocolVersion ?? 0
+            self.serverCapabilities = Set(capabilities ?? [])
             isAuthenticated = true
             authenticatedGeneration = connection.generation
             // nil against older servers; the coordinator's reconcile falls back
@@ -348,6 +366,49 @@ public final class SessionController: ObservableObject {
         }
     }
 
+    // MARK: - Prompt optimizer (spec §6)
+
+    /// Ask the relay to rewrite the draft at the agent's input line. The relay
+    /// types the rewrite itself; the reply only tells us how it went.
+    public func optimizePrompt(sessionId: UUID, shareScreen: Bool) async throws -> OptimizeOutcome {
+        let response = try await sendAndWaitForResponse(
+            .optimizePrompt(sessionId: sessionId, shareScreen: shareScreen),
+            expected: ["optimize_prompt_result"],
+            timeout: optimizerTimeout
+        )
+        switch response {
+        case .optimizePromptResult(let status, let original, _, let message):
+            switch status {
+            case "ok": return .ok(original: original)
+            case "no_draft": return .noDraft
+            case "passthrough": return .passthrough
+            case "unconfigured": return .unconfigured
+            default: return .failed(message: message ?? OptimizerStrings.couldNotRewrite)
+            }
+        case .error(_, let message):
+            throw SessionError.unexpectedResponse(message)
+        default:
+            throw SessionError.unexpectedResponse(response.typeString)
+        }
+    }
+
+    /// Put `text` back at the input line (Undo). Same waiter as optimize.
+    public func replacePrompt(sessionId: UUID, text: String) async throws -> ReplaceOutcome {
+        let response = try await sendAndWaitForResponse(
+            .replacePrompt(sessionId: sessionId, text: text),
+            expected: ["replace_prompt_result"],
+            timeout: optimizerTimeout
+        )
+        switch response {
+        case .replacePromptResult(let status, let message):
+            return status == "ok" ? .ok : .failed(message: message ?? OptimizerStrings.couldNotRewrite)
+        case .error(_, let message):
+            throw SessionError.unexpectedResponse(message)
+        default:
+            throw SessionError.unexpectedResponse(response.typeString)
+        }
+    }
+
     // MARK: - Internal Helpers
 
     /// Serializes request-response RPCs: **at most one may be outstanding on a
@@ -386,12 +447,13 @@ public final class SessionController: ObservableObject {
     /// back in.
     private func sendAndWaitForResponse(
         _ message: ClientMessage,
-        expected: Set<String>
+        expected: Set<String>,
+        timeout: Duration? = nil
     ) async throws -> ServerMessage {
         let predecessor = previousRPC
         let rpc = Task { @MainActor [self] in
             _ = await predecessor?.result
-            return try await awaitResponse(message, expected: expected)
+            return try await awaitResponse(message, expected: expected, timeout: timeout)
         }
         previousRPC = rpc
         defer {
@@ -426,7 +488,8 @@ public final class SessionController: ObservableObject {
     /// inherit the hazard.
     private func awaitResponse(
         _ message: ClientMessage,
-        expected: Set<String>
+        expected: Set<String>,
+        timeout: Duration? = nil
     ) async throws -> ServerMessage {
         // A previous RPC on this socket timed out, so it still owes a reply that
         // this waiter would happily accept. Refuse until the socket is replaced.
@@ -482,7 +545,7 @@ public final class SessionController: ObservableObject {
                 return
             }
 
-            let timeout = responseTimeout
+            let timeout = timeout ?? self.responseTimeout
             guard_.timeoutTask = Task { @MainActor [weak self, guard_] in
                 // `try await`, NOT `try?`: `ResumeGuard.resume` cancels this task
                 // when the reply lands, and a cancelled `Task.sleep` throws
