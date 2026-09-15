@@ -45,12 +45,6 @@ dependencies {
     implementation(project(":core-session"))
     implementation(project(":terminal"))
 
-    // :speech — the MicButton observes the PTT / continuous engine state
-    // (SpeechEngineState / ContinuousListeningState) and the SpeechModelStore
-    // download progress, and routes onUtteranceReady → terminal input. The engines
-    // themselves are constructed by :app and handed down to WorkspaceScreen.
-    implementation(project(":speech"))
-
     // ConnectBot termlib — the real VT100/xterm emulator (libvterm/JNI) + its
     // Compose renderer. TerminalHost renders termlib's `Terminal` composable
     // backed by a `TerminalEmulator`; TermlibTerminalEngine adapts that emulator

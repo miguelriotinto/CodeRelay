@@ -21,7 +21,6 @@
 //   Haptics.kt               — no desktop equivalent
 //   QrScannerScreen.kt       — CameraX + ML Kit; pairing uses a typed code instead
 //   QrShareSheet.kt          — Android Bitmap; ours draws the ZXing grid on a Canvas
-//   MicButton.kt             — speech is out of parity scope (spec §1.1)
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -64,7 +63,7 @@ sourceSets {
                 it.name in setOf(
                     "TerminalHost.kt",
                     "TermlibTerminalEngine.kt", "Haptics.kt", "QrScannerScreen.kt",
-                    "QrShareSheet.kt", "MicButton.kt",
+                    "QrShareSheet.kt",
                 )
         }
     }
@@ -75,7 +74,6 @@ sourceSets {
             it.file.absolutePath.startsWith(androidRoot.absolutePath) &&
                 it.name in setOf(
                     "SessionTabsLogicTest.kt",
-                    "MicButtonStateTest.kt",
                     // Tests the Android vibrator-backed HapticController; ours is
                     // a no-op with no `vibrator` to inject.
                     "HapticsTest.kt",

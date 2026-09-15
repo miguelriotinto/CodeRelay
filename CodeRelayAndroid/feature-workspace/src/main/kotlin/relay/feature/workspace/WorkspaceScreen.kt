@@ -147,13 +147,12 @@ fun WorkspaceScreen(
     onAttach: () -> Unit = {},
     onShareQr: (UUID) -> Unit = {},
     /**
-     * Speech mic-button slot, placed in the terminal status row. `:app` supplies
-     * the real [MicButton] (constructing the device-deferred PTT / continuous
-     * engines + the model store) and wires `onUtteranceReady → vm.sendInput(text)`.
-     * Defaults to empty so the screen renders without speech (e.g. in previews /
-     * before the engines are wired).
+     * `AppSettings.shareScreenWithOptimizer` — sent as `shareScreen` on every
+     * `optimize_prompt` the magic-wand button fires (spec §7.1). Defaults to the
+     * setting's own default (on) so previews and hosts without the setting behave
+     * like a fresh install.
      */
-    micButton: @Composable () -> Unit = {},
+    shareScreen: Boolean = true,
     /**
      * `AppSettings.hapticFeedbackEnabled` — gates the `.light`-impact tap haptics
      * the iOS status bar / session tabs / key bar fire (`ActiveTerminalView.swift`
@@ -189,6 +188,20 @@ fun WorkspaceScreen(
     val isHandshaking by coordinator.isPerformingHandshake.collectAsStateWithLifecycle()
 
     val isRecovering by coordinator.isRecovering.collectAsStateWithLifecycle()
+    // Magic-wand prompt optimizer (spec §7.1). Four StateFlows from the
+    // coordinator's PromptOptimizerController, rendered by OptimizerOverlay in the
+    // bottom-right slot the mic button used to own.
+    val optimizerAvailability by coordinator.optimizerAvailability.collectAsStateWithLifecycle()
+    val optimizerState by coordinator.optimizerState.collectAsStateWithLifecycle()
+    val optimizerUndo by coordinator.optimizerUndo.collectAsStateWithLifecycle()
+    val optimizerNotice by coordinator.optimizerNotice.collectAsStateWithLifecycle()
+    val wandVisual = WandButtonLogic.visual(
+        availability = optimizerAvailability,
+        state = optimizerState,
+        hasActiveSession = activeSessionId != null,
+        isRecovering = isRecovering,
+    )
+    val undoVisible = WandButtonLogic.undoChipVisible(optimizerUndo, activeSessionId)
     val recoveryPhase by coordinator.recoveryPhase.collectAsStateWithLifecycle()
     val connectionTimedOut by coordinator.connectionTimedOut.collectAsStateWithLifecycle()
     // "Cannot Open Session" alert — raised on an app-level restore failure (the
@@ -311,7 +324,18 @@ fun WorkspaceScreen(
                 onNameLongPress = { renameActive = true },
                 onKeyHaptic = { haptics.lightTap() },
                 nameFor = ::nameFor,
-                micButton = micButton,
+                wandOverlay = {
+                    OptimizerOverlay(
+                        visual = wandVisual,
+                        undoVisible = undoVisible,
+                        notice = optimizerNotice,
+                        // Same `.light` tap haptic as every other toolbar action.
+                        // Gating (unavailable → hint, no session → no-op) lives in
+                        // the coordinator; the button only refuses DISABLED/OPTIMIZING.
+                        onWandTap = { haptics.lightTap(); scope.launch { coordinator.optimizePrompt(shareScreen) } },
+                        onUndoTap = { haptics.lightTap(); scope.launch { coordinator.undoOptimize() } },
+                    )
+                },
                 redrawToken = redrawToken,
             )
         }
@@ -512,7 +536,7 @@ private fun TerminalColumn(
     onNameLongPress: () -> Unit,
     onKeyHaptic: () -> Unit,
     nameFor: (UUID) -> String,
-    micButton: @Composable () -> Unit,
+    wandOverlay: @Composable () -> Unit,
     redrawToken: Int,
 ) {
     Column(
@@ -585,7 +609,7 @@ private fun TerminalColumn(
                 )
             }
 
-            // (The speech mic button is NOT here — iOS floats it bottom-right over
+            // (The magic-wand button is NOT here — iOS floats it bottom-right over
             // the terminal; see the floating Box in the terminal body below.)
 
             if (activeSessionId != null) {
@@ -689,16 +713,16 @@ private fun TerminalColumn(
                 )
             }
 
-            // Floating mic button, bottom-right over the terminal (iOS
-            // ActiveTerminalView floating buttons: 16dp end / 12dp bottom). Always
-            // present so the user can enable/disable continuous listening or kick
-            // off the model download even with no active session.
+            // Floating magic-wand button + its Undo chip / notice, bottom-right over
+            // the terminal (iOS ActiveTerminalView floating buttons: 16dp end /
+            // 12dp bottom). Always present: with no session it renders DISABLED,
+            // and an unavailable optimizer renders DIMMED so a tap can explain why.
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 16.dp, bottom = 12.dp),
             ) {
-                micButton()
+                wandOverlay()
             }
 
         }
