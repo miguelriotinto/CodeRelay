@@ -195,6 +195,7 @@ private fun runApp(
     val fontSizeIsSet by settings.terminalFontSizeIsSet.collectAsState()
     val fontSize by settings.terminalFontSize.collectAsState()
     val scrollbackLines by settings.terminalScrollbackLines.collectAsState()
+    val shareScreen by settings.shareScreenWithOptimizer.collectAsState()
 
     fun raiseWindow() {
         windowVisible = true
@@ -574,6 +575,9 @@ private fun runApp(
                             // `loadingAttachable` so a double click fires one fetch.
                             onAttach = { fetchAttachable(active) },
                             onShareQr = { id -> shareSessionId = id },
+                            // The device-side gate on sending the last 40 screen lines
+                            // with optimize_prompt (spec §7.1); the relay has its own.
+                            shareScreen = shareScreen,
                             // Haptics are a no-op on desktop; passed for API parity.
                             hapticsEnabled = false,
                             sidebarToggleRequests = sidebarToggles,
@@ -624,10 +628,12 @@ private fun runApp(
                             buildNumber = BuildInfo.BUILD,
                             onDone = { showSettings = false },
                             modifier = Modifier.fillMaxSize(),
-                            // No speech engine and no recording shortcut on this
-                            // platform; their toggles would persist values nothing
-                            // reads. Haptics likewise.
+                            // No hardware-shortcut capture on this platform; its
+                            // toggle would persist a value nothing reads. Haptics
+                            // likewise. The optimizer section stays: the desktop
+                            // renders the same magic-wand button.
                             visibleSections = setOf(
+                                SettingsSection.PROMPT_OPTIMIZER,
                                 SettingsSection.CONNECTION,
                                 SettingsSection.GENERAL,
                                 SettingsSection.ABOUT,
@@ -780,11 +786,7 @@ class AppEnvironment private constructor(
                 // Absent on a non-Omarchy desktop; the terminal then keeps
                 // TerminalPalette's built-in colours.
                 themeWatcher = OmarchyThemeWatcher(scope),
-                settings = AppSettings(
-                    prefs = PreferenceStore(scope = scope),
-                    tokenStore = tokens,
-                    scope = scope,
-                ),
+                settings = AppSettings(prefs = PreferenceStore(scope = scope)),
                 clipboard = DesktopClipboard(),
             )
             return environment

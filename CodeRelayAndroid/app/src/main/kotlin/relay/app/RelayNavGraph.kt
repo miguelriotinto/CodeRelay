@@ -156,11 +156,6 @@ fun RelayNavGraph(
             SplashScreen(
                 appVersion = appVersion,
                 onComplete = {
-                    // Best-effort, non-blocking speech-model preload/check (M3 Task 11).
-                    // Re-derives model-readiness from disk so a download finished on a
-                    // previous launch is reflected; does NOT trigger a download (that is
-                    // user-gated behind the mic button's prompt — iOS preload parity).
-                    scope.launch { runCatching { preloadSpeechModels(context) } }
                     navController.navigate(Routes.SERVERS) {
                         popUpTo(Routes.SPLASH) { inclusive = true }
                     }
@@ -344,6 +339,7 @@ private fun WorkspaceRoute(
 ) {
     val coordinator = session.coordinator
     val hapticsEnabled by settings.hapticFeedbackEnabled.collectAsStateWithLifecycle()
+    val shareScreen by settings.shareScreenWithOptimizer.collectAsStateWithLifecycle()
 
     // ON_RESUME → restore + repaint the active terminal (the scenePhase == .active
     // analog). restoreActiveOnForeground() is the SINGLE foreground entry point:
@@ -399,7 +395,7 @@ private fun WorkspaceRoute(
             }
         },
         onShareQr = { id -> shareSessionId = id },
-        micButton = { session.speech.MicButtonSlot(session.workspaceViewModel) },
+        shareScreen = shareScreen,
         hapticsEnabled = hapticsEnabled,
         modifier = Modifier.fillMaxSize(),
     )
@@ -442,6 +438,12 @@ private fun SettingsRoute(
         buildNumber = buildNumber,
         onDone = onDone,
         modifier = Modifier.fillMaxSize(),
+        // No Android host reads `recordingShortcut*` (the Apple clients do, via
+        // RecordingShortcutMonitor / RelayTerminalView), so rendering the section
+        // would advertise an "Optimizer Shortcut" that does nothing when pressed.
+        // The Linux client omits it for the same reason.
+        visibleSections = relay.feature.settings.SettingsSection.entries.toSet() -
+            relay.feature.settings.SettingsSection.KEYBOARD_SHORTCUTS,
     )
 }
 
@@ -450,16 +452,3 @@ private fun SettingsRoute(
 /** Loads the saved token for [connectionId] from the secure store, or null. */
 private fun loadTokenFor(context: android.content.Context, connectionId: UUID): String? =
     relay.storage.TokenStore(context.applicationContext).loadToken(connectionId)
-
-/**
- * Best-effort splash-time speech-model preload/check (M3 Task 11). Runs on
- * [kotlinx.coroutines.Dispatchers.IO] (filesystem stat). Constructs a transient
- * app-rooted [relay.speech.SpeechModelStore] and refreshes its readiness flags
- * from disk. It is fine if models aren't downloaded yet — this just checks. The
- * per-connection [SpeechSession] owns the real engines + (user-gated) download.
- */
-private suspend fun preloadSpeechModels(context: android.content.Context) {
-    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        relay.speech.SpeechModelStore.create(context.applicationContext).refreshFromDisk()
-    }
-}

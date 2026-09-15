@@ -261,6 +261,15 @@ the Bedrock keychain item and **both** model directories once per install — th
 old `SpeechModelStore` folder *and* WhisperKit's `Documents/huggingface`
 download base, which is where the Whisper weights actually landed (it was
 called with no `downloadBase`).
+The Android and Linux clients share the same shape in Kotlin: `WandButton` /
+`OptimizerOverlay` in `feature-workspace`, the four optimizer StateFlows on
+`relay.session.SessionCoordinator`, `relay.net.OptimizerStrings`, and a
+`shareScreenWithOptimizer` DataStore/preference key. Android's `:speech` module,
+`ml/` tooling and `RECORD_AUDIO` permission are gone; `AppSettings.removeSpeechSettings()`
+runs on every launch (idempotent, no completion flag): the Bedrock secret is deleted
+first and off-main, then the six DataStore keys, each half independently guarded — and
+it is literally the first thing `runMigrations()` does, ahead of the shortcut migration,
+so a corrupt DataStore cannot hold the secret hostage.
 
 ## Configuration
 
@@ -369,7 +378,7 @@ shared file on disk, so an Android-side edit is a Linux build input:
 builds green. Build with `JAVA_HOME` pointing at a JDK 21 at `/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home` (not on `PATH`), and `cmake` (the Android modules require a JDK 17 at `/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`):
 
 ```bash
-cd CodeRelayLinux && ./gradlew test            # 702 tests, real libvterm
+cd CodeRelayLinux && ./gradlew test            # full suite, real libvterm (Linux only)
 ./gradlew :app:run                               # launch against a live relay
 ./gradlew :app:createDistributable               # the jpackage image the release tars
 ```

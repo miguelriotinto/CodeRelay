@@ -50,22 +50,16 @@ private class SessionOwnershipAdapter(
  *  - **Ownership adapter** wrapping `SessionOwnershipStore(context, deviceId)`.
  *  - **Connection-quality provider** polling `RelayConnection.connectionQuality`.
  *  - **Binary input sink** `RelayConnection.sendBinary` for raw terminal keystrokes.
- *
- * The factory holds the [connection] so the host can poll quality / send binary
- * and so [SessionCoordinator.tearDown] can disconnect it on leave.
  */
 class ConnectionSession private constructor(
     val coordinator: SessionCoordinator,
     val workspaceViewModel: WorkspaceViewModel,
     val scope: CoroutineScope,
-    /** Speech engines + model store bound to this connection's scope (Task 11). */
-    val speech: SpeechSession,
 ) {
     companion object {
         /**
-         * Constructs the coordinator + workspace VM + [SpeechSession] for [config]
-         * using [token]. [settings] supplies the naming [theme] and the speech
-         * options snapshot for the engines.
+         * Constructs the coordinator + workspace VM for [config] using [token].
+         * [settings] supplies the naming [theme].
          */
         fun create(
             context: Context,
@@ -99,9 +93,7 @@ class ConnectionSession private constructor(
                 nowMs = nowMs,
             )
 
-            val speech = SpeechSession.create(appContext, scope, settings)
-
-            return ConnectionSession(coordinator, workspaceViewModel, scope, speech)
+            return ConnectionSession(coordinator, workspaceViewModel, scope)
         }
     }
 }

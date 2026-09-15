@@ -19,10 +19,13 @@ Android carries a documented deferral that Linux can trivially clear (mouse repo
 
 ### 1.1 Non-goals
 
-- **On-device speech.** Android's `WhisperTranscriber.transcribe` is a stub that throws
-  `ModelNotLoaded`; the Silero/SmartTurn ONNX detectors are built but not wired into
-  `makeDefault`. Linux inherits that state. The pure-Kotlin pipeline ports; the
-  inference layer stays absent. Tracked as a follow-on, not part of parity.
+- **On-device speech.** None. The Android speech stack was removed in 2026-09 in
+  favour of the relay-side prompt optimizer (the wand in the shared
+  `WorkspaceScreen`), so there is nothing to inherit. Voice input is the desktop's
+  own dictation into the terminal.
+- **Optimizer accelerator + Bedrock keyring scrub.** Deferred to Plan 4: the desktop
+  has no Ctrl+Shift+O binding for the wand yet, and `TokenStore` still carries the
+  now-unused Bedrock account.
 - **Push notifications.** Deliberately replaced, not ported — see §6.5.
 - **Server changes.** The wire protocol, admin API, and pairing flow are untouched.
   This client is additive.
@@ -161,7 +164,7 @@ implementations must satisfy exactly — the shared modules call them by these n
 | Android | Lines | Linux replacement | Notes |
 |---|---|---|---|
 | `SavedConnectionStore(Context)` — DataStore | 102 | JSON at `$XDG_CONFIG_HOME/coderelay/servers.json` | Same `loadAll/saveAll/add/delete` API; same `WireJson` encoding, so the on-disk format matches Android's stored string |
-| `TokenStore(Context)` — EncryptedSharedPreferences | 86 | **Secret Service** (D-Bus) via `libsecret`, keyed by connection UUID | Relay tokens and the Bedrock key must never hit disk in plaintext. Fallback: refuse to store, surface an error — never silently downgrade |
+| `TokenStore(Context)` — EncryptedSharedPreferences | 86 | **Secret Service** (D-Bus) via `libsecret`, keyed by connection UUID | Relay tokens must never hit disk in plaintext. The Bedrock half (`BEDROCK_ACCOUNT`) is dead code pending the Plan 4 scrub. Fallback: refuse to store, surface an error — never silently downgrade |
 | `SessionOwnershipStore` — SharedPreferences | 123 | JSON at `$XDG_STATE_HOME/coderelay/ownership.json` | Non-secret; device-scoped names + agent map |
 | `DeviceIdentifier` — ANDROID_ID | 100 | Generated UUID persisted at `$XDG_STATE_HOME/coderelay/device-id` | Matches Android's accepted divergence from `identifierForVendor` |
 | `AndroidConnectivitySource` | 84 | `LinuxConnectivitySource` — NetworkManager over D-Bus, polling fallback | Implements the existing `ConnectivitySource` interface; `NetworkObserver` is already pure |
@@ -169,7 +172,7 @@ implementations must satisfy exactly — the shared modules call them by these n
 | `Haptics.kt` | 120 | **Deleted.** No-op | No haptics on desktop |
 | `QrScannerScreen` (CameraX + ML Kit, `AndroidView`) | 332 | `PairWithHostSheet` — typed 8-char code + paste `coderelay://pair` URL | `PairingCode.normalize` already accepts hyphens/lowercase. Webcam scanning deferred |
 | `MainActivity` / `RelayApplication` / nav graph | ~700 | Compose Desktop `Window`, tray icon, menu bar, `NavHost` (CMP navigation) | |
-| `ContinuousListeningService` (FG service) | 176 | **Deleted.** No foreground-service concept | Speech is out of scope (§1.1) |
+| `ContinuousListeningService` (FG service) | 176 | **Deleted.** No foreground-service concept | Removed from Android too (§1.1) |
 
 ### 4.1 Not a seam — ports unchanged
 
@@ -416,12 +419,12 @@ cleanly when their secrets are absent, so a dry-run tag push is harmless.
 | Notifications on agent finished / needs input | **Full**, different transport | D-Bus, not FCM (AD-4) |
 | Clipboard bridging (OSC 52 host→device) | **Exceeds** | Decoded locally from the byte stream (the server passes OSC 52 writes through); active session only |
 | Image paste (device→host) | **Exceeds** | Ctrl+Shift+V with an image on the clipboard sends `paste_image`, as macOS Cmd+V does |
-| Settings: all 14 keys + Bedrock token | **Full** | Secret Service for the token |
+| Settings: the 10 shared keys (incl. `shareScreenWithOptimizer`) | **Full** | Bedrock token gone with the speech stack (§1.1); Secret Service still holds relay tokens |
 | Scrollback / font size / naming theme | **Full** | |
 | TLS / cleartext scoping | **Full** | AD-5 |
 | Auto-connect | **Full** | |
 | Haptics | **N/A** | No desktop equivalent |
-| On-device speech / wake word | **Deferred** | Inherited from Android (§1.1) |
+| On-device speech / wake word | **N/A** | Removed everywhere; the wand replaces it (§1.1) |
 | Keyboard shortcuts, tray rollup, close-to-tray, single instance | **Exceeds** | §5 — from the macOS client; tray mirrors `MenuBarDropdown` |
 | Local scrollback, selection, paste, mouse clicks, cursor shapes | **Exceeds** | Desktop terminal table stakes; real-libvterm tests in `linux-terminal` |
 | Desktop notifications with click-to-focus | **Exceeds** | AD-4; `notify-send --action` |
@@ -460,9 +463,7 @@ paste calls the existing `RelayConnection.sendPasteImage`.
 
 Carried from Android, explicitly **not** solved here:
 
-1. **whisper.cpp / llama.cpp inference** — stubs that degrade gracefully.
-2. **Silero VAD / SmartTurn ONNX detectors** — built, not wired into `makeDefault`.
-3. **Camera QR scanning** — replaced by typed code + URL paste, which is arguably better
+1. **Camera QR scanning** — replaced by typed code + URL paste, which is arguably better
    on a desktop.
 
 ---

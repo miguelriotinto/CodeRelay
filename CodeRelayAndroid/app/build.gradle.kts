@@ -73,7 +73,7 @@ android {
         release {
             // R8 full-mode: shrink + obfuscate code and shrink resources. The
             // keep rules in proguard-rules.pro protect everything reflection- or
-            // JNI-based (kotlinx.serialization, ONNX Runtime, ML Kit, OkHttp,
+            // JNI-based (kotlinx.serialization, termlib, ML Kit, OkHttp,
             // coroutines) from being stripped. proguard-android-optimize.txt is
             // AGP's optimized default ruleset.
             isMinifyEnabled = true
@@ -121,12 +121,6 @@ dependencies {
     implementation(project(":feature-servers"))
     implementation(project(":feature-workspace"))
     implementation(project(":feature-settings"))
-
-    // :speech — the SpeechModelStore (splash preload), the ContinuousListeningEngine
-    // (foreground service), and the SpeechProcessingOptions snapshot. This is the
-    // module that finally packages the ONNX Runtime native libs into the APK (the
-    // M3-E concern): :app → :speech → onnxruntime-android AAR → libonnxruntime*.so.
-    implementation(project(":speech"))
 
     implementation(libs.kotlinx.coroutines.android)
 

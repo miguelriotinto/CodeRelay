@@ -9,94 +9,87 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import relay.protocol.SessionNamingTheme
-import relay.speech.SpeechProcessingOptions
 import relay.storage.TokenStore
+
+/**
+ * Tiny seam for the Bedrock secret deletion, extracted so `AppSettings`' speech-removal
+ * scrub is testable without a real `EncryptedSharedPreferences` (which `TokenStore` wraps).
+ */
+fun interface BedrockSecretDeleter {
+    fun deleteBedrockToken()
+}
 
 /**
  * App-wide user settings, ported from `AppSettings.swift`.
  *
  * iOS persists these via SwiftUI `@AppStorage` (UserDefaults). The Android analog
- * is a single Preferences [DataStore] (`app_settings`) holding **exactly the 14
- * keys** the iOS `AppSettings` exposes (AppSettings.swift:112-145), each surfaced
- * here as a [StateFlow] plus a `set…` mutator. The 15th persisted preference, the
- * Bedrock bearer token, is the same exception iOS makes: it lives in the secure
- * [TokenStore] (Android's Keychain analog — EncryptedSharedPreferences), **not**
- * DataStore, and its write is debounced (see [bedrockBearerToken]).
+ * is a single Preferences [DataStore] (`app_settings`) holding **the 10 keys this
+ * client persists** — a subset of iOS's twelve, which additionally carries the two
+ * push prefs (`pushNotificationsEnabled`, `pushNotifyOnFinished`; Android hardcodes
+ * those in `PushSync`). Key *names* match iOS verbatim. Each is surfaced here as a
+ * [StateFlow] plus a `set…` mutator.
  *
- * `turnEndSilenceTimeout` is intentionally NOT a setting (it defaults from
- * `SpeechProcessingOptions`), matching iOS.
+ * ## The 10 DataStore keys (defaults match AppSettings.swift)
+ *  1. `hapticFeedbackEnabled`      = true
+ *  2. `autoConnectEnabled`         = false
+ *  3. `lastConnectedServerId`      = ""
+ *  4. `sessionNamingTheme`         = gameOfThrones
+ *  5. `terminalFontSize`           = 12.0
+ *  6. `terminalScrollbackLines`    = 5000
+ *  7. `recordingShortcutEnabled`   = true
+ *  8. `recordingShortcutFlags`     = Meta+Alt ([ShortcutFlags.DEFAULT])
+ *  9. `recordingShortcutKey`       = ""
+ * 10. `shareScreenWithOptimizer`   = true   (spec §7.1 — sent as `shareScreen` on every `optimize_prompt`)
  *
- * ## The 14 DataStore keys (defaults from AppSettings.swift:112-145)
- *  1. `smartCleanupEnabled`        = true
- *  2. `promptEnhancementEnabled`   = false
- *  3. `bedrockRegion`              = "us-east-1"
- *  4. `hapticFeedbackEnabled`      = true
- *  5. `autoConnectEnabled`         = false
- *  6. `lastConnectedServerId`      = ""
- *  7. `sessionNamingTheme`         = gameOfThrones
- *  8. `terminalFontSize`           = 12.0
- *  9. `terminalScrollbackLines`    = 5000
- * 10. `recordingShortcutEnabled`   = true
- * 11. `recordingShortcutFlags`     = Meta+Alt ([ShortcutFlags.DEFAULT])
- * 12. `recordingShortcutKey`       = ""
- * 13. `continuousListeningEnabled` = false
- * 14. `wakeWord`                   = "claude"
- * (+ `bedrockBearerToken` in [TokenStore], not counted above.)
+ * The speech stack's six keys (`smartCleanupEnabled`, `promptEnhancementEnabled`,
+ * `bedrockRegion`, `continuousListeningEnabled`, `wakeWord`, and the legacy
+ * plaintext `bedrockBearerToken`) plus the Bedrock credential in the secure
+ * [TokenStore] are **scrubbed on every launch** by [removeSpeechSettings]
+ * (spec §10) — every shipped build before the speech removal wrote them.
  *
  * @param scope a long-lived scope (the host injects an application-scoped one);
- *   owns the StateFlow hot mirrors and the debounced Bedrock write.
+ *   owns the StateFlow hot mirrors and the startup migrations.
  */
-@OptIn(FlowPreview::class)
 class AppSettings(
     private val dataStore: DataStore<Preferences>,
-    private val tokenStore: TokenStore,
+    private val secretDeleter: BedrockSecretDeleter,
     private val scope: CoroutineScope,
 ) {
 
-    // MARK: - Startup: migrations → seed → install debounced Bedrock write
+    // MARK: - Startup: migrations
 
     init {
-        // One ordered startup coroutine: run the migrations, seed the Bedrock
-        // mirror, THEN install the debounced write collector. Sequencing the seed
-        // before the collector is what gives us the iOS `dropFirst()` semantic —
-        // the seed value (read FROM the secure store) is in place before any
-        // emission can be observed, so it is never written back; only genuine
-        // post-seed user edits persist. See [bedrockBearerToken].
-        scope.launch {
-            runMigrations()
-            installDebouncedBedrockWrite()
-        }
+        scope.launch { runMigrations() }
     }
 
     /**
-     * Best-effort forward migrations, ported from `AppSettings.init`
-     * (AppSettings.swift:12-13). On a fresh Android install both are no-ops (no
-     * legacy data was ever written); see [AppSettingsMigrations] for the rationale.
+     * Best-effort forward migrations, in launch order: the speech scrub first, then
+     * the shortcut one (a no-op on any real Android install — see
+     * [AppSettingsMigrations]).
+     *
+     * The order and the guard are both load-bearing. `app_settings` is created with
+     * no `corruptionHandler`, so a malformed file makes **every** DataStore read
+     * throw for the life of the install. Running the shortcut migration first, and
+     * unguarded, would then (a) skip the Bedrock secret delete forever — on exactly
+     * the devices whose DataStore is broken, which is what "secret first" exists to
+     * survive — and (b) let the exception escape this `scope.launch` into the
+     * default uncaught handler, killing the process during `MainActivity.onCreate`.
      */
     private suspend fun runMigrations() {
-        migrateShortcutIfNeeded()
-        migrateBedrockTokenIfNeeded()
-        // Seed the Bedrock token mirror from the secure store (with legacy
-        // fallback), matching AppSettings.swift:16.
-        _bedrockBearerToken.value = AppSettingsMigrations.loadBedrockTokenWithFallback(
-            secure = tokenStore.loadBedrockToken(),
-            legacy = readLegacyBedrock(),
-        )
+        removeSpeechSettings()
+        runCatching { migrateShortcutIfNeeded() }
+            .onFailure { if (it is CancellationException) throw it }
     }
 
     /**
@@ -116,47 +109,27 @@ class AppSettings(
     }
 
     /**
-     * Migrate a legacy plaintext Bedrock token (if one was ever stored in DataStore)
-     * into the secure [TokenStore], with the read-back-confirm-before-delete dance
-     * + plaintext fallback. Mirrors `AppSettings.migrateBedrockToken`
-     * (AppSettings.swift:77-98) — the pure decision lives in
-     * [AppSettingsMigrations.decideBedrockMigration].
+     * Speech-removal scrub (spec §10), the Android counterpart of the Apple
+     * clients' `SpeechRemovalMigration`. Runs every launch: it is idempotent and
+     * cheap, and having no "done" flag means it can never be marked complete before
+     * the deletion landed. Order: secret first (it is the higher-value item), then
+     * DataStore; each half guarded; the secure-store delete runs on IO.
      */
-    private suspend fun migrateBedrockTokenIfNeeded() {
-        val legacy = readLegacyBedrock()
-        when (val decision = AppSettingsMigrations.decideBedrockMigration(
-            legacy = legacy,
-            secureExisting = tokenStore.loadBedrockToken(),
-        )) {
-            AppSettingsMigrations.BedrockMigrationDecision.NoOp -> Unit
-            AppSettingsMigrations.BedrockMigrationDecision.DeleteLegacyOnly ->
-                dataStore.edit { it.remove(LEGACY_BEDROCK_KEY) }
-            is AppSettingsMigrations.BedrockMigrationDecision.WriteThenConfirm -> {
-                runCatching { tokenStore.saveBedrockToken(decision.token) }
-                    .onSuccess {
-                        val reread = tokenStore.loadBedrockToken()
-                        if (AppSettingsMigrations.shouldScrubLegacyAfterWrite(decision.token, reread)) {
-                            dataStore.edit { it.remove(LEGACY_BEDROCK_KEY) }
-                        }
-                    }
-                // On a write failure, keep the legacy copy in place — the fallback
-                // reader picks it up (AppSettings.swift:95-96).
+    private suspend fun removeSpeechSettings() {
+        // Secret first: it is the higher-value item and must not wait on DataStore health.
+        // `runCatching` catches Throwable, so each half rethrows CancellationException:
+        // absorbing it would let a cancelled scope keep running the next statement.
+        runCatching { withContext(Dispatchers.IO) { secretDeleter.deleteBedrockToken() } }
+            .onFailure { if (it is CancellationException) throw it }
+        runCatching {
+            val prefs = dataStore.data.first()
+            if (AppSettingsMigrations.REMOVED_SPEECH_KEYS.any { prefs.contains(it) }) {
+                dataStore.edit { AppSettingsMigrations.scrubSpeechKeys(it) }
             }
-        }
+        }.onFailure { if (it is CancellationException) throw it }
     }
 
-    private suspend fun readLegacyBedrock(): String? = dataStore.data.first()[LEGACY_BEDROCK_KEY]
-
-    // MARK: - StateFlow mirrors + setters (the 14 keys)
-
-    val smartCleanupEnabled: StateFlow<Boolean> = boolFlow(SMART_CLEANUP, true)
-    fun setSmartCleanupEnabled(value: Boolean) = put(SMART_CLEANUP, value)
-
-    val promptEnhancementEnabled: StateFlow<Boolean> = boolFlow(PROMPT_ENHANCEMENT, false)
-    fun setPromptEnhancementEnabled(value: Boolean) = put(PROMPT_ENHANCEMENT, value)
-
-    val bedrockRegion: StateFlow<String> = stringFlow(BEDROCK_REGION, "us-east-1")
-    fun setBedrockRegion(value: String) = put(BEDROCK_REGION, value)
+    // MARK: - StateFlow mirrors + setters (the 10 keys)
 
     val hapticFeedbackEnabled: StateFlow<Boolean> = boolFlow(HAPTIC_FEEDBACK, true)
     fun setHapticFeedbackEnabled(value: Boolean) = put(HAPTIC_FEEDBACK, value)
@@ -189,67 +162,14 @@ class AppSettings(
     val recordingShortcutKey: StateFlow<String> = stringFlow(RECORDING_SHORTCUT_KEY, "")
     fun setRecordingShortcutKey(value: String) = put(RECORDING_SHORTCUT_KEY, value)
 
-    val continuousListeningEnabled: StateFlow<Boolean> = boolFlow(CONTINUOUS_LISTENING, false)
-    fun setContinuousListeningEnabled(value: Boolean) = put(CONTINUOUS_LISTENING, value)
-
-    val wakeWord: StateFlow<String> = stringFlow(WAKE_WORD, "claude")
-    fun setWakeWord(value: String) = put(WAKE_WORD, value)
-
-    // MARK: - Speech options snapshot
-
     /**
-     * Captures the current speech-related settings into a [SpeechProcessingOptions]
-     * snapshot for the PTT / continuous engines. Ported from
-     * `AppSettings.swift:147-155` (`currentSpeechOptions()`): reads the latest
-     * [StateFlow.value] of each contributing setting (the secure Bedrock token
-     * included) so a mid-session change takes effect on the next utterance.
-     *
-     * `turnEndSilenceTimeout` is intentionally NOT pulled from settings — it
-     * defaults from [SpeechProcessingOptions] (8 s), matching iOS, which does not
-     * expose it as a tunable.
+     * Whether `optimize_prompt` may carry the last 40 screen lines (spec §7.1).
+     * The device-side gate; the relay has its own (`promptOptimizerShareScreen`).
+     * Eagerly seeded with the default until the first DataStore emission; the wand
+     * needs an attached session, which takes longer than hydration.
      */
-    fun currentSpeechOptions(): SpeechProcessingOptions =
-        SpeechProcessingOptions(
-            smartCleanupEnabled = smartCleanupEnabled.value,
-            promptEnhancementEnabled = promptEnhancementEnabled.value,
-            bedrockBearerToken = bedrockBearerToken.value,
-            bedrockRegion = bedrockRegion.value,
-            wakeWord = wakeWord.value,
-        )
-
-    // MARK: - Bedrock bearer token (secure store, debounced write)
-
-    private val _bedrockBearerToken = MutableStateFlow("")
-
-    /**
-     * Bedrock bearer token, persisted in the secure [TokenStore] (Android's
-     * Keychain analog) — NOT DataStore. Mirrors `AppSettings.bedrockBearerToken`
-     * (AppSettings.swift:121): the in-memory mirror is seeded from the secure store
-     * at init; writes are **debounced 500 ms** so rapid typing in the masked field
-     * collapses into a single secure write.
-     */
-    val bedrockBearerToken: StateFlow<String> = _bedrockBearerToken.asStateFlow()
-
-    /** Updates the in-memory token mirror; the secure-store write fires debounced. */
-    fun setBedrockBearerToken(value: String) {
-        _bedrockBearerToken.value = value
-    }
-
-    /**
-     * Installs the debounced secure-store write, called from the startup coroutine
-     * AFTER the seed is in place. `.drop(1)` then discards the replayed current
-     * (seed) value, so only post-seed user edits fire a write — the
-     * `$bedrockBearerToken.dropFirst().debounce(500ms)` semantic from
-     * AppSettings.swift:18-24. The 500 ms debounce collapses rapid typing in the
-     * masked field into one write.
-     */
-    private fun installDebouncedBedrockWrite() {
-        _bedrockBearerToken
-            .drop(1)
-            .debounce(BEDROCK_DEBOUNCE_MS)
-            .onEach { token -> runCatching { tokenStore.saveBedrockToken(token) } }
-            .launchIn(scope)
-    }
+    val shareScreenWithOptimizer: StateFlow<Boolean> = boolFlow(SHARE_SCREEN_WITH_OPTIMIZER, true)
+    fun setShareScreenWithOptimizer(value: Boolean) = put(SHARE_SCREEN_WITH_OPTIMIZER, value)
 
     // MARK: - DataStore plumbing
 
@@ -270,14 +190,8 @@ class AppSettings(
     }
 
     companion object {
-        /** Bedrock-token write debounce, ms. Mirrors `AppSettings.bedrockDebounce` (500 ms). */
-        const val BEDROCK_DEBOUNCE_MS = 500L
-
-        // The 14 DataStore keys (names match the iOS @AppStorage keys verbatim so
+        // The 10 DataStore keys (names match the iOS @AppStorage keys verbatim so
         // a cross-platform import round-trips).
-        private val SMART_CLEANUP = booleanPreferencesKey("smartCleanupEnabled")
-        private val PROMPT_ENHANCEMENT = booleanPreferencesKey("promptEnhancementEnabled")
-        private val BEDROCK_REGION = stringPreferencesKey("bedrockRegion")
         private val HAPTIC_FEEDBACK = booleanPreferencesKey("hapticFeedbackEnabled")
         private val AUTO_CONNECT = booleanPreferencesKey("autoConnectEnabled")
         private val LAST_CONNECTED_SERVER_ID = stringPreferencesKey("lastConnectedServerId")
@@ -287,24 +201,31 @@ class AppSettings(
         private val RECORDING_SHORTCUT_ENABLED = booleanPreferencesKey("recordingShortcutEnabled")
         private val RECORDING_SHORTCUT_FLAGS = intPreferencesKey("recordingShortcutFlags")
         private val RECORDING_SHORTCUT_KEY = stringPreferencesKey("recordingShortcutKey")
-        private val CONTINUOUS_LISTENING = booleanPreferencesKey("continuousListeningEnabled")
-        private val WAKE_WORD = stringPreferencesKey("wakeWord")
+        private val SHARE_SCREEN_WITH_OPTIMIZER = booleanPreferencesKey("shareScreenWithOptimizer")
 
-        // Legacy keys read by the migrations only (never written on Android today).
+        // Legacy key read by the shortcut migration only (never written on Android today).
         private val LEGACY_SHORTCUT_MODIFIER_KEY =
             stringPreferencesKey(AppSettingsMigrations.LEGACY_SHORTCUT_MODIFIER_KEY)
-        private val LEGACY_BEDROCK_KEY = stringPreferencesKey("bedrockBearerToken")
 
         /**
          * Builds the production [AppSettings] from a [Context] + a long-lived
          * [scope]. The DataStore is the single process-wide `app_settings` instance.
          */
-        fun create(context: Context, scope: CoroutineScope): AppSettings =
-            AppSettings(
-                dataStore = context.applicationContext.appSettingsDataStore,
-                tokenStore = TokenStore(context.applicationContext),
+        fun create(context: Context, scope: CoroutineScope): AppSettings {
+            val app = context.applicationContext
+            return AppSettings(
+                dataStore = app.appSettingsDataStore,
+                // Constructed *inside* the lambda on purpose: `TokenStore`'s
+                // constructor runs `EncryptedSharedPreferences.create` (MasterKey
+                // unwrap + a synchronous prefs read), and `create` is called from
+                // `MainActivity.onCreate` on the main thread. The lambda runs inside
+                // `removeSpeechSettings`' `withContext(Dispatchers.IO)` hop, so the
+                // expensive half moves off main too — the delete is now this class's
+                // only use of the store.
+                secretDeleter = BedrockSecretDeleter { TokenStore(app).deleteBedrockToken() },
                 scope = scope,
             )
+        }
     }
 }
 

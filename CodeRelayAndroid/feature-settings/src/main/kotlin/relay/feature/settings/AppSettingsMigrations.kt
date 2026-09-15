@@ -1,21 +1,29 @@
 package relay.feature.settings
 
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+
 /**
- * Pure (side-effect-free) ports of the two `AppSettings` migrations from
- * `AppSettings.swift`. They are factored out of [AppSettings] so the load-bearing
- * decision logic is unit-testable on the JVM without DataStore, the
+ * Pure (side-effect-free) pieces of the [AppSettings] startup migrations, factored
+ * out so the load-bearing logic is unit-testable on the JVM without DataStore, the
  * EncryptedSharedPreferences-backed `TokenStore`, or an emulator.
  *
  * ## Android-faithfulness note
  *
- * On iOS these migrations move data written by **older app versions** (a legacy
- * `recordingShortcutModifier` String in `UserDefaults`; a legacy plaintext
- * `bedrockBearerToken` in `UserDefaults`) into the new representations. There has
- * never been a shipped Android client, so on a real device **neither legacy value
- * exists** and both migrations are no-ops today. They are ported in full anyway —
- * as the same kind of best-effort forward-migration hook the M1 `SavedConnectionStore`
- * carries — so that a future Android backup/restore or cross-platform import that
- * seeds the legacy keys migrates cleanly and identically to iOS.
+ * On iOS the shortcut migration moves data written by **older app versions** (a
+ * legacy `recordingShortcutModifier` String in `UserDefaults`) into the new Int
+ * flags. No shipped Android build ever wrote that key, so on a real device it is a
+ * no-op today. It is ported anyway — the same kind of best-effort forward-migration
+ * hook the M1 `SavedConnectionStore` carries — so a future backup/restore or
+ * cross-platform import that seeds the legacy key migrates identically to iOS.
+ *
+ * The speech-removal scrub is the opposite case: every shipped build before the
+ * speech removal **did** write the speech settings and the Bedrock token (the build
+ * that removes them is the one this comment ships in — `versionName` is deliberately
+ * untouched by that change), so [REMOVED_SPEECH_KEYS] must stay in place for as long
+ * as such installs can update.
  */
 object AppSettingsMigrations {
 
@@ -46,67 +54,26 @@ object AppSettingsMigrations {
         else -> ShortcutFlags.META or ShortcutFlags.SHIFT
     }
 
-    // MARK: - Bedrock-token migration (AppSettings.swift:77-110)
+    // MARK: - Speech-removal scrub (spec §10)
 
     /**
-     * The decision a single migration step makes about the legacy plaintext token,
-     * the secure ([TokenStore]) copy, and a post-write read-back confirmation.
-     *
-     * Mirrors `AppSettings.migrateBedrockToken` (AppSettings.swift:77-98), whose
-     * only side-effectful dependencies are the legacy read, a secure read, a secure
-     * write, and a legacy delete. By returning the decision instead of performing
-     * it, the read-back-confirm logic — "only scrub the legacy copy once a re-read
-     * confirms the value landed" — is exercised in tests without touching real
-     * storage.
+     * Every DataStore key the removed on-device speech stack wrote. Names are the
+     * iOS `@AppStorage` keys verbatim (they were shared so an import could
+     * round-trip), plus the legacy plaintext Bedrock token that predates the
+     * secure store. `AppSettings` removes them on every launch; the Bedrock
+     * credential in the secure store is deleted alongside.
      */
-    sealed interface BedrockMigrationDecision {
-        /** No legacy value (or it's blank) — nothing to migrate. */
-        data object NoOp : BedrockMigrationDecision
+    val REMOVED_SPEECH_KEYS: List<Preferences.Key<*>> = listOf(
+        booleanPreferencesKey("smartCleanupEnabled"),
+        booleanPreferencesKey("promptEnhancementEnabled"),
+        stringPreferencesKey("bedrockRegion"),
+        booleanPreferencesKey("continuousListeningEnabled"),
+        stringPreferencesKey("wakeWord"),
+        stringPreferencesKey("bedrockBearerToken"),
+    )
 
-        /**
-         * The secure store already holds a non-empty token, so just scrub the
-         * stale legacy copy (AppSettings.swift:86-89).
-         */
-        data object DeleteLegacyOnly : BedrockMigrationDecision
-
-        /**
-         * Write [token] to the secure store, then re-read; scrub the legacy copy
-         * **only if** the read-back confirms the write landed (AppSettings.swift:90-97).
-         */
-        data class WriteThenConfirm(val token: String) : BedrockMigrationDecision
+    /** Removes [REMOVED_SPEECH_KEYS] from [prefs]; leaves every other key untouched. */
+    fun scrubSpeechKeys(prefs: MutablePreferences) {
+        REMOVED_SPEECH_KEYS.forEach { prefs.remove(it) }
     }
-
-    /**
-     * Pure decision for the Bedrock-token migration. Given the current legacy and
-     * secure-store values, returns what should happen. The caller performs the
-     * actual write + read-back + delete and feeds the read-back result back through
-     * [shouldScrubLegacyAfterWrite].
-     *
-     * @param legacy the legacy plaintext token (null/blank → no-op)
-     * @param secureExisting the value currently in the secure store (null/blank → none)
-     */
-    fun decideBedrockMigration(legacy: String?, secureExisting: String?): BedrockMigrationDecision {
-        if (legacy.isNullOrEmpty()) return BedrockMigrationDecision.NoOp
-        if (!secureExisting.isNullOrEmpty()) return BedrockMigrationDecision.DeleteLegacyOnly
-        return BedrockMigrationDecision.WriteThenConfirm(legacy)
-    }
-
-    /**
-     * Whether the legacy plaintext copy may be scrubbed after a
-     * [BedrockMigrationDecision.WriteThenConfirm] write. True iff the secure-store
-     * re-read returned exactly the value we wrote (AppSettings.swift:92-94). A
-     * mismatch (or a failed write surfaced as a null re-read) keeps the legacy copy
-     * in place so the fallback reader can still surface it.
-     */
-    fun shouldScrubLegacyAfterWrite(wrote: String, reread: String?): Boolean = reread == wrote
-
-    // MARK: - Bedrock-token read with legacy fallback (AppSettings.swift:102-110)
-
-    /**
-     * Pure read helper with a legacy fallback. Returns the secure-store value when
-     * non-empty, else the legacy value, else `""` (AppSettings.swift:106-109).
-     * Callers treat `""` as "not configured".
-     */
-    fun loadBedrockTokenWithFallback(secure: String?, legacy: String?): String =
-        secure?.takeIf { it.isNotEmpty() } ?: legacy ?: ""
 }

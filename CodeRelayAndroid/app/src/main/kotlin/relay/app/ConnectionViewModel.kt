@@ -88,7 +88,6 @@ class ConnectionViewModel : ViewModel() {
     suspend fun teardown() {
         _activeSession.value?.let { session ->
             FcmTokenBridge.onTokenRefreshed = null  // don't fire into a dead session
-            session.speech.stop()
             session.coordinator.tearDown()
             session.scope.cancel()
         }
@@ -99,14 +98,14 @@ class ConnectionViewModel : ViewModel() {
         // The Activity is truly finishing (not a fold/config change) — tear the
         // session down. teardown() is suspend, so it needs a live scope. NOT
         // viewModelScope: AndroidX cancels that inside clear() *before* onCleared()
-        // runs, so a coroutine launched here would never start (leaking the mic /
-        // foreground microphone service). The session's OWN scope is still alive at
-        // this point, so launch the teardown there and cancel it as the final step.
+        // runs, so a coroutine launched here would never start (leaking the socket
+        // and the recovery loop). The session's OWN scope is still alive at this
+        // point, so launch the teardown there and cancel it as the final step.
         val session = _activeSession.value
         _activeSession.value = null
         if (session != null) {
             session.scope.launch {
-                session.speech.stop()
+                FcmTokenBridge.onTokenRefreshed = null
                 session.coordinator.tearDown()
                 session.scope.cancel()
             }

@@ -1,6 +1,6 @@
 // Settings UI.
 //
-// `SettingsScreen.kt` (471 lines) is compiled straight from the Android source:
+// `SettingsScreen.kt` (376 lines) is compiled straight from the Android source:
 // its only non-portable import is
 // `androidx.lifecycle.compose.collectAsStateWithLifecycle`, and Compose
 // Multiplatform republishes that under the identical package name.
@@ -37,6 +37,8 @@ sourceSets {
 dependencies {
     api(project(":shared-protocol"))
     api(project(":linux-storage"))
+    // OptimizerStrings for the share-screen toggle; same reason as the Android module.
+    implementation(project(":shared-net"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
 

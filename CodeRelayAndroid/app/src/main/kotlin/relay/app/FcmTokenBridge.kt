@@ -25,6 +25,6 @@ object FcmTokenBridge {
     /** Called after the POST_NOTIFICATIONS runtime-permission result. */
     fun setPermissionGranted(granted: Boolean) { _permissionGranted.value = granted }
 
-    /** Invoked when a fresh token arrives so the coordinator can (re)register. */
+    /** Invoked when a fresh token arrives or the notification permission is granted, so the coordinator can (re)register. */
     var onTokenRefreshed: (() -> Unit)? = null
 }
