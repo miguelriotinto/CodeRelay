@@ -8,8 +8,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -59,17 +57,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var networkObserver: NetworkObserver
 
     /**
-     * Speech runtime-permission launcher (RECORD_AUDIO + POST_NOTIFICATIONS on
-     * API 33+). [SpeechSession] triggers it via [SpeechPermissions.request] before
-     * the first mic interaction. Result is informational here — the mic flow is
-     * device-deferred, so the grant outcome is not blocking in this build.
-     */
-    private val speechPermissionLauncher: ActivityResultLauncher<Array<String>> =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-            Log.i(TAG, "Speech permission grants: $grants")
-        }
-
-    /**
      * The most recent session id parsed from a `coderelay://session/<uuid>`
      * deep link, or null. The nav graph collects this on workspace entry, calls
      * `SessionCoordinator.attachRemoteSession(id)`, then clears it via
@@ -106,9 +93,6 @@ class MainActivity : ComponentActivity() {
         connectivitySource = AndroidConnectivitySource(this)
         networkObserver = NetworkObserver(connectivitySource)
         connectivitySource.start()
-
-        // Register the speech runtime-permission requester for SpeechSession.
-        SpeechPermissions.requester = { speechPermissionLauncher.launch(SpeechPermissions.required) }
 
         // Resolve the auto-connect target (CodeRelayApp.swift auto-connect): when
         // enabled AND lastConnectedServerId resolves to a saved bookmark.
@@ -151,7 +135,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         connectivitySource.stop()
-        SpeechPermissions.requester = null
         appScope.cancel()
         super.onDestroy()
     }

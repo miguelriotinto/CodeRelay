@@ -58,14 +58,11 @@ class ConnectionSession private constructor(
     val coordinator: SessionCoordinator,
     val workspaceViewModel: WorkspaceViewModel,
     val scope: CoroutineScope,
-    /** Speech engines + model store bound to this connection's scope (Task 11). */
-    val speech: SpeechSession,
 ) {
     companion object {
         /**
-         * Constructs the coordinator + workspace VM + [SpeechSession] for [config]
-         * using [token]. [settings] supplies the naming [theme] and the speech
-         * options snapshot for the engines.
+         * Constructs the coordinator + workspace VM for [config] using [token].
+         * [settings] supplies the naming [theme].
          */
         fun create(
             context: Context,
@@ -99,9 +96,7 @@ class ConnectionSession private constructor(
                 nowMs = nowMs,
             )
 
-            val speech = SpeechSession.create(appContext, scope, settings)
-
-            return ConnectionSession(coordinator, workspaceViewModel, scope, speech)
+            return ConnectionSession(coordinator, workspaceViewModel, scope)
         }
     }
 }
