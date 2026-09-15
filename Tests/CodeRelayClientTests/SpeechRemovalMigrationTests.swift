@@ -7,7 +7,10 @@ import XCTest
 final class SpeechRemovalMigrationTests: XCTestCase {
 
     private var defaults: UserDefaults!
+    private var sandbox: URL!
     private var modelsDir: URL!
+    /// Stands in for WhisperKit's `Documents/huggingface` default.
+    private var hubDir: URL!
     private let doneKey = "test.speechRemovalMigrationDone"
     private let legacyKeys = ["a.legacy", "b.legacy", "c.whisperDownloaded"]
 
@@ -16,12 +19,14 @@ final class SpeechRemovalMigrationTests: XCTestCase {
         let suite = "SpeechRemovalMigrationTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
-        modelsDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SpeechRemoval-\(UUID().uuidString)/Models", isDirectory: true)
+        sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SpeechRemoval-\(UUID().uuidString)", isDirectory: true)
+        modelsDir = sandbox.appendingPathComponent("Models", isDirectory: true)
+        hubDir = sandbox.appendingPathComponent("huggingface", isDirectory: true)
     }
 
     override func tearDown() {
-        try? FileManager.default.removeItem(at: modelsDir.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: sandbox)
         defaults = nil
         super.tearDown()
     }
@@ -32,10 +37,10 @@ final class SpeechRemovalMigrationTests: XCTestCase {
         try Data("weights".utf8).write(to: modelsDir.appendingPathComponent("qwen35-0.8b-q4km.gguf"))
     }
 
-    private func run(delete: () throws -> Void = {}) -> Bool {
+    private func run(directories: [URL]? = nil, delete: () throws -> Void = {}) -> Bool {
         SpeechRemovalMigration.run(
             defaults: defaults, doneKey: doneKey, legacyKeys: legacyKeys,
-            modelsDirectory: modelsDir, deleteBedrockToken: delete
+            directories: directories ?? [modelsDir], deleteBedrockToken: delete
         )
     }
 
@@ -62,6 +67,23 @@ final class SpeechRemovalMigrationTests: XCTestCase {
     func testMissingModelDirectoryIsNotAFailure() {
         XCTAssertTrue(run())
         XCTAssertTrue(defaults.bool(forKey: doneKey))
+    }
+
+    /// The two model families lived in different places (LLM weights in the
+    /// store's own directory, Whisper's CoreML weights under WhisperKit's
+    /// `Documents/huggingface` default), so every directory has to be removed —
+    /// and one of them being absent must still mark the migration done.
+    func testRemovesEveryDirectoryAndToleratesAnAbsentOne() throws {
+        try seedLegacyState()
+        try FileManager.default.createDirectory(at: hubDir, withIntermediateDirectories: true)
+        try Data("coreml".utf8).write(to: hubDir.appendingPathComponent("openai_whisper-small.en"))
+        let absent = sandbox.appendingPathComponent("never-existed", isDirectory: true)
+
+        XCTAssertTrue(run(directories: [modelsDir, hubDir, absent]))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: modelsDir.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: hubDir.path))
+        XCTAssertTrue(defaults.bool(forKey: doneKey), "an absent directory is not a failure")
     }
 
     func testKeychainFailureLeavesFlagUnsetSoItRetries() throws {

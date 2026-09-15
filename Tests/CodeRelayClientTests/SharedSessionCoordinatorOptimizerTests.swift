@@ -86,6 +86,9 @@ final class SharedSessionCoordinatorOptimizerTests: XCTestCase {
         coordinator.isRecovering = true
         XCTAssertFalse(coordinator.isWandEnabled)
         coordinator.isRecovering = false
+        coordinator.isTornDown = true
+        XCTAssertFalse(coordinator.isWandEnabled, "a torn-down coordinator must not re-authenticate")
+        coordinator.isTornDown = false
         coordinator.activeSessionId = nil
         XCTAssertFalse(coordinator.isWandEnabled)
     }
@@ -182,12 +185,14 @@ final class SharedSessionCoordinatorOptimizerTests: XCTestCase {
         XCTAssertNil(coordinator.optimizerUndo)
     }
 
-    func testOkWithoutOriginalArmsNoUndo() async throws {
+    /// No `original` means there is nothing to put back, so no chip — but the
+    /// rewrite still landed and the user gets told (spec §7.1).
+    func testOkWithoutOriginalConfirmsWithoutArmingUndo() async throws {
         try await inject()
         respondToOptimize(.optimizePromptResult(status: "ok", original: nil, prompt: "b", message: nil))
         await coordinator.optimizePrompt(shareScreen: true)
         XCTAssertNil(coordinator.optimizerUndo)
-        XCTAssertNil(coordinator.optimizerNotice)
+        XCTAssertEqual(coordinator.optimizerNotice, OptimizerStrings.optimized)
     }
 
     func testFailedRetryKeepsExistingUndo() async throws {
@@ -269,7 +274,98 @@ final class SharedSessionCoordinatorOptimizerTests: XCTestCase {
         }
         await coordinator.undoOptimize()
         XCTAssertEqual(coordinator.optimizerNotice, "Session not attached")
-        XCTAssertNil(coordinator.optimizerUndo)
+        XCTAssertEqual(
+            coordinator.optimizerUndo, OptimizerUndo(sessionId: sessionId, original: "a"),
+            "A failed undo must keep the chip: it holds the only copy of the user's draft"
+        )
+    }
+
+    /// After a successful optimize the terminal holds the rewrite and
+    /// `optimizerUndo` is the only copy of what the user typed, so a failed
+    /// replace must not consume it — and must not extend its window either.
+    func testUndoFailureKeepsTheChipSoTheUserCanRetry() async throws {
+        coordinator.optimizerUndoWindow = .milliseconds(500)
+        try await inject()
+        respondToOptimize(.optimizePromptResult(status: "ok", original: "the original", prompt: "rewrite", message: nil))
+        await coordinator.optimizePrompt(shareScreen: true)
+        XCTAssertNotNil(coordinator.optimizerUndo)
+
+        // Spend most of the 500 ms window before failing, so a re-armed task
+        // would be provably visible at the last assertion below.
+        try await Task.sleep(for: .milliseconds(350))
+        conn.autoRespond = { m in
+            if case .replacePrompt = m { return .replacePromptResult(status: "failed", message: "Draft mirror lost") }
+            return nil
+        }
+        await coordinator.undoOptimize()
+
+        XCTAssertEqual(coordinator.optimizerUndo, OptimizerUndo(sessionId: sessionId, original: "the original"))
+        XCTAssertEqual(coordinator.optimizerNotice, "Draft mirror lost")
+        XCTAssertEqual(coordinator.optimizerState, .idle, "a retry must be possible immediately")
+
+        // A second attempt still sends the true original.
+        conn.autoRespond = { m in
+            if case .replacePrompt(let id, let text) = m {
+                XCTAssertEqual(id, self.sessionId)
+                XCTAssertEqual(text, "the original")
+                return .replacePromptResult(status: "ok", message: nil)
+            }
+            return nil
+        }
+        await coordinator.undoOptimize()
+        XCTAssertNil(coordinator.optimizerUndo, "a successful undo is one-shot")
+    }
+
+    /// The 10 s window is not restarted by a failed undo: the chip disappears on
+    /// the schedule the optimize set, not on the failure's.
+    func testFailedUndoDoesNotExtendTheUndoWindow() async throws {
+        coordinator.optimizerUndoWindow = .milliseconds(500)
+        try await inject()
+        respondToOptimize(.optimizePromptResult(status: "ok", original: "the original", prompt: "rewrite", message: nil))
+        await coordinator.optimizePrompt(shareScreen: true)
+
+        try await Task.sleep(for: .milliseconds(350))
+        conn.autoRespond = { m in
+            if case .replacePrompt = m { return .replacePromptResult(status: "failed", message: "Draft mirror lost") }
+            return nil
+        }
+        await coordinator.undoOptimize()
+        XCTAssertNotNil(coordinator.optimizerUndo, "still inside the original window")
+
+        // t ≈ 650 ms: past the original 500 ms deadline, but well short of the
+        // ~850 ms a window re-armed at the failure would have run to.
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(coordinator.optimizerUndo, "the window must not have been extended")
+    }
+
+    /// `undoOptimize` gates on the same `isWandEnabled` the wand does, so a
+    /// programmatic tap during recovery cannot fire an RPC.
+    func testUndoIsIgnoredWhileRecovering() async throws {
+        try await inject()
+        respondToOptimize(.optimizePromptResult(status: "ok", original: "a", prompt: "b", message: nil))
+        await coordinator.optimizePrompt(shareScreen: true)
+        XCTAssertNotNil(coordinator.optimizerUndo)
+
+        coordinator.isRecovering = true
+        await coordinator.undoOptimize()
+        XCTAssertFalse(conn.sentTypes.contains("replace_prompt"))
+        XCTAssertNotNil(coordinator.optimizerUndo)
+        coordinator.isRecovering = false
+    }
+
+    /// A toast from the previous tap must not survive into the next attempt's
+    /// result — `Optimizer unavailable` beside `Optimized · Undo` reads as a
+    /// contradiction.
+    func testNewOptimizeDismissesTheStaleNotice() async throws {
+        try await inject()
+        respondToOptimize(.optimizePromptResult(status: "failed", original: nil, prompt: nil, message: "Something broke"))
+        await coordinator.optimizePrompt(shareScreen: true)
+        XCTAssertEqual(coordinator.optimizerNotice, "Something broke")
+
+        respondToOptimize(.optimizePromptResult(status: "ok", original: "a", prompt: "b", message: nil))
+        await coordinator.optimizePrompt(shareScreen: true)
+        XCTAssertNil(coordinator.optimizerNotice, "the previous failure's toast must be gone")
+        XCTAssertNotNil(coordinator.optimizerUndo)
     }
 
     func testTearDownClearsOptimizerState() async throws {

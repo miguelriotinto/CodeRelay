@@ -64,6 +64,19 @@ final class SessionControllerOptimizerTests: SessionControllerTestCase {
         XCTAssertTrue(controller.serverCapabilities.isEmpty)
     }
 
+    /// Between `resetAuth()` and the next `auth_success` nothing may still read
+    /// the previous relay's capability set.
+    func testResetAuthClearsCapabilitiesAndProtocolVersion() async throws {
+        let conn = FakeConnection()
+        let controller = try await authenticated(conn: conn, protocolVersion: 2, capabilities: ["prompt_optimizer"])
+        XCTAssertEqual(controller.serverProtocolVersion, 2)
+
+        controller.resetAuth()
+
+        XCTAssertEqual(controller.serverProtocolVersion, 0)
+        XCTAssertTrue(controller.serverCapabilities.isEmpty)
+    }
+
     // MARK: - optimize_prompt
 
     func testOptimizeSendsSessionIdAndShareScreen() async throws {
@@ -105,6 +118,21 @@ final class SessionControllerOptimizerTests: SessionControllerTestCase {
             let outcome = try await controller.optimizePrompt(sessionId: UUID(), shareScreen: true)
             XCTAssertEqual(outcome, expected, "status \(status)")
         }
+    }
+
+    /// An empty `message` is as good as absent: passing it through would set
+    /// `optimizerNotice = ""` and draw an empty toast capsule.
+    func testOptimizeEmptyFailureMessageFallsBackToStandardCopy() async throws {
+        let conn = FakeConnection()
+        let controller = try await authenticated(conn: conn)
+        conn.autoRespond = { m in
+            if case .optimizePrompt = m {
+                return .optimizePromptResult(status: "failed", original: nil, prompt: nil, message: "")
+            }
+            return nil
+        }
+        let outcome = try await controller.optimizePrompt(sessionId: UUID(), shareScreen: true)
+        XCTAssertEqual(outcome, .failed(message: OptimizerStrings.couldNotRewrite))
     }
 
     func testOptimizeErrorReplyThrowsUnexpectedResponse() async throws {
@@ -188,6 +216,18 @@ final class SessionControllerOptimizerTests: SessionControllerTestCase {
             let outcome = try await controller.replacePrompt(sessionId: UUID(), text: "x")
             XCTAssertEqual(outcome, expected, "status \(status)")
         }
+    }
+
+    /// Same empty-message hardening as `optimize_prompt`.
+    func testReplaceEmptyFailureMessageFallsBackToStandardCopy() async throws {
+        let conn = FakeConnection()
+        let controller = try await authenticated(conn: conn)
+        conn.autoRespond = { m in
+            if case .replacePrompt = m { return .replacePromptResult(status: "failed", message: "") }
+            return nil
+        }
+        let outcome = try await controller.replacePrompt(sessionId: UUID(), text: "x")
+        XCTAssertEqual(outcome, .failed(message: OptimizerStrings.couldNotRewrite))
     }
 
     func testOtherRPCsStillUseDefaultTimeout() async throws {

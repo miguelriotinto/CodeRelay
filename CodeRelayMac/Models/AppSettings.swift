@@ -8,7 +8,7 @@ final class AppSettings: ObservableObject {
     private init() {
         AppSettings.migrateSpeechRemoval(
             defaults: .standard,
-            modelsDirectory: AppSettings.legacySpeechModelsDirectory,
+            directories: AppSettings.legacySpeechDirectories,
             deleteBedrockToken: { try AuthManager.shared.deleteBedrockToken() }
         )
     }
@@ -64,7 +64,7 @@ final class AppSettings: ObservableObject {
         "com.clauderelay.mac.whisperDownloaded",
     ]
 
-    /// Where `SpeechModelStore` kept downloaded weights on macOS.
+    /// Where `SpeechModelStore` kept the downloaded LLM weights on macOS.
     static var legacySpeechModelsDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base
@@ -72,18 +72,33 @@ final class AppSettings: ObservableObject {
             .appendingPathComponent("Models", isDirectory: true)
     }
 
+    /// Where the Whisper CoreML weights actually landed. `SpeechModelStore`
+    /// called `WhisperKit.download(variant:progressCallback:)` with **no**
+    /// `downloadBase`, and WhisperKit's HubApi defaults that to
+    /// `Documents/huggingface` — not the directory above. A few hundred MB, and
+    /// this migration is the only remaining code path that can delete it.
+    static var legacyWhisperHubDirectory: URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documents.appendingPathComponent("huggingface", isDirectory: true)
+    }
+
+    /// Every directory the removed speech stack could have written weights to.
+    static var legacySpeechDirectories: [URL] {
+        [legacySpeechModelsDirectory, legacyWhisperHubDirectory]
+    }
+
     /// macOS wiring of the shared one-time cleanup (see `SpeechRemovalMigration`).
     @discardableResult
     static func migrateSpeechRemoval(
         defaults: UserDefaults,
-        modelsDirectory: URL,
+        directories: [URL],
         deleteBedrockToken: () throws -> Void
     ) -> Bool {
         SpeechRemovalMigration.run(
             defaults: defaults,
             doneKey: speechRemovalMigrationKey,
             legacyKeys: legacySpeechDefaultsKeys,
-            modelsDirectory: modelsDirectory,
+            directories: directories,
             deleteBedrockToken: deleteBedrockToken
         )
     }

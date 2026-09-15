@@ -33,7 +33,7 @@ struct SettingsView: View {
                          : "Turn on to be notified when an agent is blocked or finishes, even when the app is in the background.")
                 }
 
-                Section {
+                Section("General") {
                     Toggle("Haptic Feedback", isOn: $settings.hapticFeedbackEnabled)
                     Picker("Session Names", selection: $settings.sessionNamingTheme) {
                         ForEach(SessionNamingTheme.allCases) { theme in
@@ -55,9 +55,15 @@ struct SettingsView: View {
                         Text("10,000 lines").tag(10_000)
                         Text("25,000 lines").tag(25_000)
                     }
+                }
+
+                // Its own section, as on macOS: the footer describes what the
+                // optimizer sends off the host, and must not read as a note on
+                // Haptic Feedback or the terminal font.
+                Section {
                     Toggle(OptimizerStrings.shareScreenToggle, isOn: $settings.shareScreenWithOptimizer)
                 } header: {
-                    Text("General")
+                    Text("Prompt Optimizer")
                 } footer: {
                     Text(OptimizerStrings.shareScreenFooter)
                 }

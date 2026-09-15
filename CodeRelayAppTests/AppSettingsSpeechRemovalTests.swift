@@ -9,7 +9,10 @@ import XCTest
 final class AppSettingsSpeechRemovalTests: XCTestCase {
 
     private var defaults: UserDefaults!
+    private var sandbox: URL!
     private var modelsDir: URL!
+    /// Stands in for WhisperKit's `Documents/huggingface` download base.
+    private var hubDir: URL!
     private var suiteName: String!
 
     override func setUp() {
@@ -17,12 +20,14 @@ final class AppSettingsSpeechRemovalTests: XCTestCase {
         suiteName = "AppSettingsSpeechRemovalTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
-        modelsDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SpeechRemoval-\(UUID().uuidString)/Models", isDirectory: true)
+        sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SpeechRemoval-\(UUID().uuidString)", isDirectory: true)
+        modelsDir = sandbox.appendingPathComponent("Models", isDirectory: true)
+        hubDir = sandbox.appendingPathComponent("huggingface", isDirectory: true)
     }
 
     override func tearDown() {
-        try? FileManager.default.removeItem(at: modelsDir.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: sandbox)
         defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
         super.tearDown()
@@ -38,21 +43,55 @@ final class AppSettingsSpeechRemovalTests: XCTestCase {
         XCTAssertEqual(AppSettings.legacySpeechModelsDirectory.lastPathComponent, "Models")
     }
 
-    func testOneLaunchScrubsOldKeysDirectoryAndBedrockSecret() throws {
+    /// Both model homes must be scrubbed: the LLM weights under Application
+    /// Support, and the Whisper CoreML weights WhisperKit put in
+    /// `Documents/huggingface` (it was called with no `downloadBase`).
+    func testLegacyDirectoriesCoverBothModelHomes() {
+        let directories = AppSettings.legacySpeechDirectories
+        XCTAssertEqual(directories.count, 2)
+        XCTAssertEqual(directories.first, AppSettings.legacySpeechModelsDirectory)
+        XCTAssertEqual(directories.last, AppSettings.legacyWhisperHubDirectory)
+        XCTAssertEqual(AppSettings.legacyWhisperHubDirectory.lastPathComponent, "huggingface")
+        XCTAssertEqual(
+            AppSettings.legacyWhisperHubDirectory.deletingLastPathComponent().standardizedFileURL,
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].standardizedFileURL
+        )
+    }
+
+    func testOneLaunchScrubsOldKeysDirectoriesAndBedrockSecret() throws {
         for key in AppSettings.legacySpeechDefaultsKeys { defaults.set("x", forKey: key) }
         try FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: hubDir, withIntermediateDirectories: true)
+        try Data("coreml".utf8).write(to: hubDir.appendingPathComponent("openai_whisper-small.en"))
         var deleteCalls = 0
 
         let ok = AppSettings.migrateSpeechRemoval(
-            defaults: defaults, modelsDirectory: modelsDir, deleteBedrockToken: { deleteCalls += 1 }
+            defaults: defaults, directories: [modelsDir, hubDir], deleteBedrockToken: { deleteCalls += 1 }
         )
 
         XCTAssertTrue(ok)
         XCTAssertEqual(deleteCalls, 1)
         for key in AppSettings.legacySpeechDefaultsKeys { XCTAssertNil(defaults.object(forKey: key), key) }
         XCTAssertFalse(FileManager.default.fileExists(atPath: modelsDir.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: hubDir.path), "Whisper weights must go too")
         XCTAssertTrue(defaults.bool(forKey: AppSettings.speechRemovalMigrationKey))
-        XCTAssertFalse(AppSettings.migrateSpeechRemoval(defaults: defaults, modelsDirectory: modelsDir, deleteBedrockToken: { deleteCalls += 1 }))
+        XCTAssertFalse(AppSettings.migrateSpeechRemoval(
+            defaults: defaults, directories: [modelsDir, hubDir], deleteBedrockToken: { deleteCalls += 1 }
+        ))
         XCTAssertEqual(deleteCalls, 1, "second launch is a no-op")
+    }
+
+    /// An install that only ever downloaded one of the two models still
+    /// completes: a missing directory is not a failure.
+    func testOneAbsentDirectoryStillMarksTheMigrationDone() throws {
+        try FileManager.default.createDirectory(at: hubDir, withIntermediateDirectories: true)
+
+        let ok = AppSettings.migrateSpeechRemoval(
+            defaults: defaults, directories: [modelsDir, hubDir], deleteBedrockToken: {}
+        )
+
+        XCTAssertTrue(ok)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: hubDir.path))
+        XCTAssertTrue(defaults.bool(forKey: AppSettings.speechRemovalMigrationKey))
     }
 }

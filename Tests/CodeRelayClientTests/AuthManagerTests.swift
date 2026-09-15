@@ -74,6 +74,10 @@ final class AuthManagerTests: XCTestCase {
     func testDeleteBedrockTokenRemovesTheLegacySecret() throws {
         let service = "com.coderemote.relay" // AuthManager's private keychain service
         try keychain.add(service: service, account: AuthManager.bedrockAccount, data: Data("old-secret".utf8))
+        // Without this the test passes vacuously if `service` ever drifts from
+        // `AuthManager`'s own constant: the seed lands somewhere nobody deletes
+        // from and the assertion below reads nil for the wrong reason.
+        XCTAssertNotNil(try keychain.get(service: service, account: AuthManager.bedrockAccount))
         try manager.deleteBedrockToken()
         XCTAssertNil(try keychain.get(service: service, account: AuthManager.bedrockAccount))
     }

@@ -202,6 +202,11 @@ public final class SessionController: ObservableObject {
     public func resetAuth() {
         isAuthenticated = false
         sessionId = nil
+        // The next relay may be a different one (or the same one with its
+        // optimizer key removed), so what the previous `auth_success` reported
+        // must not be readable while unauthenticated.
+        serverProtocolVersion = 0
+        serverCapabilities = []
     }
 
     /// Sends an authentication request and waits for the server response.
@@ -368,6 +373,14 @@ public final class SessionController: ObservableObject {
 
     // MARK: - Prompt optimizer (spec §6)
 
+    /// The toast text for a `failed` status. An **empty** `message` is treated
+    /// exactly like an absent one: it is non-nil, so it would set
+    /// `optimizerNotice = ""` and draw an empty toast capsule.
+    private static func optimizerFailureMessage(_ message: String?) -> String {
+        guard let message, !message.isEmpty else { return OptimizerStrings.couldNotRewrite }
+        return message
+    }
+
     /// Ask the relay to rewrite the draft at the agent's input line. The relay
     /// types the rewrite itself; the reply only tells us how it went.
     public func optimizePrompt(sessionId: UUID, shareScreen: Bool) async throws -> OptimizeOutcome {
@@ -383,7 +396,7 @@ public final class SessionController: ObservableObject {
             case "no_draft": return .noDraft
             case "passthrough": return .passthrough
             case "unconfigured": return .unconfigured
-            default: return .failed(message: message ?? OptimizerStrings.couldNotRewrite)
+            default: return .failed(message: Self.optimizerFailureMessage(message))
             }
         case .error(_, let message):
             throw SessionError.unexpectedResponse(message)
@@ -401,7 +414,7 @@ public final class SessionController: ObservableObject {
         )
         switch response {
         case .replacePromptResult(let status, let message):
-            return status == "ok" ? .ok : .failed(message: message ?? OptimizerStrings.couldNotRewrite)
+            return status == "ok" ? .ok : .failed(message: Self.optimizerFailureMessage(message))
         case .error(_, let message):
             throw SessionError.unexpectedResponse(message)
         default:

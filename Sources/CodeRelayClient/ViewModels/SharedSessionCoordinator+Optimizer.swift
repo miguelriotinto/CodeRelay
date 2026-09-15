@@ -37,8 +37,14 @@ extension SharedSessionCoordinator {
 
     /// The button is tappable. Availability is deliberately *not* part of this:
     /// an unavailable wand is drawn dimmed and a tap shows the hint (spec §9).
+    ///
+    /// `!isTornDown` is defence in depth: the button dies with the view, but a
+    /// programmatic tap (the keyboard-shortcut notification) on a coordinator
+    /// that has already been torn down would otherwise reach
+    /// `ensureAuthenticated()` and open a fresh `auth_request` on an
+    /// invalidated coordinator.
     public var isWandEnabled: Bool {
-        optimizerState == .idle && !isRecovering && activeSessionId != nil
+        optimizerState == .idle && !isRecovering && !isTornDown && activeSessionId != nil
     }
 
     public var isOptimizerAvailable: Bool { optimizerAvailability == .available }
@@ -79,6 +85,10 @@ extension SharedSessionCoordinator {
             return
         }
 
+        // A notice from the *previous* tap lives on its own 4 s timer. Leaving it
+        // up would render a stale failure toast beside this attempt's result —
+        // e.g. `Optimizer unavailable, try again` next to `Optimized · Undo`.
+        dismissOptimizerNotice()
         optimizerState = .optimizing
         defer { optimizerState = .idle }
 
@@ -101,10 +111,19 @@ extension SharedSessionCoordinator {
             }
             switch outcome {
             case .ok(let original):
-                if let original, activeSessionId == sessionId {
+                if activeSessionId != sessionId {
+                    // Session switched mid-optimize: the reply belongs to a
+                    // session the user is no longer looking at. No undo, and no
+                    // toast either — it would read as this session's result.
+                    clearOptimizerUndo()
+                } else if let original {
                     armOptimizerUndo(OptimizerUndo(sessionId: sessionId, original: original))
                 } else {
+                    // The relay rewrote the draft but was not tracking what it
+                    // replaced, so there is nothing to put back. Confirm the
+                    // rewrite anyway (spec §7.1) — without an Undo affordance.
                     clearOptimizerUndo()
+                    showOptimizerNotice(OptimizerStrings.optimized)
                 }
             case .noDraft:
                 showOptimizerNotice(OptimizerStrings.noDraft)
@@ -122,16 +141,29 @@ extension SharedSessionCoordinator {
     }
 
     /// Undo chip tap: put the original back. One-shot.
+    ///
+    /// The undo is cleared **only on success.** After a successful optimize the
+    /// terminal's input line holds the rewrite and `optimizerUndo` is the only
+    /// copy of what the user actually typed; clearing it before the RPC would
+    /// destroy that draft whenever the replace failed (spec §9 lists two such
+    /// rows, plus timeout and a mid-flight disconnect). This matches the
+    /// deliberate choice on the sibling path — a failed *re-optimize* keeps the
+    /// existing undo too. One-shot-ness does not depend on the early clear: the
+    /// `isWandEnabled` guard plus `optimizerState = .optimizing` already block a
+    /// double tap, and not clearing leaves the 10 s expiry task running, so the
+    /// chip still disappears on its original schedule.
     public func undoOptimize() async {
-        guard optimizerState == .idle, let undo = optimizerUndo, undo.sessionId == activeSessionId else { return }
-        clearOptimizerUndo()
+        guard isWandEnabled, let undo = optimizerUndo, undo.sessionId == activeSessionId else { return }
         optimizerState = .optimizing
         defer { optimizerState = .idle }
         do {
             let outcome = try await withAuth { controller in
                 try await controller.replacePrompt(sessionId: undo.sessionId, text: undo.original)
             }
-            if case .failed(let message) = outcome {
+            switch outcome {
+            case .ok:
+                clearOptimizerUndo()
+            case .failed(let message):
                 showOptimizerNotice(message)
             }
         } catch {
