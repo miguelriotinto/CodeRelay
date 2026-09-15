@@ -21,6 +21,14 @@ public protocol ConnectionSurface: AnyObject {
 
     func send(_ message: ClientMessage) async throws
 
+    /// Abandon the current socket, because it can never be used again: bump the
+    /// generation, drop the transport, and report the failure so the coordinator
+    /// can drive recovery. Called by the controller when an RPC timeout leaves a
+    /// request outstanding that no future reply can be matched to — poisoning a
+    /// socket and giving it up are the same event, and this is the only moment
+    /// anything knows about it.
+    func markConnectionDead()
+
     @discardableResult
     func addServerMessageSubscriber(_ handler: @escaping (ServerMessage) -> Void) -> UUID
     func removeSubscriber(_ id: UUID)
@@ -113,18 +121,27 @@ public final class SessionController: ObservableObject {
     /// later RPC on it throws `connectionDesynchronized` until it is replaced.
     /// Keying on the generation makes that self-expiring — any reconnect
     /// (`connect()` or `markConnectionDead()`) bumps it, and a fresh socket
-    /// cannot carry the old one's in-flight reply. `SessionHandshake` recovers
-    /// without a special case: its catch-all already does `resetAuth()` +
-    /// `disconnect()` and retries, which is exactly the required response.
+    /// cannot carry the old one's in-flight reply.
+    ///
+    /// The timeout that sets this ALSO calls `connection.markConnectionDead()`,
+    /// so the replacement is requested at the same instant rather than left to
+    /// whichever path notices first. It used to be left: the comment here said
+    /// `SessionHandshake` recovers without a special case, via its catch-all's
+    /// `resetAuth()` + `disconnect()` + retry. That is true and it is not
+    /// enough, because nothing was making the handshake run — see the teardown's
+    /// comment in `awaitResponse` for the incident.
     private var desyncedGeneration: UInt64?
 
     /// Whether the CURRENT socket is desynchronized — no RPC can run on it and
-    /// only replacing it will help. Private, unlike the Kotlin port's public
-    /// equivalent: there, the recovery layer has to consult it because its
-    /// alive-restore path would otherwise loop on an unusable socket. Swift has
-    /// no such path — `restoreSession` is only ever reached after a successful
-    /// `forceReconnect()`, whose generation bump has already cleared this — and
-    /// the handshake's catch-all cures it by disconnecting and retrying.
+    /// only replacing it will help.
+    ///
+    /// Normally false the moment it is set, because the teardown that
+    /// accompanies it bumps the generation. It stays as the controller's own
+    /// backstop: "a desynchronized socket carries no further RPC" is this type's
+    /// guarantee, and it must not depend on the transport honouring a request to
+    /// replace itself. Private, unlike the Kotlin port's public equivalent — its
+    /// recovery layer consults the flag instead of the socket being given up at
+    /// the poison site. Same invariant, different mechanics.
     private var isDesynchronized: Bool {
         desyncedGeneration == connection.generation
     }
@@ -492,7 +509,31 @@ public final class SessionController: ObservableObject {
                 // lets a `CancellationException` escape instead, so it poisons in
                 // a `finally` covering both paths. Same invariant, different
                 // mechanics; don't "align" one to the other without re-checking.
-                if let self { desyncedGeneration = sentGeneration }
+                if let self {
+                    desyncedGeneration = sentGeneration
+                    // ...and give the socket up, in the same breath. Marking it
+                    // without replacing it was a 16-minute silent wedge on macOS
+                    // (reported 2026-09-12): nothing else looks. Pings are not
+                    // RPCs, so the keepalive kept succeeding, `onSendFailed`
+                    // never fired and the quality indicator read "Excellent"
+                    // while every request failed before reaching the wire; and
+                    // both repair paths test the TRANSPORT — the recovery
+                    // controller's `isAlive()` short-circuit and the handshake's
+                    // `state != .connected` check — which was honestly reporting
+                    // a healthy socket. A foregrounded Mac emits no
+                    // wake/foreground/network signal, so neither ran at all: the
+                    // app typed into a session it was no longer attached to (the
+                    // server drops unattached input silently, by design) until
+                    // the server's read-idle reaper hung up 16 minutes later.
+                    //
+                    // Generation-guarded for the same reason the marker is: if a
+                    // reconnect already intervened, this timeout belongs to a
+                    // socket that is already gone, and killing the live one
+                    // would turn one dead request into an outage.
+                    if connection.generation == sentGeneration {
+                        connection.markConnectionDead()
+                    }
+                }
                 guard_.resume(throwing: SessionError.timeout)
             }
         }
