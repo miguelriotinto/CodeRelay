@@ -1,6 +1,6 @@
 // Settings UI.
 //
-// `SettingsScreen.kt` (471 lines) is compiled straight from the Android source:
+// `SettingsScreen.kt` (376 lines) is compiled straight from the Android source:
 // its only non-portable import is
 // `androidx.lifecycle.compose.collectAsStateWithLifecycle`, and Compose
 // Multiplatform republishes that under the identical package name.

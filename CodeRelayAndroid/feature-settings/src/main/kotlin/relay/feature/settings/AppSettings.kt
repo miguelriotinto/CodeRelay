@@ -10,14 +10,24 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import relay.protocol.SessionNamingTheme
 import relay.storage.TokenStore
+
+/**
+ * Tiny seam for the Bedrock secret deletion, extracted so `AppSettings`' speech-removal
+ * scrub is testable without a real `EncryptedSharedPreferences` (which `TokenStore` wraps).
+ */
+fun interface BedrockSecretDeleter {
+    fun deleteBedrockToken()
+}
 
 /**
  * App-wide user settings, ported from `AppSettings.swift`.
@@ -50,7 +60,7 @@ import relay.storage.TokenStore
  */
 class AppSettings(
     private val dataStore: DataStore<Preferences>,
-    private val tokenStore: TokenStore,
+    private val secretDeleter: BedrockSecretDeleter,
     private val scope: CoroutineScope,
 ) {
 
@@ -62,7 +72,7 @@ class AppSettings(
 
     /**
      * Best-effort forward migrations. The shortcut one is a no-op on any real
-     * Android install (see [AppSettingsMigrations]); the speech scrub is not.
+     * Android install (see [AppSettingsMigrations]); the speech scrub runs every launch.
      */
     private suspend fun runMigrations() {
         migrateShortcutIfNeeded()
@@ -88,16 +98,19 @@ class AppSettings(
     /**
      * Speech-removal scrub (spec §10), the Android counterpart of the Apple
      * clients' `SpeechRemovalMigration`. Runs every launch: it is idempotent and
-     * cheap (one DataStore read + one secure-store remove), and having no "done"
-     * flag means it can never be marked complete before the deletion landed. The
-     * secure-store delete is wrapped so a keystore hiccup cannot take startup down.
+     * cheap, and having no "done" flag means it can never be marked complete before
+     * the deletion landed. Order: secret first (it is the higher-value item), then
+     * DataStore; each half guarded; the secure-store delete runs on IO.
      */
     private suspend fun removeSpeechSettings() {
-        val prefs = dataStore.data.first()
-        if (AppSettingsMigrations.REMOVED_SPEECH_KEYS.any { prefs.contains(it) }) {
-            dataStore.edit { AppSettingsMigrations.scrubSpeechKeys(it) }
+        // Secret first: it is the higher-value item and must not wait on DataStore health.
+        runCatching { withContext(Dispatchers.IO) { secretDeleter.deleteBedrockToken() } }
+        runCatching {
+            val prefs = dataStore.data.first()
+            if (AppSettingsMigrations.REMOVED_SPEECH_KEYS.any { prefs.contains(it) }) {
+                dataStore.edit { AppSettingsMigrations.scrubSpeechKeys(it) }
+            }
         }
-        runCatching { tokenStore.deleteBedrockToken() }
     }
 
     // MARK: - StateFlow mirrors + setters (the 10 keys)
@@ -136,6 +149,8 @@ class AppSettings(
     /**
      * Whether `optimize_prompt` may carry the last 40 screen lines (spec §7.1).
      * The device-side gate; the relay has its own (`promptOptimizerShareScreen`).
+     * Eagerly seeded with the default until the first DataStore emission; the wand
+     * needs an attached session, which takes longer than hydration.
      */
     val shareScreenWithOptimizer: StateFlow<Boolean> = boolFlow(SHARE_SCREEN_WITH_OPTIMIZER, true)
     fun setShareScreenWithOptimizer(value: Boolean) = put(SHARE_SCREEN_WITH_OPTIMIZER, value)
@@ -180,12 +195,14 @@ class AppSettings(
          * Builds the production [AppSettings] from a [Context] + a long-lived
          * [scope]. The DataStore is the single process-wide `app_settings` instance.
          */
-        fun create(context: Context, scope: CoroutineScope): AppSettings =
-            AppSettings(
+        fun create(context: Context, scope: CoroutineScope): AppSettings {
+            val tokenStore = TokenStore(context.applicationContext)
+            return AppSettings(
                 dataStore = context.applicationContext.appSettingsDataStore,
-                tokenStore = TokenStore(context.applicationContext),
+                secretDeleter = BedrockSecretDeleter { tokenStore.deleteBedrockToken() },
                 scope = scope,
             )
+        }
     }
 }
 

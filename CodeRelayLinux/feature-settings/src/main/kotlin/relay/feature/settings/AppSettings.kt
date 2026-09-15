@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import relay.protocol.SessionNamingTheme
 
 /**
- * The 10 persisted app preferences.
+ * The 10 shared preferences, plus 2 desktop-only ones (window geometry).
  *
  * Linux counterpart of the Android `AppSettings`. **The public API is identical
  * on purpose** — the same `StateFlow` properties and `setX` methods — so the

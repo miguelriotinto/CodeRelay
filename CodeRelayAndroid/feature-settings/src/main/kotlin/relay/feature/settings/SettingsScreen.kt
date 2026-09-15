@@ -16,7 +16,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -157,8 +156,8 @@ fun SettingsScreen(
             // 5) About
             if (SettingsSection.ABOUT in visibleSections) {
                 SectionHeader("About")
-                ValueRow(label = "Version", value = appVersion, onClick = null)
-                ValueRow(label = "Build", value = buildNumber, onClick = null)
+                ValueRow(label = "Version", value = appVersion)
+                ValueRow(label = "Build", value = buildNumber)
             }
 
             Spacer(Modifier.height(24.dp))
@@ -198,27 +197,21 @@ private fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean
 }
 
 /**
- * A label + value row. When [onClick] is non-null the value is rendered as a
- * trailing [TextButton] (the tappable wake-word / picker rows); otherwise it is a
- * static secondary-colored value (the About rows).
+ * A label + static value row (the About section's version/build lines).
  */
 @Composable
-private fun ValueRow(label: String, value: String, onClick: (() -> Unit)?) {
+private fun ValueRow(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, style = MaterialTheme.typography.bodyLarge)
-        if (onClick != null) {
-            TextButton(onClick = onClick) { Text(value) }
-        } else {
-            Text(
-                value,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
