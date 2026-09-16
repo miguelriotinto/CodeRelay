@@ -345,6 +345,10 @@ in-flight guard and the flag would hand two frames arriving in one read a window
 where neither has claimed the slot. A refused call charges nothing, so a retry
 storm cannot drag the window forward. Not a config key by choice: an operator who
 wants a different number wants per-token quotas, which is a different feature.
+The check sits before the draft is read, so a `no_draft` or over-length refusal
+also consumes one of the 20/min — deliberate, a refusal must leave no state to
+unwind. The admin `POST /optimizer/try` route (`claude-relay optimizer try`) is
+localhost-only and operator-driven and is not budgeted.
 
 Two operational notes for the first live deployment:
 - The key is read **once at startup**, and a Bedrock bearer token expires within
