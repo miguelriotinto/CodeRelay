@@ -793,9 +793,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         guard !vm.isReloadingFromServer else { return }
         vm.beginServerReload()
         do {
-            let grid = gridForRequest
             try await withAuth {
-                try await $0.resumeSession(id: id, skipReplay: false, cols: grid.cols, rows: grid.rows)
+                // Read at the call site, not hoisted: `withAuth`'s re-auth retry
+                // must send the current grid, not a capture from before it.
+                try await $0.resumeSession(
+                    id: id, skipReplay: false, cols: gridForRequest.cols, rows: gridForRequest.rows
+                )
             }
         } catch {
             // No replay is coming: release the buffering WITHOUT the clear, so
