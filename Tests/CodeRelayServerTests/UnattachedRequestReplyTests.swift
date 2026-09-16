@@ -7,8 +7,9 @@ import CodeRelayKit
 @testable import CodeRelayClient
 
 /// The server half of the unattached-request reply rule: a fire-and-forget
-/// request that lands while nothing is attached must be DROPPED, not answered
-/// with `.error`. See the rule at the top of
+/// request that lands while nothing is attached must go UNANSWERED (`refresh`
+/// is dropped; `resize` is deferred into `pendingGrid`), never answered with
+/// `.error`. See the rule at the top of
 /// `Sources/CodeRelayServer/Network/SessionRequestHandlers.swift`.
 ///
 /// Split out of `WebSocketIntegrationTests`, which was already over SwiftLint's
@@ -17,7 +18,8 @@ import CodeRelayKit
 final class UnattachedRequestReplyTests: XCTestCase {
 
     /// Regression: a fire-and-forget request that arrives while nothing is
-    /// attached must be DROPPED, not answered with `.error`.
+    /// attached must go unanswered — `refresh` dropped, `resize` deferred into
+    /// `pendingGrid` — and never be answered with `.error`.
     ///
     /// `resize` has no waiter — the client sends it from a `Task` and never reads a
     /// reply. Replies carry no request ids, so `SessionController.awaitResponse`

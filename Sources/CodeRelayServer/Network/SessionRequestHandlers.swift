@@ -39,8 +39,12 @@ import CodeRelayKit
 // unattached. `refresh` is dropped outright. An authenticated-but-unattached
 // `resize` is **deferred** into `pendingGrid` and applied by the next
 // attach/resume/create (still silently) — a *pre-auth* one is still dropped by
-// `handleMessage` before it reaches `handleResize`; clients also send their grid
-// on the attach/resume request itself, which wins.
+// `handleUnauthenticatedMessage` (RelayMessageHandler.swift) before it reaches
+// `handleResize`; clients also send their grid on the attach/resume request
+// itself, which wins. Note the mirror case: a `resize` that arrives BEFORE the
+// client's `detach` lands still takes the attached path and resizes the
+// *outgoing* session's PTY — pre-existing, and it self-heals on the next attach,
+// which carries its own grid.
 //
 // Deferral matters because nothing else would ever recover that grid. Two
 // plausible-sounding recovery paths do NOT exist: SwiftTerm only fires
@@ -149,7 +153,10 @@ extension RelayMessageHandler {
 
     /// The grid this attach/resume/create should apply: the request's own, else
     /// one deferred by an unattached `resize`. Consumes the deferred grid either
-    /// way (for create it is the spawn size, not a resize).
+    /// way (for create it is the spawn size, not a resize). A partial request
+    /// grid (only one of `cols`/`rows`) is intentionally treated as absent and
+    /// falls through to `pendingGrid` — Kit's `encodeIfPresent` can put a half
+    /// grid on the wire, but a half grid is never applied.
     /// Event-loop only (it touches `pendingGrid`) — call it *before*
     /// `bridgeToEventLoopWithCtx` so the work closure captures the result.
     private func takeGrid(cols: UInt16?, rows: UInt16?) -> (cols: UInt16, rows: UInt16)? {
@@ -242,12 +249,12 @@ extension RelayMessageHandler {
             work: { [weak self] ctx -> (any PTYSessionProtocol, Data, ActivitySnapshot) in
                 await self?.autoDetachIfNeeded(ctx: ctx)
                 let (_, _, pty) = try await mgr.resumeSession(id: sessionId, tokenId: tokenId, excludeObserver: myStealId)
-                RelayLogger.log(category: "session",
-                                "Session resumed: \(sessionId) (skipReplay=\(skipReplay))"
-                                    + RelayMessageHandler.gridSuffix(grid))
                 // Before the buffer read, and even when `skipReplay` is true:
                 // the repaint that follows must redraw at this device's grid.
                 if let grid { await pty.resize(cols: grid.cols, rows: grid.rows) }
+                RelayLogger.log(category: "session",
+                                "Session resumed: \(sessionId) (skipReplay=\(skipReplay))"
+                                    + RelayMessageHandler.gridSuffix(grid))
                 // Read scrollback history to send to client, unless the client
                 // already has a live terminal with full scrollback (tab switch).
                 let buffered = skipReplay ? Data() : await pty.readBuffer()
@@ -389,7 +396,10 @@ extension RelayMessageHandler {
             // incoming terminal lays out (and reports its grid) while
             // `session_resume` is still in flight and we are briefly unattached.
             // Still no reply — resize is fire-and-forget and a `.error` here
-            // would resolve whatever RPC is in flight (header).
+            // would resolve whatever RPC is in flight (header). A 0x0 grid was
+            // inert before deferral existed; keep it inert rather than spawn or
+            // resize a PTY to it.
+            guard cols > 0, rows > 0 else { return }
             pendingGrid = (cols, rows)
             RelayLogger.log(.debug, category: "session", "resize \(cols)x\(rows) deferred until attach")
             return

@@ -124,8 +124,10 @@ final class AttachGridTests: XCTestCase {
 
     /// A resize that arrives while the connection is unattached (the incoming
     /// terminal view laying out during a switch) is deferred, not dropped: the
-    /// next attach/resume without its own grid applies it. Nothing is replied
-    /// (no resize_ack, no error) — the unattached-request reply rule.
+    /// next attach/resume without its own grid applies it. That nothing is
+    /// replied (no resize_ack, no error) is asserted on the raw message stream
+    /// by `UnattachedRequestReplyTests.testUnattachedResizeAndRefreshAreDroppedNotErrored`,
+    /// not here.
     @MainActor
     func testResizeWhileUnattachedIsAppliedByTheNextAttach() async throws {
         let f = try await makeFixture()
@@ -145,6 +147,32 @@ final class AttachGridTests: XCTestCase {
         XCTAssertTrue(readAfter)
     }
 
+    /// The exact production sequence on a client that predates grid-on-request:
+    /// attached with a grid, `detach`, the incoming view's `resize` lands while
+    /// unattached, then a `session_resume` carrying NO grid. The deferred grid
+    /// must survive the detach — this pins that `handleSessionDetach` does not
+    /// run `cleanupSession()`, which clears `pendingGrid`.
+    @MainActor
+    func testResizeBetweenDetachAndGridlessResumeIsApplied() async throws {
+        let f = try await makeFixture()
+        defer { f.teardown() }
+
+        try await f.controller.attachSession(id: f.sessionId, cols: 100, rows: 30)
+        try? await Task.sleep(for: .milliseconds(200))
+        try await f.controller.detach()
+
+        try await f.connection.sendResize(cols: 55, rows: 19)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        try await f.controller.resumeSession(id: f.sessionId)   // no grid on the request
+        try? await Task.sleep(for: .milliseconds(200))
+
+        let calls = await f.mockPTY.resizeCalls
+        let last = try XCTUnwrap(calls.last)
+        XCTAssertEqual([last.cols, last.rows], [55, 19],
+                       "the resize deferred between detach and resume must be applied by the gridless resume")
+    }
+
     /// `session_create` follows the same rule as attach/resume via `takeGrid`:
     /// a create WITHOUT its own grid spawns at the deferred size (not 80x24),
     /// and the deferred grid is consumed rather than left to land stale later.
@@ -161,7 +189,7 @@ final class AttachGridTests: XCTestCase {
 
         let createdPTY = await f.sessionManager.ptySession(for: newId)
         let created = try XCTUnwrap(createdPTY as? MockPTYSession)
-        let spawn = await created.spawnGrid
+        let spawn = created.spawnGrid
         XCTAssertEqual([spawn.cols, spawn.rows], [77, 21], "the deferred grid must be the spawn size")
         let calls = await created.resizeCalls
         XCTAssertTrue(calls.isEmpty, "consumed at spawn — no second application as a resize")
@@ -185,7 +213,7 @@ final class AttachGridTests: XCTestCase {
 
         let createdPTY = await f.sessionManager.ptySession(for: newId)
         let created = try XCTUnwrap(createdPTY as? MockPTYSession)
-        let spawn = await created.spawnGrid
+        let spawn = created.spawnGrid
         XCTAssertEqual([spawn.cols, spawn.rows], [100, 30], "the request grid is the spawn size")
         let calls = await created.resizeCalls
         XCTAssertTrue(calls.isEmpty, "the stale deferred grid must NOT be applied after the spawn")
