@@ -408,8 +408,8 @@ All WebSocket messages use `MessageEnvelope` with JSON encoding:
 - `pair_request` - Redeem a single-use pairing code for a per-device token (sent **pre-auth**)
 - `auth_request` - Authenticate with token (includes optional `protocolVersion`)
 - `session_create` - Create new session (optional `name`, `cols`, `rows`)
-- `session_attach` - Attach to session
-- `session_resume` - Resume detached session with scrollback replay (optional `skipReplay`)
+- `session_attach` - Attach to session (optional `cols`, `rows`)
+- `session_resume` - Resume detached session with scrollback replay (optional `skipReplay`, `cols`, `rows`)
 - `session_detach` - Detach from session
 - `session_terminate` - Terminate a session
 - `session_list` - List own sessions
