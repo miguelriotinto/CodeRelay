@@ -32,12 +32,12 @@ Every task's requirements implicitly include this section.
 ```bash
 cd /Users/miguelriotinto/Developer/CodeRelay/CodeRelayLinux
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
-./gradlew --no-daemon --rerun-tasks \
+./gradlew --no-daemon --rerun-tasks -x :linux-terminal:buildNativeTerminal \
   :linux-storage:test :feature-settings:test :feature-servers:test :feature-workspace:test \
   :app:compileKotlin :app:compileTestKotlin :app:test 2>&1 | tail -15; echo EXIT=${pipestatus[1]}
 ```
 
-Expected: `BUILD SUCCESSFUL` and `EXIT=0`. (`:app:test --dry-run` on this Mac shows `:linux-terminal:buildNativeTerminal SKIPPED`, i.e. the app test task does not require the native build — if `:app:test` nevertheless fails *only* on the native task on macOS, fall back to `:app:compileTestKotlin` plus `:app:test --tests 'relay.app.AppShortcutsChordTest'` and say so in the report.)
+Expected: `BUILD SUCCESSFUL` and `EXIT=0`. `:app:test` depends on `:linux-terminal:buildNativeTerminal`, which refuses to run on macOS; excluding it with `-x` lets the pure-JVM app tests (`AppShortcutsChordTest` and friends) run here — verified on 2026-09-16, 8/8 passing. CI's `linux.yml` runs the same tasks without the exclusion on Ubuntu.
 
 ---
 
@@ -103,7 +103,7 @@ Append these three tests inside `class AppShortcutsChordTest` in `CodeRelayLinux
 ```bash
 cd /Users/miguelriotinto/Developer/CodeRelay/CodeRelayLinux
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
-./gradlew --no-daemon :app:test --tests 'relay.app.AppShortcutsChordTest' 2>&1 | tail -15; echo EXIT=${pipestatus[1]}
+./gradlew --no-daemon -x :linux-terminal:buildNativeTerminal :app:test --tests 'relay.app.AppShortcutsChordTest' 2>&1 | tail -15; echo EXIT=${pipestatus[1]}
 ```
 
 Expected: compilation FAILS with `Unresolved reference: OPTIMIZE_PROMPT` (EXIT non-zero).
@@ -136,7 +136,7 @@ In `resolve(key: Key, ctrl: Boolean, shift: Boolean, alt: Boolean)`, add one row
 
 - [ ] **Step 4: Run the chord test to verify it passes**
 
-Same command as Step 2. Expected: `BUILD SUCCESSFUL`, `EXIT=0`. (If `:app:test` cannot run here, `:app:compileTestKotlin` must succeed and you must say so in the report.)
+Same command as Step 2. Expected: `BUILD SUCCESSFUL`, `EXIT=0`, all `AppShortcutsChordTest` tests PASSED.
 
 - [ ] **Step 5: Dispatch the chord in `Main.kt`**
 
