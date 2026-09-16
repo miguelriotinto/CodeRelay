@@ -234,6 +234,7 @@ class SessionCoordinatorTest {
         coord.switchToSession(target)
         advanceUntilIdle()
 
+        assertTrue("rpc:session_resume" in log)
         assertEquals(null, surface.lastResumeCols)
         assertEquals(null, surface.lastResumeRows)
     }
@@ -269,9 +270,17 @@ class SessionCoordinatorTest {
             }
         }
         log.entries.clear()
+        coord.recordTerminalSize(104, 33)
 
         coord.attachRemoteSession(attachTarget)
         advanceUntilIdle()
+
+        // Both legs carry the pane grid — the failed attach and the rollback
+        // resume — asserted by value so a cols/rows transposition is caught.
+        assertEquals(104.toUShort(), surface.lastAttachCols)
+        assertEquals(33.toUShort(), surface.lastAttachRows)
+        assertEquals(104.toUShort(), surface.lastResumeCols)
+        assertEquals(33.toUShort(), surface.lastResumeRows)
 
         // Rollback: a resume of the PREVIOUS id happened, followed by a re-wire.
         assertTrue("rpc:session_attach" in log, "attach was attempted")
