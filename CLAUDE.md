@@ -29,7 +29,7 @@ Note: Service commands are top-level (`claude-relay stop`), while token/session/
 
 **Launchd**: Plist at `~/Library/LaunchAgents/com.claude.relay.plist`. The `load` command locates the server binary via a fallback chain: sibling of the CLI binary, `/opt/homebrew/bin/`, `/usr/local/bin/`, `~/.claude-relay/bin/`.
 
-**Linux server**: the same `CodeRelayServer`/`CodeRelayCLI`/`CodeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the Apple client library (`CodeRelayClient`) is not declared. `swift build && swift test` run there (1372 tests). The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). CI fails if the Linux resolve changes `Package.resolved`. The `linux-server` CI job builds and tests on Ubuntu.
+**Linux server**: the same `CodeRelayServer`/`CodeRelayCLI`/`CodeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the Apple client library (`CodeRelayClient`) is not declared. `swift build && swift test` run there. The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). CI fails if the Linux resolve changes `Package.resolved`. The `linux-server` CI job builds and tests on Ubuntu.
 
 ## Release Process
 
@@ -58,7 +58,7 @@ All WebSocket messages use `MessageEnvelope`: `{"type":"<type_string>","payload"
 
 **Protocol versioning**: Client sends `protocolVersion` in `auth_request`; server responds with `protocolVersion` in `auth_success`. `minProtocolVersion` is 0 for backward compatibility with older clients.
 
-**Scrollback replay**: After `session_attached` / `session_resumed`, the server sends ring-buffer scrollback as binary frames, then a `replay_complete` envelope, then `session_activity`, before live PTY output begins. Always emitted, even when the buffer is empty — clients use it as the "you can render now" signal. The client (`TerminalViewModel`) holds incoming bytes in `pendingOutput` while `isReplaying` is true (set by the coordinator before attach/resume) and flushes them in one batch on `endReplay()`. This keeps SwiftTerm's `queuePendingDisplay` coalescing 60 fps frames into a single render, so the user sees the final terminal state instead of watching history scroll past.
+**Scrollback replay**: After `session_attached` / `session_resumed`, the server sends ring-buffer scrollback as binary frames, then a `replay_complete` envelope, then `session_activity`, before live PTY output begins. Always emitted, even when the buffer is empty — clients use it as the "you can render now" signal. The client (`TerminalViewModel`) holds incoming bytes in `pendingOutput` while `isReplaying` is true (set by the coordinator before attach/resume) and flushes them in one batch on `endReplay()`. This keeps SwiftTerm's `queuePendingDisplay` coalescing 60 fps frames into a single render, so the user sees the final terminal state instead of watching history scroll past. `session_attach`/`session_resume` may carry `cols`/`rows`; the server resizes the PTY to them **before** reading the ring buffer and before the post-replay repaint. A `resize` received while unattached is deferred (`RelayMessageHandler.pendingGrid`) and applied at the next attach/resume/create rather than dropped — the session-switch race where the incoming view's resize landed between `detach` and `resume`. The request's own grid wins over a deferred one (`takeGrid`, which consumes it either way); for `session_create` the grid is the PTY's **spawn** size (`grid?.cols ?? 80`), reported back in `session_created` and stored in `SessionInfo`. A grid arriving after `takeGrid` ran — during the in-flight attach — is applied in `onSuccess` via `applyLatePendingGrid` and is deliberately unordered against the repaint: either interleaving ends with a redraw at the new grid.
 
 ### Clipboard Bridging (F11)
 
@@ -222,8 +222,9 @@ Replies carry no request ids, so a waiter can only correlate on the response
 `expected ∪ {"error"}`. An `.error` produced by a request nobody is awaiting
 therefore resolves whichever RPC is in flight, and that waiter cannot reject it.
 `resize`/`refresh`/`paste_image` and binary terminal input are all
-fire-and-forget, so the server drops them when unattached rather than replying
-(`handleResize`/`handleRefresh` log at debug; `paste_image` uses its own
+fire-and-forget, so the server answers none of them when unattached
+(`handleRefresh` logs at debug; `handleResize` defers the grid into
+`pendingGrid` and logs at debug; `paste_image` uses its own
 `.pasteImageResult(success: false)` — the rule is about the reply *type*, not
 about staying silent). `detach` keeps its `.error(400, "No session attached")`: it
 has a real waiter. Full rationale at the top of
@@ -366,7 +367,7 @@ The macOS-only surfaces and their Linux replacements (full table in
   `SecRandomCopyBytes`; `RelayLogLevel` replaces `OSLogType` (os.Logger kept
   under `canImport(os)`, stderr → journald on Linux); `TerminalQRRenderer` uses
   CoreImage on macOS and `swift-qrcode-generator` (Linux-only dep) otherwise.
-- **Integration tests** — the 12 tests that drive the server through
+- **Integration tests** — the 20 tests that drive the server through
   `CodeRelayClient` are macOS-only; `TestWebSocketClient` (raw NIO) re-runs the
   same scenarios on both platforms (`WireIntegrationTests`,
   `WireRequestReplyTests`).

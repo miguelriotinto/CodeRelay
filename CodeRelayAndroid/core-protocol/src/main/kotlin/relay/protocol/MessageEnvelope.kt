@@ -43,11 +43,16 @@ object MessageEnvelope {
                     message.cols?.let { put("cols", JsonPrimitive(it.toInt())) }
                     message.rows?.let { put("rows", JsonPrimitive(it.toInt())) }
                 }
-                is ClientMessage.SessionAttach ->
+                is ClientMessage.SessionAttach -> {
                     put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
+                    message.cols?.let { put("cols", JsonPrimitive(it.toInt())) }
+                    message.rows?.let { put("rows", JsonPrimitive(it.toInt())) }
+                }
                 is ClientMessage.SessionResume -> {
                     put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
                     if (message.skipReplay) put("skipReplay", JsonPrimitive(true))
+                    message.cols?.let { put("cols", JsonPrimitive(it.toInt())) }
+                    message.rows?.let { put("rows", JsonPrimitive(it.toInt())) }
                 }
                 ClientMessage.SessionDetach -> Unit
                 is ClientMessage.SessionTerminate ->

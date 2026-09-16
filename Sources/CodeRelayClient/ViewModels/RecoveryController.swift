@@ -301,7 +301,8 @@ final class RecoveryController {
             if let activeId = coordinator.activeSessionId {
                 coordinator.recoveryPhase = .resuming
                 coordinator.terminalViewModels[activeId]?.resetForReplay()
-                try await controller.resumeSession(id: activeId)
+                let grid = coordinator.gridForRequest
+                try await controller.resumeSession(id: activeId, cols: grid.cols, rows: grid.rows)
                 guard !coordinator.isTornDown, generation == recoveryGeneration else { return }
                 coordinator.wireTerminalOutput(to: activeId)
             }

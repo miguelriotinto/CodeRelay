@@ -25,7 +25,16 @@ sealed interface ClientMessage {
         override val typeString get() = "session_create"
     }
 
-    data class SessionAttach(val sessionId: UUID) : ClientMessage {
+    /**
+     * [cols]/[rows] (optional): the device grid, applied by the server BEFORE it
+     * reads the ring buffer and before the post-replay repaint, so the first frame
+     * is drawn for this width. Omitted from the wire when null (older servers).
+     */
+    data class SessionAttach(
+        val sessionId: UUID,
+        val cols: UShort? = null,
+        val rows: UShort? = null,
+    ) : ClientMessage {
         override val typeString get() = "session_attach"
     }
 
@@ -33,8 +42,17 @@ sealed interface ClientMessage {
      * Resume a detached session. [skipReplay] (default false) lets the client
      * opt out of the server's ring-buffer replay when it already holds a live
      * terminal with full scrollback — e.g. switching tabs on the same device.
+     *
+     * [cols]/[rows] (optional): the device grid, applied by the server BEFORE it
+     * reads the ring buffer and before the post-replay repaint, so the first frame
+     * is drawn for this width. Omitted from the wire when null (older servers).
      */
-    data class SessionResume(val sessionId: UUID, val skipReplay: Boolean = false) : ClientMessage {
+    data class SessionResume(
+        val sessionId: UUID,
+        val skipReplay: Boolean = false,
+        val cols: UShort? = null,
+        val rows: UShort? = null,
+    ) : ClientMessage {
         override val typeString get() = "session_resume"
     }
 

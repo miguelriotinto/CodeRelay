@@ -48,7 +48,7 @@ private final class StallableConnection: ConnectionSurface {
     /// if none did.
     var lastResumeSkipReplay: Bool? {
         for message in sentMessages.reversed() {
-            if case .sessionResume(_, let skipReplay) = message { return skipReplay }
+            if case .sessionResume(_, let skipReplay, _, _) = message { return skipReplay }
         }
         return nil
     }
@@ -183,7 +183,7 @@ final class SessionSwitchLatencyTests: XCTestCase {
         conn.autoRespond = { message in
             switch message {
             case .sessionDetach: return .sessionDetached
-            case .sessionResume(let id, _):
+            case .sessionResume(let id, _, _, _):
                 // The target's resume fails; the rollback's re-resume succeeds.
                 return id == second ? .error(code: 404, message: "gone") : .sessionResumed(sessionId: id)
             default: return nil
@@ -237,7 +237,7 @@ final class SessionSwitchLatencyTests: XCTestCase {
         conn.autoRespond = { message in
             switch message {
             case .sessionDetach: return .sessionDetached
-            case .sessionResume(let id, _): return .sessionResumed(sessionId: id)
+            case .sessionResume(let id, _, _, _): return .sessionResumed(sessionId: id)
             default: return nil
             }
         }
@@ -260,7 +260,7 @@ final class SessionSwitchLatencyTests: XCTestCase {
         conn.autoRespond = { message in
             switch message {
             case .sessionDetach: return .sessionDetached
-            case .sessionResume(let id, _): return .sessionResumed(sessionId: id)
+            case .sessionResume(let id, _, _, _): return .sessionResumed(sessionId: id)
             default: return nil
             }
         }

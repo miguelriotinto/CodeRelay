@@ -284,9 +284,19 @@ public final class SessionController: ObservableObject {
 
     /// Attaches to a session that may still be active on another connection.
     /// Unlike resume, this does not require the session to be detached first.
-    public func attachSession(id: UUID) async throws {
+    /// - Parameters:
+    ///   - cols: The requesting terminal's grid, applied to the PTY before the
+    ///     replay so the replayed bytes re-wrap at this device's width.
+    ///   - rows: See `cols`. The server applies the grid only when both are
+    ///     present; a half grid is ignored.
+    ///
+    /// `cols`/`rows` are the device grid; the server resizes the PTY to it
+    /// before replaying and repainting. Pass the pane's last reported size
+    /// (`SharedSessionCoordinator.gridForRequest`); nil is allowed for callers
+    /// that have none, in which case the PTY keeps its current size.
+    public func attachSession(id: UUID, cols: UInt16? = nil, rows: UInt16? = nil) async throws {
         let response = try await sendAndWaitForResponse(
-            .sessionAttach(sessionId: id),
+            .sessionAttach(sessionId: id, cols: cols, rows: rows),
             expected: ["session_attached"]
         )
 
@@ -301,12 +311,22 @@ public final class SessionController: ObservableObject {
     }
 
     /// Resumes an existing session by its identifier.
-    /// - Parameter skipReplay: When true, the server skips the ring-buffer
-    ///   replay. Use this when the client is swapping between locally-cached
-    ///   terminals and already has the full scrollback on screen.
-    public func resumeSession(id: UUID, skipReplay: Bool = false) async throws {
+    /// - Parameters:
+    ///   - skipReplay: When true, the server skips the ring-buffer replay. Use
+    ///     this when the client is swapping between locally-cached terminals
+    ///     and already has the full scrollback on screen.
+    ///   - cols: The requesting terminal's grid, applied to the PTY before the
+    ///     replay (and before the post-replay repaint even with `skipReplay`).
+    ///   - rows: See `cols`. The server applies the grid only when both are
+    ///     present; a half grid is ignored.
+    ///
+    /// `cols`/`rows` are the device grid; the server resizes the PTY to it
+    /// before replaying and repainting. Pass the pane's last reported size
+    /// (`SharedSessionCoordinator.gridForRequest`); nil is allowed for callers
+    /// that have none, in which case the PTY keeps its current size.
+    public func resumeSession(id: UUID, skipReplay: Bool = false, cols: UInt16? = nil, rows: UInt16? = nil) async throws {
         let response = try await sendAndWaitForResponse(
-            .sessionResume(sessionId: id, skipReplay: skipReplay),
+            .sessionResume(sessionId: id, skipReplay: skipReplay, cols: cols, rows: rows),
             expected: ["session_resumed"]
         )
 

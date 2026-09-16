@@ -112,6 +112,24 @@ strays.
 
 **Output backpressure**: `RelayMessageHandler` caps inflight WebSocket-write bytes per session at 2 MB (`maxInflightOutputBytes`). When the cap is hit the server skips frames until writes drain — the `RingBuffer` holds the authoritative copy and clients replay from it on resume.
 
+**Attach grid**: `handleSessionAttach`/`handleSessionResume`/`handleSessionCreate`
+apply the request's `cols`/`rows` (else a `resize` deferred in
+`RelayMessageHandler.pendingGrid` while unattached — `takeGrid`, request grid wins,
+deferred grid consumed either way). For attach/resume the grid taken before the
+work closure is applied in a fixed order: resize → `readBuffer()` → replay →
+`wirePTYOutput` → `forceRepaint()`. For create it is the PTY's **spawn** size
+(`grid?.cols ?? 80`), reported in `session_created` and stored in `SessionInfo`.
+The resize must come first: a redraw the app produced for width W1, fed into a W2
+grid, wraps one column short and misplaces every relative cursor move that follows
+— the "garbled after switching sessions" bug. The resize happens even with
+`skipReplay`, because the repaint that follows must be at the new width. A grid
+that arrives *after* `takeGrid` ran (during the in-flight attach/resume/create) is
+applied in `onSuccess` via `applyLatePendingGrid` and is deliberately unordered
+against the repaint: either interleaving ends with a redraw at the new grid, so
+only the pre-work grid is strictly ordered. Guarded by `AttachGridTests`, which is
+Linux-excluded (`Package.swift` `serverTestExcludes`) — the ordering invariant is
+guarded on macOS only.
+
 **Per-token session cap**: `SessionManager.createSession` enforces `config.maxSessionsPerToken` (default 50, 0 = unlimited) and throws `SessionError.sessionLimitExceeded` when exceeded. Prevents runaway clients from fork-bombing the server.
 
 **fd liveness is tracked outside actor isolation, and only reads whose result is

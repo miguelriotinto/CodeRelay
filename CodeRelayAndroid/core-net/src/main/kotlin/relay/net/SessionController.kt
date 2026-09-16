@@ -261,9 +261,9 @@ class SessionController(private val connection: ConnectionSurface) {
      * Attaches to a session that may still be active on another connection.
      * Unlike resume, this does not require the session to be detached first.
      */
-    suspend fun attachSession(id: UUID) {
+    suspend fun attachSession(id: UUID, cols: UShort? = null, rows: UShort? = null) {
         val response = sendAndWaitForResponse(
-            ClientMessage.SessionAttach(id),
+            ClientMessage.SessionAttach(id, cols, rows),
             expected = setOf("session_attached"),
         )
         when (response) {
@@ -277,9 +277,9 @@ class SessionController(private val connection: ConnectionSurface) {
      * Resumes an existing session by its identifier. When [skipReplay] is true the
      * server skips the ring-buffer replay (the client already holds the scrollback).
      */
-    suspend fun resumeSession(id: UUID, skipReplay: Boolean = false) {
+    suspend fun resumeSession(id: UUID, skipReplay: Boolean = false, cols: UShort? = null, rows: UShort? = null) {
         val response = sendAndWaitForResponse(
-            ClientMessage.SessionResume(id, skipReplay),
+            ClientMessage.SessionResume(id, skipReplay, cols, rows),
             expected = setOf("session_resumed"),
         )
         when (response) {

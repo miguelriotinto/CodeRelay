@@ -34,18 +34,27 @@ import CodeRelayKit
 // so the incoming terminal view lays out and reports its grid while
 // `session_resume` is still on the wire and `attachedPTY` is briefly nil.
 //
-// So those handlers drop the request (logging at debug) instead, matching
+// So those handlers never reply (logging at debug), matching
 // `handleBinaryFrame`, which has always silently dropped terminal input when
-// unattached.
+// unattached. `refresh` is dropped outright. An authenticated-but-unattached
+// `resize` is **deferred** into `pendingGrid` and applied by the next
+// attach/resume/create (still silently) — a *pre-auth* one is still dropped by
+// `handleUnauthenticatedMessage` (RelayMessageHandler.swift) before it reaches
+// `handleResize`; clients also send their grid on the attach/resume request
+// itself, which wins. Note the mirror case: a `resize` that arrives BEFORE the
+// client's `detach` lands still takes the attached path and resizes the
+// *outgoing* session's PTY — pre-existing, and it self-heals on the next attach,
+// which carries its own grid.
 //
-// A dropped resize is genuinely lost, and that is the accepted cost — do not
-// write it up as harmless. Two plausible-sounding recovery paths do NOT exist:
-// SwiftTerm only fires `sizeChanged` when the grid actually *changes*, so a
-// client whose grid is already correct never re-sends; and `forceRepaint()`
-// wiggles to `currentCols - 1` and back to the PTY's *own* stored `currentCols`,
-// so it never learns the value that was dropped. The PTY therefore keeps the
-// stale grid until the next real layout change (rotation, split, font change).
-// We take that over the alternative: an `.error` here fails an unrelated RPC,
+// Deferral matters because nothing else would ever recover that grid. Two
+// plausible-sounding recovery paths do NOT exist: SwiftTerm only fires
+// `sizeChanged` when the grid actually *changes*, so a client whose grid is
+// already correct never re-sends; and `forceRepaint()` wiggles to
+// `currentCols - 1` and back to the PTY's *own* stored `currentCols`, so it
+// never learns a value it was not told. Before `pendingGrid`, a resize dropped
+// here left the PTY at the previous device's width until the next real layout
+// change (rotation, split, font change) — the "garbled after switching" bug.
+// What has not changed is the reply: an `.error` here fails an unrelated RPC,
 // and a client-side timeout poisons the socket via `desyncedGeneration`. A wrong
 // grid is recoverable by the user; a poisoned socket is not.
 //
@@ -79,22 +88,33 @@ extension RelayMessageHandler {
         guard let tokenId = authenticatedTokenId else { return }
         let mgr = self.sessionManager
         let myStealId = self.stealObserverId
+        // Same "request grid wins" rule as attach/resume: a request carrying its
+        // own grid discards a stale deferred one; a request without spawns at
+        // the deferred size instead of the 80x24 default.
+        let grid = takeGrid(cols: cols, rows: rows)
         bridgeToEventLoopWithCtx(
             context: context,
             work: { [weak self] ctx -> (SessionInfo, any PTYSessionProtocol) in
                 await self?.autoDetachIfNeeded(ctx: ctx)
-                let info = try await mgr.createSession(tokenId: tokenId, cols: cols ?? 80, rows: rows ?? 24, name: name)
+                let info = try await mgr.createSession(
+                    tokenId: tokenId, cols: grid?.cols ?? 80, rows: grid?.rows ?? 24, name: name)
                 // Attach immediately. Exclude our own steal observer so the
                 // creating connection isn't told it "stole" the session it just
                 // created (attachSession always fires steal notifications).
                 let (_, pty) = try await mgr.attachSession(id: info.id, tokenId: tokenId, excludeObserver: myStealId)
-                RelayLogger.log(category: "session", "Session created: \(info.id) (name: \(name ?? "nil"))")
+                RelayLogger.log(category: "session",
+                                "Session created: \(info.id) (name: \(name ?? "nil"))" + RelayMessageHandler.gridSuffix(grid))
                 return (info, pty)
             },
             onSuccess: { handler, ctx, pair in
                 let (info, pty) = pair
                 handler.attachedSessionId = info.id
                 handler.attachedPTY = pty
+                // A resize that arrived while the create RPC was in flight
+                // (after `takeGrid` ran). Create ends attached, so it must
+                // consume it like attach/resume do — otherwise it lingers and
+                // lands stale on a later attach.
+                handler.applyLatePendingGrid(to: pty)
                 handler.sendServerMessage(.sessionCreated(sessionId: info.id, cols: info.cols, rows: info.rows), context: ctx)
                 handler.wirePTYOutput(pty: pty, context: ctx)
             },
@@ -129,17 +149,57 @@ extension RelayMessageHandler {
         )
     }
 
+    // MARK: - Attach grid
+
+    /// The grid this attach/resume/create should apply: the request's own, else
+    /// one deferred by an unattached `resize`. Consumes the deferred grid either
+    /// way (for create it is the spawn size, not a resize). A half grid (only
+    /// one of `cols`/`rows`) OR a grid with a zero side is intentionally treated
+    /// as absent and falls through to `pendingGrid` — Kit's `encodeIfPresent`
+    /// can put a half grid on the wire, and a client that has not laid out yet
+    /// can report 0x0; neither is ever applied. `handleResize` already refuses
+    /// to defer a 0x0, and a 0-wide PTY would disable `forceRepaint` (it guards
+    /// `currentCols > 1`) until the next real resize.
+    /// Event-loop only (it touches `pendingGrid`) — call it *before*
+    /// `bridgeToEventLoopWithCtx` so the work closure captures the result.
+    private func takeGrid(cols: UInt16?, rows: UInt16?) -> (cols: UInt16, rows: UInt16)? {
+        defer { pendingGrid = nil }
+        if let cols, let rows, cols > 0, rows > 0 { return (cols, rows) }
+        return pendingGrid
+    }
+
+    /// Applies a `resize` that arrived while the attach/resume/create was in
+    /// flight (after `takeGrid` ran, before `attachedPTY` was set). Called from
+    /// `onSuccess`, on the event loop, right after `attachedPTY = pty`, by every
+    /// handler that ends attached. The
+    /// kernel's own SIGWINCH for this resize makes the app redraw at the new
+    /// grid, so ordering against the `forceRepaint` Task does not matter.
+    private func applyLatePendingGrid(to pty: any PTYSessionProtocol) {
+        guard let late = pendingGrid else { return }
+        pendingGrid = nil
+        Task { await pty.resize(cols: late.cols, rows: late.rows) }
+    }
+
+    /// Log-line suffix for an applied grid (cols×rows only — never screen text).
+    private static func gridSuffix(_ grid: (cols: UInt16, rows: UInt16)?) -> String {
+        grid.map { " grid=\($0.cols)x\($0.rows)" } ?? ""
+    }
+
     // MARK: - Session Attach
 
-    func handleSessionAttach(sessionId: UUID, context: ChannelHandlerContext) {
+    func handleSessionAttach(sessionId: UUID, cols: UInt16?, rows: UInt16?, context: ChannelHandlerContext) {
         guard let tokenId = authenticatedTokenId else { return }
         let mgr = self.sessionManager
         let myStealId = self.stealObserverId
+        let grid = takeGrid(cols: cols, rows: rows)
         bridgeToEventLoopWithCtx(
             context: context,
             work: { [weak self] ctx -> (SessionInfo, any PTYSessionProtocol, Data, ActivitySnapshot) in
                 await self?.autoDetachIfNeeded(ctx: ctx)
                 let (info, pty) = try await mgr.attachSession(id: sessionId, tokenId: tokenId, excludeObserver: myStealId)
+                // Before `readBuffer()`: the replayed bytes re-wrap and the
+                // post-replay repaint redraws at *this* device's grid.
+                if let grid { await pty.resize(cols: grid.cols, rows: grid.rows) }
                 let buffered = await pty.readBuffer()
                 let filtered = RelayMessageHandler.filterEscapeResponses(buffered)
                 let snapshot = ActivitySnapshot(
@@ -148,13 +208,15 @@ extension RelayMessageHandler {
                     agentState: await pty.getAgentState(),
                     title: await pty.getTitle()
                 )
-                RelayLogger.log(category: "session", "Session attached: \(sessionId)")
+                RelayLogger.log(category: "session",
+                                "Session attached: \(sessionId)" + RelayMessageHandler.gridSuffix(grid))
                 return (info, pty, filtered, snapshot)
             },
             onSuccess: { handler, ctx, tuple in
                 let (info, pty, filtered, snapshot) = tuple
                 handler.attachedSessionId = sessionId
                 handler.attachedPTY = pty
+                handler.applyLatePendingGrid(to: pty)
                 handler.sendServerMessage(.sessionAttached(sessionId: sessionId, state: info.state.rawValue), context: ctx)
                 if !filtered.isEmpty {
                     handler.sendChunkedBinaryData(filtered, context: ctx)
@@ -180,16 +242,22 @@ extension RelayMessageHandler {
 
     // MARK: - Session Resume
 
-    func handleSessionResume(sessionId: UUID, skipReplay: Bool, context: ChannelHandlerContext) {
+    func handleSessionResume(sessionId: UUID, skipReplay: Bool, cols: UInt16?, rows: UInt16?, context: ChannelHandlerContext) {
         guard let tokenId = authenticatedTokenId else { return }
         let mgr = self.sessionManager
         let myStealId = self.stealObserverId
+        let grid = takeGrid(cols: cols, rows: rows)
         bridgeToEventLoopWithCtx(
             context: context,
             work: { [weak self] ctx -> (any PTYSessionProtocol, Data, ActivitySnapshot) in
                 await self?.autoDetachIfNeeded(ctx: ctx)
                 let (_, _, pty) = try await mgr.resumeSession(id: sessionId, tokenId: tokenId, excludeObserver: myStealId)
-                RelayLogger.log(category: "session", "Session resumed: \(sessionId) (skipReplay=\(skipReplay))")
+                // Before the buffer read, and even when `skipReplay` is true:
+                // the repaint that follows must redraw at this device's grid.
+                if let grid { await pty.resize(cols: grid.cols, rows: grid.rows) }
+                RelayLogger.log(category: "session",
+                                "Session resumed: \(sessionId) (skipReplay=\(skipReplay))"
+                                    + RelayMessageHandler.gridSuffix(grid))
                 // Read scrollback history to send to client, unless the client
                 // already has a live terminal with full scrollback (tab switch).
                 let buffered = skipReplay ? Data() : await pty.readBuffer()
@@ -207,6 +275,7 @@ extension RelayMessageHandler {
                 let (pty, filtered, snapshot) = tuple
                 handler.attachedSessionId = sessionId
                 handler.attachedPTY = pty
+                handler.applyLatePendingGrid(to: pty)
                 handler.sendServerMessage(.sessionResumed(sessionId: sessionId), context: ctx)
                 if !filtered.isEmpty {
                     handler.sendChunkedBinaryData(filtered, context: ctx)
@@ -324,14 +393,18 @@ extension RelayMessageHandler {
 
     func handleResize(cols: UInt16, rows: UInt16, context: ChannelHandlerContext) {
         guard let pty = attachedPTY else {
-            // Dropped, NOT answered with `.error` — see the unattached-request
-            // reply rule at the top of this file. A resize racing a session
-            // switch is routine: the client publishes the new selection before
-            // its RPCs, so the incoming terminal lays out (and reports its grid)
-            // while `session_resume` is still in flight and we are briefly
-            // unattached.
-            RelayLogger.log(.debug, category: "session",
-                            "resize \(cols)x\(rows) dropped: no session attached")
+            // Deferred, not dropped: applied by the next attach/resume/create (see
+            // `pendingGrid`). A resize racing a session switch is routine: the
+            // client publishes the new selection before its RPCs, so the
+            // incoming terminal lays out (and reports its grid) while
+            // `session_resume` is still in flight and we are briefly unattached.
+            // Still no reply — resize is fire-and-forget and a `.error` here
+            // would resolve whatever RPC is in flight (header). A 0x0 grid was
+            // inert before deferral existed; keep it inert rather than spawn or
+            // resize a PTY to it.
+            guard cols > 0, rows > 0 else { return }
+            pendingGrid = (cols, rows)
+            RelayLogger.log(.debug, category: "session", "resize \(cols)x\(rows) deferred until attach")
             return
         }
         bridgeToEventLoop(

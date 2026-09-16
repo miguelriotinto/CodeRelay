@@ -160,6 +160,14 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// Seeds `session_create` so the PTY forks at the right width. `nil` until
     /// the first terminal has been laid out.
     public private(set) var lastKnownTerminalSize: (cols: UInt16, rows: UInt16)?
+
+    /// The grid to put on attach/resume requests: the pane's last reported size
+    /// (all sessions on this device share the pane). Nil until the first layout.
+    /// Internal rather than private because `RecoveryController`'s restore is
+    /// one of the resumes that must carry it.
+    var gridForRequest: (cols: UInt16?, rows: UInt16?) {
+        (lastKnownTerminalSize?.cols, lastKnownTerminalSize?.rows)
+    }
     public var recoveryTask: Task<Void, Never>?
     public var isTornDown = false
     /// UserDefaults persistence for the device-independent auxiliary maps
@@ -730,7 +738,16 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 if previousId != nil {
                     try? await controller.detach()
                 }
-                try await controller.resumeSession(id: id, skipReplay: hasLiveTerminal)
+                // Read the grid HERE, after the awaited detach, not before it:
+                // the server's `takeGrid` is request-grid-wins and discards a
+                // deferred resize, so a grid captured earlier would beat the
+                // fresher one the incoming view reported during the detach.
+                // Reading late also gives `withAuth`'s re-auth retry the
+                // current grid instead of re-sending a stale capture.
+                let grid = gridForRequest
+                try await controller.resumeSession(
+                    id: id, skipReplay: hasLiveTerminal, cols: grid.cols, rows: grid.rows
+                )
             }
 
             // force: bypass the debounce so the switched-to session refreshes
@@ -746,7 +763,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             if activeSessionId == id {
                 activeSessionId = previousId
                 if let previousId {
-                    try? await sessionController?.resumeSession(id: previousId)
+                    let grid = gridForRequest
+                    try? await sessionController?.resumeSession(id: previousId, cols: grid.cols, rows: grid.rows)
                     wireTerminalOutput(to: previousId)
                 }
             }
@@ -774,7 +792,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         guard !vm.isReloadingFromServer else { return }
         vm.beginServerReload()
         do {
-            try await withAuth { try await $0.resumeSession(id: id, skipReplay: false) }
+            try await withAuth {
+                // Read at the call site, not hoisted: `withAuth`'s re-auth retry
+                // must send the current grid, not a capture from before it.
+                let grid = gridForRequest
+                try await $0.resumeSession(id: id, skipReplay: false, cols: grid.cols, rows: grid.rows)
+            }
         } catch {
             // No replay is coming: release the buffering WITHOUT the clear, so
             // the pane keeps what it was showing rather than going blank.
@@ -809,7 +832,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 if previousId != nil {
                     try? await controller.detach()
                 }
-                try await controller.attachSession(id: id)
+                // Read the grid at the call site, after the awaited detach —
+                // same reason as `switchToSession`: request-grid-wins on the
+                // server, so an earlier capture would discard a fresher resize.
+                let grid = gridForRequest
+                try await controller.attachSession(id: id, cols: grid.cols, rows: grid.rows)
                 return controller
             }
 
@@ -852,7 +879,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         } catch {
             recoveryLog.error("attachRemoteSession failed for \(id): \(error.localizedDescription, privacy: .public)")
             if let previousId {
-                try? await sessionController?.resumeSession(id: previousId)
+                let grid = gridForRequest
+                try? await sessionController?.resumeSession(id: previousId, cols: grid.cols, rows: grid.rows)
                 wireTerminalOutput(to: previousId)
             }
             if Self.isApplicationLevelError(error) {
@@ -1029,6 +1057,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         terminalViewModels[sessionId]?.onTitleChanged = { [weak self] title in
             self?.terminalTitles[sessionId] = title
         }
+        // The size is recorded deliberately even while the view model's sends
+        // are suppressed: `TerminalViewModel.sendResize` calls `onResize` BEFORE
+        // its `isSendingSuppressed` guard, and recovery relies on that — the
+        // grid it puts on the post-reconnect resume is this value. Do not gate
+        // the record on suppression, and do not move `onResize` below the guard.
         terminalViewModels[sessionId]?.onResize = { [weak self] cols, rows in
             self?.lastKnownTerminalSize = (cols, rows)
         }
