@@ -29,7 +29,7 @@ Note: Service commands are top-level (`claude-relay stop`), while token/session/
 
 **Launchd**: Plist at `~/Library/LaunchAgents/com.claude.relay.plist`. The `load` command locates the server binary via a fallback chain: sibling of the CLI binary, `/opt/homebrew/bin/`, `/usr/local/bin/`, `~/.claude-relay/bin/`.
 
-**Linux server**: the same `CodeRelayServer`/`CodeRelayCLI`/`CodeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the Apple client library (`CodeRelayClient`) is not declared. `swift build && swift test` run there (1372 tests). The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). CI fails if the Linux resolve changes `Package.resolved`. The `linux-server` CI job builds and tests on Ubuntu.
+**Linux server**: the same `CodeRelayServer`/`CodeRelayCLI`/`CodeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the Apple client library (`CodeRelayClient`) is not declared. `swift build && swift test` run there. The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). CI fails if the Linux resolve changes `Package.resolved`. The `linux-server` CI job builds and tests on Ubuntu.
 
 ## Release Process
 
@@ -367,7 +367,7 @@ The macOS-only surfaces and their Linux replacements (full table in
   `SecRandomCopyBytes`; `RelayLogLevel` replaces `OSLogType` (os.Logger kept
   under `canImport(os)`, stderr → journald on Linux); `TerminalQRRenderer` uses
   CoreImage on macOS and `swift-qrcode-generator` (Linux-only dep) otherwise.
-- **Integration tests** — the 12 tests that drive the server through
+- **Integration tests** — the 19 tests that drive the server through
   `CodeRelayClient` are macOS-only; `TestWebSocketClient` (raw NIO) re-runs the
   same scenarios on both platforms (`WireIntegrationTests`,
   `WireRequestReplyTests`).
