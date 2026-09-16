@@ -32,9 +32,8 @@ private class SessionOwnershipAdapter(
 /**
  * One live connection: its coordinator, workspace view model, and scope.
  *
- * Linux counterpart of the Android `ConnectionSession`, minus the speech
- * engines (out of parity scope). The two obligations the lower layers leave as
- * injected seams are satisfied here exactly as on Android:
+ * Linux counterpart of the Android `ConnectionSession`. The two obligations the
+ * lower layers leave as injected seams are satisfied here exactly as on Android:
  *
  *  - **A serial, confined scope.** `SessionCoordinator` documents itself as the
  *    `@MainActor` analogue: every entry point and callback must run on one

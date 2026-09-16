@@ -55,16 +55,6 @@ class TokenStoreTest {
         )
     }
 
-    @Test
-    fun `bedrock secret also stays out of argv`() {
-        val runner = FakeRunner()
-        TokenStore(runner).saveBedrockToken("bedrock-key-abc123")
-
-        val call = runner.invocations.single()
-        assertEquals("bedrock-key-abc123", call.stdin)
-        assertTrue(call.command.none { it.contains("bedrock-key-abc123") })
-    }
-
     /**
      * Never silently fall back to disk. "My keyring is locked" must not quietly
      * become "my relay token is in plaintext in my home directory" — a relay
@@ -147,13 +137,6 @@ class TokenStoreTest {
         assertTrue(argv.containsAll(listOf("account", connectionId.toString().lowercase())))
     }
 
-    @Test
-    fun `bedrock uses its own reserved account`() {
-        val runner = FakeRunner()
-        TokenStore(runner).saveBedrockToken("k")
-        assertTrue(runner.invocations.single().command.contains(TokenStore.BEDROCK_ACCOUNT))
-    }
-
     /**
      * The Bedrock account name must not be able to collide with a connection
      * account, or clearing one would clear the other.
@@ -165,11 +148,38 @@ class TokenStoreTest {
         }
     }
 
+    /**
+     * Builds before 2026-09 stored the AWS Bedrock key for the on-device prompt
+     * enhancer under the reserved account. The optimizer is a relay feature now,
+     * so the launch-time scrub must address exactly the attributes those builds
+     * wrote — same service, literal `bedrock` account — and nothing else.
+     */
     @Test
-    fun `saving an empty bedrock token clears it instead of storing empty`() {
+    fun `deleteBedrockToken clears the reserved account and nothing else`() {
         val runner = FakeRunner()
-        TokenStore(runner).saveBedrockToken("")
-        assertEquals("clear", runner.invocations.single().command[1])
+        val removed = TokenStore(runner).deleteBedrockToken()
+
+        val call = runner.invocations.single()
+        assertEquals(
+            listOf("secret-tool", "clear", "service", TokenStore.SERVICE_NAME, "account", TokenStore.BEDROCK_ACCOUNT),
+            call.command,
+        )
+        assertNull(call.stdin)
+        assertTrue(removed)
+    }
+
+    /** No keyring, no secret-tool: the scrub is a no-op that the next launch retries. */
+    @Test
+    fun `deleteBedrockToken does not throw when secret-tool is missing`() {
+        val runner = FakeRunner(throwOnRun = true)
+        assertFalse(TokenStore(runner).deleteBedrockToken())
+    }
+
+    /** `secret-tool clear` exits 0 on a miss; a non-zero exit is a locked or broken keyring. */
+    @Test
+    fun `deleteBedrockToken reports a keyring failure as false`() {
+        val runner = FakeRunner(exitCode = 1, stderr = "The name org.freedesktop.secrets was not provided")
+        assertFalse(TokenStore(runner).deleteBedrockToken())
     }
 
     @Test
@@ -177,5 +187,44 @@ class TokenStoreTest {
         val runner = FakeRunner(exitCode = 1)
         TokenStore(runner).deleteToken(connectionId)
         assertEquals("clear", runner.invocations.single().command[1])
+    }
+
+    /**
+     * A keyring prompting for an unlock keeps secret-tool's stdout open; the
+     * runner must give up on the wall clock, not on EOF (the old order read
+     * to EOF first and the timeout could never be reached).
+     */
+    @Test
+    fun `process runner gives up on the wall clock even when stdout stays open`() {
+        val started = System.nanoTime()
+        val result = TokenStore.ProcessCommandRunner(timeoutSeconds = 1)
+            .run(listOf("sh", "-c", "sleep 10"), stdin = null)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals(-1, result.exitCode)
+        assertEquals("timed out", result.stderr)
+        assertTrue(elapsedMs < 5_000, "runner blocked for ${elapsedMs} ms")
+    }
+
+    /**
+     * Pending stdout data does not defeat the bound — a prompting secret-tool
+     * prints its prompt and then blocks.
+     */
+    @Test
+    fun `process runner is still bounded when the process has written output before hanging`() {
+        val started = System.nanoTime()
+        val result = TokenStore.ProcessCommandRunner(timeoutSeconds = 1)
+            .run(listOf("sh", "-c", "echo prompt; sleep 10"), stdin = null)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals(-1, result.exitCode)
+        assertEquals("timed out", result.stderr)
+        assertTrue(elapsedMs < 5_000, "runner blocked for ${elapsedMs} ms")
+    }
+
+    @Test
+    fun `process runner returns stdout and exit code of a finished process`() {
+        val result = TokenStore.ProcessCommandRunner(timeoutSeconds = 5)
+            .run(listOf("sh", "-c", "printf hello; exit 3"), stdin = null)
+        assertEquals(3, result.exitCode)
+        assertEquals("hello", result.stdout)
     }
 }

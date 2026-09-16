@@ -38,6 +38,12 @@ enum class AppShortcut {
     /** Ctrl+Shift+C / Ctrl+Shift+V: the terminal-world copy and paste chords. */
     COPY,
     PASTE,
+    /**
+     * Ctrl+Shift+O: the prompt-optimizer wand (spec §7.4). Shifted like every
+     * other accelerator — bare Ctrl+O is nano's write-out and readline's
+     * operate-and-get-next, so it belongs to the terminal.
+     */
+    OPTIMIZE_PROMPT,
     ;
 
     companion object {
@@ -87,6 +93,7 @@ enum class AppShortcut {
                     Key.Zero -> ZOOM_RESET
                     Key.C -> COPY
                     Key.V -> PASTE
+                    Key.O -> OPTIMIZE_PROMPT
                     else -> null
                 }
             }

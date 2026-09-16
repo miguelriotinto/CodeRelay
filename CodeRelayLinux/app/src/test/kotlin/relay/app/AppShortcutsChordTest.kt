@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
-/** The chords added for settings, zoom, copy and paste. */
+/** The chords added for settings, zoom, copy, paste and the prompt-optimizer wand. */
 class AppShortcutsChordTest {
 
     private fun ctrlShift(key: Key) = AppShortcut.resolve(key, ctrl = true, shift = true, alt = false)
@@ -39,5 +39,26 @@ class AppShortcutsChordTest {
     fun `ctrl shift zero is zoom reset, not session switching`() {
         assertNull(AppShortcut.sessionIndex(Key.Zero, ctrl = true, alt = true))
         assertEquals(AppShortcut.ZOOM_RESET, ctrlShift(Key.Zero))
+    }
+
+    @Test
+    fun `ctrl shift O triggers the prompt optimizer wand`() {
+        assertEquals(AppShortcut.OPTIMIZE_PROMPT, ctrlShift(Key.O))
+    }
+
+    /**
+     * Bare Ctrl+O is terminal input (nano's write-out, readline's operate-and-
+     * get-next); it must never resolve to an app command. See the class doc on
+     * [AppShortcut] for the rule.
+     */
+    @Test
+    fun `bare ctrl O still belongs to the terminal`() {
+        assertNull(AppShortcut.resolve(Key.O, ctrl = true, shift = false, alt = false))
+    }
+
+    /** Ctrl+Alt is the session-switching family; O is not bound there. */
+    @Test
+    fun `ctrl alt O is not a shortcut`() {
+        assertNull(AppShortcut.resolve(Key.O, ctrl = true, shift = false, alt = true))
     }
 }

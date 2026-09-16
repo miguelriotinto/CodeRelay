@@ -53,7 +53,7 @@ Runtime (present on a stock Omarchy install):
 
 | Tool | Package | Used for |
 |---|---|---|
-| `secret-tool` | `libsecret` | Relay + Bedrock tokens in the keyring |
+| `secret-tool` | `libsecret` | Relay tokens in the keyring |
 | `notify-send` | `libnotify` | Agent-finished / needs-input notifications |
 | `wl-copy` / `wl-paste` | `wl-clipboard` | Clipboard and PRIMARY selection (AWT fallback on X11) |
 
@@ -106,11 +106,10 @@ change**, and notifications work even with the server's `pushEnabled=false`
 
 ### Secrets
 
-Relay tokens and the Bedrock key go to the Secret Service via `secret-tool`,
-passed on **stdin** — never argv, which is world-readable through
-`/proc/<pid>/cmdline`. If the keyring is unavailable, writes fail loudly; there
-is deliberately no plaintext fallback. A relay token grants full session access
-to the user's machine.
+Relay tokens go to the Secret Service via `secret-tool`, passed on **stdin** —
+never argv, which is world-readable through `/proc/<pid>/cmdline`. If the keyring
+is unavailable, writes fail loudly; there is deliberately no plaintext fallback.
+A relay token grants full session access to the user's machine.
 
 ## Omarchy integration
 
@@ -179,8 +178,10 @@ unless `CODERELAY_TEST_HOST`/`PORT`/`TOKEN` are set):
   shapes and blink are honoured, with a hollow cursor when unfocused.
 - **Keyboard.** Every accelerator is Ctrl+Shift or Ctrl+Alt so bare Ctrl chords
   reach the terminal: new session, detach, terminate, next/previous, session
-  1–9, sidebar, settings, zoom (Ctrl+Shift+= / - / 0), copy, paste. Handled at
-  the window, so they work with the sidebar focused too.
+  1–9, sidebar, settings, zoom (Ctrl+Shift+= / - / 0), copy, paste, optimize
+  prompt (Ctrl+Shift+O, the wand). Handled at the window, so they work with the
+  sidebar focused too. The optimize-prompt chord is swallowed while the
+  Settings or Servers overlay is open.
 - **Desktop shell.** Close-to-tray with a per-session rollup (state glyphs,
   attention count, quick switch, new/attach/servers/settings/quit). One instance
   per user session: a second `coderelay://` click or the "New Session" desktop

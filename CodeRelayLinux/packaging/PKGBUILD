@@ -27,9 +27,9 @@ conflicts=("$_pkgname")
 
 # Runtime dependencies are the small CLI tools the platform layer shells out
 # to. Both are load-bearing rather than optional niceties:
-#   libsecret  — secret-tool, the ONLY place relay and Bedrock tokens are
-#                stored. There is deliberately no plaintext fallback, so
-#                without this the app cannot save a token at all.
+#   libsecret  — secret-tool, the ONLY place relay tokens are stored. There is
+#                deliberately no plaintext fallback, so without this the app
+#                cannot save a token at all.
 #   libnotify  — notify-send, for agent-finished / needs-input notifications.
 #
 # No java dependency: the tarball bundles a trimmed JRE, so the package imposes

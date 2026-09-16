@@ -366,6 +366,24 @@ private fun runApp(
             }
             AppShortcut.COPY -> if (active?.coordinator?.activeSessionId?.value != null) copyRequest++ else return false
             AppShortcut.PASTE -> if (active?.coordinator?.activeSessionId?.value != null) pasteRequest++ else return false
+            // The wand's accelerator (spec §7.4) — the same entry point as a tap
+            // on the WandButton, on purpose. PromptOptimizerController owns the
+            // gate (idle, not recovering, an active session, not torn down) and
+            // shows the "update / enable the relay" hint itself when the wand is
+            // unavailable, so the chord and the tap cannot drift apart. Mirrors
+            // the macOS WandButton receiving `.optimizePromptShortcut`.
+            AppShortcut.OPTIMIZE_PROMPT -> {
+                // Optimize is the only chord that rewrites text the user is
+                // composing, and its feedback (Undo chip, hint) lives on the
+                // workspace, so it must not fire while that is covered. When an
+                // overlay is showing, the chord is swallowed rather than forwarded
+                // — an unhandled Ctrl+Shift+O reaches the terminal as Ctrl+O,
+                // which zsh binds to accept-line-and-down-history.
+                if (showSettings || showServers) return true
+                active?.let { s ->
+                    s.scope.launch { s.coordinator.optimizePrompt(shareScreen) }
+                } ?: return false
+            }
         }
         return true
     }
@@ -770,6 +788,13 @@ class AppEnvironment private constructor(
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val deviceId = DeviceIdentifier.get()
             val tokens = TokenStore()
+            // Builds before 2026-09 kept an AWS Bedrock key for the on-device
+            // prompt enhancer under TokenStore.BEDROCK_ACCOUNT. The optimizer is
+            // a relay feature now, so the secret is deleted on every launch —
+            // idempotent, no completion flag, the same rule as Android's speech
+            // scrub. Dispatchers.IO because the runner bounds secret-tool at
+            // 30 s wall clock, and the coordinators run on Main.immediate.
+            scope.launch(Dispatchers.IO) { tokens.deleteBedrockToken() }
 
             lateinit var environment: AppEnvironment
             environment = AppEnvironment(

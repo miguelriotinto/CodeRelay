@@ -4,12 +4,13 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * Stores relay bearer tokens and the Bedrock API key in the desktop keyring.
+ * Stores relay bearer tokens in the desktop keyring.
  *
  * Linux counterpart of the Android `TokenStore`, which uses
- * `EncryptedSharedPreferences`. The public API is identical — `saveToken` /
- * `loadToken` / `deleteToken` / `saveBedrockToken` / `loadBedrockToken` — so
- * shared call sites compile against either.
+ * `EncryptedSharedPreferences`. The public API matches — `saveToken` /
+ * `loadToken` / `deleteToken` / `deleteBedrockToken` (Linux additionally
+ * reports success from the last one) — so shared call sites that ignore the
+ * result compile against either.
  *
  * Backed by the **Secret Service** (D-Bus: gnome-keyring, KWallet, …) through
  * `secret-tool` from libsecret. Two properties of that choice are load-bearing:
@@ -27,8 +28,8 @@ import java.util.concurrent.TimeUnit
  *     ownership across tokens by design), so it is exactly as sensitive as an SSH key.
  *
  * Attribute schema matches Android's key layout so the two are conceptually the
- * same store: `service` is constant, `account` is the connection UUID (or the
- * literal `bedrock` for the API key).
+ * same store: `service` is constant and `account` is the connection UUID. The
+ * literal `bedrock` account is only ever *cleared* now — see [deleteBedrockToken].
  */
 class TokenStore(
     private val runner: CommandRunner = DefaultCommandRunner,
@@ -52,17 +53,23 @@ class TokenStore(
         clear(account = connectionId.toString().lowercase())
     }
 
-    /** Persists the AWS Bedrock bearer token used by the prompt enhancer. */
-    fun saveBedrockToken(token: String) {
-        if (token.isEmpty()) {
-            clear(account = BEDROCK_ACCOUNT)
-            return
-        }
-        store(account = BEDROCK_ACCOUNT, secret = token, label = "CodeRelay Bedrock token")
-    }
-
-    /** Returns the stored Bedrock token, or null. */
-    fun loadBedrockToken(): String? = lookup(account = BEDROCK_ACCOUNT)
+    /**
+     * Deletes the AWS Bedrock API key that builds before 2026-09 stored for the
+     * on-device prompt enhancer. The optimizer is a relay feature now, so the
+     * key has no reader; `AppEnvironment` calls this on every launch, off the
+     * AWT thread, with no completion flag. On a locked keyring that still holds
+     * the entry, libsecret's clear raises the unlock prompt; if the user
+     * dismisses it, `secret-tool` exits non-zero, this returns false, and the
+     * next launch prompts again — accepted, because there is no non-prompting
+     * probe (`lookup` prompts too) and the entry exists only on machines that
+     * once typed a Bedrock key. Once the entry is gone, `clear` is one cheap
+     * exit-0 no-op per launch, bounded at 30 s wall clock.
+     *
+     * Never throws. Returns true when the keyring confirmed the entry is gone
+     * (removed or absent) and false when it could not be reached, so a locked
+     * keyring simply retries next launch.
+     */
+    fun deleteBedrockToken(): Boolean = clear(account = BEDROCK_ACCOUNT)
 
     /** True when a working Secret Service is reachable. Used to warn early, in Settings. */
     fun isKeyringAvailable(): Boolean =
@@ -109,11 +116,11 @@ class TokenStore(
         return result.stdout.trimEnd('\n', '\r').takeIf { it.isNotEmpty() }
     }
 
-    private fun clear(account: String) {
+    /** True when `secret-tool clear` exited 0 — which it does on a miss too. */
+    private fun clear(account: String): Boolean =
         runCatching {
-            runner.run(listOf(SECRET_TOOL, "clear", "service", SERVICE_NAME, "account", account), null)
-        }
-    }
+            runner.run(listOf(SECRET_TOOL, "clear", "service", SERVICE_NAME, "account", account), null).exitCode == 0
+        }.getOrDefault(false)
 
     /** Result of running an external command. */
     data class CommandResult(val exitCode: Int, val stdout: String, val stderr: String)
@@ -127,7 +134,19 @@ class TokenStore(
         fun run(command: List<String>, stdin: String?): CommandResult
     }
 
-    object DefaultCommandRunner : CommandRunner {
+    /**
+     * Runs `secret-tool` with a hard wall-clock bound. `waitFor` runs BEFORE the
+     * pipes are drained, deliberately: a keyring prompting for an unlock
+     * password keeps its stdout open, so reading to EOF first would block for
+     * the life of the prompt and the timeout would never be reached.
+     * secret-tool's whole output is one secret or one D-Bus error line — far
+     * below the pipe buffer — so waiting first cannot deadlock on a full pipe.
+     * Waiting before draining is safe only because `secret-tool` writes at most
+     * a few lines (well under the 64 KiB pipe buffer); a program that writes
+     * more before exiting would block on write and hit the timeout, so this
+     * runner is for `secret-tool`, not a general process helper.
+     */
+    class ProcessCommandRunner(private val timeoutSeconds: Long = KEYRING_TIMEOUT_SECONDS) : CommandRunner {
         override fun run(command: List<String>, stdin: String?): CommandResult {
             val process = ProcessBuilder(command).redirectErrorStream(false).start()
             if (stdin != null) {
@@ -135,14 +154,12 @@ class TokenStore(
             } else {
                 process.outputStream.close()
             }
-            val out = process.inputStream.bufferedReader().use { it.readText() }
-            val err = process.errorStream.bufferedReader().use { it.readText() }
-            // A keyring prompting for an unlock password can block indefinitely;
-            // bound it so the UI thread's caller cannot hang forever.
-            if (!process.waitFor(KEYRING_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
                 return CommandResult(exitCode = -1, stdout = "", stderr = "timed out")
             }
+            val out = process.inputStream.bufferedReader().use { it.readText() }
+            val err = process.errorStream.bufferedReader().use { it.readText() }
             return CommandResult(process.exitValue(), out, err)
         }
     }
@@ -154,7 +171,9 @@ class TokenStore(
         /** Matches the Android store's service name so the two agree conceptually. */
         const val SERVICE_NAME = "com.coderemote.relay"
 
-        /** Account attribute for the Bedrock key; every other account is a connection UUID. */
+        /** Account attribute older builds used for the Bedrock key; every other account is a connection UUID. */
         const val BEDROCK_ACCOUNT = "bedrock"
+
+        val DefaultCommandRunner: CommandRunner = ProcessCommandRunner()
     }
 }
