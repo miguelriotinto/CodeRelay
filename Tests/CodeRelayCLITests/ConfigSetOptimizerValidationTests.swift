@@ -11,6 +11,20 @@ final class ConfigSetOptimizerValidationTests: XCTestCase {
         ConfigSetCommand.optimizerValidationError(key: key, value: ConfigValue.infer(from: raw))
     }
 
+    /// Review C-2: the optimizer is built once at startup, so a `config set` of
+    /// any of these keys is inert until a restart — and nothing in the output said
+    /// so. Every promptOptimizer* key gets the hint; nothing else does.
+    func testOptimizerKeysGetTheRestartHint() {
+        let expected = "Note: optimizer settings are read at startup — run 'claude-relay restart' to apply."
+        for key in ["promptOptimizerEnabled", "promptOptimizerProvider", "promptOptimizerModel",
+                    "promptOptimizerRegion", "promptOptimizerKeyPath", "promptOptimizerShareScreen"] {
+            XCTAssertEqual(ConfigSetCommand.restartHint(forKey: key), expected, key)
+        }
+        for key in ["wsPort", "logLevel", "pushEnabled", "detachTimeout", "bindAll"] {
+            XCTAssertNil(ConfigSetCommand.restartHint(forKey: key), "\(key) takes effect without a restart")
+        }
+    }
+
     func testProviderMustBeKnown() {
         XCTAssertNil(error("promptOptimizerProvider", "anthropic"))
         XCTAssertNil(error("promptOptimizerProvider", "bedrock"))

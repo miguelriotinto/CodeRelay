@@ -138,11 +138,23 @@ struct ConfigSetCommand: AsyncParsableCommand {
             let _: ConfigSetResponse = try await client.put("/config/\(key)", body: body)
             if !globals.quiet {
                 print("Set \(key) = \(value)")
+                if let hint = Self.restartHint(forKey: key) { print(hint) }
             }
         } catch {
             print(OutputFormatter.formatError(error, json: globals.json))
             throw ExitCode.failure
         }
+    }
+
+    /// The optimizer is built once, at startup: `PromptOptimizerFactory.make` reads
+    /// the key file and decides the capability there and never revisits it. So
+    /// `config set promptOptimizerEnabled true` on a running relay changes nothing
+    /// a client can see — the wand stays dimmed — and the operator has no reason to
+    /// suspect it. One line closes that gap (review C-2). Returns nil for every
+    /// other key, whose writes *are* live.
+    static func restartHint(forKey key: String) -> String? {
+        guard key.hasPrefix("promptOptimizer") else { return nil }
+        return "Note: optimizer settings are read at startup — run 'claude-relay restart' to apply."
     }
 
     /// Client-side fast path for the promptOptimizer* keys. Returns the message
