@@ -446,7 +446,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `SessionController.attachSession(id:cols:rows:)`, `resumeSession(id:skipReplay:cols:rows:)`; `SharedSessionCoordinator.lastKnownTerminalSize: (cols: UInt16, rows: UInt16)?` (already set from the active VM's `onResize`, line ~1033).
 - Produces: a private helper on the coordinator: `var gridForRequest: (cols: UInt16?, rows: UInt16?) { (lastKnownTerminalSize?.cols, lastKnownTerminalSize?.rows) }`.
 
-Design note for the implementer: all terminal view models on one device render in the same pane, so the pane's last reported grid is the right value for every session on that device — no per-VM size store is needed. The incoming view will still send its own `resize` after layout; the server now defers/applies it, so nothing is lost if it differs.
+Design note for the implementer: all terminal view models on one device render in the same pane, so the pane's last reported grid is the right value for every session on that device — no per-VM size store is needed. The incoming view will still send its own `resize` after layout, but a resize that lands BEFORE the resume request is discarded by the server's request-grid-wins rule (`takeGrid`), and one that lands after is deferred and applied — so the grid put on the request must be read as late as possible (at the call site, after the awaited `detach`), never hoisted ahead of it.
 
 - [ ] **Step 1: Write the failing controller test**
 

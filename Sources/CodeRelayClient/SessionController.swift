@@ -287,7 +287,8 @@ public final class SessionController: ObservableObject {
     /// - Parameters:
     ///   - cols: The requesting terminal's grid, applied to the PTY before the
     ///     replay so the replayed bytes re-wrap at this device's width.
-    ///   - rows: See `cols`. Both must be given for the grid to be sent.
+    ///   - rows: See `cols`. The server applies the grid only when both are
+    ///     present; a half grid is ignored.
     ///
     /// `cols`/`rows` are the device grid; the server resizes the PTY to it
     /// before replaying and repainting. Pass the pane's last reported size
@@ -310,13 +311,14 @@ public final class SessionController: ObservableObject {
     }
 
     /// Resumes an existing session by its identifier.
-    /// - Parameter skipReplay: When true, the server skips the ring-buffer
-    ///   replay. Use this when the client is swapping between locally-cached
-    ///   terminals and already has the full scrollback on screen.
     /// - Parameters:
+    ///   - skipReplay: When true, the server skips the ring-buffer replay. Use
+    ///     this when the client is swapping between locally-cached terminals
+    ///     and already has the full scrollback on screen.
     ///   - cols: The requesting terminal's grid, applied to the PTY before the
     ///     replay (and before the post-replay repaint even with `skipReplay`).
-    ///   - rows: See `cols`. Both must be given for the grid to be sent.
+    ///   - rows: See `cols`. The server applies the grid only when both are
+    ///     present; a half grid is ignored.
     ///
     /// `cols`/`rows` are the device grid; the server resizes the PTY to it
     /// before replaying and repainting. Pass the pane's last reported size

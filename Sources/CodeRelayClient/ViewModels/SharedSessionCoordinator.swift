@@ -734,13 +734,19 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             terminalCache.touch(id)
             terminalCache.enforceLimit(activeSessionId: activeSessionId)
 
-            let grid = gridForRequest
             try await withAuth { controller in
                 if previousId != nil {
                     try? await controller.detach()
                 }
+                // Read the grid HERE, after the awaited detach, not before it:
+                // the server's `takeGrid` is request-grid-wins and discards a
+                // deferred resize, so a grid captured earlier would beat the
+                // fresher one the incoming view reported during the detach.
+                // Reading late also gives `withAuth`'s re-auth retry the
+                // current grid instead of re-sending a stale capture.
                 try await controller.resumeSession(
-                    id: id, skipReplay: hasLiveTerminal, cols: grid.cols, rows: grid.rows
+                    id: id, skipReplay: hasLiveTerminal,
+                    cols: gridForRequest.cols, rows: gridForRequest.rows
                 )
             }
 
@@ -820,13 +826,17 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     public func attachRemoteSession(id: UUID, serverName: String? = nil) async {
         guard !isRecovering else { return }
         let previousId = activeSessionId
-        let grid = gridForRequest
         do {
             let controller = try await withAuth { controller in
                 if previousId != nil {
                     try? await controller.detach()
                 }
-                try await controller.attachSession(id: id, cols: grid.cols, rows: grid.rows)
+                // Read the grid at the call site, after the awaited detach —
+                // same reason as `switchToSession`: request-grid-wins on the
+                // server, so an earlier capture would discard a fresher resize.
+                try await controller.attachSession(
+                    id: id, cols: gridForRequest.cols, rows: gridForRequest.rows
+                )
                 return controller
             }
 
@@ -1048,6 +1058,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         terminalViewModels[sessionId]?.onTitleChanged = { [weak self] title in
             self?.terminalTitles[sessionId] = title
         }
+        // The size is recorded deliberately even while the view model's sends
+        // are suppressed: `TerminalViewModel.sendResize` calls `onResize` BEFORE
+        // its `isSendingSuppressed` guard, and recovery relies on that — the
+        // grid it puts on the post-reconnect resume is this value. Do not gate
+        // the record on suppression, and do not move `onResize` below the guard.
         terminalViewModels[sessionId]?.onResize = { [weak self] cols, rows in
             self?.lastKnownTerminalSize = (cols, rows)
         }

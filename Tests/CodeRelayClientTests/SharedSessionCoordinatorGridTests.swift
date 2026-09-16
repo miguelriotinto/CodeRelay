@@ -136,6 +136,43 @@ final class SharedSessionCoordinatorGridTests: SessionControllerTestCase {
         XCTAssertEqual(rollback?.rows, 33)
     }
 
+    /// The grid must be read when the resume is BUILT, not when the switch was
+    /// entered. The coordinator publishes the selection and wires the incoming
+    /// view before its awaited `detach`, so that view can lay out and report a
+    /// new size while the detach is on the wire. The server's `takeGrid` is
+    /// request-grid-wins and discards the deferred resize, so a grid captured
+    /// before the detach would make the server repaint at the stale size and
+    /// throw the fresh one away. Models the parked detach with `autoRespond`
+    /// withholding its reply until the new size has been reported.
+    func testSwitchReadsTheGridAfterTheDetachNotWhenEntered() async throws {
+        activateFirstAndReportPane(cols: 104, rows: 33)
+        conn.autoRespond = { message in
+            switch message {
+            case .sessionDetach: return nil   // parked until the test releases it
+            case .sessionResume(let id, _, _, _): return .sessionResumed(sessionId: id)
+            case .sessionList: return .sessionList(sessions: [])
+            default: return nil
+            }
+        }
+
+        let switching = Task { await coordinator.switchToSession(id: second) }
+        await waitUntil("the detach to go out") { conn.sentTypes.contains("session_detach") }
+        XCTAssertTrue(resumes(of: second).isEmpty, "the resume must wait behind the parked detach")
+
+        // The incoming view lays out and reports its size while the detach is parked.
+        coordinator.terminalViewModels[second]?.sendResize(cols: 120, rows: 40)
+        XCTAssertEqual(coordinator.lastKnownTerminalSize?.cols, 120)
+        XCTAssertEqual(coordinator.lastKnownTerminalSize?.rows, 40)
+
+        conn.deliver(.sessionDetached)
+        await switching.value
+
+        let resume = resumes(of: second).last
+        XCTAssertNotNil(resume, "expected a session_resume for the target, got \(conn.sentTypes)")
+        XCTAssertEqual(resume?.cols, 120, "the resume must carry the grid current at send time, not at entry")
+        XCTAssertEqual(resume?.rows, 40)
+    }
+
     // MARK: - Reload
 
     func testReloadTerminalFromServerPutsTheGridOnTheResume() async throws {
