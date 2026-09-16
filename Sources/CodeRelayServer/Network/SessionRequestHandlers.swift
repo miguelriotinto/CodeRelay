@@ -153,15 +153,18 @@ extension RelayMessageHandler {
 
     /// The grid this attach/resume/create should apply: the request's own, else
     /// one deferred by an unattached `resize`. Consumes the deferred grid either
-    /// way (for create it is the spawn size, not a resize). A partial request
-    /// grid (only one of `cols`/`rows`) is intentionally treated as absent and
-    /// falls through to `pendingGrid` — Kit's `encodeIfPresent` can put a half
-    /// grid on the wire, but a half grid is never applied.
+    /// way (for create it is the spawn size, not a resize). A half grid (only
+    /// one of `cols`/`rows`) OR a grid with a zero side is intentionally treated
+    /// as absent and falls through to `pendingGrid` — Kit's `encodeIfPresent`
+    /// can put a half grid on the wire, and a client that has not laid out yet
+    /// can report 0x0; neither is ever applied. `handleResize` already refuses
+    /// to defer a 0x0, and a 0-wide PTY would disable `forceRepaint` (it guards
+    /// `currentCols > 1`) until the next real resize.
     /// Event-loop only (it touches `pendingGrid`) — call it *before*
     /// `bridgeToEventLoopWithCtx` so the work closure captures the result.
     private func takeGrid(cols: UInt16?, rows: UInt16?) -> (cols: UInt16, rows: UInt16)? {
         defer { pendingGrid = nil }
-        if let cols, let rows { return (cols, rows) }
+        if let cols, let rows, cols > 0, rows > 0 { return (cols, rows) }
         return pendingGrid
     }
 

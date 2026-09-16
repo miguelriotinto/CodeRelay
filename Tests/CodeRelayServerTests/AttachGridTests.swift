@@ -245,4 +245,30 @@ final class AttachGridTests: XCTestCase {
         XCTAssertEqual(calls.map { [$0.cols, $0.rows] }, [[120, 40]],
                        "only the request grid; the deferred one is neither applied nor replayed later")
     }
+
+    /// A 0x0 request grid (a client that has not laid out yet) is treated as
+    /// absent, like a half grid: it never resizes the PTY — a 0-wide PTY would
+    /// disable `forceRepaint` until the next real resize — and it falls through
+    /// to a deferred grid instead of discarding it.
+    @MainActor
+    func testZeroRequestGridIsTreatedAsAbsent() async throws {
+        let f = try await makeFixture()
+        defer { f.teardown() }
+
+        try await f.controller.attachSession(id: f.sessionId, cols: 0, rows: 0)
+        try? await Task.sleep(for: .milliseconds(200))
+        let afterZero = await f.mockPTY.resizeCalls
+        XCTAssertTrue(afterZero.isEmpty, "a 0x0 request grid must never resize the PTY")
+
+        // Absent means absent: with a deferred grid pending, 0x0 does not beat it.
+        try await f.controller.detach()
+        try await f.connection.sendResize(cols: 77, rows: 21)
+        try? await Task.sleep(for: .milliseconds(100))
+        try await f.controller.attachSession(id: f.sessionId, cols: 0, rows: 0)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        let calls = await f.mockPTY.resizeCalls
+        XCTAssertEqual(calls.map { [$0.cols, $0.rows] }, [[77, 21]],
+                       "the deferred grid is applied; the 0x0 request grid is neither applied nor allowed to discard it")
+    }
 }
