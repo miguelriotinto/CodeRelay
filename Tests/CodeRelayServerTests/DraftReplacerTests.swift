@@ -32,6 +32,52 @@ final class DraftReplacerTests: XCTestCase {
         XCTAssertEqual(out.filter { $0 == 0x7F }.count, 3)
     }
 
+    /// T1 gap 2: a multi-scalar grapheme. "👍🏽" is ONE Character, TWO scalars and
+    /// FOUR UTF-16 code units, and four is what the erase must count — the Ink
+    /// rule the type documents. Pinned because every other unit is a plausible
+    /// mistake here and each of them under-counts, the destructive direction.
+    func testMultiScalarGraphemeCountsFourUTF16Units() {
+        let draft = "👍🏽"
+        XCTAssertEqual(draft.count, 1)
+        XCTAssertEqual(draft.unicodeScalars.count, 2)
+        XCTAssertEqual(draft.utf16.count, 4)
+        let out = DraftReplacer.bytes(replacing: draft, with: "ok", bracketedPaste: false, keyboardFlags: [])
+        XCTAssertEqual(string(out), String(repeating: "\u{7F}", count: 4)
+                       + String(repeating: "\(esc)[3~", count: 4) + "ok")
+    }
+
+    // MARK: canonical mode (A-7)
+
+    /// In canonical mode the line discipline honours Backspace as VERASE but has
+    /// no idea what `ESC [ 3 ~` is: it inserts those four bytes into the line, N
+    /// times, and hands them to the program on Enter. Backspace×N alone erases
+    /// the line there, because canonical mode has no intra-line cursor.
+    func testCanonicalModeEmitsBackspacesOnly() {
+        let out = DraftReplacer.bytes(replacing: "abc", with: "xy", bracketedPaste: false,
+                                      keyboardFlags: [], canonical: true)
+        XCTAssertEqual(string(out), "\u{7F}\u{7F}\u{7F}" + "xy")
+        XCTAssertFalse(string(out).contains("\(esc)[3~"), "a literal ^[[3~ would land in the line")
+    }
+
+    /// The raw-mode branch is unchanged, and it is the default: the Delete run is
+    /// what removes the tail when the cursor sits inside the draft.
+    func testRawModeStillEmitsTheDeleteRun() {
+        let raw = DraftReplacer.bytes(replacing: "abc", with: "xy", bracketedPaste: false,
+                                      keyboardFlags: [], canonical: false)
+        let defaulted = DraftReplacer.bytes(replacing: "abc", with: "xy", bracketedPaste: false,
+                                            keyboardFlags: [])
+        XCTAssertEqual(string(raw), "\u{7F}\u{7F}\u{7F}" + "\(esc)[3~\(esc)[3~\(esc)[3~" + "xy")
+        XCTAssertEqual(raw, defaulted, "raw mode is the default")
+    }
+
+    /// Canonical mode changes only the erase; the kitty backspace dialect and the
+    /// paste bracket are orthogonal to it.
+    func testCanonicalModeKeepsTheBackspaceDialectAndPasteBracket() {
+        let out = DraftReplacer.bytes(replacing: "ab", with: "z", bracketedPaste: true,
+                                      keyboardFlags: [.disambiguate, .reportAllKeys], canonical: true)
+        XCTAssertEqual(string(out), "\(esc)[127u\(esc)[127u" + "\(esc)[200~z\(esc)[201~")
+    }
+
     func testBracketedPasteWrapsTextVerbatim() {
         let out = DraftReplacer.bytes(replacing: "", with: "line1\nline2", bracketedPaste: true, keyboardFlags: [])
         XCTAssertEqual(string(out), "\(esc)[200~line1\nline2\(esc)[201~")

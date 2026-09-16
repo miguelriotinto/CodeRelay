@@ -12,6 +12,13 @@ import SwiftTerm
 /// removed wherever the cursor sits; the extra keys are no-ops at either end.
 /// Ink-based agents count UTF-16 code units, hence that unit rather than
 /// characters or scalars.
+///
+/// **Except in canonical mode.** When the foreground program reads the line
+/// through the tty's line discipline (`ICANON` — `cat`, a script's `read`), the
+/// discipline honours Backspace as VERASE but knows nothing about `ESC [ 3 ~`:
+/// those four bytes are *inserted* into the line, N times, and then delivered to
+/// the program on Enter. Backspace×N alone is sufficient there because canonical
+/// mode has no intra-line cursor to leave a tail behind (review A-7).
 enum DraftReplacer {
     private static let legacyBackspace: [UInt8] = [0x7F]
     /// kitty `CSI 127 u`, used only when the program asked for *all* keys as
@@ -58,8 +65,13 @@ enum DraftReplacer {
             .replacingOccurrences(of: "\t", with: " ")
     }
 
+    /// - Parameter canonical: the tty is in canonical mode, so the Delete run is
+    ///   omitted. Defaults to raw mode — the value is a property of the *pty*, so
+    ///   only `PTYSession` can supply it (it reads `c_lflag` at replace time);
+    ///   the default exists for tests and for callers that have no fd.
     static func bytes(replacing draft: String, with text: String,
-                      bracketedPaste: Bool, keyboardFlags: KittyKeyboardFlags) -> Data {
+                      bracketedPaste: Bool, keyboardFlags: KittyKeyboardFlags,
+                      canonical: Bool = false) -> Data {
         // One source of truth for what gets typed, so `bytes` and the text the
         // caller adopts cannot drift apart.
         let payload = effectiveText(text, bracketedPaste: bracketedPaste)
@@ -68,7 +80,11 @@ enum DraftReplacer {
         var out = Data()
         out.reserveCapacity(count * (backspace.count + deleteKey.count) + payload.utf8.count + 12)
         for _ in 0..<count { out.append(contentsOf: backspace) }
-        for _ in 0..<count { out.append(contentsOf: deleteKey) }
+        // Canonical mode: no Delete run. See the type comment — there it would be
+        // N copies of a literal `^[[3~` in the line the program is about to read.
+        if !canonical {
+            for _ in 0..<count { out.append(contentsOf: deleteKey) }
+        }
         if bracketedPaste {
             out.append(contentsOf: pasteStart)
             out.append(contentsOf: Array(payload.utf8))

@@ -813,10 +813,38 @@ public actor PTYSession: PTYSessionProtocol {
         let bracketedPaste = screenModel.bracketedPasteEnabled
         let bytes = DraftReplacer.bytes(replacing: erased, with: text,
                                         bracketedPaste: bracketedPaste,
-                                        keyboardFlags: screenModel.keyboardFlags)
+                                        keyboardFlags: screenModel.keyboardFlags,
+                                        canonical: isCanonicalMode())
         write(bytes)
         draftTracker.adopt(DraftReplacer.effectiveText(text, bracketedPaste: bracketedPaste))
         return .replaced(erased: erased)
+    }
+
+    /// Is the tty in canonical mode right now? Master and slave share one
+    /// `termios`, so `tcgetattr` on the master reports the line discipline the
+    /// child is actually reading through (review A-7).
+    ///
+    /// Read here, at replace time, not cached: a program can flip `ICANON` at any
+    /// moment (a shell script dropping into `read`, an agent suspending itself),
+    /// and this is the only moment the answer matters. A failed read means raw
+    /// mode — the current behaviour, and the overwhelmingly common case for the
+    /// agents this feature targets.
+    ///
+    /// Guarded on `fdClosed`, with the syscall *inside* the lock, for the same
+    /// reason `_testOnly_kernelWindowSize` is: between "closed" and `close(fd)`
+    /// another thread could probe a descriptor number the process has already
+    /// handed to something else.
+    /// Exposed only for tests — the erase dialect is otherwise observable only by
+    /// reading the bytes the child received. Do not call from production code.
+    func _testOnly_isCanonicalMode() -> Bool { isCanonicalMode() }
+
+    private func isCanonicalMode() -> Bool {
+        fdClosed.withLockedValue { closed -> Bool in
+            guard !closed else { return false }
+            var settings = termios()
+            guard tcgetattr(masterFD, &settings) == 0 else { return false }
+            return settings.c_lflag & tcflag_t(ICANON) != 0
+        }
     }
 
     /// Enqueue PTY write, bypassing the draft mirror. Used for relay-generated

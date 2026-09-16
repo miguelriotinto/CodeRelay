@@ -299,7 +299,40 @@ final class DraftTrackerTests: XCTestCase {
         XCTAssertTrue(t.mirrorLost)
     }
 
+    /// T1 gap 6: the cap is checked before the insert and the cursor position is
+    /// irrelevant to it — a paste that overflows with the cursor in the *middle*
+    /// of the draft must clear exactly like one at the end, because the real box
+    /// then holds text the mirror stopped counting either way.
+    func testPasteAtTheCapWithTheCursorMidDraftClearsTheMirror() {
+        var t = tracker(typing: "abcdef")
+        t.apply(.left); t.apply(.left)                // cursor between "abcd" and "ef"
+        XCTAssertEqual(t.cursor, 4)
+        let fits = DraftTracker.maxScalars - 6
+        t.apply(.paste(String(repeating: "x", count: fits)))
+        XCTAssertEqual(t.draft.unicodeScalars.count, DraftTracker.maxScalars,
+                       "a paste that exactly reaches the cap is still tracked")
+        XCTAssertEqual(t.cursor, 4 + fits, "the paste landed at the cursor, not at the end")
+        XCTAssertFalse(t.mirrorLost)
+        XCTAssertTrue(t.draft.hasSuffix("ef"), "the tail after the cursor survives")
+
+        t.apply(.paste("y"))                          // one scalar past the cap
+        XCTAssertEqual(t.draft, "")
+        XCTAssertTrue(t.mirrorLost)
+    }
+
     // MARK: C2 — clear on anything unmodelled
+
+    /// Review A-2, end to end: F1 in application-cursor mode (`ESC O P`) decodes
+    /// to `.ignored`, so a user who taps it mid-draft keeps the wand instead of
+    /// paying for the terminal's encoding choice.
+    func testApplicationModeF1LeavesTheDraftAlone() {
+        var decoder = KeyDecoder()
+        var t = tracker(typing: "fix the failing test")
+        for event in decoder.decode(Data("\u{1B}OP".utf8)) { t.apply(event) }
+        XCTAssertEqual(t.draft, "fix the failing test")
+        XCTAssertEqual(t.cursor, 20)
+        XCTAssertFalse(t.mirrorLost, "F1 is inert at an input line")
+    }
 
     func testOnlyProvablyInertEventsLeaveTheDraftAlone() {
         var t = tracker(typing: "abc")

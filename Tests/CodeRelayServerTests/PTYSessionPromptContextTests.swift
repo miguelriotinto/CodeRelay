@@ -32,6 +32,22 @@ final class PTYSessionPromptContextTests: XCTestCase {
         return session
     }
 
+    /// A-7 through the real actor: an interactive zsh runs the tty raw (ZLE owns
+    /// the line), and a plain `cat` hands the line back to the discipline. The
+    /// erase dialect follows that, which is why `c_lflag` is read at replace time
+    /// rather than cached — and why the bit test itself needs a live pty to pin:
+    /// a mask mistake would drop the Delete run for every real session, and no
+    /// pure `DraftReplacer` test could see it.
+    func testCanonicalModeTracksTheForegroundProgram() async throws {
+        let session = try await startedSession()
+        let canonicalUnderZLE = await session._testOnly_isCanonicalMode()
+        XCTAssertFalse(canonicalUnderZLE, "an interactive line editor runs the tty raw")
+
+        await session.write(Data("cat\r".utf8))
+        let canonicalUnderCat = await poll { await session._testOnly_isCanonicalMode() }
+        XCTAssertTrue(canonicalUnderCat, "`cat` reads the line through the line discipline")
+    }
+
     func testDraftFollowsWritesAndSubmitClearsIt() async throws {
         let session = try await startedSession()
 

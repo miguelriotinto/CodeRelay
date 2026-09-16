@@ -73,7 +73,9 @@ struct KeyDecoder: Sendable {
     /// Bytes consumed so far inside `.osc`/`.dcs`.
     private var stringSequenceBytes = 0
     /// The current text run overflowed `DraftTracker.maxScalars`, so the rest of
-    /// it is dropped too instead of being emitted as a partial tail.
+    /// it is dropped too instead of being emitted as a partial tail — one
+    /// `.unknown` was already emitted for the run, and the tracker has cleared.
+    /// Invalid UTF-8 is *not* dropped this way; it emits `.unknown` too.
     private var textRunDropped = false
 
     init() {}
@@ -111,7 +113,15 @@ struct KeyDecoder: Sendable {
                 }
                 return
             }
-            // Broken sequence: drop the partial scalar and reprocess this byte.
+            // Broken sequence. Fail *loud*, not quiet (review A-3): the
+            // foreground program does not necessarily drop these bytes — a
+            // permissive input box may render a replacement character or the raw
+            // byte — so silently dropping them leaves the mirror holding fewer
+            // units than the real line and the next erase too short, the one
+            // destructive direction (spec §9). `.unknown` costs one optimize on a
+            // malformed frame; a short erase pastes into surviving residue.
+            flushText(into: &events)
+            events.append(.unknown)
             utf8Pending.removeAll()
             utf8Expected = 0
         }
@@ -148,7 +158,11 @@ struct KeyDecoder: Sendable {
             utf8Expected = 4
             utf8Pending = [byte]
         default:
-            break   // stray continuation byte / invalid lead: drop
+            // Stray continuation byte / invalid lead (0x80–0xC1, 0xF5–0xFF).
+            // Same reasoning as the broken-sequence path above: unclassifiable,
+            // so `.unknown` rather than a silent drop.
+            flushText(into: &events)
+            events.append(.unknown)
         }
     }
 
@@ -346,6 +360,11 @@ struct KeyDecoder: Sendable {
         case 0x44: events.append(.left)
         case 0x48: events.append(.home)
         case 0x46: events.append(.end)
+        case 0x50, 0x51, 0x52, 0x53:
+            // SS3 P/Q/R/S = F1–F4 in application mode. Inert at an input line
+            // exactly like their CSI `1;…P`-style twins already handled above,
+            // so they must not cost the user the mirror (spec §5.1, review A-2).
+            events.append(.ignored)
         default: events.append(.unknown)
         }
     }

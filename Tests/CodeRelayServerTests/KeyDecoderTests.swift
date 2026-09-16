@@ -3,6 +3,10 @@ import XCTest
 
 final class KeyDecoderTests: XCTestCase {
     private func decode(_ chunks: [UInt8]...) -> [KeyEvent] {
+        decode(chunks: chunks)
+    }
+    /// Same as above for a chunk list built at runtime (one byte per call).
+    private func decode(chunks: [[UInt8]]) -> [KeyEvent] {
         var decoder = KeyDecoder()
         var events: [KeyEvent] = []
         for chunk in chunks { events += decoder.decode(Data(chunk)) }
@@ -19,12 +23,24 @@ final class KeyDecoderTests: XCTestCase {
         XCTAssertEqual(decode([0xC3], [0xA9, 0x21]), [.text("é!")])
     }
 
-    func testBrokenUTF8DropsThePartialAndKeepsTheASCII() {
-        // A lead byte whose continuation never comes: the partial scalar is
-        // dropped and the byte that broke it is reprocessed from ground, so the
-        // ASCII survives instead of the whole run being lost.
-        XCTAssertEqual(decode([0xC3, 0x41, 0x42]), [.text("AB")])
-        XCTAssertEqual(decode([0xE2, 0x82], [0x41]), [.text("A")])   // truncated "€"
+    /// A lead byte whose continuation never comes. The partial scalar cannot be
+    /// rendered, but the foreground program may well have rendered *something*
+    /// for it (a replacement character, or the raw byte), so dropping it silently
+    /// would leave the mirror shorter than the real line and the next erase too
+    /// short — the one destructive direction (spec §9, review A-3). One
+    /// `.unknown` clears the mirror instead; the byte that broke the sequence is
+    /// still reprocessed from ground, so the ASCII after it is decoded normally.
+    func testBrokenUTF8IsUnknownAndKeepsTheASCII() {
+        XCTAssertEqual(decode([0xC3, 0x41, 0x42]), [.unknown, .text("AB")])
+        XCTAssertEqual(decode([0xE2, 0x82], [0x41]), [.unknown, .text("A")])   // truncated "€"
+    }
+
+    /// The other invalid-UTF-8 shape: a byte that can never start or continue a
+    /// sequence. Same verdict, for the same reason.
+    func testStrayContinuationAndInvalidLeadBytesAreUnknown() {
+        XCTAssertEqual(decode([0xA9]), [.unknown])              // bare continuation
+        XCTAssertEqual(decode([0xFF]), [.unknown])              // invalid lead
+        XCTAssertEqual(decode([0x41, 0x80, 0x42]), [.text("A"), .unknown, .text("B")])
     }
 
     func testCarriageReturnAndLineFeed() {
@@ -230,7 +246,47 @@ final class KeyDecoderTests: XCTestCase {
 
     func testUnknownCSIFinalAndSS3AreUnknown() {
         XCTAssertEqual(decode(bytes("\u{1B}[Z")), [.unknown])      // back-tab
-        XCTAssertEqual(decode(bytes("\u{1B}OP")), [.unknown])      // SS3 F1
+        XCTAssertEqual(decode(bytes("\u{1B}OX")), [.unknown])      // SS3 with no meaning here
+    }
+
+    /// SS3 P/Q/R/S are F1–F4 in application cursor mode — the same keys the CSI
+    /// tilde table already treats as inert. They must not cost the user the
+    /// mirror just because the terminal sent the application-mode encoding
+    /// (spec §5.1, review A-2).
+    func testApplicationModeF1ToF4AreIgnored() {
+        XCTAssertEqual(decode(bytes("\u{1B}OP")), [.ignored])      // F1
+        XCTAssertEqual(decode(bytes("\u{1B}OQ")), [.ignored])      // F2
+        XCTAssertEqual(decode(bytes("\u{1B}OR")), [.ignored])      // F3
+        XCTAssertEqual(decode(bytes("\u{1B}OS")), [.ignored])      // F4
+    }
+
+    /// A WebSocket frame boundary can fall anywhere, so the decoder is fed one
+    /// byte per `decode()` call here: the state machine must carry across calls
+    /// and still produce exactly the events the whole-sequence path produces
+    /// (T1 gap 1).
+    func testSequencesSplitOneBytePerCallDecodeIdentically() {
+        let cases: [(String, [KeyEvent])] = [
+            ("\u{1B}[3~", [.delete]),
+            ("\u{1B}[1;5D", [.unknown]),      // Ctrl+Left: a word jump nothing models
+            ("\u{1B}[A", [.up]),
+            ("\u{1B}OP", [.ignored]),
+            ("\u{1B}[Z", [.unknown]),
+        ]
+        for (sequence, expected) in cases {
+            let split = bytes(sequence).map { [$0] }
+            XCTAssertEqual(decode(chunks: split), expected, "one byte per call: \(sequence.debugDescription)")
+            XCTAssertEqual(decode(bytes(sequence)), expected, "whole sequence: \(sequence.debugDescription)")
+        }
+    }
+
+    /// The bracketed-paste *start* is a CSI sequence like any other, so it can be
+    /// split too — including at the point where the decoder has consumed `ESC [`
+    /// but not yet the `200~` that tells it a paste is beginning (T1 gap 10).
+    func testBracketedPasteStartSplitAcrossCalls() {
+        XCTAssertEqual(decode(bytes("\u{1B}["), bytes("200~hi\u{1B}[201~")), [.paste("hi")])
+        // And split inside the parameter run as well.
+        XCTAssertEqual(decode(bytes("\u{1B}[2"), bytes("00"), bytes("~hi"), bytes("\u{1B}[201~")),
+                       [.paste("hi")])
     }
 
     func testMouseReportAndCursorPositionReplyStayIgnored() {
