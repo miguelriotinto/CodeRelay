@@ -199,6 +199,7 @@ Ported from `CodeRelayMac/Helpers/AppCommands.swift`, `Ctrl` replacing `Cmd`:
 | Next / previous session | ⌘⇧] / ⌘⇧[ | `Ctrl+Shift+]` / `Ctrl+Shift+[` |
 | Session *n* | ⌘1–9 | `Ctrl+Alt+1`–`9` |
 | Toggle sidebar | ⌘0 | `Ctrl+Shift+B` |
+| Optimize prompt (wand) | configurable `recordingShortcut*` chord | `Ctrl+Shift+O` |
 
 All shortcuts use `Ctrl+Shift` or `Ctrl+Alt` because a bare `Ctrl+<key>` **must reach
 the terminal** — `Ctrl+C`, `Ctrl+D`, `Ctrl+W` are shell/agent input, not app commands.

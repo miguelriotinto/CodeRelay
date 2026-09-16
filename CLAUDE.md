@@ -264,7 +264,10 @@ called with no `downloadBase`).
 The Android and Linux clients share the same shape in Kotlin: `WandButton` /
 `OptimizerOverlay` in `feature-workspace`, the four optimizer StateFlows on
 `relay.session.SessionCoordinator`, `relay.net.OptimizerStrings`, and a
-`shareScreenWithOptimizer` DataStore/preference key. Android's `:speech` module,
+`shareScreenWithOptimizer` DataStore/preference key. On Linux the wand's accelerator is `Ctrl+Shift+O`, dispatched at the `Window`
+like every other chord and routed to `SessionCoordinator.optimizePrompt` —
+the same call a tap makes, so the controller's gate and hint apply unchanged.
+Android's `:speech` module,
 `ml/` tooling and `RECORD_AUDIO` permission are gone; `AppSettings.removeSpeechSettings()`
 runs on every launch (idempotent, no completion flag): the Bedrock secret is deleted
 first and off-main, then the six DataStore keys, each half independently guarded — and

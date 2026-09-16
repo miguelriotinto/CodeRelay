@@ -366,6 +366,15 @@ private fun runApp(
             }
             AppShortcut.COPY -> if (active?.coordinator?.activeSessionId?.value != null) copyRequest++ else return false
             AppShortcut.PASTE -> if (active?.coordinator?.activeSessionId?.value != null) pasteRequest++ else return false
+            // The wand's accelerator (spec §7.4) — the same entry point as a tap
+            // on the WandButton, on purpose. PromptOptimizerController owns the
+            // gate (idle, not recovering, an active session, not torn down) and
+            // shows the "update / enable the relay" hint itself when the wand is
+            // unavailable, so the chord and the tap cannot drift apart. Mirrors
+            // the macOS WandButton receiving `.optimizePromptShortcut`.
+            AppShortcut.OPTIMIZE_PROMPT -> active?.let { s ->
+                s.scope.launch { s.coordinator.optimizePrompt(shareScreen) }
+            } ?: return false
         }
         return true
     }
