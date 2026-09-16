@@ -101,6 +101,15 @@ sealed interface ClientMessage {
         override val typeString get() = "pair_request"
     }
 
+    /** Ask the relay to rewrite the draft on the attached session's input line (spec §5.1). */
+    data class OptimizePrompt(val sessionId: UUID, val shareScreen: Boolean) : ClientMessage {
+        override val typeString get() = "optimize_prompt"
+    }
+    /** Undo: type [text] back over whatever is on the input line now. */
+    data class ReplacePrompt(val sessionId: UUID, val text: String) : ClientMessage {
+        override val typeString get() = "replace_prompt"
+    }
+
     companion object {
         val ALL_TYPE_STRINGS: Set<String> = setOf(
             "auth_request",
@@ -108,7 +117,7 @@ sealed interface ClientMessage {
             "session_terminate", "session_list", "session_list_all", "session_rename",
             "resize", "refresh", "paste_image", "ping",
             "register_push_token", "unregister_push_token",
-            "pair_request",
+            "pair_request", "optimize_prompt", "replace_prompt",
         )
     }
 }

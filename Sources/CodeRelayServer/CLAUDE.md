@@ -219,3 +219,156 @@ Relatedly, `attachSession` cancels any live detach-expiry timer (as `resumeSessi
 
 **Hook-based state authority (F6)**: An optional local Claude Code hook can report authoritative lifecycle state, overriding screen detection while fresh. `PTYSession` injects `CLAUDE_RELAY_SESSION_ID` + `CLAUDE_RELAY_ADMIN_PORT` into each session's shell env (admin port threaded through the default `PTYFactory` closure; the `PTYFactory` typealias is unchanged so test mocks are unaffected). The shipped hook (`Scripts/hooks/claude-relay-state-hook.sh`) POSTs `{sessionId, state}` to the localhost-only `POST /hook/state` admin route → `SessionManager.reportHookState` → `SessionActivityMonitor.applyHookState`. Hook state is trusted for a 10 s TTL (`hookStateTTL`); `updateScreenDetection` no-ops while a fresh hook state exists, then screen detection resumes automatically when it goes stale. The hook reports **state only** — agent *identity* stays owned by the foreground poll, so a hook can never assert or evict an agent. With no hook installed, behavior is identical to screen-detection-only. Install docs: `Scripts/hooks/README.md`.
 
+
+## Prompt Optimizer
+
+Spec: `docs/superpowers/specs/2026-09-13-server-prompt-optimizer-design.md`.
+Code: `Prompt/` (pure pieces) + `Network/PromptRequestHandlers.swift` (the RPCs).
+
+A device sends `optimize_prompt{sessionId, shareScreen}`; the server reads the
+draft the user has typed at the agent's input line, asks the model to rewrite
+it as a coding-agent prompt, **types the rewrite in place of the draft** (never
+submits), and answers `optimize_prompt_result{status, original, prompt}`.
+`replace_prompt{sessionId, text}` is the same typing step with client-supplied
+text and backs Undo. Both are RPCs with their own result types, so an
+unattached request is answered `status: "failed"` on that type — never with
+`.error` (see "sendAndWaitForResponse" in the root CLAUDE.md) — and the message
+is `"Session not attached"`, not `"No session attached"` (clients treat that
+exact string as a foreign detach error).
+
+Pipeline per session, all inside the `PTYSession` actor:
+
+- `KeyDecoder` turns the bytes clients write into `KeyEvent`s (text, paste,
+  Enter with modifiers in legacy / kitty-CSI-u / xterm-modifyOtherKeys form,
+  editing keys). `InputProfile` (the manifest's optional `"input"` block —
+  Task 14's probe fills it; unprobed agents get the single-line default) says
+  which Enter chords insert a newline and which submit.
+- `DraftTracker` mirrors the input line as an array of scalars plus a cursor.
+  **It clears itself on anything it cannot model** (unknown escape, Tab, history
+  Up/Down at the edges, a submit) rather than guessing: a wrong draft would make
+  the replacer erase the wrong number of characters in the user's terminal, and
+  an empty draft only costs a `no_draft` reply. **That doubt is sticky**
+  (`mirrorLost`): while it is set every event is a no-op, because otherwise the
+  next keystroke would rebuild a 1-scalar mirror over a real line that still
+  holds everything typed before the clear, and the replacer erases only as many
+  characters as the mirror claims. Only events that prove the real input box is
+  empty resume tracking: Ctrl-C, `reset(profile:)` (agent changed), `adopt` (a
+  server replacement), and a submit-Enter — but **a bare Enter under a profile
+  with `backslash_enter` recovers only when the last event since the loss was
+  typed text or a paste not ending in `\`**, since on a line ending in a
+  backslash that Enter inserts a newline and the box stays full. For the same
+  reason a lost episode leaves the kill buffer *kept but untrusted*: the next
+  Ctrl-Y loses the mirror instead of yanking a copy the agent's ring may have
+  outgrown. Capped at 16 384 scalars
+  (`DraftTracker.maxScalars`), checked *before* an insert, and the decoder drops a
+  printable run past the same bound as one `.unknown`.
+- **A lost mirror refuses a replacement, and the actor is what refuses.** The
+  decision cannot live in a handler: a `promptContext` snapshot is 2–3 async hops
+  old by the time the bytes are written (for optimize, the whole model call), and
+  terminal input reaches the actor through its own unstructured `Task`, so a
+  keystroke can land in between — an erase sized from the stale draft under-counts
+  the real line. `PTYSession.replaceDraft(with:forAgent:)` therefore reads the
+  mirror itself and returns `false`, writing and adopting nothing, when the session
+  terminated, the mirror is lost, or an `.exactly(agentId)` expectation no longer
+  matches the foreground agent. **Both** `handleOptimizePrompt` (`.exactly` — the
+  agent it optimized for) and `handleReplacePrompt` (`.any` — Undo has no agent
+  snapshot) turn `false` into `failed` / `"Optimizer could not rewrite this
+  prompt"` with no PTY write. The gate is the mirror, *not* an empty draft: Undo
+  onto a genuinely empty known line is legitimate (erase nothing, paste the
+  original). `PromptContext.draftKnown` still carries `!mirrorLost`, but only
+  for the tests and any future consumer — which must read it as a hint, never
+  re-deriving the "a handler snapshot decides the replacement" pattern this
+  actor-side gate replaced.
+- **A server write adopts what it pasted.** `replaceDraft` writes the bytes and
+  then `DraftTracker.adopt(DraftReplacer.effectiveText(text, …))` in the same actor
+  step, with no `await` in between: the erase keystrokes would otherwise flow
+  through the decoder and lose the mirror at an uncertain cursor, whereas the
+  server knows the line is now exactly what it typed. `effectiveText`, not the raw
+  text — the replacer strips control scalars and folds `\r\n`/`\n`/`\r`/`\t` to spaces
+  without bracketed paste (there, newline submits and tab completes), so the raw text can be the wrong length. Adoption is a
+  recovery point like a submit; a mirror lost to *user* keystrokes is not recovered
+  this way.
+- `PromptContext` is the snapshot handed to the model: draft, agent id + display
+  name, cwd, the trailing ≤40 lines / ≤4 KB of the rendered screen (only when
+  both `promptOptimizerShareScreen` and the request's `shareScreen` are true),
+  and the terminal's bracketed-paste / kitty-flags state for the replacer.
+- `PromptOptimizer` builds the Messages request (system prompt with
+  `cache_control: ephemeral`, forced `deliver_prompt` tool, `max_tokens` 1024,
+  no thinking/temperature), sends it through `MessagesSending`
+  (`HTTPMessagesClient` over `PushHTTP`, 12 s, no retries) to Anthropic or
+  Bedrock, and maps the reply to `.optimized(String)` / `.passthrough` / an
+  `OptimizerError` (`refused`, `malformed`, `keyRejected`, `unavailable`,
+  `draftTooLong`).
+- `DraftReplacer` emits the bytes that erase the current draft and type the
+  replacement: Backspace×N then Delete×N (N = UTF-16 count of the current draft;
+  never Ctrl-U, never per line), then the new text wrapped in bracketed paste
+  when the terminal has it on; otherwise newlines (`\r\n`, `\n`, `\r`) are folded
+  to spaces and control bytes stripped.
+
+Caps and fixed strings: draft > 4 KB → `"Prompt too long to optimize"`;
+`replace_prompt.text` > 16 KB → `"Replacement too long"`; one optimize in
+flight per connection (`"Already optimizing"`); **20 optimizes per relay token
+per rolling minute** (`RelayMessageHandler.maxOptimizesPerMinutePerToken`, held
+in the process-wide `OptimizerBudget`) → the sanctioned `"Optimizer
+unavailable, try again"` plus one `.info` line naming the token id and nothing
+else; a 12 s deadline over context
+capture + the model call (`PromptOptimizer.deadline`;
+`RelayMessageHandler.optimizeDeadline` and the admin route's `optimizeDeadline`
+parameter default to it) → `"Optimizer unavailable, try again"`. It is **not**
+end-to-end: the handler cancels it as soon as the outcome is in, before spawning
+the PTY write, so total latency is the deadline plus write time (spec §6) — and
+it is deliberately never re-armed around the write. No optimizer → `status:
+"unconfigured"`, `"Optimizer not configured on the relay"`. The draft is re-read
+right before typing so edits made while the model ran are erased correctly (and
+if the *agent* changed under it, nothing is typed at all), and a reply that lands
+after the deadline never types.
+
+**Never log the draft, the prompt, the screen, or the key.** Handler and client
+log status, byte counts, latency and `usage.cache_read_input_tokens` at debug
+only. The key file is read once by `PromptOptimizerFactory` at startup; if it is
+missing or empty the relay logs one error line, advertises no capability and the
+wand stays disabled on every device until a restart with a fixed config.
+
+**The one paid call needs a cost bound, and `optimizeInFlight` is not one.**
+That flag is per *connection* and is cleared before the reply is even written, so
+a retry-looping client — or a device token lifted off a lost phone — bills a
+Sonnet-class call per round trip, on as many sockets as it likes
+(`maxSessionsPerToken` bounds sessions, not sockets). `OptimizerBudget` is the
+bound: a rolling 60 s window per `authenticatedTokenId`, LRU-capped at 10 k
+tokens like `RateLimiter.maxTrackedIPs`, checked after the `optimizer != nil`
+guard and before the generation bump so a refusal has no state to unwind. Two
+details are load-bearing: it is **shared process-wide** (injected from
+`main.swift`, defaulted only in `WebSocketServer.init` for the test construction
+sites — a per-connection budget would bound nothing), and it is a synchronous
+`NSLock`-guarded class rather than an actor, because an `await` between the
+in-flight guard and the flag would hand two frames arriving in one read a window
+where neither has claimed the slot. A refused call charges nothing, so a retry
+storm cannot drag the window forward. Not a config key by choice: an operator who
+wants a different number wants per-token quotas, which is a different feature.
+The check sits before the draft is read, so a `no_draft` or over-length refusal
+also consumes one of the 20/min — deliberate, a refusal must leave no state to
+unwind. The admin `POST /optimizer/try` route (`claude-relay optimizer try`) is
+localhost-only and operator-driven and is not budgeted.
+
+Two operational notes for the first live deployment:
+- The key is read **once at startup**, and a Bedrock bearer token expires within
+  12 h — so rotating the key file on a Bedrock relay requires a restart, not just
+  a rewrite. Symptom on the device is `"Optimizer key rejected on the relay"`.
+- The cached prefix (tools + system prompt) measures ≈950–1050 tokens against
+  Sonnet 5's 1 024-token minimum cacheable prefix, i.e. right on the edge. Check
+  the debug `cache_read_input_tokens` counter on the second call of a session; if
+  it reads zero, pad the static system prompt rather than assuming caching works.
+
+Tuning loop without a phone: `claude-relay optimizer try "<draft>" [--session
+<id>] [--no-screen]` → `POST /optimizer/try` runs the same optimizer over a
+draft (with a live session's agent/cwd/screen if given) and prints the result
+without writing the PTY. Tests double the model with `FakeOptimizer`
+(`PromptRequestHandlerTests`, `WirePromptOptimizerTests`; the doubles live in
+`Tests/CodeRelayServerTests/PromptTestDoubles.swift`) and the HTTP layer
+with a scripted `MessagesSending` (`PromptOptimizerTests`, `MessagesClientTests`).
+
+Test-coverage gap to know about: no test drives `AdminHTTPServer` over a real
+socket for `/optimizer/try`. Coverage is route-level only
+(`AdminRoutesEndpointTests` calls `AdminRoutes.handle` directly), so the
+`optimizer:` / `optimizeDeadline:` pass-through in `AdminHTTPServer.swift` is
+unverified by test — a wiring mistake there would not fail the suite.

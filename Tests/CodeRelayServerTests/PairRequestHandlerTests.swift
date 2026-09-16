@@ -41,7 +41,8 @@ final class PairRequestHandlerTests: XCTestCase {
             rateLimiter: rateLimiter ?? RateLimiter(maxAttempts: 100, windowSeconds: 60),
             clipboardService: NoopClipboardService(),
             pushStore: PushRegistrationStore(directory: tempDir),
-            pairingStore: pairingStore
+            pairingStore: pairingStore,
+            optimizerBudget: OptimizerBudget()
         )
         let channel = await NIOAsyncTestingChannel(handler: handler)
         let sentinel = try SocketAddress(ipAddress: "127.0.0.1", port: 9999)

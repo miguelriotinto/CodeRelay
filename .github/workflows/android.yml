@@ -33,6 +33,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default is `tools platform-tools`, and `tools` no longer
+          # exists in Google's repo — the step fails with "Failed to find package
+          # 'tools'" before Gradle ever runs.
+          packages: platform-tools
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4

@@ -21,7 +21,7 @@ final class WireIntegrationTests: XCTestCase {
         let client = try await fixture.connect()
         try await client.send(.authRequest(token: token, protocolVersion: nil))
         let reply = try await client.waitFor(["auth_success", "auth_failure"])
-        guard case .authSuccess(_, let tokenId) = reply else {
+        guard case .authSuccess(_, let tokenId, _) = reply else {
             return XCTFail("expected auth_success, got \(reply.typeString)")
         }
         XCTAssertNotNil(tokenId, "auth_success carries the token id the client will be scoped to")

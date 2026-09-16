@@ -12,6 +12,7 @@ public final class AdminHTTPServer {
     private let pairingStore: PairingCodeStore
     private let rateLimiter: RateLimiter
     private let config: RelayConfig
+    private let optimizer: (any PromptOptimizing)?
     private let port: UInt16
     private var channel: Channel?
 
@@ -19,7 +20,8 @@ public final class AdminHTTPServer {
                 sessionManager: SessionManager, tokenStore: TokenStore,
                 pairingStore: PairingCodeStore,
                 config: RelayConfig,
-                rateLimiter: RateLimiter = RateLimiter(maxAttempts: 30, windowSeconds: 60)) {
+                rateLimiter: RateLimiter = RateLimiter(maxAttempts: 30, windowSeconds: 60),
+                optimizer: (any PromptOptimizing)? = nil) {
         self.group = group
         self.port = port
         self.sessionManager = sessionManager
@@ -27,6 +29,7 @@ public final class AdminHTTPServer {
         self.pairingStore = pairingStore
         self.config = config
         self.rateLimiter = rateLimiter
+        self.optimizer = optimizer
     }
 
     public func start() async throws {
@@ -35,6 +38,7 @@ public final class AdminHTTPServer {
         let pairingStore = self.pairingStore
         let config = self.config
         let rateLimiter = self.rateLimiter
+        let optimizer = self.optimizer
 
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
@@ -46,7 +50,8 @@ public final class AdminHTTPServer {
                         tokenStore: tokenStore,
                         pairingStore: pairingStore,
                         config: config,
-                        rateLimiter: rateLimiter
+                        rateLimiter: rateLimiter,
+                        optimizer: optimizer
                     )
                     return channel.pipeline.addHandler(handler)
                 }
@@ -75,18 +80,21 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     private let pairingStore: PairingCodeStore
     private let config: RelayConfig
     private let rateLimiter: RateLimiter
+    private let optimizer: (any PromptOptimizing)?
 
     private var requestHead: HTTPRequestHead?
     private var requestBody: ByteBuffer?
     private var requestBodyOverflow: Bool = false
 
     init(sessionManager: SessionManager, tokenStore: TokenStore,
-         pairingStore: PairingCodeStore, config: RelayConfig, rateLimiter: RateLimiter) {
+         pairingStore: PairingCodeStore, config: RelayConfig, rateLimiter: RateLimiter,
+         optimizer: (any PromptOptimizing)?) {
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
         self.pairingStore = pairingStore
         self.config = config
         self.rateLimiter = rateLimiter
+        self.optimizer = optimizer
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -136,6 +144,7 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
             let pairingStore = self.pairingStore
             let config = self.config
             let rateLimiter = self.rateLimiter
+            let optimizer = self.optimizer
 
             // Extract client IP for rate limiting.
             //
@@ -174,7 +183,8 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                     sessionManager: sessionManager,
                     tokenStore: tokenStore,
                     pairingStore: pairingStore,
-                    config: config
+                    config: config,
+                    optimizer: optimizer
                 )
 
                 // Track failures (4xx/5xx) for rate limiting

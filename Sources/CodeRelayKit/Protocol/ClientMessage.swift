@@ -32,6 +32,12 @@ public enum ClientMessage: Equatable, Sendable {
     /// Redeem a one-time pairing code for a freshly minted per-device token.
     /// Sent **before** `authRequest` on a brand-new connection.
     case pairRequest(code: String, deviceName: String, platform: String)
+    /// Ask the relay to rewrite the draft at the attached session's input line
+    /// (spec §5.1). `shareScreen` is the device's per-request toggle; the server
+    /// ANDs it with its own `promptOptimizerShareScreen` config.
+    case optimizePrompt(sessionId: UUID, shareScreen: Bool)
+    /// Undo: type `text` back over whatever is currently on the input line.
+    case replacePrompt(sessionId: UUID, text: String)
 
     // MARK: - Wire type strings
 
@@ -53,6 +59,8 @@ public enum ClientMessage: Equatable, Sendable {
         case .registerPushToken:   return "register_push_token"
         case .unregisterPushToken: return "unregister_push_token"
         case .pairRequest:         return "pair_request"
+        case .optimizePrompt:      return "optimize_prompt"
+        case .replacePrompt:       return "replace_prompt"
         }
     }
 
@@ -64,7 +72,7 @@ public enum ClientMessage: Equatable, Sendable {
         "session_terminate", "session_list", "session_list_all", "session_rename",
         "resize", "refresh", "paste_image", "ping",
         "register_push_token", "unregister_push_token",
-        "pair_request"
+        "pair_request", "optimize_prompt", "replace_prompt"
     ]
 }
 
@@ -74,7 +82,7 @@ extension ClientMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case token, sessionId, cols, rows, name, data, protocolVersion, skipReplay
         case platform, deviceId, enabled, notifyOnFinished, topic
-        case code, deviceName
+        case code, deviceName, shareScreen, text
     }
 
     public func encodePayload(to encoder: Encoder) throws {
@@ -127,6 +135,12 @@ extension ClientMessage: Codable {
             try container.encode(code, forKey: .code)
             try container.encode(deviceName, forKey: .deviceName)
             try container.encode(platform, forKey: .platform)
+        case .optimizePrompt(let sessionId, let shareScreen):
+            try container.encode(sessionId, forKey: .sessionId)
+            try container.encode(shareScreen, forKey: .shareScreen)
+        case .replacePrompt(let sessionId, let text):
+            try container.encode(sessionId, forKey: .sessionId)
+            try container.encode(text, forKey: .text)
         }
     }
 
@@ -188,6 +202,14 @@ extension ClientMessage: Codable {
                 code: try container.decode(String.self, forKey: .code),
                 deviceName: try container.decode(String.self, forKey: .deviceName),
                 platform: try container.decode(String.self, forKey: .platform))
+        case "optimize_prompt":
+            return .optimizePrompt(
+                sessionId: try container.decode(UUID.self, forKey: .sessionId),
+                shareScreen: try container.decodeIfPresent(Bool.self, forKey: .shareScreen) ?? false)
+        case "replace_prompt":
+            return .replacePrompt(
+                sessionId: try container.decode(UUID.self, forKey: .sessionId),
+                text: try container.decode(String.self, forKey: .text))
         default:
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(

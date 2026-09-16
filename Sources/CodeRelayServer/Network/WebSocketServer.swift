@@ -24,6 +24,12 @@ public final class WebSocketServer {
     private let config: RelayConfig
     private let pushStore: PushRegistrationStore
     private let pairingStore: PairingCodeStore
+    private let optimizer: (any PromptOptimizing)?
+    /// One budget for the whole server — the cost bound is per relay token, and
+    /// a token may hold many connections (review B-3). Defaulted here only so the
+    /// ten-odd test construction sites need no change; `main.swift` passes the
+    /// same instance it would build anyway.
+    private let optimizerBudget: OptimizerBudget
     private var channel: Channel?
 
     public init(group: EventLoopGroup, config: RelayConfig,
@@ -31,7 +37,9 @@ public final class WebSocketServer {
                 rateLimiter: RateLimiter = RateLimiter(maxAttempts: 10, windowSeconds: 60),
                 clipboardService: ClipboardService = DefaultClipboardService.make(),
                 pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory),
-                pairingStore: PairingCodeStore) {
+                pairingStore: PairingCodeStore,
+                optimizer: (any PromptOptimizing)? = nil,
+                optimizerBudget: OptimizerBudget = OptimizerBudget()) {
         self.group = group
         self.config = config
         self.sessionManager = sessionManager
@@ -40,6 +48,8 @@ public final class WebSocketServer {
         self.clipboardService = clipboardService
         self.pushStore = pushStore
         self.pairingStore = pairingStore
+        self.optimizer = optimizer
+        self.optimizerBudget = optimizerBudget
     }
 
     /// Create SSL context from configured cert and key files.
@@ -77,7 +87,9 @@ public final class WebSocketServer {
         let tokenStore = self.tokenStore
         let pushStore = self.pushStore
         let pairingStore = self.pairingStore
+        let optimizer = self.optimizer
         let rateLimiter = self.rateLimiter
+        let optimizerBudget = self.optimizerBudget
         let clipboardService = self.clipboardService
         let sslContext: NIOSSLContext? = try createSSLContextIfConfigured()
 
@@ -93,7 +105,9 @@ public final class WebSocketServer {
                     rateLimiter: rateLimiter,
                     clipboardService: clipboardService,
                     pushStore: pushStore,
-                    pairingStore: pairingStore
+                    pairingStore: pairingStore,
+                    optimizer: optimizer,
+                    optimizerBudget: optimizerBudget
                 )
                 return channel.pipeline.addHandler(handler)
             }

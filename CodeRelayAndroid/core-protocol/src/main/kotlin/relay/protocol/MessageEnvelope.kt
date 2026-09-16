@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
@@ -79,6 +80,14 @@ object MessageEnvelope {
                     put("deviceName", JsonPrimitive(message.deviceName))
                     put("platform", JsonPrimitive(message.platform))
                 }
+                is ClientMessage.OptimizePrompt -> {
+                    put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
+                    put("shareScreen", JsonPrimitive(message.shareScreen))
+                }
+                is ClientMessage.ReplacePrompt -> {
+                    put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
+                    put("text", JsonPrimitive(message.text))
+                }
             }
         }
         val envelope = buildJsonObject {
@@ -108,6 +117,7 @@ object MessageEnvelope {
         when (type) {
             "auth_success" -> ServerMessage.AuthSuccess(
                 payload.intOrNull("protocolVersion"), payload.stringOrNull("tokenId"),
+                payload.stringListOrNull("capabilities"),
             )
             "auth_failure" -> ServerMessage.AuthFailure(payload.string("reason"))
             "session_created" -> ServerMessage.SessionCreated(
@@ -146,6 +156,16 @@ object MessageEnvelope {
             "pair_success" -> ServerMessage.PairSuccess(
                 payload.string("token"), payload.string("tokenId"), payload.string("label"),
             )
+            "optimize_prompt_result" -> ServerMessage.OptimizePromptResult(
+                status = payload.string("status"),
+                original = payload.stringOrNull("original"),
+                prompt = payload.stringOrNull("prompt"),
+                message = payload.stringOrNull("message"),
+            )
+            "replace_prompt_result" -> ServerMessage.ReplacePromptResult(
+                status = payload.string("status"),
+                message = payload.stringOrNull("message"),
+            )
             else -> throw IllegalArgumentException("Unknown server message type: $type")
         }
     } catch (e: IllegalArgumentException) {
@@ -169,4 +189,6 @@ object MessageEnvelope {
     private fun JsonObject.uShort(key: String): UShort = getValue(key).jsonPrimitive.int.toUShort()
     private fun JsonObject.sessions(key: String): List<SessionInfo> =
         WireJson.instance.decodeFromJsonElement(ListSerializer(SessionInfo.serializer()), getValue(key))
+    private fun JsonObject.stringListOrNull(key: String): List<String>? =
+        this[key]?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.jsonArray?.map { it.jsonPrimitive.content }
 }

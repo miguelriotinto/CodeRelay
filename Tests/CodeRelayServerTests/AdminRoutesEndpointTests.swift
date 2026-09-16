@@ -11,7 +11,9 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
         _ uri: String,
         body: [String: Any]? = nil,
         manager: SessionManager? = nil,
-        config: RelayConfig = .default
+        config: RelayConfig = .default,
+        optimizer: (any PromptOptimizing)? = nil,
+        optimizeDeadline: Duration = PromptOptimizer.deadline
     ) async -> (status: Int, json: [String: Any]?) {
         var buf: ByteBuffer?
         if let body {
@@ -29,7 +31,9 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
             sessionManager: manager ?? makeManager(),
             tokenStore: tokenStore,
             pairingStore: PairingCodeStore(),
-            config: config
+            config: config,
+            optimizer: optimizer,
+            optimizeDeadline: optimizeDeadline
         )
 
         let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any]
@@ -206,5 +210,171 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
     func testHookStateMalformedBodyReturns400() async throws {
         let (status, _) = await route(.POST, "/hook/state", body: ["state": "working"])
         XCTAssertEqual(status, 400)
+    }
+
+    // MARK: - POST /optimizer/try
+
+    func testOptimizerTryWithoutOptimizerIs503() async {
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "fix the tests"])
+        XCTAssertEqual(r.status, 503)
+        XCTAssertEqual(r.json?["error"] as? String, "Optimizer not configured on the relay")
+    }
+
+    func testOptimizerTryRequiresADraft() async {
+        let optimizer = FakeOptimizer()
+        let r1 = await route(.POST, "/optimizer/try", body: [:], optimizer: optimizer)
+        XCTAssertEqual(r1.status, 400)
+        let r2 = await route(.POST, "/optimizer/try", body: ["draft": ""], optimizer: optimizer)
+        XCTAssertEqual(r2.status, 400)
+        let r3 = await route(.POST, "/optimizer/try", body: ["draft": 42], optimizer: optimizer)
+        XCTAssertEqual(r3.status, 400)
+        let r4 = await route(.POST, "/optimizer/try", optimizer: optimizer)
+        XCTAssertEqual(r4.status, 400)
+        let received = await optimizer.received
+        XCTAssertTrue(received.isEmpty)
+    }
+
+    func testOptimizerTryUnknownSubpathIs404() async {
+        let r = await route(.POST, "/optimizer/nope", body: ["draft": "x"], optimizer: FakeOptimizer())
+        XCTAssertEqual(r.status, 404)
+    }
+
+    func testOptimizerTryDraftOnlyReturnsThePrompt() async throws {
+        let optimizer = FakeOptimizer(result: .success(.optimized("Run `swift test` and fix what fails.")))
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "run tests fix failures"], optimizer: optimizer)
+        XCTAssertEqual(r.status, 200)
+        XCTAssertEqual(r.json?["status"] as? String, "ok")
+        XCTAssertEqual(r.json?["prompt"] as? String, "Run `swift test` and fix what fails.")
+        let seen = await optimizer.received
+        XCTAssertEqual(seen.count, 1)
+        XCTAssertEqual(seen.first?.draft, "run tests fix failures")
+        XCTAssertNil(seen.first?.agentId)
+        XCTAssertEqual(seen.first?.screenLines, [])
+    }
+
+    func testOptimizerTryPassthroughAndFailure() async {
+        let pass = await route(.POST, "/optimizer/try", body: ["draft": "what is a monad"],
+                               optimizer: FakeOptimizer(result: .success(.passthrough)))
+        XCTAssertEqual(pass.status, 200)
+        XCTAssertEqual(pass.json?["status"] as? String, "passthrough")
+
+        let fail = await route(.POST, "/optimizer/try", body: ["draft": "x"],
+                               optimizer: FakeOptimizer(result: .failure(OptimizerError.keyRejected)))
+        XCTAssertEqual(fail.status, 200)
+        XCTAssertEqual(fail.json?["status"] as? String, "failed")
+        XCTAssertEqual(fail.json?["message"] as? String, OptimizerError.keyRejected.clientMessage)
+    }
+
+    func testOptimizerTryUsesTheSessionContextButTheBodyDraftAndNeverWrites() async throws {
+        let manager = makeManager()
+        let optimizer = FakeOptimizer()
+        let (_, token) = try await createTestToken()
+        let info = try await manager.createSession(tokenId: token.id, cols: 80, rows: 24)
+        guard let mock = await manager.ptySession(for: info.id) as? MockPTYSession else {
+            return XCTFail("expected MockPTYSession")
+        }
+        await mock.setMockPromptContext(PromptContext(
+            draft: "the live draft the user is typing", agentId: "codex", agentDisplayName: "Codex",
+            workingDirectory: "/tmp/repo", screenLines: ["$ swift test", "error: boom"],
+            bracketedPaste: true, keyboardFlagsRawValue: 0))
+
+        let r = await route(.POST, "/optimizer/try",
+                            body: ["draft": "probe draft", "sessionId": info.id.uuidString, "shareScreen": true],
+                            manager: manager, optimizer: optimizer)
+        XCTAssertEqual(r.status, 200)
+        XCTAssertEqual(r.json?["status"] as? String, "ok")
+        let seen = await optimizer.received.first
+        XCTAssertEqual(seen?.draft, "probe draft")
+        XCTAssertEqual(seen?.agentId, "codex")
+        XCTAssertEqual(seen?.workingDirectory, "/tmp/repo")
+        XCTAssertEqual(seen?.screenLines, ["$ swift test", "error: boom"])
+        let writes = await mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "try must never type into the PTY")
+
+        let noScreen = await route(.POST, "/optimizer/try",
+                                   body: ["draft": "probe draft", "sessionId": info.id.uuidString, "shareScreen": false],
+                                   manager: manager, optimizer: optimizer)
+        XCTAssertEqual(noScreen.status, 200)
+        let receivedLast = await optimizer.received.last
+        XCTAssertEqual(receivedLast?.screenLines, [])
+    }
+
+    func testOptimizerTryUnknownSessionIs404() async {
+        let r = await route(.POST, "/optimizer/try",
+                            body: ["draft": "x", "sessionId": UUID().uuidString], optimizer: FakeOptimizer())
+        XCTAssertEqual(r.status, 404)
+    }
+
+    func testOptimizerTryOversizedDraftReturns400() async {
+        let oversized = String(repeating: "x", count: 4097)
+        let r = await route(.POST, "/optimizer/try", body: ["draft": oversized], optimizer: FakeOptimizer())
+        XCTAssertEqual(r.status, 400)
+        XCTAssertEqual(r.json?["error"] as? String, "Prompt too long to optimize")
+    }
+
+    /// Injects a 50 ms deadline — it pins the *reporting* of a deadline, not the
+    /// 12 s constant (`PromptRequestHandlerTests` pins that).
+    func testOptimizerTryReportsDeadlineAsFailedWithinTheInjectedDeadline() async {
+        let suspending = FakeOptimizer(result: .success(.optimized("will never arrive")), delay: .seconds(1))
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "wait forever"],
+                           optimizer: suspending, optimizeDeadline: .milliseconds(50))
+        XCTAssertEqual(r.status, 200)
+        XCTAssertEqual(r.json?["status"] as? String, "failed")
+        XCTAssertEqual(r.json?["message"] as? String, "Optimizer unavailable, try again")
+    }
+
+    /// `withOptimizerDeadline` must cancel the loser without awaiting it: an
+    /// optimizer that ignores cancellation and never returns would otherwise hold
+    /// this route open forever (a task group awaits its cancelled child).
+    func testOptimizerTryDeadlineHoldsAgainstANonCooperativeOptimizer() async {
+        let started = ContinuousClock.now
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "hang forever"],
+                            optimizer: HangingOptimizer(), optimizeDeadline: .milliseconds(100))
+        let elapsed = ContinuousClock.now - started
+        XCTAssertEqual(r.status, 200)
+        XCTAssertEqual(r.json?["status"] as? String, "failed")
+        XCTAssertEqual(r.json?["message"] as? String, "Optimizer unavailable, try again")
+        XCTAssertLessThan(elapsed, .seconds(2), "the deadline must not wait on a non-cooperative optimizer")
+    }
+
+    func testOptimizerTryRejectsANonUUIDSessionId() async {
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "x", "sessionId": "not-a-uuid"],
+                            optimizer: FakeOptimizer())
+        XCTAssertEqual(r.status, 400)
+        XCTAssertEqual(r.json?["error"] as? String, "\"sessionId\" is not a UUID")
+    }
+
+    /// A whitespace-only draft is empty: the WebSocket handler answers `no_draft`
+    /// for the same input, so this route must not spend a model call on it.
+    func testOptimizerTryRejectsAWhitespaceOnlyDraft() async {
+        let optimizer = FakeOptimizer()
+        let r = await route(.POST, "/optimizer/try", body: ["draft": "  \n"], optimizer: optimizer)
+        XCTAssertEqual(r.status, 400)
+        XCTAssertEqual(r.json?["error"] as? String, "\"draft\" must be a non-empty string")
+        let received = await optimizer.received
+        XCTAssertTrue(received.isEmpty)
+    }
+
+    /// No `shareScreen` key: the admin route defaults to true (operator-local),
+    /// unlike the wire decoder which fails closed at false.
+    func testOptimizerTryDefaultsShareScreenToTrue() async throws {
+        let manager = makeManager()
+        let optimizer = FakeOptimizer(sharesScreen: true)
+        let (_, token) = try await createTestToken()
+        let info = try await manager.createSession(tokenId: token.id, cols: 80, rows: 24)
+        guard let mock = await manager.ptySession(for: info.id) as? MockPTYSession else {
+            return XCTFail("expected MockPTYSession")
+        }
+        await mock.setMockPromptContext(PromptContext(
+            draft: "live draft", agentId: "claude", agentDisplayName: "Claude Code",
+            workingDirectory: "/tmp/repo", screenLines: ["$ swift build", "error: boom"],
+            bracketedPaste: false, keyboardFlagsRawValue: 0))
+
+        let r = await route(.POST, "/optimizer/try",
+                            body: ["draft": "probe draft", "sessionId": info.id.uuidString],
+                            manager: manager, optimizer: optimizer)
+        XCTAssertEqual(r.status, 200)
+        let seen = await optimizer.received.first
+        XCTAssertEqual(seen?.screenLines, ["$ swift build", "error: boom"])
     }
 }
