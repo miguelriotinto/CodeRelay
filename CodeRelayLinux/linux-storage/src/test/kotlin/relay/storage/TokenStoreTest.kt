@@ -205,6 +205,21 @@ class TokenStoreTest {
         assertTrue(elapsedMs < 5_000, "runner blocked for ${elapsedMs} ms")
     }
 
+    /**
+     * Pending stdout data does not defeat the bound — a prompting secret-tool
+     * prints its prompt and then blocks.
+     */
+    @Test
+    fun `process runner is still bounded when the process has written output before hanging`() {
+        val started = System.nanoTime()
+        val result = TokenStore.ProcessCommandRunner(timeoutSeconds = 1)
+            .run(listOf("sh", "-c", "echo prompt; sleep 10"), stdin = null)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals(-1, result.exitCode)
+        assertEquals("timed out", result.stderr)
+        assertTrue(elapsedMs < 5_000, "runner blocked for ${elapsedMs} ms")
+    }
+
     @Test
     fun `process runner returns stdout and exit code of a finished process`() {
         val result = TokenStore.ProcessCommandRunner(timeoutSeconds = 5)

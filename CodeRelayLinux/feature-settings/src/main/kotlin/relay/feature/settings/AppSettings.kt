@@ -20,19 +20,23 @@ import relay.protocol.SessionNamingTheme
  * settings the removed speech stack wrote. Both exist because *older builds of
  * that app* wrote those keys.
  *
- * Linux never shipped the speech stack and no CodeRelay build has ever written
- * a legacy preference on this platform, so there is no legacy data to migrate —
- * by construction, not by assumption. Porting the migration machinery would be
- * dead code that still has to be maintained and can still go wrong.
- * `AppSettingsMigrations` is therefore not compiled into this module.
- *
- * (If settings import from another device is ever added, the migrations become
- * relevant again — and the shared `AppSettingsMigrations` is pure Kotlin, so it
- * can be pulled in at that point without a rewrite.)
+ * Linux never shipped the shortcut-modifier String key (the persisted format was
+ * always Int), so that migration is not needed. However, older Linux builds
+ * (≤ v0.3.25) DID write the speech preferences: `smartCleanupEnabled`,
+ * `promptEnhancementEnabled`, `bedrockRegion`, `continuousListeningEnabled`,
+ * and `wakeWord`. Those five keys are pruned at construction, idempotent, with
+ * no completion flag — the same rule as Android's `removeSpeechSettings` and
+ * this PR's keyring scrub (`TokenStore.deleteBedrockToken()` at launch in
+ * `Main.kt`).
  */
 class AppSettings(
     private val prefs: PreferenceStore,
 ) {
+
+    init {
+        // Prune legacy speech preferences written by builds ≤ v0.3.25.
+        LEGACY_SPEECH_KEYS.forEach { if (prefs.contains(it)) prefs.remove(it) }
+    }
 
     // ---- the 10 persisted preferences ----
 
@@ -117,5 +121,14 @@ class AppSettings(
         // Desktop-only keys; no Android counterpart.
         const val WINDOW_WIDTH = "windowWidth"
         const val WINDOW_HEIGHT = "windowHeight"
+
+        /** Legacy speech preferences written by builds ≤ v0.3.25, pruned at construction. */
+        private val LEGACY_SPEECH_KEYS = listOf(
+            "smartCleanupEnabled",
+            "promptEnhancementEnabled",
+            "bedrockRegion",
+            "continuousListeningEnabled",
+            "wakeWord"
+        )
     }
 }

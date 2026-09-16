@@ -375,8 +375,11 @@ private fun runApp(
             AppShortcut.OPTIMIZE_PROMPT -> {
                 // Optimize is the only chord that rewrites text the user is
                 // composing, and its feedback (Undo chip, hint) lives on the
-                // workspace, so it must not fire while that is covered.
-                if (showSettings || showServers) return false
+                // workspace, so it must not fire while that is covered. When an
+                // overlay is showing, the chord is swallowed rather than forwarded
+                // — an unhandled Ctrl+Shift+O reaches the terminal as Ctrl+O,
+                // which zsh binds to accept-line-and-down-history.
+                if (showSettings || showServers) return true
                 active?.let { s ->
                     s.scope.launch { s.coordinator.optimizePrompt(shareScreen) }
                 } ?: return false
@@ -790,7 +793,7 @@ class AppEnvironment private constructor(
             // a relay feature now, so the secret is deleted on every launch —
             // idempotent, no completion flag, the same rule as Android's speech
             // scrub. Dispatchers.IO because the runner bounds secret-tool at
-            // 30 s wall clock, and Default's pool is the coordinators' too.
+            // 30 s wall clock, and the coordinators run on Main.immediate.
             scope.launch(Dispatchers.IO) { tokens.deleteBedrockToken() }
 
             lateinit var environment: AppEnvironment

@@ -164,7 +164,7 @@ implementations must satisfy exactly — the shared modules call them by these n
 | Android | Lines | Linux replacement | Notes |
 |---|---|---|---|
 | `SavedConnectionStore(Context)` — DataStore | 102 | JSON at `$XDG_CONFIG_HOME/coderelay/servers.json` | Same `loadAll/saveAll/add/delete` API; same `WireJson` encoding, so the on-disk format matches Android's stored string |
-| `TokenStore(Context)` — EncryptedSharedPreferences | 86 | **Secret Service** (D-Bus) via `libsecret`, keyed by connection UUID | Relay tokens must never hit disk in plaintext. The `BEDROCK_ACCOUNT` entry older builds wrote is scrubbed on every launch (`deleteBedrockToken`, off the AWT thread, no flag). Fallback: refuse to store, surface an error — never silently downgrade |
+| `TokenStore(Context)` — EncryptedSharedPreferences | 86 | **Secret Service** (D-Bus) via `libsecret`, keyed by connection UUID | Relay tokens must never hit disk in plaintext. The `BEDROCK_ACCOUNT` entry older builds wrote is scrubbed on every launch (`deleteBedrockToken`, off the AWT thread, no flag). The five speech preferences (`smartCleanupEnabled`, `promptEnhancementEnabled`, `bedrockRegion`, `continuousListeningEnabled`, `wakeWord`) written by builds ≤ v0.3.25 are pruned at `AppSettings` construction. Fallback: refuse to store, surface an error — never silently downgrade |
 | `SessionOwnershipStore` — SharedPreferences | 123 | JSON at `$XDG_STATE_HOME/coderelay/ownership.json` | Non-secret; device-scoped names + agent map |
 | `DeviceIdentifier` — ANDROID_ID | 100 | Generated UUID persisted at `$XDG_STATE_HOME/coderelay/device-id` | Matches Android's accepted divergence from `identifierForVendor` |
 | `AndroidConnectivitySource` | 84 | `LinuxConnectivitySource` — NetworkManager over D-Bus, polling fallback | Implements the existing `ConnectivitySource` interface; `NetworkObserver` is already pure |
@@ -199,7 +199,7 @@ Ported from `CodeRelayMac/Helpers/AppCommands.swift`, `Ctrl` replacing `Cmd`:
 | Next / previous session | ⌘⇧] / ⌘⇧[ | `Ctrl+Shift+]` / `Ctrl+Shift+[` |
 | Session *n* | ⌘1–9 | `Ctrl+Alt+1`–`9` |
 | Toggle sidebar | ⌘0 | `Ctrl+Shift+B` |
-| Optimize prompt (wand) | configurable `recordingShortcut*` chord | `Ctrl+Shift+O` |
+| Optimize prompt (wand) | configurable `recordingShortcut*` chord | `Ctrl+Shift+O` (ignored while Settings or Servers overlay is open) |
 
 All shortcuts use `Ctrl+Shift` or `Ctrl+Alt` because a bare `Ctrl+<key>` **must reach
 the terminal** — `Ctrl+C`, `Ctrl+D`, `Ctrl+W` are shell/agent input, not app commands.

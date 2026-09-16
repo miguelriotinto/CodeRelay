@@ -141,6 +141,10 @@ class TokenStore(
      * the life of the prompt and the timeout would never be reached.
      * secret-tool's whole output is one secret or one D-Bus error line — far
      * below the pipe buffer — so waiting first cannot deadlock on a full pipe.
+     * Waiting before draining is safe only because `secret-tool` writes at most
+     * a few lines (well under the 64 KiB pipe buffer); a program that writes
+     * more before exiting would block on write and hit the timeout, so this
+     * runner is for `secret-tool`, not a general process helper.
      */
     class ProcessCommandRunner(private val timeoutSeconds: Long = KEYRING_TIMEOUT_SECONDS) : CommandRunner {
         override fun run(command: List<String>, stdin: String?): CommandResult {
