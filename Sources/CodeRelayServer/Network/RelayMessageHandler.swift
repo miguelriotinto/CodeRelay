@@ -16,6 +16,14 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     var authenticatedTokenId: String?
     var attachedSessionId: UUID?
     var attachedPTY: (any PTYSessionProtocol)?
+    /// A `resize` that arrived while no session was attached. Clients report
+    /// their grid the moment the incoming terminal view lays out, which during
+    /// a switch is the unattached window between `detach` and `resume`; dropping
+    /// it left the PTY at the previous device's width and the post-replay repaint
+    /// redrew at that stale width (the "garbled after switching" bug). Consumed
+    /// by the next attach/resume; a grid on the request itself takes precedence.
+    /// Event-loop only, like `attachedPTY`.
+    var pendingGrid: (cols: UInt16, rows: UInt16)?
     /// Nil when the relay has no usable optimizer (disabled, or key unreadable at
     /// startup) — then `auth_success` omits the capability and `optimize_prompt`
     /// answers `unconfigured`. Spec §8.
@@ -789,6 +797,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         renameObserverId = nil
         attachedSessionId = nil
         attachedPTY = nil
+        pendingGrid = nil
 
         Task {
             if let id = obsActivity { await manager.removeActivityObserver(id: id) }

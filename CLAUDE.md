@@ -58,7 +58,7 @@ All WebSocket messages use `MessageEnvelope`: `{"type":"<type_string>","payload"
 
 **Protocol versioning**: Client sends `protocolVersion` in `auth_request`; server responds with `protocolVersion` in `auth_success`. `minProtocolVersion` is 0 for backward compatibility with older clients.
 
-**Scrollback replay**: After `session_attached` / `session_resumed`, the server sends ring-buffer scrollback as binary frames, then a `replay_complete` envelope, then `session_activity`, before live PTY output begins. Always emitted, even when the buffer is empty — clients use it as the "you can render now" signal. The client (`TerminalViewModel`) holds incoming bytes in `pendingOutput` while `isReplaying` is true (set by the coordinator before attach/resume) and flushes them in one batch on `endReplay()`. This keeps SwiftTerm's `queuePendingDisplay` coalescing 60 fps frames into a single render, so the user sees the final terminal state instead of watching history scroll past.
+**Scrollback replay**: After `session_attached` / `session_resumed`, the server sends ring-buffer scrollback as binary frames, then a `replay_complete` envelope, then `session_activity`, before live PTY output begins. Always emitted, even when the buffer is empty — clients use it as the "you can render now" signal. The client (`TerminalViewModel`) holds incoming bytes in `pendingOutput` while `isReplaying` is true (set by the coordinator before attach/resume) and flushes them in one batch on `endReplay()`. This keeps SwiftTerm's `queuePendingDisplay` coalescing 60 fps frames into a single render, so the user sees the final terminal state instead of watching history scroll past. `session_attach`/`session_resume` may carry `cols`/`rows`; the server resizes the PTY to them **before** reading the ring buffer and before the post-replay repaint. A `resize` received while unattached is deferred (`RelayMessageHandler.pendingGrid`) and applied at the next attach/resume rather than dropped — the session-switch race where the incoming view's resize landed between `detach` and `resume`.
 
 ### Clipboard Bridging (F11)
 
@@ -222,8 +222,9 @@ Replies carry no request ids, so a waiter can only correlate on the response
 `expected ∪ {"error"}`. An `.error` produced by a request nobody is awaiting
 therefore resolves whichever RPC is in flight, and that waiter cannot reject it.
 `resize`/`refresh`/`paste_image` and binary terminal input are all
-fire-and-forget, so the server drops them when unattached rather than replying
-(`handleResize`/`handleRefresh` log at debug; `paste_image` uses its own
+fire-and-forget, so the server answers none of them when unattached
+(`handleRefresh` logs at debug; `handleResize` defers the grid into
+`pendingGrid` and logs at debug; `paste_image` uses its own
 `.pasteImageResult(success: false)` — the rule is about the reply *type*, not
 about staying silent). `detach` keeps its `.error(400, "No session attached")`: it
 has a real waiter. Full rationale at the top of

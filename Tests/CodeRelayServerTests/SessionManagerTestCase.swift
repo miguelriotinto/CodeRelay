@@ -90,7 +90,13 @@ actor MockPTYSession: PTYSessionProtocol {
         }
         return mockPromptContext
     }
-    func resize(cols: UInt16, rows: UInt16) {}
+    /// Test hooks for the attach-grid ordering (AttachGridTests): every resize,
+    /// plus whether the buffer read and the repaint happened AFTER a resize.
+    private(set) var resizeCalls: [(cols: UInt16, rows: UInt16)] = []
+    private(set) var readBufferSawResize = false
+    private(set) var forceRepaintSawResize = false
+
+    func resize(cols: UInt16, rows: UInt16) { resizeCalls.append((cols, rows)) }
     /// Test hook: settable cwd returned by `currentWorkingDirectory()`.
     var mockCwd: String?
     func setMockCwd(_ path: String?) { mockCwd = path }
@@ -102,8 +108,12 @@ actor MockPTYSession: PTYSessionProtocol {
     func forceRepaint() {
         forceRepaintCallCount += 1
         forceRepaintSawOutputHandler = outputHandler != nil
+        forceRepaintSawResize = !resizeCalls.isEmpty
     }
-    func readBuffer() -> Data { bufferContents }
+    func readBuffer() -> Data {
+        readBufferSawResize = !resizeCalls.isEmpty
+        return bufferContents
+    }
     func terminate() { terminated = true }
     func getActivityState() -> ActivityState { .active }
     func getActiveAgent() -> CodingAgent? { nil }

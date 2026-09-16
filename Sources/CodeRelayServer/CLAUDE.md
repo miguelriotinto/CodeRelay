@@ -112,6 +112,15 @@ strays.
 
 **Output backpressure**: `RelayMessageHandler` caps inflight WebSocket-write bytes per session at 2 MB (`maxInflightOutputBytes`). When the cap is hit the server skips frames until writes drain — the `RingBuffer` holds the authoritative copy and clients replay from it on resume.
 
+**Attach grid**: `handleSessionAttach`/`handleSessionResume` apply the request's
+`cols`/`rows` (else a `resize` deferred in `RelayMessageHandler.pendingGrid` while
+unattached) in a fixed order: resize → `readBuffer()` → replay → `wirePTYOutput` →
+`forceRepaint()`. The resize must come first: a redraw the app produced for width
+W1, fed into a W2 grid, wraps one column short and misplaces every relative cursor
+move that follows — the "garbled after switching sessions" bug. The resize happens
+even with `skipReplay`, because the repaint that follows must be at the new width.
+Guarded by `AttachGridTests`.
+
 **Per-token session cap**: `SessionManager.createSession` enforces `config.maxSessionsPerToken` (default 50, 0 = unlimited) and throws `SessionError.sessionLimitExceeded` when exceeded. Prevents runaway clients from fork-bombing the server.
 
 **fd liveness is tracked outside actor isolation, and only reads whose result is
