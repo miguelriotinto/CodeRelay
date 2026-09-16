@@ -1,5 +1,7 @@
 # Continuous Voice Input v2 Implementation Plan
 
+> **Superseded (2026-09-14):** on-device voice transcription was removed from the iOS and macOS apps by `docs/superpowers/specs/2026-09-13-server-prompt-optimizer-design.md`. Kept for history only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Bring both push-to-talk and continuous listening engines to feature parity with unified post-processing, ship ML-based turn-end detection via bundled CoreML models (Silero VAD + pipecat Smart-Turn), propagate settings changes dynamically, and harden platform behavior (iOS interruptions, macOS sleep/wake, long-press PTT).

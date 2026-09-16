@@ -1,9 +1,8 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// The server, CLI, and Kit build on macOS and Linux. The two Apple client
-// libraries (CodeRelayClient: SwiftUI/UIKit/AppKit; CodeRelaySpeech:
-// WhisperKit/CoreML) and their dependencies exist only on Apple platforms —
+// The server, CLI, and Kit build on macOS and Linux. The Apple client library
+// (CodeRelayClient: SwiftUI/UIKit/AppKit) exists only on Apple platforms —
 // a manifest runs on the host, so `os(Linux)` here means "building on Linux".
 #if os(Linux)
 let buildsAppleClients = false
@@ -17,7 +16,7 @@ var products: [Product] = [
     .library(name: "CodeRelayKit", targets: ["CodeRelayKit"]),
 ]
 
-var dependencies: [Package.Dependency] = [
+let dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
     // Terminal QR codes: CoreImage on Apple platforms, this pure-Swift encoder
     // on Linux (see TerminalQRRenderer). Declared unconditionally so the
@@ -105,11 +104,6 @@ var targets: [Target] = [
 if buildsAppleClients {
     products += [
         .library(name: "CodeRelayClient", targets: ["CodeRelayClient"]),
-        .library(name: "CodeRelaySpeech", targets: ["CodeRelaySpeech"]),
-    ]
-    dependencies += [
-        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "1.0.0"),
-        .package(url: "https://github.com/obra/LLM.swift.git", revision: "c2144e1a0e29c280ec6080b7da85e876d51f8509"),
     ]
     serverTestDependencies.append("CodeRelayClient")
     targets += [
@@ -118,29 +112,10 @@ if buildsAppleClients {
             dependencies: ["CodeRelayKit"],
             path: "Sources/CodeRelayClient"
         ),
-        .target(
-            name: "CodeRelaySpeech",
-            dependencies: [
-                .product(name: "WhisperKit", package: "WhisperKit"),
-                .product(name: "LLM", package: "LLM.swift"),
-            ],
-            path: "Sources/CodeRelaySpeech",
-            resources: [
-                .copy("Resources/SileroVAD.mlmodelc"),
-                .copy("Resources/WhisperLogMel8s.mlpackage"),
-                .copy("Resources/SmartTurnV3.mlpackage"),
-            ]
-        ),
         .testTarget(
             name: "CodeRelayClientTests",
             dependencies: ["CodeRelayClient"],
             path: "Tests/CodeRelayClientTests"
-        ),
-        .testTarget(
-            name: "CodeRelaySpeechTests",
-            dependencies: ["CodeRelaySpeech"],
-            path: "Tests/CodeRelaySpeechTests",
-            resources: [.copy("Fixtures")]
         ),
     ]
 } else {

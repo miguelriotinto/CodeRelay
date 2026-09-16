@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		012F50F6760E057E309FB327 /* ModifierFlagsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2915E91C1DA4FC72AF6EBA3 /* ModifierFlagsTests.swift */; };
-		046F0D3920B1D3EF3777178C /* AppSettingsBedrockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC5384BA63641DDDF73C8B89 /* AppSettingsBedrockTests.swift */; };
 		051438AA3CED441B1CA8CEA3 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A32DE56B50F45FC20E0EAD49 /* QRScannerView.swift */; };
 		06C55262523D7C9EAFB3312D /* CodeRelayMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9811DD833847D309CB69C378 /* CodeRelayMacApp.swift */; };
 		0A2F13A1616D3539C4F3BF83 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C4A4A53A54C85D2BDFE7327 /* WorkspaceView.swift */; };
@@ -17,16 +16,15 @@
 		19510D829FEA25DDFA9F2157 /* KeyCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6C08F3358A1896291225B83 /* KeyCaptureView.swift */; };
 		1A6B6636A991BA53161D901B /* AddEditServerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7F4D875CD3FF65E067E646D /* AddEditServerView.swift */; };
 		1B42A2DD6655114FD59C359D /* CodeRelayApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 182C005C24C6294954821730 /* CodeRelayApp.swift */; };
-		1B9AA31CAEB2A2F65812F430 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 91C67EB7E180478C971D296B /* SwiftTerm */; };
 		1D19D8B964094914141377E5 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917DBD18EA67BBD605CA1766 /* SettingsView.swift */; };
 		1EB6A9EDD3096D6DFF7992CA /* QRCodeComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD79B7A885914DFF752D2179 /* QRCodeComponents.swift */; };
 		22809ECBA2EC7298B6F062E6 /* KeyCaptureInterceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C05C1B0CCB8EFB46D499F4A /* KeyCaptureInterceptor.swift */; };
 		22E9C3DC9FB07A2985640660 /* SelectAllOnBeginEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */; };
-		377425D89A5D4F801F053F88 /* CodeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = 32238D67CEB0756F56B3E2C2 /* CodeRelaySpeech */; };
+		29E42E9BE2B5383AA5137A26 /* AppSettingsSpeechRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA2B78194726A22344FEB41 /* AppSettingsSpeechRemovalTests.swift */; };
+		377425D89A5D4F801F053F88 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 91C67EB7E180478C971D296B /* SwiftTerm */; };
 		3AD2C7ED0F0C4903F9541B7A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4362FA67F25B8ABD904774A9 /* Assets.xcassets */; };
 		3BF3D4E1966454FDBC693F3E /* CodeRelayClient in Frameworks */ = {isa = PBXBuildFile; productRef = C73B67C3B1302EB50D05397D /* CodeRelayClient */; };
 		3C01AF545C145E1F47E2E571 /* AddEditServerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D40B83590E3F91399DC24BD /* AddEditServerView.swift */; };
-		41A11F7958872C06C2090EE8 /* MockSpeechComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F81944F0089F5B71708CA317 /* MockSpeechComponents.swift */; };
 		41C2FC86A1097DFE23246497 /* AddEditServerViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AFC371D175A35B37794ACFE /* AddEditServerViewModelTests.swift */; };
 		42B24E1D08E4489ACD7B3202 /* SessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A49FB62428479BAE8D6B9FD /* SessionCoordinator.swift */; };
 		49AF18631DCC4666D098FDE5 /* ServerListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C5476368DFFD611E304BB17 /* ServerListViewModel.swift */; };
@@ -39,48 +37,39 @@
 		61B865F9D79CFC959FC07A8B /* TerminalContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF37B18586BBB7B511433716 /* TerminalContainerView.swift */; };
 		6CF76DB5A91180967B19A9B7 /* AddEditServerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200D7FB7016273E202A9EE6A /* AddEditServerViewModel.swift */; };
 		6E9B9D3C005CE5D0E17E34FB /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82AA3DF58773D4439629F50D /* SessionSidebarView.swift */; };
-		72AFA8027792E20327995E3B /* TextCleanerStaticTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BA581D87A04D058689C3C8B /* TextCleanerStaticTests.swift */; };
 		737A97F8F5248D8FB46D8342 /* TerminalSwipeScrollTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF97F6314474452F10F2F8D1 /* TerminalSwipeScrollTests.swift */; };
 		75BB5A192BBB2F405FE8BE49 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB701804D2F0C75E2A6E124F /* AppSettings.swift */; };
 		78DA9C0EAF191998F507A7E1 /* StatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40D60334B831231F0CC7991 /* StatusBarView.swift */; };
 		81236181959BA642708E2E5B /* SessionNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5AC490671735ED0BB142CA /* SessionNavigationTests.swift */; };
 		813C237D6B07C1509C0F058C /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9AEC8A26328D8935405B414 /* PairingViewModel.swift */; };
 		8528C7880F07B1CAE00D37AA /* KeyboardAccessory.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA3B4510FFFD5755BE62CE4D /* KeyboardAccessory.swift */; };
-		86883ECBF8B5041C61011A01 /* AppSettingsBedrockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C2CFB21D6D233CF2080526 /* AppSettingsBedrockTests.swift */; };
+		8607DE4CBC28666FC17F4F9A /* AppSettingsSpeechRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC5B4D48BD29AC9E2BE00E0 /* AppSettingsSpeechRemovalTests.swift */; };
 		8B822D63AEEF3769114EF05D /* AlertFieldSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */; };
-		8FB9F1150D3FE9629A1E0DB6 /* CodeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = 177A1547F423385ACD6A5450 /* CodeRelaySpeech */; };
-		9319D93BDEE2E0F8110C743D /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = C0BA279E101C46CD4C9E8DA0 /* SwiftTerm */; };
+		8FB9F1150D3FE9629A1E0DB6 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = C0BA279E101C46CD4C9E8DA0 /* SwiftTerm */; };
 		948A803581BF09D54A82AF35 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC6DB3C97F9D884F7FA21ED /* PairingViewModel.swift */; };
 		9B8FCED16295ABFC21084712 /* ActiveTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E9DA3201E71F50165B91F5 /* ActiveTerminalView.swift */; };
 		9EAE3BDE8C9AE361EF9F3D71 /* MenuBarDropdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = D130F01F66F52B7E7E56E837 /* MenuBarDropdown.swift */; };
 		A52BDEE2BDFB2BA67CA64288 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE76025239CFE171AEC352E2 /* AppCommands.swift */; };
-		AFC697BCD633205BA497EC64 /* MicButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 352F521BA7AE0F68A61FDCA9 /* MicButton.swift */; };
 		B1E5AF4AD4DF9F246EFC5C05 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070B78556144927C4A84E00 /* SettingsView.swift */; };
 		B255A26627FADB404566CD01 /* RelayTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 932D11B48F0BE56805CBE758 /* RelayTerminalView.swift */; };
-		B36A3BC57F4A163A4D4A7325 /* CodeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = CB81C989DBD66B9F439A5571 /* CodeRelaySpeech */; };
-		B455ED32B40F21312627D9CF /* AppSettingsContinuousTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3F12CEBB79B8ADAA139205A /* AppSettingsContinuousTests.swift */; };
+		B36A3BC57F4A163A4D4A7325 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 94E14A8D8A42F96B0E2E0701 /* SwiftTerm */; };
 		B560E8B503C7CD244BF9B997 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38421A166AFF766050FDADC2 /* AppSettings.swift */; };
-		B64C89088373705D3B9328ED /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 94E14A8D8A42F96B0E2E0701 /* SwiftTerm */; };
 		B730C7991753987697101B78 /* CodeRelayIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */; };
 		BD22B1489C449A3C4DC16E70 /* AddEditServerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B33AE8EE6C033A2403B7BF3 /* AddEditServerViewModel.swift */; };
-		C0284F88062FB6EE25FF2DD0 /* OnDeviceSpeechEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 557311E480A66E247FA68461 /* OnDeviceSpeechEngineTests.swift */; };
 		C1FA5FD912E80166B21BD571 /* RecordingShortcutMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37919AA6CC39F799BBAF73DB /* RecordingShortcutMonitor.swift */; };
 		C5DD1A1FBD979234C8F1AFF8 /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C3AABD0A1EDCDF3D99C2813 /* TerminalPalette.swift */; };
 		C9DD34A70DE6928A07B69807 /* SleepWakeObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2E1F5AF84C6C21754F2B59 /* SleepWakeObserver.swift */; };
 		CA0083BA8B5FD10C3726C545 /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3694216ED2375FD2BA6D9CD7 /* PairWithHostSheet.swift */; };
-		CB5ADF0A205C8442A86C71DD /* SpeechEngineStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5996399F87260354D33B880E /* SpeechEngineStateTests.swift */; };
 		D08D4443A0CF018E9E593203 /* MenuBarViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14DB6DCF944C782F893809EE /* MenuBarViewModel.swift */; };
 		D1A08368206BB64AB10BF416 /* ServerListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFDE7B6F21D0081D0855981A /* ServerListViewModel.swift */; };
 		D9CEA37AF583C181BADFF2BE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AA229F172065DCCAABD4EE1 /* AppDelegate.swift */; };
 		DC3CC606AD220E28964BE57C /* QRCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C08E1E10ABEC111CA605BE4 /* QRCodeSheet.swift */; };
 		E14796A9326B97964792E6F9 /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 994105C8A15882C51A1E9D63 /* TerminalPalette.swift */; };
-		E1822BFC45771E1D5D4CEA42 /* CodeRelaySpeech in Frameworks */ = {isa = PBXBuildFile; productRef = EE82728E904F42A2EBB9F376 /* CodeRelaySpeech */; };
 		E4B007465A6886711AE4ECA6 /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C01CE54946F1BF877D94BFE /* PairWithHostSheet.swift */; };
 		E4D5925EEA80E36AD808183A /* ServerListWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 822211CDC993EFDD413DDB0E /* ServerListWindow.swift */; };
 		E56E770B9D4E9803B723749F /* CodeRelayClient in Frameworks */ = {isa = PBXBuildFile; productRef = 813FEDD64E4C31122044AC88 /* CodeRelayClient */; };
 		EB565C334D2ACAB14C719B32 /* QRCodePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1169B69C981A52324361A485 /* QRCodePopover.swift */; };
 		EBC76ABC98C120AC31CEC402 /* CodeRelayClient in Frameworks */ = {isa = PBXBuildFile; productRef = E8C74211FF5057CB56B37194 /* CodeRelayClient */; };
-		ED00153981356FBD7098EA16 /* WhisperHallucinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B84A4F87CD2F34351EB00FA /* WhisperHallucinationTests.swift */; };
 		F48556B90993213A81FE4C77 /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124B4982AAFCA447B75B2FC8 /* MainWindow.swift */; };
 		F6D838BE9B9BC00A46A2F11C /* MenuBarActivityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A9C224C001A6A792F9D58C8 /* MenuBarActivityTests.swift */; };
 		F7065C1D6A48FC570B4C3F5A /* SplashScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 707F2EFA3E2B2F9ADBAEB98F /* SplashScreenView.swift */; };
@@ -108,6 +97,7 @@
 /* Begin PBXFileReference section */
 		032B2629F2A1D548EB620340 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		05446DA7A910D4397B33AFD1 /* CodeRelayMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodeRelayMac.entitlements; sourceTree = "<group>"; };
+		0CA2B78194726A22344FEB41 /* AppSettingsSpeechRemovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsSpeechRemovalTests.swift; sourceTree = "<group>"; };
 		1169B69C981A52324361A485 /* QRCodePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodePopover.swift; sourceTree = "<group>"; };
 		12141808FD0F8690732DE837 /* CodeRelayMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodeRelayMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		124B4982AAFCA447B75B2FC8 /* MainWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow.swift; sourceTree = "<group>"; };
@@ -115,13 +105,11 @@
 		14DB6DCF944C782F893809EE /* MenuBarViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarViewModel.swift; sourceTree = "<group>"; };
 		182C005C24C6294954821730 /* CodeRelayApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeRelayApp.swift; sourceTree = "<group>"; };
 		1A49FB62428479BAE8D6B9FD /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
-		1BA581D87A04D058689C3C8B /* TextCleanerStaticTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextCleanerStaticTests.swift; sourceTree = "<group>"; };
 		1C01CE54946F1BF877D94BFE /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		200D7FB7016273E202A9EE6A /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
 		2D40B83590E3F91399DC24BD /* AddEditServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerView.swift; sourceTree = "<group>"; };
 		2F3077C18D3A47EDCAB73EEF /* CodeRelayApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodeRelayApp.entitlements; sourceTree = "<group>"; };
 		31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CodeRelayIcon.icns; sourceTree = "<group>"; };
-		352F521BA7AE0F68A61FDCA9 /* MicButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicButton.swift; sourceTree = "<group>"; };
 		3694216ED2375FD2BA6D9CD7 /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		37919AA6CC39F799BBAF73DB /* RecordingShortcutMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingShortcutMonitor.swift; sourceTree = "<group>"; };
 		38421A166AFF766050FDADC2 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
@@ -132,15 +120,12 @@
 		4C3AABD0A1EDCDF3D99C2813 /* TerminalPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPalette.swift; sourceTree = "<group>"; };
 		4C4A4A53A54C85D2BDFE7327 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		519C055662248EBE2FCC54F4 /* ServerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListView.swift; sourceTree = "<group>"; };
-		557311E480A66E247FA68461 /* OnDeviceSpeechEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceSpeechEngineTests.swift; sourceTree = "<group>"; };
-		5996399F87260354D33B880E /* SpeechEngineStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechEngineStateTests.swift; sourceTree = "<group>"; };
 		5A9C224C001A6A792F9D58C8 /* MenuBarActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarActivityTests.swift; sourceTree = "<group>"; };
 		5B33AE8EE6C033A2403B7BF3 /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
 		60465BA09A0A9870E9E03B23 /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
 		66E9DA3201E71F50165B91F5 /* ActiveTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveTerminalView.swift; sourceTree = "<group>"; };
 		67B090224A2F32FF6AA6DCAD /* ImagePasteHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePasteHandler.swift; sourceTree = "<group>"; };
 		6AA229F172065DCCAABD4EE1 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		6B84A4F87CD2F34351EB00FA /* WhisperHallucinationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperHallucinationTests.swift; sourceTree = "<group>"; };
 		6C05C1B0CCB8EFB46D499F4A /* KeyCaptureInterceptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyCaptureInterceptor.swift; sourceTree = "<group>"; };
 		707F2EFA3E2B2F9ADBAEB98F /* SplashScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashScreenView.swift; sourceTree = "<group>"; };
 		7596942A365DC1BC26A481E2 /* CodeRelayMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodeRelayMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -160,7 +145,6 @@
 		B2D38AF522487CD65B4178AC /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		B40D60334B831231F0CC7991 /* StatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarView.swift; sourceTree = "<group>"; };
 		B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollbackClearScanner.swift; sourceTree = "<group>"; };
-		B8C2CFB21D6D233CF2080526 /* AppSettingsBedrockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsBedrockTests.swift; sourceTree = "<group>"; };
 		BFDE7B6F21D0081D0855981A /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
 		CB701804D2F0C75E2A6E124F /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		CE76025239CFE171AEC352E2 /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
@@ -172,17 +156,15 @@
 		DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertFieldSelectionTests.swift; sourceTree = "<group>"; };
 		E6C08F3358A1896291225B83 /* KeyCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyCaptureView.swift; sourceTree = "<group>"; };
 		EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectAllOnBeginEditing.swift; sourceTree = "<group>"; };
-		EC5384BA63641DDDF73C8B89 /* AppSettingsBedrockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsBedrockTests.swift; sourceTree = "<group>"; };
 		EF2A47966BF7049A7B54EE51 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F070B78556144927C4A84E00 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F2915E91C1DA4FC72AF6EBA3 /* ModifierFlagsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModifierFlagsTests.swift; sourceTree = "<group>"; };
-		F3F12CEBB79B8ADAA139205A /* AppSettingsContinuousTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsContinuousTests.swift; sourceTree = "<group>"; };
 		F7EE17741C04A3558512D65A /* SessionSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSidebarView.swift; sourceTree = "<group>"; };
 		F7F4D875CD3FF65E067E646D /* AddEditServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerView.swift; sourceTree = "<group>"; };
-		F81944F0089F5B71708CA317 /* MockSpeechComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockSpeechComponents.swift; sourceTree = "<group>"; };
 		FA3B4510FFFD5755BE62CE4D /* KeyboardAccessory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardAccessory.swift; sourceTree = "<group>"; };
 		FD79B7A885914DFF752D2179 /* QRCodeComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeComponents.swift; sourceTree = "<group>"; };
 		FF97F6314474452F10F2F8D1 /* TerminalSwipeScrollTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSwipeScrollTests.swift; sourceTree = "<group>"; };
+		FFC5B4D48BD29AC9E2BE00E0 /* AppSettingsSpeechRemovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsSpeechRemovalTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -191,7 +173,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				EBC76ABC98C120AC31CEC402 /* CodeRelayClient in Frameworks */,
-				E1822BFC45771E1D5D4CEA42 /* CodeRelaySpeech in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -199,8 +180,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				377425D89A5D4F801F053F88 /* CodeRelaySpeech in Frameworks */,
-				1B9AA31CAEB2A2F65812F430 /* SwiftTerm in Frameworks */,
+				377425D89A5D4F801F053F88 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -209,8 +189,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3BF3D4E1966454FDBC693F3E /* CodeRelayClient in Frameworks */,
-				B36A3BC57F4A163A4D4A7325 /* CodeRelaySpeech in Frameworks */,
-				B64C89088373705D3B9328ED /* SwiftTerm in Frameworks */,
+				B36A3BC57F4A163A4D4A7325 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -219,8 +198,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E56E770B9D4E9803B723749F /* CodeRelayClient in Frameworks */,
-				8FB9F1150D3FE9629A1E0DB6 /* CodeRelaySpeech in Frameworks */,
-				9319D93BDEE2E0F8110C743D /* SwiftTerm in Frameworks */,
+				8FB9F1150D3FE9629A1E0DB6 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -231,15 +209,9 @@
 			isa = PBXGroup;
 			children = (
 				DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */,
-				B8C2CFB21D6D233CF2080526 /* AppSettingsBedrockTests.swift */,
-				F3F12CEBB79B8ADAA139205A /* AppSettingsContinuousTests.swift */,
-				F81944F0089F5B71708CA317 /* MockSpeechComponents.swift */,
-				557311E480A66E247FA68461 /* OnDeviceSpeechEngineTests.swift */,
-				5996399F87260354D33B880E /* SpeechEngineStateTests.swift */,
+				FFC5B4D48BD29AC9E2BE00E0 /* AppSettingsSpeechRemovalTests.swift */,
 				134E10178F9FFB931A0DF690 /* TerminalScrollSyncTests.swift */,
 				FF97F6314474452F10F2F8D1 /* TerminalSwipeScrollTests.swift */,
-				1BA581D87A04D058689C3C8B /* TextCleanerStaticTests.swift */,
-				6B84A4F87CD2F34351EB00FA /* WhisperHallucinationTests.swift */,
 			);
 			path = CodeRelayAppTests;
 			sourceTree = "<group>";
@@ -278,7 +250,6 @@
 			children = (
 				FA3B4510FFFD5755BE62CE4D /* KeyboardAccessory.swift */,
 				E6C08F3358A1896291225B83 /* KeyCaptureView.swift */,
-				352F521BA7AE0F68A61FDCA9 /* MicButton.swift */,
 				FD79B7A885914DFF752D2179 /* QRCodeComponents.swift */,
 				932D11B48F0BE56805CBE758 /* RelayTerminalView.swift */,
 				B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */,
@@ -300,7 +271,7 @@
 			isa = PBXGroup;
 			children = (
 				4AFC371D175A35B37794ACFE /* AddEditServerViewModelTests.swift */,
-				EC5384BA63641DDDF73C8B89 /* AppSettingsBedrockTests.swift */,
+				0CA2B78194726A22344FEB41 /* AppSettingsSpeechRemovalTests.swift */,
 				5A9C224C001A6A792F9D58C8 /* MenuBarActivityTests.swift */,
 				F2915E91C1DA4FC72AF6EBA3 /* ModifierFlagsTests.swift */,
 				AE5AC490671735ED0BB142CA /* SessionNavigationTests.swift */,
@@ -440,7 +411,6 @@
 			name = CodeRelayMac;
 			packageProductDependencies = (
 				813FEDD64E4C31122044AC88 /* CodeRelayClient */,
-				177A1547F423385ACD6A5450 /* CodeRelaySpeech */,
 				C0BA279E101C46CD4C9E8DA0 /* SwiftTerm */,
 			);
 			productName = CodeRelayMac;
@@ -462,7 +432,6 @@
 			name = CodeRelayApp;
 			packageProductDependencies = (
 				C73B67C3B1302EB50D05397D /* CodeRelayClient */,
-				CB81C989DBD66B9F439A5571 /* CodeRelaySpeech */,
 				94E14A8D8A42F96B0E2E0701 /* SwiftTerm */,
 			);
 			productName = CodeRelayApp;
@@ -484,7 +453,6 @@
 			name = CodeRelayMacTests;
 			packageProductDependencies = (
 				E8C74211FF5057CB56B37194 /* CodeRelayClient */,
-				EE82728E904F42A2EBB9F376 /* CodeRelaySpeech */,
 			);
 			productName = CodeRelayMacTests;
 			productReference = 7596942A365DC1BC26A481E2 /* CodeRelayMacTests.xctest */;
@@ -504,7 +472,6 @@
 			);
 			name = CodeRelayAppTests;
 			packageProductDependencies = (
-				32238D67CEB0756F56B3E2C2 /* CodeRelaySpeech */,
 				91C67EB7E180478C971D296B /* SwiftTerm */,
 			);
 			productName = CodeRelayAppTests;
@@ -580,7 +547,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				41C2FC86A1097DFE23246497 /* AddEditServerViewModelTests.swift in Sources */,
-				046F0D3920B1D3EF3777178C /* AppSettingsBedrockTests.swift in Sources */,
+				29E42E9BE2B5383AA5137A26 /* AppSettingsSpeechRemovalTests.swift in Sources */,
 				F6D838BE9B9BC00A46A2F11C /* MenuBarActivityTests.swift in Sources */,
 				012F50F6760E057E309FB327 /* ModifierFlagsTests.swift in Sources */,
 				81236181959BA642708E2E5B /* SessionNavigationTests.swift in Sources */,
@@ -592,15 +559,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				8B822D63AEEF3769114EF05D /* AlertFieldSelectionTests.swift in Sources */,
-				86883ECBF8B5041C61011A01 /* AppSettingsBedrockTests.swift in Sources */,
-				B455ED32B40F21312627D9CF /* AppSettingsContinuousTests.swift in Sources */,
-				41A11F7958872C06C2090EE8 /* MockSpeechComponents.swift in Sources */,
-				C0284F88062FB6EE25FF2DD0 /* OnDeviceSpeechEngineTests.swift in Sources */,
-				CB5ADF0A205C8442A86C71DD /* SpeechEngineStateTests.swift in Sources */,
+				8607DE4CBC28666FC17F4F9A /* AppSettingsSpeechRemovalTests.swift in Sources */,
 				4F29A94546C0E93C9F4B41E4 /* TerminalScrollSyncTests.swift in Sources */,
 				737A97F8F5248D8FB46D8342 /* TerminalSwipeScrollTests.swift in Sources */,
-				72AFA8027792E20327995E3B /* TextCleanerStaticTests.swift in Sources */,
-				ED00153981356FBD7098EA16 /* WhisperHallucinationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -649,7 +610,6 @@
 				1B42A2DD6655114FD59C359D /* CodeRelayApp.swift in Sources */,
 				19510D829FEA25DDFA9F2157 /* KeyCaptureView.swift in Sources */,
 				8528C7880F07B1CAE00D37AA /* KeyboardAccessory.swift in Sources */,
-				AFC697BCD633205BA497EC64 /* MicButton.swift in Sources */,
 				E4B007465A6886711AE4ECA6 /* PairWithHostSheet.swift in Sources */,
 				948A803581BF09D54A82AF35 /* PairingViewModel.swift in Sources */,
 				1EB6A9EDD3096D6DFF7992CA /* QRCodeComponents.swift in Sources */,
@@ -697,7 +657,6 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -877,8 +836,6 @@
 				INFOPLIST_FILE = CodeRelayApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Code[Relay] uses speech recognition to convert voice input to terminal commands.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -910,7 +867,6 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
 				INFOPLIST_KEY_LSUIElement = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -937,8 +893,6 @@
 				INFOPLIST_FILE = CodeRelayApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Code[Relay] uses the camera to scan QR codes for session sharing.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Code[Relay] needs microphone access for voice-to-text input.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Code[Relay] uses speech recognition to convert voice input to terminal commands.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -1061,14 +1015,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		177A1547F423385ACD6A5450 /* CodeRelaySpeech */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeRelaySpeech;
-		};
-		32238D67CEB0756F56B3E2C2 /* CodeRelaySpeech */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeRelaySpeech;
-		};
 		813FEDD64E4C31122044AC88 /* CodeRelayClient */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CodeRelayClient;
@@ -1092,17 +1038,9 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = CodeRelayClient;
 		};
-		CB81C989DBD66B9F439A5571 /* CodeRelaySpeech */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeRelaySpeech;
-		};
 		E8C74211FF5057CB56B37194 /* CodeRelayClient */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CodeRelayClient;
-		};
-		EE82728E904F42A2EBB9F376 /* CodeRelaySpeech */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeRelaySpeech;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,5 +1,7 @@
 # Continuous Voice Input v2 — ML Models, Unified Post-Processing, UX Polish
 
+> **Superseded (2026-09-14):** on-device voice transcription was removed from the iOS and macOS apps by `docs/superpowers/specs/2026-09-13-server-prompt-optimizer-design.md`. Kept for history only.
+
 **Date**: 2026-05-08
 **Status**: Approved
 **Platforms**: macOS + iOS (foreground-only)

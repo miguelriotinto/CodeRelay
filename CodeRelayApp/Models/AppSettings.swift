@@ -1,8 +1,6 @@
 import SwiftUI
 import UIKit
-import Combine
 import CodeRelayClient
-import CodeRelaySpeech
 
 @MainActor
 final class AppSettings: ObservableObject {
@@ -10,23 +8,12 @@ final class AppSettings: ObservableObject {
 
     private init() {
         migrateShortcutIfNeeded()
-        migrateBedrockTokenIfNeeded()
-        // Seed the in-memory mirror from the Keychain (or legacy UserDefaults
-        // fallback if the migration above hit a Keychain failure).
-        self.bedrockBearerToken = loadBedrockTokenWithFallback()
-        // Debounce prevents per-keystroke Keychain writes during SecureField typing
-        $bedrockBearerToken
-            .dropFirst()
-            .debounce(for: Self.bedrockDebounce, scheduler: DispatchQueue.main)
-            .sink { token in
-                try? AuthManager.shared.saveBedrockToken(token)
-            }
-            .store(in: &bedrockTokenSubscriptions)
+        AppSettings.migrateSpeechRemoval(
+            defaults: .standard,
+            directories: AppSettings.legacySpeechDirectories,
+            deleteBedrockToken: { try AuthManager.shared.deleteBedrockToken() }
+        )
     }
-
-    /// Debounce interval for Bedrock token Keychain writes. Exposed so tests
-    /// can validate it without hardcoding a ms count in assertions.
-    static let bedrockDebounce: DispatchQueue.SchedulerTimeType.Stride = .milliseconds(500)
 
     private func migrateShortcutIfNeeded() {
         let defaults = UserDefaults.standard
@@ -47,83 +34,6 @@ final class AppSettings: ObservableObject {
         defaults.removeObject(forKey: "recordingShortcutModifier")
     }
 
-    /// Legacy `UserDefaults` key that held the Bedrock token before the
-    /// Keychain migration. Also read as a fallback when Keychain ops fail.
-    static let legacyBedrockKey = "bedrockBearerToken"
-
-    private func migrateBedrockTokenIfNeeded() {
-        Self.migrateBedrockToken(
-            defaults: UserDefaults.standard,
-            keychainLoad: { try AuthManager.shared.loadBedrockToken() },
-            keychainSave: { try AuthManager.shared.saveBedrockToken($0) }
-        )
-    }
-
-    private func loadBedrockTokenWithFallback() -> String {
-        Self.loadBedrockToken(
-            defaults: UserDefaults.standard,
-            keychainLoad: { try AuthManager.shared.loadBedrockToken() }
-        )
-    }
-
-    /// Pure migration helper. Exposed for unit tests: `defaults` and the two
-    /// Keychain closures are the only side-effectful dependencies, so tests
-    /// can exercise every branch without touching the real Keychain or the
-    /// shared `UserDefaults`.
-    ///
-    /// Re-reads after save and only scrubs the legacy plist entry when the
-    /// round-trip confirms the value was stored. A failed Keychain write
-    /// leaves the legacy copy intact so `loadBedrockToken` can surface it.
-    static func migrateBedrockToken(
-        defaults: UserDefaults,
-        keychainLoad: () throws -> String?,
-        keychainSave: (String) throws -> Void
-    ) {
-        guard let legacy = defaults.string(forKey: legacyBedrockKey),
-              !legacy.isEmpty else {
-            return
-        }
-        if let existing = try? keychainLoad(), !existing.isEmpty {
-            defaults.removeObject(forKey: legacyBedrockKey)
-            return
-        }
-        do {
-            try keychainSave(legacy)
-            if let reread = try? keychainLoad(), reread == legacy {
-                defaults.removeObject(forKey: legacyBedrockKey)
-            }
-        } catch {
-            // Keep the legacy copy in place — the fallback reader picks it up.
-        }
-    }
-
-    /// Pure read helper with `UserDefaults` fallback. See `migrateBedrockToken`
-    /// above for the rationale.
-    static func loadBedrockToken(
-        defaults: UserDefaults,
-        keychainLoad: () throws -> String?
-    ) -> String {
-        if let keychain = try? keychainLoad(), !keychain.isEmpty {
-            return keychain
-        }
-        return defaults.string(forKey: legacyBedrockKey) ?? ""
-    }
-
-    @AppStorage("smartCleanupEnabled") var smartCleanupEnabled = true
-    @AppStorage("promptEnhancementEnabled") var promptEnhancementEnabled = false
-    @AppStorage("bedrockRegion") var bedrockRegion = "us-east-1"
-
-    /// Bedrock bearer token, persisted in the Keychain (was UserDefaults).
-    /// The stored value is seeded from the Keychain at `init`; writes are
-    /// debounced 500 ms before the Keychain save fires so rapid typing in a
-    /// `SecureField` collapses into one write. Returns `""` when the Keychain
-    /// is empty — callers treat empty as "not configured".
-    @Published var bedrockBearerToken: String = ""
-
-    /// Combine subscription store for the debounced Keychain save. Owned by
-    /// the singleton so it lives for the process lifetime.
-    private var bedrockTokenSubscriptions = Set<AnyCancellable>()
-
     @AppStorage("hapticFeedbackEnabled") var hapticFeedbackEnabled = true
     /// Push notifications: master toggle + whether to be notified when an agent
     /// finishes (blocked always notifies when push is on).
@@ -143,18 +53,62 @@ final class AppSettings: ObservableObject {
     @AppStorage("recordingShortcutFlags") var recordingShortcutFlags: Int = Int(UIKeyModifierFlags([.command, .alternate]).rawValue)
     @AppStorage("recordingShortcutKey") var recordingShortcutKey = ""
 
-    // MARK: - Continuous Listening
+    // MARK: - Prompt optimizer (spec §7.1)
 
-    @AppStorage("continuousListeningEnabled") var continuousListeningEnabled = false
-    @AppStorage("wakeWord") var wakeWord: String = "claude"
+    /// Sent as `shareScreen` on every `optimize_prompt`. Per device, default on.
+    @AppStorage("shareScreenWithOptimizer") var shareScreenWithOptimizer = true
 
-    func currentSpeechOptions() -> SpeechProcessingOptions {
-        SpeechProcessingOptions(
-            smartCleanupEnabled: smartCleanupEnabled,
-            promptEnhancementEnabled: promptEnhancementEnabled,
-            bedrockBearerToken: bedrockBearerToken,
-            bedrockRegion: bedrockRegion,
-            wakeWord: wakeWord
+    // MARK: - Speech-removal migration (spec §7.2)
+
+    static let speechRemovalMigrationKey = "speechRemovalMigrationDone"
+
+    /// Every `@AppStorage` key the speech feature ever wrote on iOS, plus the
+    /// old `SpeechModelStore` ready flag.
+    static let legacySpeechDefaultsKeys = [
+        "smartCleanupEnabled",
+        "promptEnhancementEnabled",
+        "bedrockRegion",
+        "bedrockBearerToken",
+        "continuousListeningEnabled",
+        "wakeWord",
+        "speechModelStore.whisperDownloaded",
+    ]
+
+    /// Where `SpeechModelStore` kept the downloaded LLM weights on iOS.
+    static var legacySpeechModelsDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("Models", isDirectory: true)
+    }
+
+    /// Where the Whisper CoreML weights actually landed. `SpeechModelStore`
+    /// called `WhisperKit.download(variant:progressCallback:)` with **no**
+    /// `downloadBase`, and WhisperKit's HubApi defaults that to
+    /// `Documents/huggingface` — not the directory above. A few hundred MB, in
+    /// the user-visible `Documents` container and in backups, so the scrub has
+    /// to name it explicitly.
+    static var legacyWhisperHubDirectory: URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documents.appendingPathComponent("huggingface", isDirectory: true)
+    }
+
+    /// Every directory the removed speech stack could have written weights to.
+    static var legacySpeechDirectories: [URL] {
+        [legacySpeechModelsDirectory, legacyWhisperHubDirectory]
+    }
+
+    /// iOS wiring of the shared one-time cleanup (see `SpeechRemovalMigration`).
+    @discardableResult
+    static func migrateSpeechRemoval(
+        defaults: UserDefaults,
+        directories: [URL],
+        deleteBedrockToken: () throws -> Void
+    ) -> Bool {
+        SpeechRemovalMigration.run(
+            defaults: defaults,
+            doneKey: speechRemovalMigrationKey,
+            legacyKeys: legacySpeechDefaultsKeys,
+            directories: directories,
+            deleteBedrockToken: deleteBedrockToken
         )
     }
 }

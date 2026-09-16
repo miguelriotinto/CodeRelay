@@ -29,6 +29,15 @@ private final class StallableConnection: ConnectionSurface {
 
     func removeSubscriber(_ id: UUID) { subscribers.removeValue(forKey: id) }
 
+    /// Models `RelayConnection`'s: the socket a timed-out RPC poisoned is
+    /// replaced, so its generation moves on. These tests stall RPCs on purpose,
+    /// so this fires — the assertions below are all made before the stall's
+    /// timeout, or are unaffected by it.
+    func markConnectionDead() {
+        isConnected = false
+        generation &+= 1
+    }
+
     func deliver(_ message: ServerMessage) {
         for handler in subscribers.values { handler(message) }
     }

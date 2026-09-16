@@ -44,7 +44,5 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Code[Relay] uses the camera to scan QR codes for session sharing.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Code[Relay] needs microphone access for voice-to-text input.</string>
 </dict>
 </plist>

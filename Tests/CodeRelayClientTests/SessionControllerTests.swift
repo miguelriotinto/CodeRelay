@@ -117,9 +117,70 @@ final class SessionControllerTests: SessionControllerTestCase {
             XCTAssertTrue(error is SessionController.SessionError)
         }
 
-        // The socket still looks fine to the transport — that is exactly why the
-        // controller has to remember, rather than probe.
-        XCTAssertTrue(conn.isConnected)
+        // Poisoning the socket and abandoning it are ONE event: a socket with an
+        // unanswered request on it can never correlate another reply, so it is
+        // dropped here rather than left for some later path to notice.
+        XCTAssertEqual(conn.markedDeadCount, 1, "the poisoned socket must be abandoned, not kept")
+        XCTAssertFalse(conn.isConnected)
+
+        _ = try? await controller.listSessions()
+        XCTAssertEqual(
+            conn.sentTypes, ["session_list"],
+            "the refused RPC must never reach the wire, where the late reply could meet it"
+        )
+
+        // Replacing the socket clears the poison with no explicit reset call: a
+        // fresh connection cannot carry the old one's in-flight reply.
+        conn.isConnected = true
+        conn.autoRespond = { _ in .sessionList(sessions: []) }
+        let sessions = try await controller.listSessions()
+        XCTAssertEqual(sessions.count, 0, "a new generation lifts the poison")
+    }
+
+    /// The user-visible defect this teardown exists to prevent (reported
+    /// 2026-09-12): the Mac app went mute for 16 minutes on a socket that had
+    /// been poisoned by one timed-out `detach`. Nothing noticed, because nothing
+    /// looks. Pings are not RPCs, so the keepalive kept succeeding and the
+    /// quality indicator kept reading "Excellent"; `onSendFailed` never fired;
+    /// and both repair paths test the TRANSPORT (`RecoveryController`'s
+    /// `isAlive()` short-circuit, `SessionHandshake`'s `state != .connected`),
+    /// which was honestly reporting a healthy socket. Typing went to a session
+    /// the app was no longer attached to — the server drops unattached binary
+    /// input silently, by design — and every session switch failed before
+    /// reaching the wire. It only broke when the server's read-idle reaper hung
+    /// up 16 minutes later.
+    ///
+    /// So the fix cannot be another observer of the marker: it has to be the
+    /// timeout itself declaring the socket dead, which is the one moment the
+    /// condition is known.
+    func testATimedOutRPCReportsTheSocketDeadSoRecoveryCanRun() async throws {
+        let conn = FakeConnection()
+        let controller = SessionController(connection: conn, responseTimeout: .milliseconds(20))
+
+        _ = try? await controller.listSessions()
+
+        XCTAssertEqual(
+            conn.markedDeadCount, 1,
+            """
+            the timeout must tear the socket down; on `RelayConnection` that is \
+            what fires `onSendFailed` -> `scheduleAutoRecovery`, the only route \
+            back to a usable connection when no foreground/wake signal is coming
+            """
+        )
+    }
+
+    /// The controller's guarantee — "a desynchronized socket carries no further
+    /// RPC" — must not depend on the transport cooperating with the teardown
+    /// request. A surface that cannot replace its socket keeps the same
+    /// generation, so the marker is what still refuses the next request.
+    func testDesyncMarkerRefusesRPCsEvenIfTheSocketIsNotReplaced() async throws {
+        let conn = FakeConnection()
+        conn.replacesSocketWhenMarkedDead = false
+        let controller = SessionController(connection: conn, responseTimeout: .milliseconds(20))
+
+        _ = try? await controller.listSessions()
+        conn.isConnected = true      // the surface kept the same socket
+
         do {
             _ = try await controller.listSessions()
             XCTFail("a second RPC must not run on a socket with an unanswered request on it")
@@ -128,19 +189,7 @@ final class SessionControllerTests: SessionControllerTestCase {
                 return XCTFail("expected connectionDesynchronized, got \(error)")
             }
         }
-        XCTAssertEqual(
-            conn.sentTypes, ["session_list"],
-            "the refused RPC must never reach the wire, where the late reply could meet it"
-        )
-
-        // Replacing the socket clears it, with no explicit reset call: a fresh
-        // connection cannot carry the old one's in-flight reply. This is what
-        // lets `SessionHandshake` recover through its existing
-        // resetAuth + disconnect + retry path.
-        conn.generation += 1
-        conn.autoRespond = { _ in .sessionList(sessions: []) }
-        let sessions = try await controller.listSessions()
-        XCTAssertEqual(sessions.count, 0, "a new generation lifts the poison")
+        XCTAssertEqual(conn.sentTypes, ["session_list"], "the refused RPC must not reach the wire")
     }
 
     /// The poison must name the socket the request went out on, NOT whichever one
@@ -164,6 +213,10 @@ final class SessionControllerTests: SessionControllerTestCase {
         // ...and only THEN does the abandoned request time out.
         await request.value
         XCTAssertNotNil(outcome.error, "the abandoned request still fails its caller")
+        XCTAssertEqual(
+            conn.markedDeadCount, 0,
+            "tearing down the replacement socket would turn one dead request into an outage"
+        )
 
         conn.autoRespond = { _ in .sessionList(sessions: []) }
         let sessions = try await controller.listSessions()
@@ -177,6 +230,9 @@ final class SessionControllerTests: SessionControllerTestCase {
     /// would skip the handshake and sit on a socket no RPC can use.
     func testDesyncedSocketReportsAuthInvalid() async throws {
         let conn = FakeConnection()
+        // Hold the generation still, so what invalidates auth below is provably
+        // the desync marker and not the teardown's generation bump.
+        conn.replacesSocketWhenMarkedDead = false
         conn.autoRespond = { _ in .authSuccess(protocolVersion: 1, tokenId: "tok") }
         let controller = SessionController(connection: conn, responseTimeout: .milliseconds(20))
 
@@ -185,6 +241,7 @@ final class SessionControllerTests: SessionControllerTestCase {
 
         conn.autoRespond = nil
         _ = try? await controller.listSessions()   // times out → poisons
+        conn.isConnected = true                    // the surface kept the socket
 
         XCTAssertFalse(controller.isAuthValid, "auth over a desynchronized socket is unusable")
         conn.generation += 1

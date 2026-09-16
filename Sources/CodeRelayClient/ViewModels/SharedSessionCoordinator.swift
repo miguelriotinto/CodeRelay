@@ -19,6 +19,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             // no suppression flag needed.
             guard activeSessionId != oldValue else { return }
             ownershipStore.saveActiveSession(activeSessionId)
+            clearOptimizerUndo()
         }
     }
     /// F3: the active session is restored from persistence exactly once, on the
@@ -105,6 +106,24 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// surface this as a recoverable error instead of dismissing the workspace.
     @Published public var sessionAttachFailed = false
     @Published public var sessionAttachError: String?
+
+    // MARK: - Prompt optimizer (behaviour in SharedSessionCoordinator+Optimizer.swift)
+
+    /// What the wand may do, derived from `auth_success` (spec §7.1).
+    @Published public internal(set) var optimizerAvailability: OptimizerAvailability = .unknown
+    /// `.optimizing` only for the duration of one `optimize_prompt` /
+    /// `replace_prompt` round trip.
+    @Published public internal(set) var optimizerState: OptimizerState = .idle
+    /// Non-nil for `optimizerUndoWindow` after a successful rewrite.
+    @Published public internal(set) var optimizerUndo: OptimizerUndo?
+    /// Transient toast text; auto-cleared after `optimizerNoticeDuration`.
+    @Published public internal(set) var optimizerNotice: String?
+    public var optimizerUndoWindow: Duration = .seconds(10)
+    public var optimizerNoticeDuration: Duration = .seconds(4)
+    var optimizerUndoTask: Task<Void, Never>?
+    var optimizerNoticeTask: Task<Void, Never>?
+    /// Test seam: how many times the undo window has been (re)armed this coordinator lifetime.
+    var optimizerUndoArmCount = 0
 
     /// Subscription that republishes `activityCoordinator.objectWillChange`
     /// onto this parent so SwiftUI views observing the parent `@ObservedObject`
@@ -233,6 +252,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         // override so the Mac app's `isAuthenticated` @Published flag still
         // flips.
         authCoordinator.onAuthenticated = { [weak self] in
+            self?.refreshOptimizerAvailability()
             self?.didAuthenticate()
         }
 
@@ -1079,6 +1099,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         recoveryTask?.cancel()
         recoveryTask = nil
         authCoordinator.invalidate()
+        clearOptimizerUndo()
+        dismissOptimizerNotice()
         if activeSessionId != nil {
             Task {
                 do {

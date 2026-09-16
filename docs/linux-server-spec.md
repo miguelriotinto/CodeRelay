@@ -23,9 +23,9 @@ clipboard, per-token caps, rate limiting), and the same test suite passing.
 
 ### 1.1 Non-goals
 
-- **The Apple client libraries.** `CodeRelayClient` (SwiftUI/UIKit/AppKit/IOKit) and
-  `CodeRelaySpeech` (WhisperKit/CoreML) are not ported; they are excluded from the
-  Linux build (AD-1). The Linux client already exists in Kotlin.
+- **The Apple client library.** `CodeRelayClient` (SwiftUI/UIKit/AppKit/IOKit) is not
+  ported; it is excluded from the Linux build (AD-1). The Linux client already exists
+  in Kotlin.
 - **A new push provider.** APNs and FCM are HTTP/2 clients over `AsyncHTTPClient` and
   `Crypto`; they build and run unchanged on Linux. No Linux-specific push transport is
   added — the Linux client deliberately has none (client spec AD-4).
@@ -55,10 +55,9 @@ Ten Apple-only imports in 12,170 lines; everything else is Foundation, NIO, Cryp
 AsyncHTTPClient, ArgumentParser and SwiftTerm — all of which support Linux (SwiftTerm's
 own manifest excludes its `Apple/`, `Mac/`, `iOS/` sources under `os(Linux)`).
 
-`Package.swift` is Swift, so it branches: under `os(Linux)` the two Apple client
-libraries, their two dependencies (WhisperKit, LLM.swift), and their test targets are
-not declared. The manifest runs on the *host*, so "Linux" here means "building on
-Linux" — the same reasoning SwiftTerm documents.
+`Package.swift` is Swift, so it branches: under `os(Linux)` the Apple client library
+and its test target are not declared. The manifest runs on the *host*, so "Linux" here
+means "building on Linux" — the same reasoning SwiftTerm documents.
 
 Rejected alternatives:
 - *A separate `CodeRelayLinux/server` package.* Two copies of 12 k lines to keep
@@ -67,10 +66,8 @@ Rejected alternatives:
   fire-and-forget replies, replay ordering, the reap-by-session invariant, the
   double-checked rate-limit gate — are exactly what a rewrite loses.
 
-**Consequence to accept — `Package.resolved`.** Resolving on Linux drops the pins for
-`whisperkit`, `llm.swift`, and their transitive `swift-syntax`. The committed file is
-the macOS superset and must stay that way: a Linux checkout must not commit a rewritten
-`Package.resolved`. §11 makes CI insensitive to this.
+**Consequence to accept — `Package.resolved`.** CI checks that the Linux resolve leaves
+`Package.resolved` unchanged.
 
 ### AD-2 — One shim header, two implementations
 
@@ -468,10 +465,10 @@ for a future source package.
 
 ### 11.2 CI
 
-A `linux-server` job in `ci.yml` on `ubuntu-latest` with `swift-actions/setup-swift`:
-`swift build`, `swift test`, then `git diff --exit-code Package.resolved` **is not**
-run — instead the job restores the file after resolution so the AD-1 hazard cannot fail
-a build, and a separate check greps that the committed pins still include `whisperkit`.
+A `linux-server` job in `ci.yml` on `ubuntu-latest` with `swift-actions/setup-swift`
+(Swift 6.2, so the pinned manifests load): `swift build`, then
+`git diff --exit-code -- Package.resolved` — the AD-1 hazard now fails the build if
+the Linux resolve changes any pin — then `swift test`.
 `release.yml` gains `build-linux-server`, producing the §10.2 tarball.
 
 ---

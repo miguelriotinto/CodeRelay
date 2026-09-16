@@ -17,11 +17,31 @@ final class FakeConnection: ConnectionSurface {
     var sentMessages: [ClientMessage] = []
     var autoRespond: ((ClientMessage) -> ServerMessage?)?
 
+    /// How many times the controller abandoned this socket.
+    var markedDeadCount = 0
+
+    /// Whether `markConnectionDead()` behaves like `RelayConnection`'s, which
+    /// bumps the generation as it drops the transport. A test sets this false to
+    /// model a surface that CANNOT replace its socket, which is what keeps the
+    /// controller's own desync marker honest work rather than decoration.
+    var replacesSocketWhenMarkedDead = true
+
     private var subscribers: [UUID: (ServerMessage) -> Void] = [:]
 
+    /// Throws when there is no socket, exactly as `RelayConnection` does when
+    /// its `webSocketTask` is nil. Without this the fake would let a request
+    /// reach the "wire" after the transport was gone, and the tests that assert
+    /// a refused RPC never got sent would be asserting nothing.
     func send(_ message: ClientMessage) async throws {
+        guard isConnected else { throw RelayConnection.ConnectionError.notConnected }
         sentMessages.append(message)
         if let response = autoRespond?(message) { deliver(response) }
+    }
+
+    func markConnectionDead() {
+        markedDeadCount += 1
+        isConnected = false
+        if replacesSocketWhenMarkedDead { generation &+= 1 }
     }
 
     @discardableResult

@@ -3,7 +3,6 @@ import UIKit
 import UserNotifications
 import CodeRelayClient
 import CodeRelayKit
-import CodeRelaySpeech
 
 /// App-target conformance to enable `.sheet(item:)` presentation.
 extension PairingURL: @retroactive Identifiable {
@@ -74,7 +73,6 @@ struct CodeRelayApp: App {
     @State private var pendingSessionId: UUID?
     @State private var pendingPairing: PairingURL?
     @State private var pendingConnectConfig: ConnectionConfig?
-    @State private var preloadTask: Task<Void, Never>?
 
     var body: some Scene {
         WindowGroup {
@@ -90,15 +88,6 @@ struct CodeRelayApp: App {
                     }
                     .transition(.identity)
                 }
-            }
-            .task {
-                let task = Task { await preloadSpeechModels() }
-                preloadTask = task
-                await task.value
-            }
-            .onDisappear {
-                preloadTask?.cancel()
-                preloadTask = nil
             }
             .onOpenURL { url in
                 handleDeepLink(url)
@@ -137,27 +126,5 @@ struct CodeRelayApp: App {
             return
         }
         pendingSessionId = sessionId
-    }
-
-    @MainActor
-    private func preloadSpeechModels() async {
-        let store = SpeechModelStore.shared
-
-        if !store.modelsReady {
-            try? await store.downloadAllModels()
-        }
-
-        guard store.modelsReady else { return }
-
-        let transcriber = WhisperTranscriber.shared
-        if !transcriber.isLoaded {
-            try? await transcriber.loadModel()
-        }
-
-        let cleaner = TextCleaner.shared
-        if !cleaner.isLoaded {
-            cleaner.modelPath = store.llmModelPath
-            try? cleaner.loadModel(from: store.llmModelPath)
-        }
     }
 }
