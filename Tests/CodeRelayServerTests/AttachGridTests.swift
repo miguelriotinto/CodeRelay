@@ -145,26 +145,57 @@ final class AttachGridTests: XCTestCase {
         XCTAssertTrue(readAfter)
     }
 
-    /// `session_create` ends attached too, so it consumes a deferred grid like
-    /// attach/resume do — otherwise a resize that landed while the create was
-    /// in flight would sit in `pendingGrid` and be applied stale much later.
+    /// `session_create` follows the same rule as attach/resume via `takeGrid`:
+    /// a create WITHOUT its own grid spawns at the deferred size (not 80x24),
+    /// and the deferred grid is consumed rather than left to land stale later.
     @MainActor
-    func testResizeWhileUnattachedIsAppliedByTheNextCreate() async throws {
+    func testResizeWhileUnattachedBecomesTheNextCreatesSpawnGrid() async throws {
         let f = try await makeFixture()
         defer { f.teardown() }
 
         try await f.connection.sendResize(cols: 77, rows: 21)
         try? await Task.sleep(for: .milliseconds(100))
 
-        let newId = try await f.controller.createSession(name: "created", cols: 80, rows: 24)
+        let newId = try await f.controller.createSession(name: "created")   // no grid on the request
         try? await Task.sleep(for: .milliseconds(200))
 
         let createdPTY = await f.sessionManager.ptySession(for: newId)
         let created = try XCTUnwrap(createdPTY as? MockPTYSession)
+        let spawn = await created.spawnGrid
+        XCTAssertEqual([spawn.cols, spawn.rows], [77, 21], "the deferred grid must be the spawn size")
         let calls = await created.resizeCalls
-        XCTAssertEqual(calls.map { [$0.cols, $0.rows] }, [[77, 21]], "create must consume the deferred grid")
+        XCTAssertTrue(calls.isEmpty, "consumed at spawn — no second application as a resize")
         let original = await f.mockPTY.resizeCalls
         XCTAssertTrue(original.isEmpty, "the deferred grid belongs to the connection, not the other session")
+    }
+
+    /// A create carrying its own grid wins over a stale deferred one, which is
+    /// discarded — not applied after the spawn, and not replayed on a later
+    /// attach either.
+    @MainActor
+    func testCreateRequestGridBeatsDeferredGridAndConsumesIt() async throws {
+        let f = try await makeFixture()
+        defer { f.teardown() }
+
+        try await f.connection.sendResize(cols: 77, rows: 21)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        let newId = try await f.controller.createSession(name: "created", cols: 100, rows: 30)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        let createdPTY = await f.sessionManager.ptySession(for: newId)
+        let created = try XCTUnwrap(createdPTY as? MockPTYSession)
+        let spawn = await created.spawnGrid
+        XCTAssertEqual([spawn.cols, spawn.rows], [100, 30], "the request grid is the spawn size")
+        let calls = await created.resizeCalls
+        XCTAssertTrue(calls.isEmpty, "the stale deferred grid must NOT be applied after the spawn")
+
+        // And it was consumed: a later attach without a grid applies nothing.
+        try await f.controller.detach()
+        try await f.controller.attachSession(id: f.sessionId)
+        try? await Task.sleep(for: .milliseconds(200))
+        let original = await f.mockPTY.resizeCalls
+        XCTAssertTrue(original.isEmpty, "the deferred grid was consumed by create, not replayed later")
     }
 
     /// The request's own grid wins over a stale deferred one, and the deferred

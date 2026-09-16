@@ -19,8 +19,13 @@ actor MockPTYSession: PTYSessionProtocol {
     private(set) var forceRepaintSawOutputHandler = false
     private var bufferContents = Data()
 
+    /// The grid the factory was asked to spawn at (AttachGridTests: a deferred
+    /// grid consumed by `session_create` becomes the spawn size, not a resize).
+    let spawnGrid: (cols: UInt16, rows: UInt16)
+
     init(sessionId: UUID, cols: UInt16, rows: UInt16, scrollbackSize: Int) {
         self.sessionId = sessionId
+        self.spawnGrid = (cols, rows)
     }
 
     func startReading() {}

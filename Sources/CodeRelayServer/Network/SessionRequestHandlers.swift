@@ -84,25 +84,32 @@ extension RelayMessageHandler {
         guard let tokenId = authenticatedTokenId else { return }
         let mgr = self.sessionManager
         let myStealId = self.stealObserverId
+        // Same "request grid wins" rule as attach/resume: a request carrying its
+        // own grid discards a stale deferred one; a request without spawns at
+        // the deferred size instead of the 80x24 default.
+        let grid = takeGrid(cols: cols, rows: rows)
         bridgeToEventLoopWithCtx(
             context: context,
             work: { [weak self] ctx -> (SessionInfo, any PTYSessionProtocol) in
                 await self?.autoDetachIfNeeded(ctx: ctx)
-                let info = try await mgr.createSession(tokenId: tokenId, cols: cols ?? 80, rows: rows ?? 24, name: name)
+                let info = try await mgr.createSession(
+                    tokenId: tokenId, cols: grid?.cols ?? 80, rows: grid?.rows ?? 24, name: name)
                 // Attach immediately. Exclude our own steal observer so the
                 // creating connection isn't told it "stole" the session it just
                 // created (attachSession always fires steal notifications).
                 let (_, pty) = try await mgr.attachSession(id: info.id, tokenId: tokenId, excludeObserver: myStealId)
-                RelayLogger.log(category: "session", "Session created: \(info.id) (name: \(name ?? "nil"))")
+                RelayLogger.log(category: "session",
+                                "Session created: \(info.id) (name: \(name ?? "nil"))" + RelayMessageHandler.gridSuffix(grid))
                 return (info, pty)
             },
             onSuccess: { handler, ctx, pair in
                 let (info, pty) = pair
                 handler.attachedSessionId = info.id
                 handler.attachedPTY = pty
-                // Create ends attached too, so it must consume `pendingGrid`
-                // like attach/resume — otherwise a grid deferred before or
-                // during the create lingers and lands stale on a later attach.
+                // A resize that arrived while the create RPC was in flight
+                // (after `takeGrid` ran). Create ends attached, so it must
+                // consume it like attach/resume do — otherwise it lingers and
+                // lands stale on a later attach.
                 handler.applyLatePendingGrid(to: pty)
                 handler.sendServerMessage(.sessionCreated(sessionId: info.id, cols: info.cols, rows: info.rows), context: ctx)
                 handler.wirePTYOutput(pty: pty, context: ctx)
@@ -140,8 +147,9 @@ extension RelayMessageHandler {
 
     // MARK: - Attach grid
 
-    /// The grid this attach/resume should apply: the request's own, else one
-    /// deferred by an unattached `resize`. Consumes the deferred grid either way.
+    /// The grid this attach/resume/create should apply: the request's own, else
+    /// one deferred by an unattached `resize`. Consumes the deferred grid either
+    /// way (for create it is the spawn size, not a resize).
     /// Event-loop only (it touches `pendingGrid`) — call it *before*
     /// `bridgeToEventLoopWithCtx` so the work closure captures the result.
     private func takeGrid(cols: UInt16?, rows: UInt16?) -> (cols: UInt16, rows: UInt16)? {
@@ -150,10 +158,10 @@ extension RelayMessageHandler {
         return pendingGrid
     }
 
-    /// Applies a `resize` that arrived while the attach/resume was in flight
-    /// (after `takeGrid` ran, before `attachedPTY` was set) — or, for create,
-    /// any deferred grid at all. Called from `onSuccess`, on the event loop,
-    /// right after `attachedPTY = pty`, by every handler that ends attached. The
+    /// Applies a `resize` that arrived while the attach/resume/create was in
+    /// flight (after `takeGrid` ran, before `attachedPTY` was set). Called from
+    /// `onSuccess`, on the event loop, right after `attachedPTY = pty`, by every
+    /// handler that ends attached. The
     /// kernel's own SIGWINCH for this resize makes the app redraw at the new
     /// grid, so ordering against the `forceRepaint` Task does not matter.
     private func applyLatePendingGrid(to pty: any PTYSessionProtocol) {
