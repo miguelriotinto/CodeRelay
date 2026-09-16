@@ -65,7 +65,8 @@ enum PromptOptimizerFactory {
             "Prompt optimizer enabled (provider=\(config.promptOptimizerProvider) model=\(model) "
             + "shareScreen=\(config.promptOptimizerShareScreen))")
         return PromptOptimizer(
-            client: HTTPMessagesClient(http: http, endpoint: endpoint, apiKey: apiKey),
+            client: HTTPMessagesClient(http: http, endpoint: endpoint, apiKey: apiKey,
+                                       provider: config.promptOptimizerProvider, model: model),
             model: model,
             sharesScreen: config.promptOptimizerShareScreen)
     }
@@ -73,7 +74,14 @@ enum PromptOptimizerFactory {
     /// Reads and trims the API key. Logs (but proceeds) when the file is
     /// readable by others. Never logs the key itself.
     static func readKey(atPath path: String) throws -> String {
-        let expanded = NSString(string: path).expandingTildeInPath
+        // `attributesOfItem` does not follow symlinks, so a key kept in a
+        // dotfile repo and linked into place (`~/.claude-relay/key ->
+        // ~/dotfiles/secrets/key`) used to be rejected as "not a regular file".
+        // Resolve first and check the target: the type, size and mode that
+        // matter are the file's — a symlink's own mode is 0o755 and means
+        // nothing (review A-8).
+        let expanded = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+            .resolvingSymlinksInPath().path
 
         // Check file type and size before reading.
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: expanded) else {

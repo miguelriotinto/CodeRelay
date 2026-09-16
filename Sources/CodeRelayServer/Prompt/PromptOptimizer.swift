@@ -108,9 +108,15 @@ final class PromptOptimizer: PromptOptimizing, @unchecked Sendable {
         return parts.joined(separator: "\n")
     }
 
+    /// Defangs *every* `<`, not just `</`: a draft or a screen line containing
+    /// `<draft>` could otherwise open a second block the model reads as ours and
+    /// smuggle instructions into a trusted position, which is the same attack the
+    /// closing-tag strip exists to stop (review A-6). The ZWSP strip runs first so
+    /// the marker we insert cannot be pre-inserted by the untrusted text and then
+    /// stripped back out.
     private static func escape(_ text: String) -> String {
         text.replacingOccurrences(of: "\u{200B}", with: "")
-            .replacingOccurrences(of: "</", with: "<\u{200B}/")
+            .replacingOccurrences(of: "<", with: "<\u{200B}")
     }
 
     // MARK: - Response
@@ -122,9 +128,20 @@ final class PromptOptimizer: PromptOptimizing, @unchecked Sendable {
 
     private static func parseResponse(_ data: Data) throws -> (outcome: OptimizerOutcome, cacheReadTokens: Int?) {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            // No body, ever — it can quote the draft back. This one line still
+            // separates "the provider returned HTML" from "the JSON was fine but
+            // the tool call was not", which are different fixes (review S-4).
+            RelayLogger.log(.debug, category: "optimizer", "response not valid JSON / not an object")
             throw OptimizerError.malformed
         }
         if json["stop_reason"] as? String == "refusal" { throw OptimizerError.refused }
+        // A truncated tool call is not a rewrite: `input` decodes fine and
+        // `prompt` is a *prefix* of what the model meant to say, so accepting it
+        // would replace the user's draft with half a sentence (review A-5).
+        if json["stop_reason"] as? String == "max_tokens" {
+            RelayLogger.log(.debug, category: "optimizer", "response truncated (stop_reason=max_tokens)")
+            throw OptimizerError.malformed
+        }
         guard let content = json["content"] as? [[String: Any]],
               let block = content.first(where: { $0["type"] as? String == "tool_use" && $0["name"] as? String == toolName }),
               let input = block["input"] as? [String: Any],

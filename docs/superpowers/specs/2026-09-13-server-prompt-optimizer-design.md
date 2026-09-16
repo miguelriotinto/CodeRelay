@@ -465,8 +465,11 @@ One HTTP implementation, two endpoint values chosen by `promptOptimizerProvider`
 Both send the headers `x-api-key: <key>`, `anthropic-version: 2023-06-01`,
 `content-type: application/json`. The Bedrock endpoint documents the bearer
 token in `x-api-key` for the plain-HTTP path; SigV4 signing is not implemented
-in v1 and is listed as a follow-up. A configured model on Bedrock must carry
-the `anthropic.` prefix; `config set` rejects one that does not.
+in v1 and is listed as a follow-up. There is no prefix check on the configured
+model at write time (§5.6): a Bedrock id may be `anthropic.…`, a cross-region
+`us.anthropic.…`, or an inference-profile ARN, so the only authority on whether
+an id exists is the provider's own 400 — logged at warning level with the
+status, provider and model.
 
 The client uses `PushHTTP` (AsyncHTTPClient) for the request: its 64 KB
 response cap, redaction, and retry behaviour are wanted here. The optimizer

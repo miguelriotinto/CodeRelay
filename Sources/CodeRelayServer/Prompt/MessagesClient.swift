@@ -48,11 +48,19 @@ struct HTTPMessagesClient: MessagesSending {
     private let http: any PushHTTPExecuting
     private let endpoint: MessagesEndpoint
     private let apiKey: String
+    /// Carried for the log line only — see `send`. `provider`/`model` are the
+    /// two config values that decide whether a request can ever succeed, so a
+    /// failure that does not name them is a failure the operator has to guess at.
+    private let provider: String
+    private let model: String
 
-    init(http: any PushHTTPExecuting, endpoint: MessagesEndpoint, apiKey: String) {
+    init(http: any PushHTTPExecuting, endpoint: MessagesEndpoint, apiKey: String,
+         provider: String, model: String) {
         self.http = http
         self.endpoint = endpoint
         self.apiKey = apiKey
+        self.provider = provider
+        self.model = model
     }
 
     func send(body: Data) async throws -> Data {
@@ -65,13 +73,32 @@ struct HTTPMessagesClient: MessagesSending {
         do {
             response = try await http.post(url: endpoint.url, headers: headers, body: body)
         } catch {
-            // Transport errors are already redacted by PushHTTP; the key is
-            // in a header, never in the thrown description.
+            // The client only ever sees "Optimizer unavailable, try again", which
+            // reads as transient; a blocked egress or a wrong region is not. The
+            // key is in a header and never in the thrown description, and
+            // `redact` is belt-and-braces for anything PushHTTP quotes back
+            // (review S-1).
+            RelayLogger.log(.error, category: "optimizer",
+                "messages transport failure (provider=\(provider) model=\(model)): "
+                + PushHTTP.redact("\(error)"))
             throw OptimizerError.unavailable
         }
         if response.status != 200 {
-            // Status only — the body can quote the draft back at us.
-            RelayLogger.log(.debug, category: "optimizer", "messages HTTP \(response.status)")
+            // Status, provider and model — never the body (it can quote the draft
+            // back at us) and never the key.
+            //
+            // The level splits on "can this request ever succeed?" (reviews B-5,
+            // S-3; `RelayLogLevel` has no warning case, so it is error or info):
+            // 400/404 means the configured model id does not exist for this
+            // provider — permanent, and the client reads it as "could not rewrite
+            // this prompt", i.e. as being about their draft, so it has to be
+            // visible without turning debug logging on. 429 and 5xx are transient,
+            // and 401/403 already draws a warn-once error from `PromptOptimizer`,
+            // so those stay at info and cannot spam.
+            let transient = response.status == 429 || response.status >= 500
+                || response.status == 401 || response.status == 403
+            RelayLogger.log(transient ? .info : .error, category: "optimizer",
+                "messages HTTP \(response.status) (provider=\(provider) model=\(model))")
         }
         switch response.status {
         case 200: return response.body

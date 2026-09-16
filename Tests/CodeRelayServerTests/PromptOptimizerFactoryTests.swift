@@ -200,6 +200,50 @@ final class PromptOptimizerFactoryTests: XCTestCase {
                        "Directory at keyPath should log exactly one error")
     }
 
+    // MARK: - Key File Shape (review A-8, T1 gap 7)
+
+    /// `attributesOfItem` does not follow symlinks, so a key kept in a dotfile
+    /// repo and linked into place (`~/.claude-relay/key -> ~/dotfiles/secrets/key`)
+    /// used to be rejected as "not a regular file" — a setup the operator has
+    /// every reason to expect to work, failing with a message about a file that
+    /// *is* regular.
+    func testKeyPathMayBeASymlinkToARegularFile() throws {
+        let target = try writeKey("sk-ant-symlinked\n")
+        let link = tempDir.appendingPathComponent("key-link").path
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: target)
+        XCTAssertEqual(try PromptOptimizerFactory.readKey(atPath: link), "sk-ant-symlinked")
+    }
+
+    /// The mode that matters is the target's. A symlink's own mode is 0o755 on
+    /// every filesystem that has them, so checking the link would warn on every
+    /// correctly-permissioned key reached through one.
+    func testSymlinkedKeyIsJudgedOnTheTargetsMode() throws {
+        let target = try writeKey("sk-ant-tight\n", mode: 0o600)
+        let link = tempDir.appendingPathComponent("key-link").path
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: target)
+        let before = optimizerLines(mentioning: "readable by others").count
+        XCTAssertEqual(try PromptOptimizerFactory.readKey(atPath: link), "sk-ant-tight")
+        XCTAssertEqual(optimizerLines(mentioning: "readable by others").count, before,
+                       "the link's 0o755 must not be mistaken for the key's mode")
+    }
+
+    /// 0o400 — read-only for the owner — has no bit in 0o077, so it is accepted
+    /// with no warning. The second half of the test is what makes the first half
+    /// mean something: a 0o644 key does warn.
+    func testModeReadOnlyForTheOwnerIsAcceptedWithNoWarning() throws {
+        let path = try writeKey("sk-ant-0400\n", mode: 0o400)
+        let before = optimizerLines(mentioning: "readable by others").count
+        XCTAssertEqual(try PromptOptimizerFactory.readKey(atPath: path), "sk-ant-0400")
+        XCTAssertEqual(optimizerLines(mentioning: "readable by others").count, before,
+                       "0o400 exposes nothing to group or other")
+
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o644))],
+                                             ofItemAtPath: path)
+        XCTAssertEqual(try PromptOptimizerFactory.readKey(atPath: path), "sk-ant-0400")
+        XCTAssertEqual(optimizerLines(mentioning: "readable by others").count, before + 1,
+                       "a world-readable key still warns")
+    }
+
     func testDefaultModelsResolveCorrectly() throws {
         XCTAssertEqual(MessagesEndpoint.anthropic.defaultModel, "claude-sonnet-5")
         XCTAssertEqual(MessagesEndpoint.bedrock(region: "eu-west-1").defaultModel, "anthropic.claude-sonnet-5")

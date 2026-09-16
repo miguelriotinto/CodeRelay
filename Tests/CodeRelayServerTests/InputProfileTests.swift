@@ -105,6 +105,33 @@ final class InputProfileTests: XCTestCase {
         XCTAssertEqual(manifest.rules.first?.id, "r")
     }
 
+    /// Review A-4: a manifest under `~/.claude-relay/agents/` is user free text,
+    /// so its `id` reaches the log with whatever the file said. A `\n` in it forges
+    /// a log line; an unbounded one floods `/logs`, which is readable over the
+    /// admin API. Sanitised on the pairing-label rule: control characters and
+    /// newlines stripped, 60 scalars.
+    func testMalformedInputBlockLogsASanitisedId() throws {
+        let hostileId = "a\u{001B}[2Jb\nFORGED [ERROR] [detection] relay compromised"
+            + String(repeating: "z", count: 80)
+        let json = try JSONSerialization.data(withJSONObject: [
+            "id": hostileId,
+            "rules": [],
+            "input": ["newline": ["not_a_key"]],
+        ])
+        let manifest = try JSONDecoder().decode(AgentManifest.self, from: json)
+        XCTAssertNil(manifest.input)
+        XCTAssertEqual(manifest.id, hostileId, "only the *log* is sanitised, not the id itself")
+
+        let recent = RelayLogger.store.recent(count: 2_000)
+        let line = recent.last { $0.contains("invalid \"input\" block ignored") }
+        XCTAssertNotNil(line, "the malformed input block must still be logged")
+        XCTAssertFalse(line?.contains("\u{001B}") == true, "an escape sequence reached the log")
+        XCTAssertFalse(line?.contains("\n") == true, "the newline survived, so the tail is a forged log line")
+        XCTAssertFalse(line?.contains(String(repeating: "z", count: 61)) == true,
+                       "the id was not capped at 60 scalars")
+        XCTAssertEqual(AgentManifest.sanitizedForLog(hostileId).unicodeScalars.count, 60)
+    }
+
     func testEveryBundledManifestStillLoads() {
         // A bad *rules* block would make loadBundled() drop the manifest; a bad
         // `input` block only costs the input profile (see the test above).

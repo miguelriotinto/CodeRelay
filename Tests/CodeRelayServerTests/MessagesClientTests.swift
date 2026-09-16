@@ -41,7 +41,8 @@ final class MessagesClientTests: XCTestCase {
     func testSendPostsBodyWithAnthropicHeaders() async throws {
         let http = ScriptedHTTP()
         await http.script(status: 200, body: Data(#"{"ok":true}"#.utf8))
-        let client = HTTPMessagesClient(http: http, endpoint: .anthropic, apiKey: "sk-ant-secret")
+        let client = HTTPMessagesClient(http: http, endpoint: .anthropic, apiKey: "sk-ant-secret",
+                                         provider: "anthropic", model: "claude-sonnet-5")
         let out = try await client.send(body: Data(#"{"model":"m"}"#.utf8))
         XCTAssertEqual(String(decoding: out, as: UTF8.self), #"{"ok":true}"#)
 
@@ -64,7 +65,8 @@ final class MessagesClientTests: XCTestCase {
         for (status, expected) in cases {
             let http = ScriptedHTTP()
             await http.script(status: status, body: Data("{}".utf8))
-            let client = HTTPMessagesClient(http: http, endpoint: .anthropic, apiKey: "k")
+            let client = HTTPMessagesClient(http: http, endpoint: .anthropic, apiKey: "k",
+                                         provider: "anthropic", model: "claude-sonnet-5")
             do {
                 _ = try await client.send(body: Data())
                 XCTFail("\(status) should throw")
@@ -77,12 +79,85 @@ final class MessagesClientTests: XCTestCase {
     func testTransportFailureIsUnavailable() async {
         let http = ScriptedHTTP()
         await http.script(failure: PushHTTPError.transport("connection refused"))
-        let client = HTTPMessagesClient(http: http, endpoint: .anthropic, apiKey: "k")
+        let client = HTTPMessagesClient(http: http, endpoint: .anthropic, apiKey: "k",
+                                         provider: "anthropic", model: "claude-sonnet-5")
         do {
             _ = try await client.send(body: Data())
             XCTFail("should throw")
         } catch {
             XCTAssertEqual(error as? OptimizerError, .unavailable)
+        }
+    }
+
+    /// Review B-5/S-3: a 400 is the *permanent* misconfiguration (a model id this
+    /// provider does not know) and it reaches the user as "could not rewrite this
+    /// prompt", about their draft. It has to be diagnosable without turning debug
+    /// logging on, and the two config values that caused it have to be in the line.
+    func testNon2xxLogsTheStatusProviderAndModelWithoutTheBodyOrKey() async {
+        let marker = "ZEBRA-BODY-7731"
+        let http = ScriptedHTTP()
+        await http.script(status: 400, body: Data(#"{"error":{"message":"model: \#(marker)"}}"#.utf8))
+        let client = HTTPMessagesClient(http: http, endpoint: .anthropic, apiKey: "sk-ant-secret-7731",
+                                        provider: "bedrock", model: "claude-sonnet-5")
+        do {
+            _ = try await client.send(body: Data())
+            XCTFail("400 should throw")
+        } catch {
+            XCTAssertEqual(error as? OptimizerError, .malformed)
+        }
+
+        let recent = RelayLogger.store.recent(count: 2_000)
+        let line = recent.last { $0.contains("messages HTTP 400") }
+        XCTAssertNotNil(line, "a non-2xx must be logged")
+        XCTAssertTrue(line?.contains("provider=bedrock") == true)
+        XCTAssertTrue(line?.contains("model=claude-sonnet-5") == true)
+        XCTAssertFalse(recent.contains { $0.contains(marker) }, "the response body reached the log")
+        XCTAssertFalse(recent.contains { $0.contains("sk-ant-secret-7731") }, "the key reached the log")
+    }
+
+    /// Review S-1: the client only ever sees "try again", which reads as
+    /// transient. A blocked egress or a wrong region is not, so the operator gets
+    /// one error line naming the transport failure — redacted, and with the two
+    /// config values that decide the endpoint.
+    func testTransportFailureIsLoggedAtErrorWithoutTheKey() async {
+        let http = ScriptedHTTP()
+        await http.script(failure: PushHTTPError.transport("connection refused: bearer sk-leak-7731"))
+        let client = HTTPMessagesClient(http: http, endpoint: .anthropic, apiKey: "sk-ant-secret",
+                                        provider: "anthropic", model: "claude-opus-5")
+        do {
+            _ = try await client.send(body: Data())
+            XCTFail("should throw")
+        } catch {
+            XCTAssertEqual(error as? OptimizerError, .unavailable)
+        }
+        let recent = RelayLogger.store.recent(count: 2_000)
+        let line = recent.last { $0.contains("messages transport failure") }
+        XCTAssertNotNil(line, "a transport failure must be logged")
+        XCTAssertTrue(line?.contains("provider=anthropic model=claude-opus-5") == true)
+        XCTAssertTrue(line?.contains("connection refused") == true)
+        XCTAssertFalse(recent.contains { $0.contains("sk-leak-7731") }, "PushHTTP.redact did not run")
+    }
+
+    /// T1 gap 4: a 200 carrying an HTML error page (misconfigured proxy) or a
+    /// truncated body is not a transport failure and not a status failure — the
+    /// client hands the bytes on and the *parse* is what refuses, with the fixed
+    /// "could not rewrite this prompt" string rather than a raw decode error.
+    func testTwoHundredWithANonJSONBodyIsMalformed() async {
+        let http = ScriptedHTTP()
+        await http.script(status: 200, body: Data("<html><body>502 Bad Gateway</body></html>".utf8))
+        let client = HTTPMessagesClient(http: http, endpoint: .anthropic, apiKey: "k",
+                                        provider: "anthropic", model: "claude-sonnet-5")
+        let optimizer = PromptOptimizer(client: client, model: "claude-sonnet-5", sharesScreen: false)
+        let context = PromptContext(draft: "hi", agentId: nil, agentDisplayName: nil,
+                                    workingDirectory: "/tmp", screenLines: [],
+                                    bracketedPaste: true, keyboardFlagsRawValue: 0)
+        do {
+            _ = try await optimizer.optimize(context)
+            XCTFail("a non-JSON 200 should throw")
+        } catch {
+            XCTAssertEqual(error as? OptimizerError, .malformed)
+            XCTAssertEqual((error as? OptimizerError)?.clientMessage,
+                           "Optimizer could not rewrite this prompt")
         }
     }
 

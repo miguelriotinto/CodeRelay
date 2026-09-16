@@ -235,6 +235,13 @@ extension RelayMessageHandler {
                     } else {
                         errorName = "unknown"
                         clientMessage = OptimizerError.unavailable.clientMessage
+                        // Not an `OptimizerError`, so nothing modelled it: a JSON
+                        // serialisation failure, a cancellation, a future bug. It
+                        // is a Swift error description — no draft, no screen, no
+                        // key — and without it the operator sees only "unknown"
+                        // (review S-2).
+                        RelayLogger.log(.error, category: "optimizer",
+                                        "optimize_prompt unexpected error: \(error)")
                     }
                     let elapsed = Int(Date().timeIntervalSince(startedAt) * 1000)
                     RelayLogger.log(.debug, category: "optimizer", "optimize_prompt failed (\(errorName)) in \(elapsed)ms")

@@ -102,13 +102,25 @@ struct AgentManifest: Codable {
                 input = try c.decode(InputProfile.self, forKey: .input)
             } catch {
                 input = nil
-                // The id comes from the manifest we just decoded, not from user
-                // free text; the error is not logged (it can quote the file).
+                // The error itself is not logged (it can quote the file), and the
+                // id *is* user-controlled — a `~/.claude-relay/agents/*.json`
+                // override is user free text, so a `\n` in it could forge log
+                // lines. Sanitised on the same rule as a pairing label (review
+                // A-4).
                 RelayLogger.log(.error, category: "detection",
-                                "agent manifest \(id): invalid \"input\" block ignored")
+                                "agent manifest \(Self.sanitizedForLog(id)): invalid \"input\" block ignored")
             }
         } else {
             input = nil
         }
+    }
+
+    /// Control characters and newlines stripped, capped at 60 scalars — the same
+    /// rule `RelayMessageHandler.handlePairRequest` applies to a device label,
+    /// for the same reason: this string reaches the log.
+    static func sanitizedForLog(_ id: String) -> String {
+        let allowed = CharacterSet.controlCharacters.union(.newlines).inverted
+        let stripped = id.unicodeScalars.filter { allowed.contains($0) }
+        return String(String.UnicodeScalarView(stripped).prefix(60))
     }
 }
