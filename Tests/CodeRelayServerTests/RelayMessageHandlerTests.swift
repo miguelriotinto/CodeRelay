@@ -54,7 +54,8 @@ final class RelayMessageHandlerTests: XCTestCase {
             rateLimiter: rateLimiter ?? RateLimiter(maxAttempts: 100, windowSeconds: 60),
             clipboardService: NoopClipboardService(),
             pushStore: pushStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            optimizerBudget: OptimizerBudget()
         )
 
         let channel = await NIOAsyncTestingChannel(handler: handler)

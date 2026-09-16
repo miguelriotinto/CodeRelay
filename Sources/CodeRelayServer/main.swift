@@ -96,6 +96,9 @@ if config.pushEnabled, let sender = PushSenderFactory.make(config: config, group
 // Prompt optimizer (spec §8): decided once here; nil ⇒ no capability advertised.
 var optimizerHTTPClient: HTTPClient?
 let optimizer = PromptOptimizerFactory.make(config: config, group: group, out: &optimizerHTTPClient)
+// One budget for the whole process, like the rate limiter above: the bound is
+// per relay token, and a token may hold many connections (review B-3).
+let optimizerBudget = OptimizerBudget()
 
 let wsServer = WebSocketServer(
     group: group, config: config,
@@ -103,7 +106,8 @@ let wsServer = WebSocketServer(
     rateLimiter: rateLimiter,
     pushStore: pushStore,
     pairingStore: pairingStore,
-    optimizer: optimizer
+    optimizer: optimizer,
+    optimizerBudget: optimizerBudget
 )
 let adminServer = AdminHTTPServer(
     group: group, port: config.adminPort,

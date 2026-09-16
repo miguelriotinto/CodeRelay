@@ -307,7 +307,11 @@ Pipeline per session, all inside the `PTYSession` actor:
 
 Caps and fixed strings: draft > 4 KB → `"Prompt too long to optimize"`;
 `replace_prompt.text` > 16 KB → `"Replacement too long"`; one optimize in
-flight per connection (`"Already optimizing"`); a 12 s deadline over context
+flight per connection (`"Already optimizing"`); **20 optimizes per relay token
+per rolling minute** (`RelayMessageHandler.maxOptimizesPerMinutePerToken`, held
+in the process-wide `OptimizerBudget`) → the sanctioned `"Optimizer
+unavailable, try again"` plus one `.info` line naming the token id and nothing
+else; a 12 s deadline over context
 capture + the model call (`PromptOptimizer.deadline`;
 `RelayMessageHandler.optimizeDeadline` and the admin route's `optimizeDeadline`
 parameter default to it) → `"Optimizer unavailable, try again"`. It is **not**
@@ -324,6 +328,23 @@ log status, byte counts, latency and `usage.cache_read_input_tokens` at debug
 only. The key file is read once by `PromptOptimizerFactory` at startup; if it is
 missing or empty the relay logs one error line, advertises no capability and the
 wand stays disabled on every device until a restart with a fixed config.
+
+**The one paid call needs a cost bound, and `optimizeInFlight` is not one.**
+That flag is per *connection* and is cleared before the reply is even written, so
+a retry-looping client — or a device token lifted off a lost phone — bills a
+Sonnet-class call per round trip, on as many sockets as it likes
+(`maxSessionsPerToken` bounds sessions, not sockets). `OptimizerBudget` is the
+bound: a rolling 60 s window per `authenticatedTokenId`, LRU-capped at 10 k
+tokens like `RateLimiter.maxTrackedIPs`, checked after the `optimizer != nil`
+guard and before the generation bump so a refusal has no state to unwind. Two
+details are load-bearing: it is **shared process-wide** (injected from
+`main.swift`, defaulted only in `WebSocketServer.init` for the test construction
+sites — a per-connection budget would bound nothing), and it is a synchronous
+`NSLock`-guarded class rather than an actor, because an `await` between the
+in-flight guard and the flag would hand two frames arriving in one read a window
+where neither has claimed the slot. A refused call charges nothing, so a retry
+storm cannot drag the window forward. Not a config key by choice: an operator who
+wants a different number wants per-token quotas, which is a different feature.
 
 Two operational notes for the first live deployment:
 - The key is read **once at startup**, and a Bedrock bearer token expires within

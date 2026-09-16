@@ -31,6 +31,24 @@ extension RelayMessageHandler {
             sendServerMessage(.optimizePromptResult(status: "failed", message: "Already optimizing"), context: context)
             return
         }
+        // The cost bound (review B-3). Checked here — after the guards that cost
+        // nothing, before the generation bump and the in-flight flag — so a
+        // refusal leaves no state behind to unwind. `authenticatedTokenId` is
+        // non-nil on every path that reaches this handler; keying an
+        // unauthenticated call as "unknown" rather than skipping the charge keeps
+        // the bound fail-closed if that ever stops being true.
+        //
+        // The refusal reuses the sanctioned "Optimizer unavailable, try again"
+        // string (spec §9) rather than naming the budget: it is accurate from the
+        // client's side and the client already renders it. The log line carries
+        // the token id and nothing else — never the draft.
+        guard optimizerBudget.allow(tokenId: authenticatedTokenId ?? "unknown") else {
+            RelayLogger.log(.info, category: "optimizer",
+                "optimize_prompt refused: budget exceeded for token \(authenticatedTokenId ?? "unknown")")
+            sendServerMessage(.optimizePromptResult(status: "failed",
+                                                   message: "Optimizer unavailable, try again"), context: context)
+            return
+        }
         optimizeInFlight = true
         optimizeGeneration &+= 1
         let generation = optimizeGeneration

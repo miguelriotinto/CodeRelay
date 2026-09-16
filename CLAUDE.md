@@ -201,6 +201,7 @@ Named caps across the stack:
 - `PushDispatcher` — `previousSessionState`/`lastRevision` capped at 4 k sessions, debounce map at 2 k groups (age-reaped)
 - `PushHTTP` — 64 KB response-body cap, 10 s request timeout, ≤2 retries; APNs/FCM provider-token caches ~50/55 min
 - `RelayMessageHandler.maxPushMutations` — 20 registration mutations per connection (abuse bound)
+- `RelayMessageHandler.maxOptimizesPerMinutePerToken` — 20 `optimize_prompt` calls per relay token per rolling minute, in the process-wide `OptimizerBudget` (LRU-capped at 10 k tokens). A **cost** bound, not a memory one: `optimizeInFlight` is per connection and cleared before the reply, so nothing else stands between one token and an unbounded provider bill
 - `KeyDecoder` text run / `DraftTracker.maxScalars` — 16 384 scalars; overflow clears the mirror (a 10 MB client frame is decoded and applied inline on `PTYSession.write`). `KeyDecoder.maxCSIParameterBytes` (64) and `maxStringSequenceBytes` (1 024) bound a single escape sequence
 
 ### Push Notifications

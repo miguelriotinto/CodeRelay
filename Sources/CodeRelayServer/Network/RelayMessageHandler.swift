@@ -20,6 +20,11 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// startup) — then `auth_success` omits the capability and `optimize_prompt`
     /// answers `unconfigured`. Spec §8.
     let optimizer: (any PromptOptimizing)?
+    /// Shared across every connection, like the `RateLimiter` next to it: the
+    /// bound is per *token*, and one token may hold many sockets. Injected with
+    /// no default here for the same reason `PairingCodeStore` is — a
+    /// per-connection budget would bound nothing (review B-3).
+    let optimizerBudget: OptimizerBudget
     /// One optimize per connection at a time (spec §6 "Already optimizing").
     var optimizeInFlight = false
     /// Generation counter for optimize requests. Incremented on each new request.
@@ -56,6 +61,11 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// so the late-arriving observer IDs can be unregistered instead of leaked.
     private var isCleanedUp = false
     private static let maxAuthAttempts = 3
+    /// Paid-call budget per relay token per rolling minute (review B-3).
+    /// Deliberately not a config key: an operator who wants a different number
+    /// wants a different feature (per-token quotas), and 20/min is far above any
+    /// human wand-tapping rate while still bounding a retry loop's bill.
+    static let maxOptimizesPerMinutePerToken = OptimizerBudget.defaultMaxPerWindow
     private static let jsonEncoder = JSONEncoder()
     private static let jsonDecoder = JSONDecoder()
     private static let maxTextFrameSize = 10_000_000   // 10MB (images are base64 in JSON)
@@ -82,7 +92,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
          clipboardService: ClipboardService,
          pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory),
          pairingStore: PairingCodeStore,
-         optimizer: (any PromptOptimizing)? = nil) {
+         optimizer: (any PromptOptimizing)? = nil,
+         optimizerBudget: OptimizerBudget) {
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
         self.rateLimiter = rateLimiter
@@ -90,6 +101,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         self.pushStore = pushStore
         self.pairingStore = pairingStore
         self.optimizer = optimizer
+        self.optimizerBudget = optimizerBudget
     }
 
     /// This handler is installed by the WebSocket upgrade after the channel

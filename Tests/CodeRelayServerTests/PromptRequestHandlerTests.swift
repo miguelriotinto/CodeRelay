@@ -49,7 +49,9 @@ final class PromptRequestHandlerTests: XCTestCase {
         let inbox: Inbox
     }
 
-    private func makeFixture(optimizer: (any PromptOptimizing)?, attached: Bool = true) async throws -> Fixture {
+    private func makeFixture(optimizer: (any PromptOptimizing)?, attached: Bool = true,
+                            budget: OptimizerBudget = OptimizerBudget(),
+                            tokenId: String = "test-token") async throws -> Fixture {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PromptRequestTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -66,7 +68,8 @@ final class PromptRequestHandlerTests: XCTestCase {
             clipboardService: NoopClipboardService(),
             pushStore: PushRegistrationStore(directory: tempDir),
             pairingStore: PairingCodeStore(),
-            optimizer: optimizer)
+            optimizer: optimizer,
+            optimizerBudget: budget)
         let channel = await NIOAsyncTestingChannel(handler: handler)
         try await channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 9999)).get()
         try await Task.sleep(for: .milliseconds(30))
@@ -76,6 +79,7 @@ final class PromptRequestHandlerTests: XCTestCase {
         let sessionId = UUID()
         let mock = MockPTYSession(sessionId: sessionId, cols: 80, rows: 24, scrollbackSize: 4096)
         handler.isAuthenticated = true
+        handler.authenticatedTokenId = tokenId
         if attached {
             handler.attachedSessionId = sessionId
             handler.attachedPTY = mock
@@ -574,6 +578,69 @@ final class PromptRequestHandlerTests: XCTestCase {
         let handler = fixture.handler
         let deadline = try await fixture.testingLoop.submit { handler.optimizeDeadline }.get()
         XCTAssertEqual(deadline, PromptOptimizer.deadline)
+    }
+
+    // MARK: budget (B-3)
+
+    /// The budget is the only thing between an authenticated client and an
+    /// unbounded provider bill. Refusal reuses a sanctioned string and — the part
+    /// that matters — never reaches the model.
+    func testBudgetExhaustionRefusesWithoutCallingTheModel() async throws {
+        let optimizer = FakeOptimizer()
+        let budget = OptimizerBudget(maxPerWindow: 1, windowSeconds: 600)
+        let fixture = try await makeFixture(optimizer: optimizer, budget: budget)
+        addTeardownBlock { await self.cleanup(fixture) }
+        await fixture.mock.setMockPromptContext(context(draft: "first draft"))
+
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        let first = try await nextServerMessage(fixture)
+        XCTAssertEqual(first, .optimizePromptResult(status: "ok", original: "first draft",
+                                                    prompt: "Run `git status`."))
+        // The in-flight flag is what would otherwise mask the budget: wait for it
+        // to clear so the second request is refused by the budget, not by it.
+        let handler = fixture.handler
+        let loop = fixture.testingLoop
+        let idle = await poll { (try? await loop.submit { handler.optimizeInFlight }.get()) == false }
+        XCTAssertTrue(idle)
+
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        let second = try await nextServerMessage(fixture)
+        XCTAssertEqual(second, .optimizePromptResult(status: "failed",
+                                                     message: "Optimizer unavailable, try again"))
+        let modelCalls = await optimizer.received.count
+        XCTAssertEqual(modelCalls, 1, "the refused request must not reach the model")
+        XCTAssertTrue(fixture.channel.isActive, "a refusal is not a protocol error")
+        let state = try await optimizeState(fixture)
+        XCTAssertFalse(state.inFlight, "a refusal leaves no state behind to unwind")
+        XCTAssertFalse(state.hasDeadlineTask)
+    }
+
+    /// The finding's actual shape: `optimizeInFlight` is per *connection*, and
+    /// nothing bounds how many connections one token opens. Two sockets, one
+    /// token, one shared budget — the second socket is refused.
+    func testTheBudgetIsSharedAcrossConnectionsOfOneToken() async throws {
+        let budget = OptimizerBudget(maxPerWindow: 1, windowSeconds: 600)
+        let first = try await makeFixture(optimizer: FakeOptimizer(), budget: budget, tokenId: "same-token")
+        addTeardownBlock { await self.cleanup(first) }
+        let secondOptimizer = FakeOptimizer()
+        let second = try await makeFixture(optimizer: secondOptimizer, budget: budget, tokenId: "same-token")
+        addTeardownBlock { await self.cleanup(second) }
+        await first.mock.setMockPromptContext(context(draft: "first draft"))
+        await second.mock.setMockPromptContext(context(draft: "second draft"))
+
+        try await send(.optimizePrompt(sessionId: first.sessionId, shareScreen: true), on: first)
+        let firstReply = try await nextServerMessage(first)
+        XCTAssertEqual(firstReply, .optimizePromptResult(status: "ok", original: "first draft",
+                                                        prompt: "Run `git status`."))
+
+        try await send(.optimizePrompt(sessionId: second.sessionId, shareScreen: true), on: second)
+        let secondReply = try await nextServerMessage(second)
+        XCTAssertEqual(secondReply, .optimizePromptResult(status: "failed",
+                                                          message: "Optimizer unavailable, try again"))
+        let secondCalls = await secondOptimizer.received.count
+        XCTAssertEqual(secondCalls, 0, "a second socket on the same token buys no extra model calls")
+        let writes = await second.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty)
     }
 
     // MARK: lifecycle
