@@ -744,9 +744,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 // fresher one the incoming view reported during the detach.
                 // Reading late also gives `withAuth`'s re-auth retry the
                 // current grid instead of re-sending a stale capture.
+                let grid = gridForRequest
                 try await controller.resumeSession(
-                    id: id, skipReplay: hasLiveTerminal,
-                    cols: gridForRequest.cols, rows: gridForRequest.rows
+                    id: id, skipReplay: hasLiveTerminal, cols: grid.cols, rows: grid.rows
                 )
             }
 
@@ -763,9 +763,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             if activeSessionId == id {
                 activeSessionId = previousId
                 if let previousId {
-                    try? await sessionController?.resumeSession(
-                        id: previousId, cols: gridForRequest.cols, rows: gridForRequest.rows
-                    )
+                    let grid = gridForRequest
+                    try? await sessionController?.resumeSession(id: previousId, cols: grid.cols, rows: grid.rows)
                     wireTerminalOutput(to: previousId)
                 }
             }
@@ -796,9 +795,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             try await withAuth {
                 // Read at the call site, not hoisted: `withAuth`'s re-auth retry
                 // must send the current grid, not a capture from before it.
-                try await $0.resumeSession(
-                    id: id, skipReplay: false, cols: gridForRequest.cols, rows: gridForRequest.rows
-                )
+                let grid = gridForRequest
+                try await $0.resumeSession(id: id, skipReplay: false, cols: grid.cols, rows: grid.rows)
             }
         } catch {
             // No replay is coming: release the buffering WITHOUT the clear, so
@@ -837,9 +835,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 // Read the grid at the call site, after the awaited detach —
                 // same reason as `switchToSession`: request-grid-wins on the
                 // server, so an earlier capture would discard a fresher resize.
-                try await controller.attachSession(
-                    id: id, cols: gridForRequest.cols, rows: gridForRequest.rows
-                )
+                let grid = gridForRequest
+                try await controller.attachSession(id: id, cols: grid.cols, rows: grid.rows)
                 return controller
             }
 
@@ -882,9 +879,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         } catch {
             recoveryLog.error("attachRemoteSession failed for \(id): \(error.localizedDescription, privacy: .public)")
             if let previousId {
-                try? await sessionController?.resumeSession(
-                    id: previousId, cols: gridForRequest.cols, rows: gridForRequest.rows
-                )
+                let grid = gridForRequest
+                try? await sessionController?.resumeSession(id: previousId, cols: grid.cols, rows: grid.rows)
                 wireTerminalOutput(to: previousId)
             }
             if Self.isApplicationLevelError(error) {
