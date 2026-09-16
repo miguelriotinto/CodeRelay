@@ -365,14 +365,21 @@ final class PromptRequestHandlerTests: XCTestCase {
         }
     }
 
-    func testUnauthenticatedOptimizeIsDroppedNotAnswered() async throws {
+    /// B-2: a pre-auth optimize is an RPC with a 20 s waiter, so it is answered —
+    /// on its OWN result type. `.error(401)` would resolve the client's
+    /// `authenticate` waiter instead (spec §5.7 step 1), which is the thing the
+    /// reply-discipline rule actually forbids; silence costs the socket.
+    func testUnauthenticatedOptimizeIsAnsweredOnItsOwnResultType() async throws {
         let fixture = try await makeFixture(optimizer: FakeOptimizer())
         addTeardownBlock { await self.cleanup(fixture) }
         fixture.handler.isAuthenticated = false
         try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
-        // A pre-auth `.error(401)` would resolve the client's authenticate waiter (spec §5.7 step 1).
-        try await assertNoFurtherMessages(fixture, settle: .milliseconds(300),
-                                          "a pre-auth optimize_prompt must be dropped silently")
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .optimizePromptResult(status: "failed", message: "Session not attached"))
+        try await assertNoFurtherMessages(fixture, "exactly one pre-auth reply")
+        XCTAssertTrue(fixture.channel.isActive, "answering must not close the connection")
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty)
     }
 
     /// The foreground agent changed while the model ran: the tracker was reset
@@ -544,15 +551,15 @@ final class PromptRequestHandlerTests: XCTestCase {
         XCTAssertTrue(String(decoding: expected, as: UTF8.self).contains("the original draft"))
     }
 
-    func testUnauthenticatedReplaceIsDroppedNotAnswered() async throws {
+    func testUnauthenticatedReplaceIsAnsweredOnItsOwnResultType() async throws {
         let fixture = try await makeFixture(optimizer: FakeOptimizer())
         addTeardownBlock { await self.cleanup(fixture) }
         fixture.handler.isAuthenticated = false
         try await send(.replacePrompt(sessionId: fixture.sessionId, text: "typed by hand"), on: fixture)
-        // Same rule as optimize: a pre-auth `.error(401)` would resolve the
-        // client's authenticate waiter (spec §5.7 step 1).
-        try await assertNoFurtherMessages(fixture, settle: .milliseconds(300),
-                                          "a pre-auth replace_prompt must be dropped silently")
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .replacePromptResult(status: "failed", message: "Session not attached"))
+        try await assertNoFurtherMessages(fixture, "exactly one pre-auth reply")
+        XCTAssertTrue(fixture.channel.isActive, "answering must not close the connection")
         let writes = await fixture.mock.recordedWrites()
         XCTAssertTrue(writes.isEmpty)
     }
@@ -571,7 +578,11 @@ final class PromptRequestHandlerTests: XCTestCase {
 
     // MARK: lifecycle
 
-    func testDetachWhileOptimizeInFlightPreventsWrite() async throws {
+    /// A-1/B-1: detach (or a session steal) mid-optimize leaves the channel
+    /// **alive**, so the waiter must be answered — with the sanctioned
+    /// "Session not attached" string, deliberately distinct from the clients'
+    /// `isForeignError` sentinel "No session attached". Still no PTY write.
+    func testDetachWhileOptimizeInFlightAnswersFailedAndPreventsWrite() async throws {
         let optimizer = GatedOptimizer()
         let fixture = try await makeFixture(optimizer: optimizer)
         addTeardownBlock { await self.cleanup(fixture) }
@@ -592,9 +603,80 @@ final class PromptRequestHandlerTests: XCTestCase {
         let loop = fixture.testingLoop
         let finished = await poll { (try? await loop.submit { handler.optimizeInFlight }.get()) == false }
         XCTAssertTrue(finished, "the work task must have completed")
-        try await assertNoFurtherMessages(fixture, "detached session must not receive replies")
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .optimizePromptResult(status: "failed", message: "Session not attached"))
+        XCTAssertTrue(fixture.channel.isActive, "the channel is still alive; only the attachment went away")
+        try await assertNoFurtherMessages(fixture, "a live detached session gets exactly one reply")
         let writes = await fixture.mock.recordedWrites()
         XCTAssertTrue(writes.isEmpty, "detached session must not receive PTY writes")
+    }
+
+    /// The mirror of the test above for `replace_prompt`, with a session steal
+    /// rather than a detach: the connection is still attached, to *another*
+    /// session, which is the ordinary way this happens (a second device took the
+    /// session while the user's Undo was in flight). The PTY the request names is
+    /// still alive and reachable, so "no write" is a real assertion and not an
+    /// artefact of a torn-down mock.
+    ///
+    /// It lands in the fast guard rather than the `onSuccess` re-validation, and
+    /// that is not a weaker test by accident: `replace_prompt` makes no model
+    /// call, so the window between the two guards is a single event-loop tick and
+    /// cannot be hit deterministically. Both answer with the same sanctioned
+    /// string and write nothing; the `onSuccess` half of that split is covered on
+    /// the optimize path, where the 12 s model call holds the window open.
+    func testStolenSessionReplaceAnswersFailedAndPreventsWrite() async throws {
+        let fixture = try await makeFixture(optimizer: nil)
+        addTeardownBlock { await self.cleanup(fixture) }
+        await fixture.mock.setMockPromptContext(context(draft: "the optimized prompt"))
+        let handler = fixture.handler
+        let stolenBy = UUID()
+        try await fixture.testingLoop.submit { handler.attachedSessionId = stolenBy }.get()
+        try await send(.replacePrompt(sessionId: fixture.sessionId, text: "the original draft"), on: fixture)
+
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .replacePromptResult(status: "failed", message: "Session not attached"))
+        XCTAssertTrue(fixture.channel.isActive, "answering must not close the connection")
+        try await assertNoFurtherMessages(fixture, "a stolen session gets exactly one reply")
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "a replace for a session we no longer hold must not type into the PTY")
+    }
+
+    /// B-4: with the channel gone there is nobody to answer, and — the part that
+    /// used to be untrue — nothing may be typed either. Whichever guard wins
+    /// (`onSuccess`'s `isActive`, or the write Task's own on-loop liveness
+    /// re-check) the observable contract is the same: no reply, no write.
+    func testReplaceOnAClosedChannelWritesNothingAndAnswersNothing() async throws {
+        let fixture = try await makeFixture(optimizer: nil)
+        addTeardownBlock { await self.cleanup(fixture) }
+        await fixture.mock.setMockPromptContext(context(draft: "the optimized prompt"))
+        try await send(.replacePrompt(sessionId: fixture.sessionId, text: "the original draft"), on: fixture)
+        _ = try? await fixture.channel.close()
+
+        try await assertNoFurtherMessages(fixture, settle: .milliseconds(300),
+                                          "a closed channel must not be sent a result")
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "a closed channel's replace must not type into the PTY")
+    }
+
+    /// Same shape for optimize, with the close landing *after* the model answered
+    /// — i.e. around the reply hop rather than before it.
+    func testChannelCloseAfterTheModelAnswersWritesNothing() async throws {
+        let optimizer = GatedOptimizer()
+        let fixture = try await makeFixture(optimizer: optimizer)
+        addTeardownBlock { await self.cleanup(fixture) }
+        try await setDeadline(.seconds(30), on: fixture)
+        await fixture.mock.setMockPromptContext(context(draft: "closing at the reply hop"))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        let started = await poll { await optimizer.callCount() == 1 }
+        XCTAssertTrue(started)
+
+        await optimizer.release(0)
+        _ = try? await fixture.channel.close()
+
+        try await assertNoFurtherMessages(fixture, settle: .milliseconds(300),
+                                          "a closed channel must not be sent a result")
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "a closed channel's optimize must not type into the PTY")
     }
 
     /// Channel teardown mid-optimize: both handles are dropped, the flag is
@@ -616,6 +698,15 @@ final class PromptRequestHandlerTests: XCTestCase {
         XCTAssertFalse(state.inFlight)
         XCTAssertFalse(state.hasWorkTask, "the work task handle must be dropped")
         XCTAssertFalse(state.hasDeadlineTask, "the deadline task handle must be dropped")
+        // B-4: the two PTY-write handles are cancelled and cleared as well — the
+        // work-task handle is already nil by the time a write is spawned, so it
+        // could never have covered them.
+        let handler = fixture.handler
+        let writeHandles = try await fixture.testingLoop.submit {
+            (handler.optimizeWriteTask != nil, handler.replaceWriteTask != nil)
+        }.get()
+        XCTAssertFalse(writeHandles.0, "the optimize write-task handle must be dropped")
+        XCTAssertFalse(writeHandles.1, "the replace write-task handle must be dropped")
         // Past both the shortened deadline and the optimizer's own delay.
         await fixture.testingLoop.advanceTime(by: TimeAmount.seconds(11))
         try await assertNoFurtherMessages(fixture, settle: .milliseconds(300),
@@ -723,11 +814,11 @@ final class PromptRequestHandlerTests: XCTestCase {
         XCTAssertEqual(reply, .optimizePromptResult(status: "no_draft"))
     }
 
-    /// `original` echoes the draft as it was *before* the model call, while the
-    /// erase is sized from the draft re-read *after* it — an edit made while the
-    /// model ran is erased correctly and the client's Undo still restores what
-    /// the user originally typed.
-    func testOriginalIsThePreCallDraftButTheEraseUsesTheReReadDraft() async throws {
+    /// B-6: `original` is what the actor actually **erased**, not the pre-call
+    /// snapshot. The erase is sized from the mirror at write time, so a character
+    /// typed while the model ran is erased too; reporting the snapshot would give
+    /// the client an Undo that restores strictly less than what was on the line.
+    func testOriginalIsTheDraftTheActorActuallyErased() async throws {
         let optimizer = FakeOptimizer(delay: .milliseconds(200))
         let fixture = try await makeFixture(optimizer: optimizer)
         addTeardownBlock { await self.cleanup(fixture) }
@@ -740,7 +831,8 @@ final class PromptRequestHandlerTests: XCTestCase {
         await fixture.mock.setMockPromptContext(edited)
 
         let reply = try await nextServerMessage(fixture)
-        XCTAssertEqual(reply, .optimizePromptResult(status: "ok", original: "hello", prompt: "Run `git status`."))
+        XCTAssertEqual(reply, .optimizePromptResult(status: "ok", original: "hello world",
+                                                    prompt: "Run `git status`."))
         let expected = DraftReplacer.bytes(replacing: "hello world", with: "Run `git status`.",
                                            bracketedPaste: false, keyboardFlags: edited.keyboardFlags)
         let writes = await fixture.mock.recordedWrites()

@@ -16,12 +16,13 @@ public protocol PTYSessionProtocol: Actor {
     func setClipboardHandler(_ handler: @escaping @Sendable (String) -> Void)
     func write(_ data: Data)
     /// Erase the mirrored line and paste `text`, sized from the mirror AS IT IS
-    /// NOW, in one actor step (no await anywhere inside). Returns false and writes
-    /// nothing when the session has terminated, the mirror is lost, or the tracked
-    /// foreground agent is no longer `agentId` (the agent the caller optimized for).
+    /// NOW, in one actor step (no await anywhere inside). Returns `.refused` and
+    /// writes nothing when the session has terminated, the mirror is lost, or the
+    /// tracked foreground agent is no longer `agentId` (the agent the caller
+    /// optimized for). `.replaced` carries the text that was actually erased.
     /// The only write path that may adopt a mirror.
     @discardableResult
-    func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> Bool
+    func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> DraftReplacementOutcome
     func resize(cols: UInt16, rows: UInt16)
     /// Best-effort current working directory of the session's shell process
     /// (the stable workspace anchor). Nil when the process is gone or the
@@ -79,6 +80,21 @@ public protocol PTYSessionProtocol: Actor {
 public enum AgentExpectation: Sendable, Equatable {
     case any
     case exactly(String?)
+}
+
+// MARK: - DraftReplacementOutcome
+
+/// What `replaceDraft` did.
+///
+/// `.replaced` carries the draft the actor actually erased, read from the mirror
+/// at write time. That is deliberately not the caller's snapshot: the erase is
+/// sized inside the actor, so anything typed during the 12 s model call is erased
+/// too, and reporting the snapshot as `optimize_prompt_result.original` would give
+/// the client an Undo that restores strictly less than what was on the line
+/// (review B-6).
+public enum DraftReplacementOutcome: Sendable, Equatable {
+    case refused
+    case replaced(erased: String)
 }
 
 // MARK: - PTYError
@@ -787,19 +803,20 @@ public actor PTYSession: PTYSessionProtocol {
     /// uncertain cursor — and `adopt` then states the outcome the server knows
     /// for certain: the text it actually typed, not the raw text it was handed.
     @discardableResult
-    public func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> Bool {
+    public func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> DraftReplacementOutcome {
         syncTrackedAgent()
         guard !terminated, !draftTracker.mirrorLost,
               expectation == .any || expectation == .exactly(activityMonitor.activeAgent?.id) else {
-            return false
+            return .refused
         }
+        let erased = draftTracker.draft
         let bracketedPaste = screenModel.bracketedPasteEnabled
-        let bytes = DraftReplacer.bytes(replacing: draftTracker.draft, with: text,
+        let bytes = DraftReplacer.bytes(replacing: erased, with: text,
                                         bracketedPaste: bracketedPaste,
                                         keyboardFlags: screenModel.keyboardFlags)
         write(bytes)
         draftTracker.adopt(DraftReplacer.effectiveText(text, bracketedPaste: bracketedPaste))
-        return true
+        return .replaced(erased: erased)
     }
 
     /// Enqueue PTY write, bypassing the draft mirror. Used for relay-generated

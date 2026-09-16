@@ -140,14 +140,32 @@ extension RelayMessageHandler {
                         // on the reply type alone.
                         let resolvedGeneration = handler.optimizeGeneration
 
-                        // Re-validate attachment before PTY write.
-                        guard handler.attachedSessionId == sessionId, ctx.value.channel.isActive,
+                        // Re-validate attachment before the PTY write. The two
+                        // states this used to fold together are answered
+                        // differently (review A-1/B-1): a closed channel has
+                        // nobody to answer, but a live channel that merely lost
+                        // its attachment — a second device stealing the session
+                        // mid-call is the ordinary case — still has a waiter with
+                        // a 20 s timer, and an unanswered RPC costs that client
+                        // its whole socket (root CLAUDE.md, "Connection
+                        // Health"). Spec §9: every request gets exactly one
+                        // reply. Neither state writes the PTY.
+                        guard ctx.value.channel.isActive else { return }
+                        guard handler.attachedSessionId == sessionId,
                               let pty = handler.attachedPTY else {
-                            // Connection detached or closed; write nothing, send nothing.
+                            handler.sendServerMessage(
+                                .optimizePromptResult(status: "failed", message: "Session not attached"),
+                                context: ctx.value)
                             return
                         }
                         // Write PTY first, then send reply to preserve ordering with binary terminal input.
-                        Task {
+                        let writeTask = Task {
+                            // The channel can go inactive between the hop above
+                            // and this write. `cleanupOptimizeState` cancels this
+                            // handle, and the liveness re-check runs on the loop,
+                            // so a torn-down connection's session is not typed
+                            // into (review B-4).
+                            guard await Self.isChannelLive(ctx), !Task.isCancelled else { return }
                             // The actor sizes the erase from the mirror as it is
                             // when the write lands and refuses if the mirror is
                             // lost or the agent changed since the snapshot above:
@@ -156,13 +174,16 @@ extension RelayMessageHandler {
                             // decide. It also adopts what it typed, since the erase
                             // keystrokes pass through the decoder like any input and
                             // would invalidate the mirror at an uncertain cursor.
-                            let replaced = await pty.replaceDraft(with: prompt,
-                                                                  forAgent: .exactly(promptContext.agentId))
+                            // The outcome carries the draft it actually erased, which
+                            // is what `original` must report (review B-6).
+                            let outcome = await pty.replaceDraft(with: prompt,
+                                                                 forAgent: .exactly(promptContext.agentId))
                             let elapsed = Int(Date().timeIntervalSince(startedAt) * 1000)
                             ctx.value.eventLoop.execute { [weak self] in
                                 guard let handler = self, handler.optimizeGeneration == resolvedGeneration,
                                       ctx.value.channel.isActive else { return }
-                                guard replaced else {
+                                handler.optimizeWriteTask = nil
+                                guard case .replaced(let erased) = outcome else {
                                     RelayLogger.log(.debug, category: "optimizer",
                                                     "optimize_prompt refused: agent changed or mirror lost")
                                     handler.sendServerMessage(
@@ -172,10 +193,11 @@ extension RelayMessageHandler {
                                     return
                                 }
                                 RelayLogger.log(.debug, category: "optimizer",
-                                    "optimize_prompt ok draft=\(promptContext.draft.utf8.count)B prompt=\(prompt.utf8.count)B in \(elapsed)ms")
-                                handler.sendServerMessage(.optimizePromptResult(status: "ok", original: promptContext.draft, prompt: prompt), context: ctx.value)
+                                    "optimize_prompt ok draft=\(erased.utf8.count)B prompt=\(prompt.utf8.count)B in \(elapsed)ms")
+                                handler.sendServerMessage(.optimizePromptResult(status: "ok", original: erased, prompt: prompt), context: ctx.value)
                             }
                         }
+                        handler.optimizeWriteTask = writeTask
                     }
                 }
             } catch {
@@ -230,15 +252,23 @@ extension RelayMessageHandler {
             // written, so there is no snapshot for a keystroke to invalidate.
             work: { () async throws -> Void in },
             onSuccess: { handler, ctx, _ in
-                // Re-validate attachment before PTY write.
-                guard handler.attachedSessionId == sessionId, ctx.channel.isActive,
+                // Re-validate attachment before the PTY write, with the same
+                // split as `handleOptimizePrompt` (review A-1/B-1): silence only
+                // when the channel is gone, otherwise answer.
+                guard ctx.channel.isActive else { return }
+                guard handler.attachedSessionId == sessionId,
                       let pty = handler.attachedPTY else {
-                    // Connection detached or closed; write nothing, send nothing.
+                    handler.sendServerMessage(
+                        .replacePromptResult(status: "failed", message: "Session not attached"),
+                        context: ctx)
                     return
                 }
                 // Write PTY first, then send reply to preserve ordering with binary terminal input.
                 let ctx = UnsafeTransfer(ctx)
-                Task {
+                let writeTask = Task {
+                    // Same liveness re-check as the optimize path: cancelled by
+                    // `cleanupOptimizeState`, re-tested on the loop (review B-4).
+                    guard await Self.isChannelLive(ctx), !Task.isCancelled else { return }
                     // `.any`: Undo carries no agent snapshot to compare against —
                     // the device is replaying text the user just saw in this box.
                     // The mirror check still applies: while it is lost the real
@@ -248,10 +278,11 @@ extension RelayMessageHandler {
                     // `draft.isEmpty`: a genuinely empty, known line is a
                     // legitimate Undo target (erase nothing, paste the original
                     // back).
-                    let replaced = await pty.replaceDraft(with: text, forAgent: .any)
+                    let outcome = await pty.replaceDraft(with: text, forAgent: .any)
                     ctx.value.eventLoop.execute { [weak handler] in
                         guard let handler, ctx.value.channel.isActive else { return }
-                        guard replaced else {
+                        handler.replaceWriteTask = nil
+                        guard case .replaced = outcome else {
                             RelayLogger.log(.debug, category: "optimizer", "replace_prompt refused: mirror lost")
                             handler.sendServerMessage(
                                 .replacePromptResult(status: "failed",
@@ -263,6 +294,7 @@ extension RelayMessageHandler {
                         handler.sendServerMessage(.replacePromptResult(status: "ok"), context: ctx.value)
                     }
                 }
+                handler.replaceWriteTask = writeTask
             },
             onFailure: { handler, ctx, _ in
                 // Unreachable today: `work` has no throwing step, and
@@ -276,16 +308,30 @@ extension RelayMessageHandler {
         )
     }
 
+    /// Is the channel still live? Asked from inside the write Task, on the loop,
+    /// because `ChannelHandlerContext` may only be touched there (root CLAUDE.md,
+    /// "NIO ↔ Swift Concurrency Bridge"). Returns false if the loop is already
+    /// shutting down, which is itself a dead channel.
+    private static func isChannelLive(_ ctx: UnsafeTransfer<ChannelHandlerContext>) async -> Bool {
+        (try? await ctx.value.eventLoop.submit { ctx.value.channel.isActive }.get()) ?? false
+    }
+
     /// Cancel optimize state on channel teardown.
     func cleanupOptimizeState() {
         optimizeDeadlineTask?.cancel()
         optimizeWorkTask?.cancel()
+        optimizeWriteTask?.cancel()
+        replaceWriteTask?.cancel()
         optimizeDeadlineTask = nil
         optimizeWorkTask = nil
+        optimizeWriteTask = nil
+        replaceWriteTask = nil
         optimizeInFlight = false
-        // Cleanup resolves the request: a work Task that ignores cancellation
-        // and completes after `channelInactive` must fail its generation guard
-        // instead of writing a dead channel's PTY.
+        // Cleanup resolves the request on both axes. The generation bump makes a
+        // work Task that ignores cancellation fail its guard instead of replying
+        // on a dead channel; cancelling the two write handles plus their on-loop
+        // liveness re-check is what stops the *write* itself, which the
+        // generation guard alone never could (it is consulted after the write).
         optimizeGeneration &+= 1
     }
 }

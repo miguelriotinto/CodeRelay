@@ -29,6 +29,13 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     var optimizeDeadlineTask: Scheduled<Void>?
     /// The work Task for the active optimize request, cancelled on timeout.
     var optimizeWorkTask: Task<Void, Never>?
+    /// The PTY-write Task spawned after a successful optimize. A *second* handle
+    /// on purpose: the hop that spawns it has already cleared `optimizeWorkTask`,
+    /// so without this `cleanupOptimizeState` had nothing to cancel and a write
+    /// could land on a torn-down connection's session (review B-4).
+    var optimizeWriteTask: Task<Void, Never>?
+    /// The same handle for `replace_prompt`, which has no generation counter.
+    var replaceWriteTask: Task<Void, Never>?
     /// Budget for context capture + the model call. It is cancelled once the
     /// outcome is in, before the PTY write is spawned, so the write happens
     /// outside it (spec §6: a 12 s model deadline plus write time). Tests shorten it.
@@ -221,13 +228,25 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             handlePairRequest(code: code, deviceName: deviceName, platform: platform, context: context)
         case .ping:
             sendServerMessage(.pong, context: context)
-        case .resize, .refresh, .pasteImage, .sessionRename, .sessionTerminate, .optimizePrompt, .replacePrompt:
+        case .optimizePrompt:
+            // Answered, not dropped. The rule below is about the reply *type*,
+            // not about staying silent: these two are RPCs with a 20 s waiter and
+            // a dedicated result type no other waiter matches, so the honest
+            // `failed` is safe where `.error(401)` would not be — exactly the
+            // distinction `paste_image` already makes with
+            // `.pasteImageResult(success: false)`. Dropping them instead costs a
+            // racing client its whole socket (review B-2).
+            sendServerMessage(.optimizePromptResult(status: "failed", message: "Session not attached"),
+                              context: context)
+        case .replacePrompt:
+            sendServerMessage(.replacePromptResult(status: "failed", message: "Session not attached"),
+                              context: context)
+        case .resize, .refresh, .pasteImage, .sessionRename, .sessionTerminate:
             // Dropped, NOT answered with `.error(401)` — an error here would
             // resolve the client's `authenticate` waiter with someone else's
             // error. They can reach the pre-auth window because they bypass the
             // client's RPC chain entirely: a terminal view that lays out while
-            // `auth_request` is still on the wire sends its resize immediately,
-            // and optimize/replace can be fired by the user before auth completes.
+            // `auth_request` is still on the wire sends its resize immediately.
             RelayLogger.log(.debug, category: "session",
                             "pre-auth \(message.typeString) dropped")
         default:

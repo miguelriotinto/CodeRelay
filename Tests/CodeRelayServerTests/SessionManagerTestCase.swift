@@ -50,15 +50,16 @@ actor MockPTYSession: PTYSessionProtocol {
     /// `draftKnown == false` stands in for a lost mirror, and `.exactly` compares
     /// the tracked agent. A refusal writes nothing and adopts nothing.
     @discardableResult
-    func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> Bool {
-        guard !terminated, mockPromptContext.draftKnown else { return false }
-        if case .exactly(let expected) = expectation, expected != mockPromptContext.agentId { return false }
-        let bytes = DraftReplacer.bytes(replacing: mockPromptContext.draft, with: text,
+    func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> DraftReplacementOutcome {
+        guard !terminated, mockPromptContext.draftKnown else { return .refused }
+        if case .exactly(let expected) = expectation, expected != mockPromptContext.agentId { return .refused }
+        let erased = mockPromptContext.draft
+        let bytes = DraftReplacer.bytes(replacing: erased, with: text,
                                         bracketedPaste: mockPromptContext.bracketedPaste,
                                         keyboardFlags: mockPromptContext.keyboardFlags)
         write(bytes)
         adoptedDrafts.append(DraftReplacer.effectiveText(text, bracketedPaste: mockPromptContext.bracketedPaste))
-        return true
+        return .replaced(erased: erased)
     }
     func recordedAdoptedDrafts() -> [String] { adoptedDrafts }
     func setMockPromptContext(_ context: PromptContext) { mockPromptContext = context }

@@ -60,8 +60,10 @@ final class PTYSessionPromptContextTests: XCTestCase {
         XCTAssertEqual(ctx.draft, "echo hello")
         XCTAssertTrue(ctx.draftKnown)
 
-        let replaced = await session.replaceDraft(with: "echo bye", forAgent: .any)
-        XCTAssertTrue(replaced)
+        let outcome = await session.replaceDraft(with: "echo bye", forAgent: .any)
+        // B-6: the outcome reports the draft the actor actually erased, which is
+        // what the `ok` reply hands the client as `original`.
+        XCTAssertEqual(outcome, .replaced(erased: "echo hello"))
         ctx = await session.promptContext(includeScreen: false)
         XCTAssertEqual(ctx.draft, "echo bye")
         XCTAssertTrue(ctx.draftKnown)
@@ -88,8 +90,8 @@ final class PTYSessionPromptContextTests: XCTestCase {
         XCTAssertEqual(ctx.draft, "")
         XCTAssertFalse(ctx.draftKnown)
 
-        let replaced = await session.replaceDraft(with: "echo bye", forAgent: .any)
-        XCTAssertFalse(replaced, "a lost mirror must refuse the replacement")
+        let outcome = await session.replaceDraft(with: "echo bye", forAgent: .any)
+        XCTAssertEqual(outcome, .refused, "a lost mirror must refuse the replacement")
         ctx = await session.promptContext(includeScreen: false)
         XCTAssertEqual(ctx.draft, "")
         XCTAssertFalse(ctx.draftKnown, "a refused replacement must not adopt anything")
