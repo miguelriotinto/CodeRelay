@@ -4,12 +4,16 @@ import Foundation
 public enum ClientMessage: Equatable, Sendable {
     case authRequest(token: String, protocolVersion: Int? = nil)
     case sessionCreate(name: String? = nil, cols: UInt16? = nil, rows: UInt16? = nil)
-    case sessionAttach(sessionId: UUID)
+    case sessionAttach(sessionId: UUID, cols: UInt16? = nil, rows: UInt16? = nil)
     /// Resume a detached session. `skipReplay` (defaults to false) lets the
     /// client opt out of receiving the server's ring-buffer replay when it
     /// already has a live terminal with full scrollback for this session —
     /// e.g. when switching between tabs on the same device.
-    case sessionResume(sessionId: UUID, skipReplay: Bool = false)
+    /// `skipReplay`: see the resume doc. `cols`/`rows`: the requesting device's
+    /// grid, applied by the server BEFORE the ring buffer is read and BEFORE the
+    /// post-replay repaint, so the first frame is drawn for the right width.
+    /// Optional and omitted when nil for older servers.
+    case sessionResume(sessionId: UUID, skipReplay: Bool = false, cols: UInt16? = nil, rows: UInt16? = nil)
     case sessionDetach
     case sessionTerminate(sessionId: UUID)
     case sessionList
@@ -95,13 +99,15 @@ extension ClientMessage: Codable {
             try container.encodeIfPresent(name, forKey: .name)
             try container.encodeIfPresent(cols, forKey: .cols)
             try container.encodeIfPresent(rows, forKey: .rows)
-        case .sessionAttach(let sessionId):
+        case .sessionAttach(let sessionId, let cols, let rows):
             try container.encode(sessionId, forKey: .sessionId)
-        case .sessionResume(let sessionId, let skipReplay):
+            try container.encodeIfPresent(cols, forKey: .cols)
+            try container.encodeIfPresent(rows, forKey: .rows)
+        case .sessionResume(let sessionId, let skipReplay, let cols, let rows):
             try container.encode(sessionId, forKey: .sessionId)
-            if skipReplay {
-                try container.encode(true, forKey: .skipReplay)
-            }
+            if skipReplay { try container.encode(true, forKey: .skipReplay) }
+            try container.encodeIfPresent(cols, forKey: .cols)
+            try container.encodeIfPresent(rows, forKey: .rows)
         case .sessionDetach:
             break
         case .sessionTerminate(let sessionId):
@@ -158,11 +164,15 @@ extension ClientMessage: Codable {
             return .sessionCreate(name: name, cols: cols, rows: rows)
         case "session_attach":
             let sessionId = try container.decode(UUID.self, forKey: .sessionId)
-            return .sessionAttach(sessionId: sessionId)
+            let cols = try container.decodeIfPresent(UInt16.self, forKey: .cols)
+            let rows = try container.decodeIfPresent(UInt16.self, forKey: .rows)
+            return .sessionAttach(sessionId: sessionId, cols: cols, rows: rows)
         case "session_resume":
             let sessionId = try container.decode(UUID.self, forKey: .sessionId)
             let skipReplay = try container.decodeIfPresent(Bool.self, forKey: .skipReplay) ?? false
-            return .sessionResume(sessionId: sessionId, skipReplay: skipReplay)
+            let cols = try container.decodeIfPresent(UInt16.self, forKey: .cols)
+            let rows = try container.decodeIfPresent(UInt16.self, forKey: .rows)
+            return .sessionResume(sessionId: sessionId, skipReplay: skipReplay, cols: cols, rows: rows)
         case "session_detach":
             return .sessionDetach
         case "session_terminate":

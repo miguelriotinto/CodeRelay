@@ -274,10 +274,10 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
             sendServerMessage(.error(code: 400, message: "Already authenticated"), context: context)
         case .sessionCreate(let name, let cols, let rows):
             handleSessionCreate(name: name, cols: cols, rows: rows, context: context)
-        case .sessionAttach(let sessionId):
-            handleSessionAttach(sessionId: sessionId, context: context)
-        case .sessionResume(let sessionId, let skipReplay):
-            handleSessionResume(sessionId: sessionId, skipReplay: skipReplay, context: context)
+        case .sessionAttach(let sessionId, let cols, let rows):
+            handleSessionAttach(sessionId: sessionId, cols: cols, rows: rows, context: context)
+        case .sessionResume(let sessionId, let skipReplay, let cols, let rows):
+            handleSessionResume(sessionId: sessionId, skipReplay: skipReplay, cols: cols, rows: rows, context: context)
         case .sessionDetach:
             handleSessionDetach(context: context)
         case .sessionTerminate(let sessionId):

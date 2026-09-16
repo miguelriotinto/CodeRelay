@@ -131,7 +131,8 @@ extension RelayMessageHandler {
 
     // MARK: - Session Attach
 
-    func handleSessionAttach(sessionId: UUID, context: ChannelHandlerContext) {
+    func handleSessionAttach(sessionId: UUID, cols: UInt16?, rows: UInt16?, context: ChannelHandlerContext) {
+        // Task 2 applies these.
         guard let tokenId = authenticatedTokenId else { return }
         let mgr = self.sessionManager
         let myStealId = self.stealObserverId
@@ -180,7 +181,8 @@ extension RelayMessageHandler {
 
     // MARK: - Session Resume
 
-    func handleSessionResume(sessionId: UUID, skipReplay: Bool, context: ChannelHandlerContext) {
+    func handleSessionResume(sessionId: UUID, skipReplay: Bool, cols: UInt16?, rows: UInt16?, context: ChannelHandlerContext) {
+        // Task 2 applies these.
         guard let tokenId = authenticatedTokenId else { return }
         let mgr = self.sessionManager
         let myStealId = self.stealObserverId
