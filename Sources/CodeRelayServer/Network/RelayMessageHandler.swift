@@ -21,8 +21,9 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// a switch is the unattached window between `detach` and `resume`; dropping
     /// it left the PTY at the previous device's width and the post-replay repaint
     /// redrew at that stale width (the "garbled after switching" bug). Consumed
-    /// by the next attach/resume; a grid on the request itself takes precedence.
-    /// Event-loop only, like `attachedPTY`.
+    /// by the next attach, resume or create (every handler that ends attached);
+    /// a grid on an attach/resume request itself takes precedence. Event-loop
+    /// only, like `attachedPTY`.
     var pendingGrid: (cols: UInt16, rows: UInt16)?
     /// Nil when the relay has no usable optimizer (disabled, or key unreadable at
     /// startup) — then `auth_success` omits the capability and `optimize_prompt`

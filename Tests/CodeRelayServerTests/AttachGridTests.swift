@@ -20,6 +20,7 @@ final class AttachGridTests: XCTestCase {
         let connection: RelayConnection
         let mockPTY: MockPTYSession
         let sessionId: UUID
+        let sessionManager: SessionManager
         let server: WebSocketServer
         let group: MultiThreadedEventLoopGroup
         let tempDir: URL
@@ -82,7 +83,8 @@ final class AttachGridTests: XCTestCase {
 
         return Fixture(
             controller: controller, connection: connection, mockPTY: mockPTY,
-            sessionId: sessionInfo.id, server: server, group: group, tempDir: tempDir
+            sessionId: sessionInfo.id, sessionManager: sessionManager,
+            server: server, group: group, tempDir: tempDir
         )
     }
 
@@ -141,6 +143,28 @@ final class AttachGridTests: XCTestCase {
         XCTAssertEqual(calls.map { [$0.cols, $0.rows] }, [[77, 21]], "the deferred grid must be applied at attach")
         let readAfter = await f.mockPTY.readBufferSawResize
         XCTAssertTrue(readAfter)
+    }
+
+    /// `session_create` ends attached too, so it consumes a deferred grid like
+    /// attach/resume do — otherwise a resize that landed while the create was
+    /// in flight would sit in `pendingGrid` and be applied stale much later.
+    @MainActor
+    func testResizeWhileUnattachedIsAppliedByTheNextCreate() async throws {
+        let f = try await makeFixture()
+        defer { f.teardown() }
+
+        try await f.connection.sendResize(cols: 77, rows: 21)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        let newId = try await f.controller.createSession(name: "created", cols: 80, rows: 24)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        let createdPTY = await f.sessionManager.ptySession(for: newId)
+        let created = try XCTUnwrap(createdPTY as? MockPTYSession)
+        let calls = await created.resizeCalls
+        XCTAssertEqual(calls.map { [$0.cols, $0.rows] }, [[77, 21]], "create must consume the deferred grid")
+        let original = await f.mockPTY.resizeCalls
+        XCTAssertTrue(original.isEmpty, "the deferred grid belongs to the connection, not the other session")
     }
 
     /// The request's own grid wins over a stale deferred one, and the deferred

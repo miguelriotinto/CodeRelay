@@ -120,6 +120,7 @@ if buildsAppleClients {
     ]
 } else {
     serverTestExcludes = [
+        "AttachGridTests.swift",
         "ReplayRepaintTests.swift",
         "UnattachedRequestReplyTests.swift",
         "WebSocketIntegrationTests.swift",

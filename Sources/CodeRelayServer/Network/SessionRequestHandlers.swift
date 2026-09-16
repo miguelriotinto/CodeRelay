@@ -36,10 +36,11 @@ import CodeRelayKit
 //
 // So those handlers never reply (logging at debug), matching
 // `handleBinaryFrame`, which has always silently dropped terminal input when
-// unattached. `refresh` is dropped outright. An unattached `resize` is
-// **deferred** into `pendingGrid` and applied by the next attach/resume (still
-// silently); clients also send their grid on the attach/resume request itself,
-// which wins.
+// unattached. `refresh` is dropped outright. An authenticated-but-unattached
+// `resize` is **deferred** into `pendingGrid` and applied by the next
+// attach/resume/create (still silently) — a *pre-auth* one is still dropped by
+// `handleMessage` before it reaches `handleResize`; clients also send their grid
+// on the attach/resume request itself, which wins.
 //
 // Deferral matters because nothing else would ever recover that grid. Two
 // plausible-sounding recovery paths do NOT exist: SwiftTerm only fires
@@ -99,6 +100,10 @@ extension RelayMessageHandler {
                 let (info, pty) = pair
                 handler.attachedSessionId = info.id
                 handler.attachedPTY = pty
+                // Create ends attached too, so it must consume `pendingGrid`
+                // like attach/resume — otherwise a grid deferred before or
+                // during the create lingers and lands stale on a later attach.
+                handler.applyLatePendingGrid(to: pty)
                 handler.sendServerMessage(.sessionCreated(sessionId: info.id, cols: info.cols, rows: info.rows), context: ctx)
                 handler.wirePTYOutput(pty: pty, context: ctx)
             },
@@ -146,8 +151,9 @@ extension RelayMessageHandler {
     }
 
     /// Applies a `resize` that arrived while the attach/resume was in flight
-    /// (after `takeGrid` ran, before `attachedPTY` was set). Called from
-    /// `onSuccess`, on the event loop, right after `attachedPTY = pty`. The
+    /// (after `takeGrid` ran, before `attachedPTY` was set) — or, for create,
+    /// any deferred grid at all. Called from `onSuccess`, on the event loop,
+    /// right after `attachedPTY = pty`, by every handler that ends attached. The
     /// kernel's own SIGWINCH for this resize makes the app redraw at the new
     /// grid, so ordering against the `forceRepaint` Task does not matter.
     private func applyLatePendingGrid(to pty: any PTYSessionProtocol) {
