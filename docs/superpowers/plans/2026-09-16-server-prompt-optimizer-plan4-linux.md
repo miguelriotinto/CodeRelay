@@ -71,7 +71,7 @@ Expected: `BUILD SUCCESSFUL` and `EXIT=0`. `:app:test` depends on `:linux-termin
 - Consumes (existing, do not change): `relay.session.SessionCoordinator.optimizePrompt(shareScreen: Boolean)` (`suspend`); `ConnectionSession.scope: CoroutineScope` and `.coordinator: SessionCoordinator` (the `active` local in `handleShortcut`); `val shareScreen by settings.shareScreenWithOptimizer.collectAsState()` already declared earlier in the same composable (~line 198).
 - Produces: `relay.app.AppShortcut.OPTIMIZE_PROMPT`, resolved from `AppShortcut.resolve(Key.O, ctrl = true, shift = true, alt = false)`.
 
-- [ ] **Step 1: Write the failing chord tests**
+- [x] **Step 1: Write the failing chord tests**
 
 Append these three tests inside `class AppShortcutsChordTest` in `CodeRelayLinux/app/src/test/kotlin/relay/app/AppShortcutsChordTest.kt`, before the closing brace. Also widen the class KDoc from `/** The chords added for settings, zoom, copy and paste. */` to `/** The chords added for settings, zoom, copy, paste and the prompt-optimizer wand. */`.
 
@@ -98,7 +98,7 @@ Append these three tests inside `class AppShortcutsChordTest` in `CodeRelayLinux
     }
 ```
 
-- [ ] **Step 2: Run the chord test to verify it fails**
+- [x] **Step 2: Run the chord test to verify it fails**
 
 ```bash
 cd /Users/miguelriotinto/Developer/CodeRelay/CodeRelayLinux
@@ -108,7 +108,7 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
 
 Expected: compilation FAILS with `Unresolved reference: OPTIMIZE_PROMPT` (EXIT non-zero).
 
-- [ ] **Step 3: Add the enum constant and the chord**
+- [x] **Step 3: Add the enum constant and the chord**
 
 In `CodeRelayLinux/app/src/main/kotlin/relay/app/AppShortcuts.kt`, add the constant after `PASTE,` (keep the trailing `;` that closes the constant list):
 
@@ -134,11 +134,11 @@ In `resolve(key: Key, ctrl: Boolean, shift: Boolean, alt: Boolean)`, add one row
                     else -> null
 ```
 
-- [ ] **Step 4: Run the chord test to verify it passes**
+- [x] **Step 4: Run the chord test to verify it passes**
 
 Same command as Step 2. Expected: `BUILD SUCCESSFUL`, `EXIT=0`, all `AppShortcutsChordTest` tests PASSED.
 
-- [ ] **Step 5: Dispatch the chord in `Main.kt`**
+- [x] **Step 5: Dispatch the chord in `Main.kt`**
 
 `handleShortcut`'s `when (shortcut)` is exhaustive over `AppShortcut`, so after Step 3 `:app:compileKotlin` fails until the new case exists. Add the case after the `PASTE` row:
 
@@ -158,7 +158,7 @@ Same command as Step 2. Expected: `BUILD SUCCESSFUL`, `EXIT=0`, all `AppShortcut
 
 `shareScreen` is the `val shareScreen by settings.shareScreenWithOptimizer.collectAsState()` already declared near line 198 of the same composable; do not add a second one. `launch` is already imported.
 
-- [ ] **Step 6: Update the three docs**
+- [x] **Step 6: Update the three docs**
 
 `docs/linux-client-spec.md` §5.1 — add one row at the end of the shortcut table (after the `| Toggle sidebar | ⌘0 | `Ctrl+Shift+B` |` row, or after the last row if later rows exist):
 
@@ -187,11 +187,11 @@ like every other chord and routed to `SessionCoordinator.optimizePrompt` —
 the same call a tap makes, so the controller's gate and hint apply unchanged.
 ```
 
-- [ ] **Step 7: Run the Linux local gate**
+- [x] **Step 7: Run the Linux local gate**
 
 Run the **Linux local gate** command from Global Constraints. Expected: `BUILD SUCCESSFUL`, `EXIT=0`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 cd /Users/miguelriotinto/Developer/CodeRelay
@@ -226,7 +226,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `TokenStore.CommandRunner` / `CommandResult` (existing seam); `TokenStore.SERVICE_NAME`, `TokenStore.BEDROCK_ACCOUNT` (existing constants, unchanged); `AppEnvironment.create`'s `scope` (`SupervisorJob() + Dispatchers.Default`) and `tokens` (already constructed there).
 - Produces: `fun TokenStore.deleteBedrockToken(): Boolean` — true when `secret-tool clear` exited 0 (removed, or nothing to remove), false on non-zero exit / exception; never throws. `saveBedrockToken` and `loadBedrockToken` no longer exist.
 
-- [ ] **Step 1: Rewrite the Bedrock tests**
+- [x] **Step 1: Rewrite the Bedrock tests**
 
 In `CodeRelayLinux/linux-storage/src/test/kotlin/relay/storage/TokenStoreTest.kt`:
 
@@ -274,7 +274,7 @@ Add these tests right after `` `bedrock account is not a valid uuid` ``:
 
 Make sure `assertFalse` and `assertNull` are imported: the file's existing imports are `org.junit.jupiter.api.Assertions.*` singles — add `import org.junit.jupiter.api.Assertions.assertFalse` and `import org.junit.jupiter.api.Assertions.assertNull` if absent (keep the import list sorted).
 
-- [ ] **Step 2: Run the storage tests to verify they fail**
+- [x] **Step 2: Run the storage tests to verify they fail**
 
 ```bash
 cd /Users/miguelriotinto/Developer/CodeRelay/CodeRelayLinux
@@ -284,7 +284,7 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
 
 Expected: compilation FAILS with `Unresolved reference: deleteBedrockToken` (EXIT non-zero).
 
-- [ ] **Step 3: Replace save/load with the scrub in `TokenStore.kt`**
+- [x] **Step 3: Replace save/load with the scrub in `TokenStore.kt`**
 
 Replace the class KDoc's first paragraph and API sentence:
 
@@ -341,11 +341,11 @@ Update the `BEDROCK_ACCOUNT` constant's KDoc:
         const val BEDROCK_ACCOUNT = "bedrock"
 ```
 
-- [ ] **Step 4: Run the storage tests to verify they pass**
+- [x] **Step 4: Run the storage tests to verify they pass**
 
 Same command as Step 2. Expected: `BUILD SUCCESSFUL`, `EXIT=0`.
 
-- [ ] **Step 5: Run the scrub at launch**
+- [x] **Step 5: Run the scrub at launch**
 
 In `CodeRelayLinux/app/src/main/kotlin/relay/app/Main.kt`, `AppEnvironment.companion.create`, directly after `val tokens = TokenStore()`:
 
@@ -362,7 +362,7 @@ In `CodeRelayLinux/app/src/main/kotlin/relay/app/Main.kt`, `AppEnvironment.compa
 
 `kotlinx.coroutines.launch` and `Dispatchers` are already imported in `Main.kt`.
 
-- [ ] **Step 6: Fix the stale KDoc and the docs**
+- [x] **Step 6: Fix the stale KDoc and the docs**
 
 `CodeRelayLinux/app/src/main/kotlin/relay/app/ConnectionSession.kt` — replace
 
@@ -419,7 +419,7 @@ The `BEDROCK_ACCOUNT` entry older builds wrote is scrubbed on every launch (`del
 
 `CodeRelayLinux/README.md` — line ~56: `| `secret-tool` | `libsecret` | Relay + Bedrock tokens in the keyring |` → `| `secret-tool` | `libsecret` | Relay tokens in the keyring |`. Line ~109: `Relay tokens and the Bedrock key go to the Secret Service via `secret-tool`,` → `Relay tokens go to the Secret Service via `secret-tool`,` (keep the rest of the sentence).
 
-- [ ] **Step 7: Run the Linux local gate**
+- [x] **Step 7: Run the Linux local gate**
 
 Run the **Linux local gate** command from Global Constraints. Expected: `BUILD SUCCESSFUL`, `EXIT=0`. Also confirm nothing else referenced the removed methods:
 
@@ -430,7 +430,7 @@ grep -rn 'saveBedrockToken\|loadBedrockToken' CodeRelayLinux docs CLAUDE.md | gr
 
 Expected: no matches (`GREP_EXIT=1`).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 cd /Users/miguelriotinto/Developer/CodeRelay

@@ -7,9 +7,10 @@ import java.util.concurrent.TimeUnit
  * Stores relay bearer tokens in the desktop keyring.
  *
  * Linux counterpart of the Android `TokenStore`, which uses
- * `EncryptedSharedPreferences`. The public API is identical — `saveToken` /
- * `loadToken` / `deleteToken` / `deleteBedrockToken` — so shared call sites
- * compile against either.
+ * `EncryptedSharedPreferences`. The public API matches — `saveToken` /
+ * `loadToken` / `deleteToken` / `deleteBedrockToken` (Linux additionally
+ * reports success from the last one) — so shared call sites that ignore the
+ * result compile against either.
  *
  * Backed by the **Secret Service** (D-Bus: gnome-keyring, KWallet, …) through
  * `secret-tool` from libsecret. Two properties of that choice are load-bearing:
@@ -56,8 +57,13 @@ class TokenStore(
      * Deletes the AWS Bedrock API key that builds before 2026-09 stored for the
      * on-device prompt enhancer. The optimizer is a relay feature now, so the
      * key has no reader; `AppEnvironment` calls this on every launch, off the
-     * AWT thread, with no completion flag — `secret-tool clear` exits 0 on a
-     * miss, so the steady state is one cheap no-op per launch.
+     * AWT thread, with no completion flag. On a locked keyring that still holds
+     * the entry, libsecret's clear raises the unlock prompt; if the user
+     * dismisses it, `secret-tool` exits non-zero, this returns false, and the
+     * next launch prompts again — accepted, because there is no non-prompting
+     * probe (`lookup` prompts too) and the entry exists only on machines that
+     * once typed a Bedrock key. Once the entry is gone, `clear` is one cheap
+     * exit-0 no-op per launch, bounded at 30 s wall clock.
      *
      * Never throws. Returns true when the keyring confirmed the entry is gone
      * (removed or absent) and false when it could not be reached, so a locked
@@ -128,7 +134,15 @@ class TokenStore(
         fun run(command: List<String>, stdin: String?): CommandResult
     }
 
-    object DefaultCommandRunner : CommandRunner {
+    /**
+     * Runs `secret-tool` with a hard wall-clock bound. `waitFor` runs BEFORE the
+     * pipes are drained, deliberately: a keyring prompting for an unlock
+     * password keeps its stdout open, so reading to EOF first would block for
+     * the life of the prompt and the timeout would never be reached.
+     * secret-tool's whole output is one secret or one D-Bus error line — far
+     * below the pipe buffer — so waiting first cannot deadlock on a full pipe.
+     */
+    class ProcessCommandRunner(private val timeoutSeconds: Long = KEYRING_TIMEOUT_SECONDS) : CommandRunner {
         override fun run(command: List<String>, stdin: String?): CommandResult {
             val process = ProcessBuilder(command).redirectErrorStream(false).start()
             if (stdin != null) {
@@ -136,14 +150,12 @@ class TokenStore(
             } else {
                 process.outputStream.close()
             }
-            val out = process.inputStream.bufferedReader().use { it.readText() }
-            val err = process.errorStream.bufferedReader().use { it.readText() }
-            // A keyring prompting for an unlock password can block indefinitely;
-            // bound it so the UI thread's caller cannot hang forever.
-            if (!process.waitFor(KEYRING_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
                 return CommandResult(exitCode = -1, stdout = "", stderr = "timed out")
             }
+            val out = process.inputStream.bufferedReader().use { it.readText() }
+            val err = process.errorStream.bufferedReader().use { it.readText() }
             return CommandResult(process.exitValue(), out, err)
         }
     }
@@ -157,5 +169,7 @@ class TokenStore(
 
         /** Account attribute older builds used for the Bedrock key; every other account is a connection UUID. */
         const val BEDROCK_ACCOUNT = "bedrock"
+
+        val DefaultCommandRunner: CommandRunner = ProcessCommandRunner()
     }
 }

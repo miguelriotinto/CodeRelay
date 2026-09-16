@@ -179,8 +179,8 @@ unless `CODERELAY_TEST_HOST`/`PORT`/`TOKEN` are set):
 - **Keyboard.** Every accelerator is Ctrl+Shift or Ctrl+Alt so bare Ctrl chords
   reach the terminal: new session, detach, terminate, next/previous, session
   1–9, sidebar, settings, zoom (Ctrl+Shift+= / - / 0), copy, paste, optimize
-  prompt (Ctrl+Shift+O, the wand). Handled at
-  the window, so they work with the sidebar focused too.
+  prompt (Ctrl+Shift+O, the wand). Handled at the window, so they work with the
+  sidebar focused too.
 - **Desktop shell.** Close-to-tray with a per-session rollup (state glyphs,
   attention count, quick switch, new/attach/servers/settings/quit). One instance
   per user session: a second `coderelay://` click or the "New Session" desktop

@@ -95,7 +95,8 @@ class AppShortcutsTest {
      */
     @Test
     fun `every resolvable shortcut carries ctrl plus shift or alt`() {
-        val candidates = listOf(Key.T, Key.W, Key.Q, Key.B, Key.LeftBracket, Key.RightBracket)
+        val candidates = listOf(Key.T, Key.W, Key.Q, Key.B, Key.LeftBracket, Key.RightBracket,
+            Key.Comma, Key.Equals, Key.Plus, Key.Minus, Key.Zero, Key.C, Key.V, Key.O)
         for (k in candidates) {
             assertNull(resolve(k, ctrl = true), "$k resolved with Ctrl alone — it would never be delivered")
         }

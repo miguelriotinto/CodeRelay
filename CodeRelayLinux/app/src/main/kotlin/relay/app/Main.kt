@@ -372,9 +372,15 @@ private fun runApp(
             // shows the "update / enable the relay" hint itself when the wand is
             // unavailable, so the chord and the tap cannot drift apart. Mirrors
             // the macOS WandButton receiving `.optimizePromptShortcut`.
-            AppShortcut.OPTIMIZE_PROMPT -> active?.let { s ->
-                s.scope.launch { s.coordinator.optimizePrompt(shareScreen) }
-            } ?: return false
+            AppShortcut.OPTIMIZE_PROMPT -> {
+                // Optimize is the only chord that rewrites text the user is
+                // composing, and its feedback (Undo chip, hint) lives on the
+                // workspace, so it must not fire while that is covered.
+                if (showSettings || showServers) return false
+                active?.let { s ->
+                    s.scope.launch { s.coordinator.optimizePrompt(shareScreen) }
+                } ?: return false
+            }
         }
         return true
     }
@@ -783,8 +789,8 @@ class AppEnvironment private constructor(
             // prompt enhancer under TokenStore.BEDROCK_ACCOUNT. The optimizer is
             // a relay feature now, so the secret is deleted on every launch —
             // idempotent, no completion flag, the same rule as Android's speech
-            // scrub. Dispatchers.IO because secret-tool can block up to 30 s on
-            // a locked keyring, and Default's pool is the coordinators' too.
+            // scrub. Dispatchers.IO because the runner bounds secret-tool at
+            // 30 s wall clock, and Default's pool is the coordinators' too.
             scope.launch(Dispatchers.IO) { tokens.deleteBedrockToken() }
 
             lateinit var environment: AppEnvironment

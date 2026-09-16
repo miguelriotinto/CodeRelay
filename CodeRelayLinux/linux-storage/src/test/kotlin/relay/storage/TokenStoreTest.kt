@@ -55,7 +55,6 @@ class TokenStoreTest {
         )
     }
 
-
     /**
      * Never silently fall back to disk. "My keyring is locked" must not quietly
      * become "my relay token is in plaintext in my home directory" — a relay
@@ -188,5 +187,29 @@ class TokenStoreTest {
         val runner = FakeRunner(exitCode = 1)
         TokenStore(runner).deleteToken(connectionId)
         assertEquals("clear", runner.invocations.single().command[1])
+    }
+
+    /**
+     * A keyring prompting for an unlock keeps secret-tool's stdout open; the
+     * runner must give up on the wall clock, not on EOF (the old order read
+     * to EOF first and the timeout could never be reached).
+     */
+    @Test
+    fun `process runner gives up on the wall clock even when stdout stays open`() {
+        val started = System.nanoTime()
+        val result = TokenStore.ProcessCommandRunner(timeoutSeconds = 1)
+            .run(listOf("sh", "-c", "sleep 10"), stdin = null)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals(-1, result.exitCode)
+        assertEquals("timed out", result.stderr)
+        assertTrue(elapsedMs < 5_000, "runner blocked for ${elapsedMs} ms")
+    }
+
+    @Test
+    fun `process runner returns stdout and exit code of a finished process`() {
+        val result = TokenStore.ProcessCommandRunner(timeoutSeconds = 5)
+            .run(listOf("sh", "-c", "printf hello; exit 3"), stdin = null)
+        assertEquals(3, result.exitCode)
+        assertEquals("hello", result.stdout)
     }
 }
