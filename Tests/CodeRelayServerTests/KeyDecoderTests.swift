@@ -43,6 +43,15 @@ final class KeyDecoderTests: XCTestCase {
         XCTAssertEqual(decode([0x41, 0x80, 0x42]), [.text("A"), .unknown, .text("B")])
     }
 
+    /// Invalid-but-complete UTF-8: structurally complete sequences that are
+    /// semantically forbidden (overlong, surrogate, out-of-range).
+    func testInvalidButCompleteUTF8IsUnknown() {
+        XCTAssertEqual(decode([0xE0, 0x80, 0x80]), [.unknown])                    // overlong NUL
+        XCTAssertEqual(decode([0xED, 0xA0, 0x80]), [.unknown])                    // UTF-16 surrogate U+D800
+        XCTAssertEqual(decode([0xF4, 0x90, 0x80, 0x80]), [.unknown])              // out-of-range U+110000
+        XCTAssertEqual(decode([0x41, 0xE0, 0x80, 0x80, 0x42]), [.text("A"), .unknown, .text("B")])
+    }
+
     func testCarriageReturnAndLineFeed() {
         XCTAssertEqual(decode([0x0D]), [.enter([])])
         // Bare LF is its own event: the probe measured it as the newline chord

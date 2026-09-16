@@ -107,6 +107,10 @@ struct KeyDecoder: Sendable {
                     if let s = String(bytes: utf8Pending, encoding: .utf8) {
                         textRun.append(contentsOf: s.unicodeScalars)
                         capTextRun(into: &events)
+                    } else {
+                        // Invalid-but-complete (overlong, surrogate, out-of-range): fail loud (see rationale below).
+                        flushText(into: &events)
+                        events.append(.unknown)
                     }
                     utf8Pending.removeAll()
                     utf8Expected = 0
@@ -361,9 +365,11 @@ struct KeyDecoder: Sendable {
         case 0x48: events.append(.home)
         case 0x46: events.append(.end)
         case 0x50, 0x51, 0x52, 0x53:
-            // SS3 P/Q/R/S = F1–F4 in application mode. Inert at an input line
-            // exactly like their CSI `1;…P`-style twins already handled above,
-            // so they must not cost the user the mirror (spec §5.1, review A-2).
+            // SS3 P/Q/R/S = F1–F4 in application mode. SwiftTerm sends these for
+            // the bare function keys; they cannot edit the line so must not cost
+            // the user the mirror (spec §5.1, review A-2). The CSI `1;<mod>P..S`
+            // modifier dialect falls to `.unknown` (mirror lost, safe direction),
+            // and the `~` dialect is handled separately in `tildeEvent`.
             events.append(.ignored)
         default: events.append(.unknown)
         }
