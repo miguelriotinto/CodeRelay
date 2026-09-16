@@ -390,7 +390,7 @@ extension RelayMessageHandler {
 
     func handleResize(cols: UInt16, rows: UInt16, context: ChannelHandlerContext) {
         guard let pty = attachedPTY else {
-            // Deferred, not dropped: applied by the next attach/resume (see
+            // Deferred, not dropped: applied by the next attach/resume/create (see
             // `pendingGrid`). A resize racing a session switch is routine: the
             // client publishes the new selection before its RPCs, so the
             // incoming terminal lays out (and reports its grid) while
