@@ -13,10 +13,11 @@ import java.util.UUID
  * Protocol version constants. Ports `CodeRelayKit.protocolVersion` /
  * `minProtocolVersion`. The client sends [CURRENT] in `auth_request`; the server
  * echoes its version in `auth_success` and the controller rejects anything below
- * [MIN].
+ * [MIN]. Version 2 adds `capabilities` to `auth_success` and the `optimize_prompt` /
+ * `replace_prompt` RPCs.
  */
 object ProtocolVersions {
-    const val CURRENT = 1
+    const val CURRENT = 2
     const val MIN = 0
 }
 
@@ -71,6 +72,23 @@ class SessionController(private val connection: ConnectionSurface) {
      * "genuinely moved to another token".
      */
     var tokenId: String? = null
+        private set
+
+    /**
+     * The protocol version the server reported in `auth_success` (0 before
+     * authentication, and again after [resetAuth]). Together with
+     * [serverCapabilities] this decides whether the prompt-optimizer wand is
+     * available (spec §7.1) — see `PromptOptimizerController`.
+     */
+    var serverProtocolVersion: Int = 0
+        private set
+
+    /**
+     * The optional capability list from `auth_success`, as a set (empty when the
+     * server sent none, and again after [resetAuth]). Today's only member is
+     * [PromptOptimizerProtocol.CAPABILITY].
+     */
+    var serverCapabilities: Set<String> = emptySet()
         private set
 
     /**
@@ -165,6 +183,8 @@ class SessionController(private val connection: ConnectionSurface) {
     fun resetAuth() {
         isAuthenticated = false
         sessionId = null
+        serverProtocolVersion = 0
+        serverCapabilities = emptySet()
     }
 
     // MARK: - Authentication
@@ -188,6 +208,8 @@ class SessionController(private val connection: ConnectionSurface) {
                     )
                 }
                 isAuthenticated = true
+                serverProtocolVersion = serverVersion
+                serverCapabilities = response.capabilities?.toSet() ?: emptySet()
                 authenticatedGeneration = connection.generation
                 // Null against older servers; the coordinator's reconcile falls
                 // back to a safe "retain if still on the server" rule when unknown.
@@ -314,6 +336,53 @@ class SessionController(private val connection: ConnectionSurface) {
         }
     }
 
+    // MARK: - Prompt optimizer (spec §6, §7.1)
+
+    /**
+     * Asks the relay to rewrite the draft at the agent's input line for the
+     * attached [sessionId]. Waits [OPTIMIZER_TIMEOUT_MS] — the model call is the
+     * slow part — while every other RPC keeps [RESPONSE_TIMEOUT_MS]. Never logs
+     * any payload (spec §10).
+     */
+    suspend fun optimizePrompt(sessionId: UUID, shareScreen: Boolean): OptimizeOutcome {
+        val response = sendAndWaitForResponse(
+            ClientMessage.OptimizePrompt(sessionId, shareScreen),
+            expected = setOf("optimize_prompt_result"),
+            timeoutMs = OPTIMIZER_TIMEOUT_MS,
+        )
+        return when (response) {
+            is ServerMessage.OptimizePromptResult -> when (response.status) {
+                "ok" -> OptimizeOutcome.Ok(response.original)
+                "no_draft" -> OptimizeOutcome.NoDraft
+                "passthrough" -> OptimizeOutcome.Passthrough
+                "unconfigured" -> OptimizeOutcome.Unconfigured
+                else -> OptimizeOutcome.Failed(failureMessage(response.message))
+            }
+            is ServerMessage.Error -> throw unexpected(response.message)
+            else -> throw unexpected(response)
+        }
+    }
+
+    /** Undo: types [text] (the pre-optimize original) back over the input line. */
+    suspend fun replacePrompt(sessionId: UUID, text: String): ReplaceOutcome {
+        val response = sendAndWaitForResponse(
+            ClientMessage.ReplacePrompt(sessionId, text),
+            expected = setOf("replace_prompt_result"),
+            timeoutMs = OPTIMIZER_TIMEOUT_MS,
+        )
+        return when (response) {
+            is ServerMessage.ReplacePromptResult ->
+                if (response.status == "ok") ReplaceOutcome.Ok
+                else ReplaceOutcome.Failed(failureMessage(response.message))
+            is ServerMessage.Error -> throw unexpected(response.message)
+            else -> throw unexpected(response)
+        }
+    }
+
+    /** The server's message when it sent a non-empty one, else the spec §9 fallback. */
+    private fun failureMessage(message: String?): String =
+        message?.takeIf { it.isNotEmpty() } ?: OptimizerStrings.COULD_NOT_REWRITE
+
     // MARK: - Internal helpers
 
     /** Stamps a successful create/attach/resume against the current connection. */
@@ -365,7 +434,8 @@ class SessionController(private val connection: ConnectionSurface) {
 
     /**
      * Installs a response subscription, sends [message], and waits up to
-     * [RESPONSE_TIMEOUT_MS] for a reply whose type is in [expected] (or `error`).
+     * [timeoutMs] (default [RESPONSE_TIMEOUT_MS]; the optimizer RPCs pass
+     * [OPTIMIZER_TIMEOUT_MS]) for a reply whose type is in [expected] (or `error`).
      * The subscriber is installed **before** the send so a response that arrives
      * during/just after the send is held by the [ResumeGuard]'s deferred rather
      * than lost.
@@ -383,11 +453,13 @@ class SessionController(private val connection: ConnectionSurface) {
     private suspend fun sendAndWaitForResponse(
         message: ClientMessage,
         expected: Set<String>,
-    ): ServerMessage = rpcLock.withLock { awaitResponse(message, expected) }
+        timeoutMs: Long = RESPONSE_TIMEOUT_MS,
+    ): ServerMessage = rpcLock.withLock { awaitResponse(message, expected, timeoutMs) }
 
     private suspend fun awaitResponse(
         message: ClientMessage,
         expected: Set<String>,
+        timeoutMs: Long,
     ): ServerMessage {
         // A previous RPC on this socket timed out, so it still owes a reply that
         // this waiter would happily accept. Refuse until the socket is replaced.
@@ -425,7 +497,7 @@ class SessionController(private val connection: ConnectionSurface) {
             if (guard.isDelivered) return guard.await()
 
             // 4) Otherwise wait with a timeout.
-            return withTimeoutOrNull(RESPONSE_TIMEOUT_MS) { guard.await() }
+            return withTimeoutOrNull(timeoutMs) { guard.await() }
                 ?: throw SessionException("The operation timed out.")
         } finally {
             connection.removeSubscriber(subscriptionId)
@@ -459,6 +531,13 @@ class SessionController(private val connection: ConnectionSurface) {
 
     companion object {
         const val RESPONSE_TIMEOUT_MS = 10_000L
+
+        /**
+         * Waiter for `optimize_prompt` / `replace_prompt` only: the relay's model
+         * call takes seconds, so the ordinary 10 s would time out spuriously and
+         * poison the socket (spec §7.1).
+         */
+        const val OPTIMIZER_TIMEOUT_MS = 20_000L
 
         /** User-facing text for the desynchronized-socket refusal. */
         const val DESYNC_MESSAGE = "The connection to the server needs to be re-established."

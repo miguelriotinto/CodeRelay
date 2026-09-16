@@ -70,23 +70,6 @@ class WorkspaceViewModel(
     }
 
     /**
-     * Text-input overload for the speech pipeline. The continuous-listening engine
-     * and the push-to-talk engine both deliver a cleaned utterance as a `String`
-     * ([relay.speech.ContinuousListeningEngine.onUtteranceReady] /
-     * `OnDeviceSpeechEngine.stopAndProcess`), so this UTF-8-encodes the text and
-     * routes it through the existing raw-binary terminal-input path — exactly the
-     * iOS `vm.sendInput(text)` seam the MicButton calls.
-     *
-     * Blank/whitespace-only text is dropped (the wiring already blank-skips, but
-     * this guards the sink directly too) so a silent utterance never sends an empty
-     * frame to the PTY.
-     */
-    fun sendInput(text: String) {
-        val bytes = WorkspaceLogic.utteranceInputBytes(text) ?: return
-        sendInput(bytes)
-    }
-
-    /**
      * Forwards the terminal's measured grid to the server PTY so its window size
      * matches what is actually on screen. The real VT engine (the termlib
      * `Terminal` in [relay.feature.workspace.ui.TerminalHost]) auto-fits cols×rows

@@ -6,22 +6,23 @@ import androidx.security.crypto.MasterKey
 import java.util.UUID
 
 /**
- * Encrypted at-rest storage for per-connection authentication tokens and the
- * shared Bedrock bearer token.
+ * Encrypted at-rest storage for per-connection authentication tokens.
  *
  * Ports `AuthManager.swift` (CodeRelayClient). On iOS/macOS those secrets live
  * in the Keychain under service `com.coderemote.relay`, keyed by the connection
- * `UUID` string (the Bedrock token uses the well-known account
- * `com.clauderelay.bedrock.bearerToken`). On Android there is no system Keychain,
- * so we use [EncryptedSharedPreferences] (AES-256 GCM, master key in the Android
+ * `UUID` string. On Android there is no system Keychain, so we use
+ * [EncryptedSharedPreferences] (AES-256 GCM, master key in the Android
  * Keystore / hardware-backed when available) with the **same** logical names:
  *
  * - file/service name: `com.coderemote.relay`
  * - per-connection key: the connection [UUID] string (`UUID.toString()`)
- * - Bedrock token key: `com.clauderelay.bedrock.bearerToken`
  *
  * Keeping the string identities identical to Swift means this store is the
  * single source of truth for those names across the whole product.
+ *
+ * The removed on-device speech stack also kept an AWS Bedrock bearer token here
+ * under [BEDROCK_KEY]; [deleteBedrockToken] scrubs it (spec §10) and is the only
+ * thing that still touches that entry.
  */
 class TokenStore(context: Context) {
 
@@ -53,20 +54,13 @@ class TokenStore(context: Context) {
     }
 
     /**
-     * Saves the Bedrock bearer [token]. An empty string deletes the entry,
-     * mirroring `AuthManager.saveBedrockToken(_:)`.
+     * Removes the AWS Bedrock bearer token the speech stack used to store.
+     * Idempotent; called on every launch by `AppSettings`' speech-removal scrub.
      */
-    fun saveBedrockToken(token: String) {
-        // commit() not apply() — see saveToken(); a force-kill must not lose it.
-        if (token.isEmpty()) {
-            prefs.edit().remove(BEDROCK_KEY).commit()
-        } else {
-            prefs.edit().putString(BEDROCK_KEY, token).commit()
-        }
+    fun deleteBedrockToken() {
+        // commit() not apply() — see saveToken(); a force-kill must not resurrect it.
+        prefs.edit().remove(BEDROCK_KEY).commit()
     }
-
-    /** Returns the Bedrock bearer token, or `null` if none is stored. */
-    fun loadBedrockToken(): String? = prefs.getString(BEDROCK_KEY, null)
 
     companion object {
         /**
@@ -77,9 +71,9 @@ class TokenStore(context: Context) {
         const val SERVICE_NAME = "com.coderemote.relay"
 
         /**
-         * Bedrock bearer token key. Matches the iOS/macOS Keychain account
-         * (AuthManager.swift line 112:
-         * `private var bedrockAccount: String { "com.clauderelay.bedrock.bearerToken" }`).
+         * Legacy Bedrock bearer token key, kept only so [deleteBedrockToken] can
+         * scrub it. Matches the old iOS/macOS Keychain account
+         * `com.clauderelay.bedrock.bearerToken`.
          */
         const val BEDROCK_KEY = "com.clauderelay.bedrock.bearerToken"
     }

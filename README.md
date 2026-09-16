@@ -13,7 +13,7 @@ A remote terminal relay server and CLI over WebSocket, enabling secure terminal 
 - **Service management** - Run as a background service with launchd/brew services (macOS) or a systemd user unit (Linux)
 - **iOS client** - Native iOS app with terminal emulation, session tabs, and coding agent detection
 - **macOS client** - Native macOS app with menu-bar persistence, full keyboard shortcuts, and iOS feature parity
-- **Android client** - Native Android app (Jetpack Compose) with a real VT100 terminal, session tabs, recovery, and on-device speech (in test-build distribution; see [CodeRelayAndroid](CodeRelayAndroid/))
+- **Android client** - Native Android app (Jetpack Compose) with a real VT100 terminal, session tabs, recovery, and the prompt-optimizer wand (in test-build distribution; see [CodeRelayAndroid](CodeRelayAndroid/))
 - **Multi-agent detection** - Pluggable coding agent registry (Claude Code, Codex, opencode, Copilot CLI, Cursor Agent, Droid) with per-agent tab colors
 - **Device pairing** - `claude-relay setup` prints a QR carrying a single-use, 5-minute pairing code; the app redeems it for its own revocable per-device token
 - **Push notifications** - Optional APNs/FCM alerts when an agent finishes or needs input, coalesced per workspace (off by default)
@@ -39,7 +39,7 @@ The macOS server/CLI and the two Apple clients are built from one Swift package;
 
 **Android client (separate Gradle project, `CodeRelayAndroid/`):**
 
-- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and an on-device speech pipeline). It speaks the identical wire protocol to the same server. The APK is published with every [release](https://github.com/miguelriotinto/CodeRelay/releases) (`vX.Y.Z` tags, under its own **Android client** section) next to the Linux client and server; interim test builds also appear as `android-v*` pre-releases — see [`CodeRelayAndroid/RELEASE.md`](CodeRelayAndroid/RELEASE.md).
+- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and the same prompt-optimizer wand as the Apple clients). It speaks the identical wire protocol to the same server. The APK is published with every [release](https://github.com/miguelriotinto/CodeRelay/releases) (`vX.Y.Z` tags, under its own **Android client** section) next to the Linux client and server; interim test builds also appear as `android-v*` pre-releases — see [`CodeRelayAndroid/RELEASE.md`](CodeRelayAndroid/RELEASE.md).
 
 ## Installation
 
@@ -379,7 +379,6 @@ CodeRelay/
 │   ├── core-session/           # SessionCoordinator, RecoveryController, NetworkObserver (pure-JVM)
 │   ├── core-storage/           # Token / ownership / saved-connection stores
 │   ├── terminal/               # VT100 terminal (ConnectBot termlib) + session view model
-│   ├── speech/                 # Android on-device speech pipeline (Whisper/LLM)
 │   ├── feature-servers|workspace|settings/  # Compose UI features
 │   └── app/                    # Nav graph, MainActivity, connection wiring
 ├── Tests/

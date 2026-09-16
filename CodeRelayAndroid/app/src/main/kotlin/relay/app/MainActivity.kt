@@ -1,7 +1,9 @@
 package relay.app
 
+import android.Manifest
 import android.content.Intent
 import android.graphics.Color as AndroidColor
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -59,14 +61,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var networkObserver: NetworkObserver
 
     /**
-     * Speech runtime-permission launcher (RECORD_AUDIO + POST_NOTIFICATIONS on
-     * API 33+). [SpeechSession] triggers it via [SpeechPermissions.request] before
-     * the first mic interaction. Result is informational here — the mic flow is
-     * device-deferred, so the grant outcome is not blocking in this build.
+     * POST_NOTIFICATIONS runtime request (API 33+). Push (F1) needs the grant; the
+     * result feeds [FcmTokenBridge] so a live session re-syncs its registration.
      */
-    private val speechPermissionLauncher: ActivityResultLauncher<Array<String>> =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-            Log.i(TAG, "Speech permission grants: $grants")
+    private val notificationPermissionLauncher: ActivityResultLauncher<String> =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            FcmTokenBridge.setPermissionGranted(granted)
+            if (granted) FcmTokenBridge.onTokenRefreshed?.invoke()
         }
 
     /**
@@ -107,8 +108,15 @@ class MainActivity : ComponentActivity() {
         networkObserver = NetworkObserver(connectivitySource)
         connectivitySource.start()
 
-        // Register the speech runtime-permission requester for SpeechSession.
-        SpeechPermissions.requester = { speechPermissionLauncher.launch(SpeechPermissions.required) }
+        // First creation only. A display change (Huawei Fold outer↔inner) restarts
+        // the Activity despite our configChanges, as does a process-death restore, and
+        // re-prompting a user who already declined is what locks the OS into auto-deny.
+        if (savedInstanceState == null &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !PushSync.notificationsGranted(this)
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         // Resolve the auto-connect target (CodeRelayApp.swift auto-connect): when
         // enabled AND lastConnectedServerId resolves to a saved bookmark.
@@ -151,7 +159,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         connectivitySource.stop()
-        SpeechPermissions.requester = null
         appScope.cancel()
         super.onDestroy()
     }
@@ -220,7 +227,8 @@ class MainActivity : ComponentActivity() {
         // Then try session link (coderelay://session/<uuid>).
         val sessionId = DeepLinks.parseSessionId(data)
         if (sessionId == null) {
-            Log.w(TAG, "Ignoring unparseable deep link: $data")
+            val uri = intent.data
+            Log.w(TAG, "Ignoring unparseable deep link: ${uri?.scheme}://${uri?.host}${uri?.path}")
             return
         }
         Log.i(TAG, "Deep link → pending session $sessionId")

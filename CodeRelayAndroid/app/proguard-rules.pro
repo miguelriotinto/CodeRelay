@@ -81,17 +81,10 @@
 }
 
 # ----------------------------------------------------------------------------
-# ONNX Runtime (com.microsoft.onnxruntime → ai.onnxruntime API + JNI)
+# JNI (generic)
 # ----------------------------------------------------------------------------
-# Backs the Silero VAD + Smart-Turn detectors (:speech). The Java API classes
-# under ai.onnxruntime.** are bound to native libonnxruntime*.so via JNI; the
-# native side looks up Java fields/methods by name, so obfuscation breaks the
-# bridge. Keep the API surface and ALL native-method signatures everywhere.
--keep class ai.onnxruntime.** { *; }
--keep class com.microsoft.onnxruntime.** { *; }
--dontwarn ai.onnxruntime.**
--dontwarn com.microsoft.onnxruntime.**
-# JNI: never rename a class that declares native methods, and keep the methods.
+# Never rename a class that declares native methods, and keep the methods: the
+# native side (termlib's libvterm bridge below) looks them up by name.
 -keepclasseswithmembernames class * {
     native <methods>;
 }
