@@ -4,12 +4,12 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * Stores relay bearer tokens and the Bedrock API key in the desktop keyring.
+ * Stores relay bearer tokens in the desktop keyring.
  *
  * Linux counterpart of the Android `TokenStore`, which uses
  * `EncryptedSharedPreferences`. The public API is identical — `saveToken` /
- * `loadToken` / `deleteToken` / `saveBedrockToken` / `loadBedrockToken` — so
- * shared call sites compile against either.
+ * `loadToken` / `deleteToken` / `deleteBedrockToken` — so shared call sites
+ * compile against either.
  *
  * Backed by the **Secret Service** (D-Bus: gnome-keyring, KWallet, …) through
  * `secret-tool` from libsecret. Two properties of that choice are load-bearing:
@@ -27,8 +27,8 @@ import java.util.concurrent.TimeUnit
  *     ownership across tokens by design), so it is exactly as sensitive as an SSH key.
  *
  * Attribute schema matches Android's key layout so the two are conceptually the
- * same store: `service` is constant, `account` is the connection UUID (or the
- * literal `bedrock` for the API key).
+ * same store: `service` is constant and `account` is the connection UUID. The
+ * literal `bedrock` account is only ever *cleared* now — see [deleteBedrockToken].
  */
 class TokenStore(
     private val runner: CommandRunner = DefaultCommandRunner,
@@ -52,17 +52,18 @@ class TokenStore(
         clear(account = connectionId.toString().lowercase())
     }
 
-    /** Persists the AWS Bedrock bearer token used by the prompt enhancer. */
-    fun saveBedrockToken(token: String) {
-        if (token.isEmpty()) {
-            clear(account = BEDROCK_ACCOUNT)
-            return
-        }
-        store(account = BEDROCK_ACCOUNT, secret = token, label = "CodeRelay Bedrock token")
-    }
-
-    /** Returns the stored Bedrock token, or null. */
-    fun loadBedrockToken(): String? = lookup(account = BEDROCK_ACCOUNT)
+    /**
+     * Deletes the AWS Bedrock API key that builds before 2026-09 stored for the
+     * on-device prompt enhancer. The optimizer is a relay feature now, so the
+     * key has no reader; `AppEnvironment` calls this on every launch, off the
+     * AWT thread, with no completion flag — `secret-tool clear` exits 0 on a
+     * miss, so the steady state is one cheap no-op per launch.
+     *
+     * Never throws. Returns true when the keyring confirmed the entry is gone
+     * (removed or absent) and false when it could not be reached, so a locked
+     * keyring simply retries next launch.
+     */
+    fun deleteBedrockToken(): Boolean = clear(account = BEDROCK_ACCOUNT)
 
     /** True when a working Secret Service is reachable. Used to warn early, in Settings. */
     fun isKeyringAvailable(): Boolean =
@@ -109,11 +110,11 @@ class TokenStore(
         return result.stdout.trimEnd('\n', '\r').takeIf { it.isNotEmpty() }
     }
 
-    private fun clear(account: String) {
+    /** True when `secret-tool clear` exited 0 — which it does on a miss too. */
+    private fun clear(account: String): Boolean =
         runCatching {
-            runner.run(listOf(SECRET_TOOL, "clear", "service", SERVICE_NAME, "account", account), null)
-        }
-    }
+            runner.run(listOf(SECRET_TOOL, "clear", "service", SERVICE_NAME, "account", account), null).exitCode == 0
+        }.getOrDefault(false)
 
     /** Result of running an external command. */
     data class CommandResult(val exitCode: Int, val stdout: String, val stderr: String)
@@ -154,7 +155,7 @@ class TokenStore(
         /** Matches the Android store's service name so the two agree conceptually. */
         const val SERVICE_NAME = "com.coderemote.relay"
 
-        /** Account attribute for the Bedrock key; every other account is a connection UUID. */
+        /** Account attribute older builds used for the Bedrock key; every other account is a connection UUID. */
         const val BEDROCK_ACCOUNT = "bedrock"
     }
 }

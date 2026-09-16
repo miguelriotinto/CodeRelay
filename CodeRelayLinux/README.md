@@ -53,7 +53,7 @@ Runtime (present on a stock Omarchy install):
 
 | Tool | Package | Used for |
 |---|---|---|
-| `secret-tool` | `libsecret` | Relay + Bedrock tokens in the keyring |
+| `secret-tool` | `libsecret` | Relay tokens in the keyring |
 | `notify-send` | `libnotify` | Agent-finished / needs-input notifications |
 | `wl-copy` / `wl-paste` | `wl-clipboard` | Clipboard and PRIMARY selection (AWT fallback on X11) |
 
@@ -106,11 +106,10 @@ change**, and notifications work even with the server's `pushEnabled=false`
 
 ### Secrets
 
-Relay tokens and the Bedrock key go to the Secret Service via `secret-tool`,
-passed on **stdin** — never argv, which is world-readable through
-`/proc/<pid>/cmdline`. If the keyring is unavailable, writes fail loudly; there
-is deliberately no plaintext fallback. A relay token grants full session access
-to the user's machine.
+Relay tokens go to the Secret Service via `secret-tool`, passed on **stdin** —
+never argv, which is world-readable through `/proc/<pid>/cmdline`. If the keyring
+is unavailable, writes fail loudly; there is deliberately no plaintext fallback.
+A relay token grants full session access to the user's machine.
 
 ## Omarchy integration
 

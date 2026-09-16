@@ -779,6 +779,13 @@ class AppEnvironment private constructor(
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val deviceId = DeviceIdentifier.get()
             val tokens = TokenStore()
+            // Builds before 2026-09 kept an AWS Bedrock key for the on-device
+            // prompt enhancer under TokenStore.BEDROCK_ACCOUNT. The optimizer is
+            // a relay feature now, so the secret is deleted on every launch —
+            // idempotent, no completion flag, the same rule as Android's speech
+            // scrub. Dispatchers.IO because secret-tool can block up to 30 s on
+            // a locked keyring, and Default's pool is the coordinators' too.
+            scope.launch(Dispatchers.IO) { tokens.deleteBedrockToken() }
 
             lateinit var environment: AppEnvironment
             environment = AppEnvironment(
