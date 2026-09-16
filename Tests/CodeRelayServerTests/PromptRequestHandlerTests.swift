@@ -13,6 +13,21 @@ private struct NoopClipboardService: ClipboardService {
     func pasteImage(_ imageData: Data) -> Bool { true }
 }
 
+/// Counts round trips to the provider. Used with the *real* `PromptOptimizer`,
+/// so a test can assert that a guard ran before the socket rather than that a
+/// double happened to throw.
+private final class RecordingMessages: MessagesSending, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var sendCount: Int { lock.lock(); defer { lock.unlock() }; return count }
+
+    func send(body: Data) async throws -> Data {
+        lock.lock(); count += 1; lock.unlock()
+        return Data(#"{"content":[{"type":"tool_use","id":"t","name":"deliver_prompt","input":{"kind":"passthrough"}}],"stop_reason":"tool_use"}"#.utf8)
+    }
+}
+
 final class PromptRequestHandlerTests: XCTestCase {
 
     /// Every decoded outbound server message, in arrival order. `nextServerMessage`
@@ -467,7 +482,74 @@ final class PromptRequestHandlerTests: XCTestCase {
         try await assertNoFurtherMessages(fixture)
     }
 
+    /// T2 gap 2: the draft is the server's mirror of a terminal line, and nothing
+    /// on the way in bounds it — a paste of a log file makes it arbitrarily large.
+    /// `PromptOptimizer`'s 4 KB guard has to run before the socket, or a 5 MB
+    /// request buys a provider round trip (and a bill) to be told what the server
+    /// already knew. The second half is what makes the first non-vacuous: a draft
+    /// *at* the cap does reach the provider.
+    func testOversizedDraftIsRefusedBeforeTheProviderIsCalled() async throws {
+        let messages = RecordingMessages()
+        let optimizer = PromptOptimizer(client: messages, model: "claude-sonnet-5", sharesScreen: true)
+        let fixture = try await makeFixture(optimizer: optimizer)
+        addTeardownBlock { await self.cleanup(fixture) }
+
+        let tooLong = String(repeating: "a", count: PromptOptimizer.maxDraftBytes + 1)
+        await fixture.mock.setMockPromptContext(context(draft: tooLong))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: false), on: fixture)
+        let refusal = try await nextServerMessage(fixture)
+        XCTAssertEqual(refusal, .optimizePromptResult(status: "failed", message: "Prompt too long to optimize"))
+        XCTAssertEqual(messages.sendCount, 0, "the 4 KB guard must run before the socket")
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "a refused optimize types nothing")
+
+        await fixture.mock.setMockPromptContext(
+            context(draft: String(repeating: "a", count: PromptOptimizer.maxDraftBytes)))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: false), on: fixture)
+        let atCap = try await nextServerMessage(fixture)
+        XCTAssertEqual(atCap, .optimizePromptResult(status: "passthrough"))
+        XCTAssertEqual(messages.sendCount, 1, "a draft at exactly the cap is sent")
+    }
+
+    /// T2 gap 5: a terminated PTY is still *attached* — the fast "Session not
+    /// attached" guard passes and only the actor knows the fd is gone. The
+    /// refusal has to reach the waiter anyway (spec §9), and nothing may be
+    /// written to a dead session.
+    func testOptimizeOnATerminatedPTYAnswersFailedAndWritesNothing() async throws {
+        let fixture = try await makeFixture(optimizer: FakeOptimizer())
+        addTeardownBlock { await self.cleanup(fixture) }
+        await fixture.mock.setMockPromptContext(context(draft: "fix the build"))
+        await fixture.mock.terminate()
+
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: false), on: fixture)
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .optimizePromptResult(status: "failed",
+                                                   message: "Optimizer could not rewrite this prompt"))
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "a terminated PTY must not be written to")
+        let state = try await optimizeState(fixture)
+        XCTAssertFalse(state.inFlight, "the flag must clear even on the refusal path")
+        try await assertNoFurtherMessages(fixture)
+    }
+
     // MARK: replace_prompt
+
+    /// T2 gap 5, Undo half: the same terminated-but-attached state, reached by the
+    /// path with no model call in it.
+    func testReplaceOnATerminatedPTYAnswersFailedAndWritesNothing() async throws {
+        let fixture = try await makeFixture(optimizer: nil)
+        addTeardownBlock { await self.cleanup(fixture) }
+        await fixture.mock.setMockPromptContext(context(draft: "fix the build"))
+        await fixture.mock.terminate()
+
+        try await send(.replacePrompt(sessionId: fixture.sessionId, text: "fix the build"), on: fixture)
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .replacePromptResult(status: "failed",
+                                                   message: "Optimizer could not rewrite this prompt"))
+        let writes = await fixture.mock.recordedWrites()
+        XCTAssertTrue(writes.isEmpty, "a terminated PTY must not be written to")
+        try await assertNoFurtherMessages(fixture)
+    }
 
     func testReplaceUnattachedFails() async throws {
         let fixture = try await makeFixture(optimizer: nil, attached: false)
