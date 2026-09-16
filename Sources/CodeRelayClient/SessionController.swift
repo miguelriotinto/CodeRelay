@@ -288,6 +288,11 @@ public final class SessionController: ObservableObject {
     ///   - cols: The requesting terminal's grid, applied to the PTY before the
     ///     replay so the replayed bytes re-wrap at this device's width.
     ///   - rows: See `cols`. Both must be given for the grid to be sent.
+    ///
+    /// `cols`/`rows` are the device grid; the server resizes the PTY to it
+    /// before replaying and repainting. Pass the pane's last reported size
+    /// (`SharedSessionCoordinator.gridForRequest`); nil is allowed for callers
+    /// that have none, in which case the PTY keeps its current size.
     public func attachSession(id: UUID, cols: UInt16? = nil, rows: UInt16? = nil) async throws {
         let response = try await sendAndWaitForResponse(
             .sessionAttach(sessionId: id, cols: cols, rows: rows),
@@ -312,6 +317,11 @@ public final class SessionController: ObservableObject {
     ///   - cols: The requesting terminal's grid, applied to the PTY before the
     ///     replay (and before the post-replay repaint even with `skipReplay`).
     ///   - rows: See `cols`. Both must be given for the grid to be sent.
+    ///
+    /// `cols`/`rows` are the device grid; the server resizes the PTY to it
+    /// before replaying and repainting. Pass the pane's last reported size
+    /// (`SharedSessionCoordinator.gridForRequest`); nil is allowed for callers
+    /// that have none, in which case the PTY keeps its current size.
     public func resumeSession(id: UUID, skipReplay: Bool = false, cols: UInt16? = nil, rows: UInt16? = nil) async throws {
         let response = try await sendAndWaitForResponse(
             .sessionResume(sessionId: id, skipReplay: skipReplay, cols: cols, rows: rows),

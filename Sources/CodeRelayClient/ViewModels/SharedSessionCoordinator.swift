@@ -160,6 +160,14 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// Seeds `session_create` so the PTY forks at the right width. `nil` until
     /// the first terminal has been laid out.
     public private(set) var lastKnownTerminalSize: (cols: UInt16, rows: UInt16)?
+
+    /// The grid to put on attach/resume requests: the pane's last reported size
+    /// (all sessions on this device share the pane). Nil until the first layout.
+    /// Internal rather than private because `RecoveryController`'s restore is
+    /// one of the resumes that must carry it.
+    var gridForRequest: (cols: UInt16?, rows: UInt16?) {
+        (lastKnownTerminalSize?.cols, lastKnownTerminalSize?.rows)
+    }
     public var recoveryTask: Task<Void, Never>?
     public var isTornDown = false
     /// UserDefaults persistence for the device-independent auxiliary maps
@@ -726,11 +734,14 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             terminalCache.touch(id)
             terminalCache.enforceLimit(activeSessionId: activeSessionId)
 
+            let grid = gridForRequest
             try await withAuth { controller in
                 if previousId != nil {
                     try? await controller.detach()
                 }
-                try await controller.resumeSession(id: id, skipReplay: hasLiveTerminal)
+                try await controller.resumeSession(
+                    id: id, skipReplay: hasLiveTerminal, cols: grid.cols, rows: grid.rows
+                )
             }
 
             // force: bypass the debounce so the switched-to session refreshes
@@ -746,7 +757,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             if activeSessionId == id {
                 activeSessionId = previousId
                 if let previousId {
-                    try? await sessionController?.resumeSession(id: previousId)
+                    try? await sessionController?.resumeSession(
+                        id: previousId, cols: gridForRequest.cols, rows: gridForRequest.rows
+                    )
                     wireTerminalOutput(to: previousId)
                 }
             }
@@ -774,7 +787,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         guard !vm.isReloadingFromServer else { return }
         vm.beginServerReload()
         do {
-            try await withAuth { try await $0.resumeSession(id: id, skipReplay: false) }
+            let grid = gridForRequest
+            try await withAuth {
+                try await $0.resumeSession(id: id, skipReplay: false, cols: grid.cols, rows: grid.rows)
+            }
         } catch {
             // No replay is coming: release the buffering WITHOUT the clear, so
             // the pane keeps what it was showing rather than going blank.
@@ -804,12 +820,13 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     public func attachRemoteSession(id: UUID, serverName: String? = nil) async {
         guard !isRecovering else { return }
         let previousId = activeSessionId
+        let grid = gridForRequest
         do {
             let controller = try await withAuth { controller in
                 if previousId != nil {
                     try? await controller.detach()
                 }
-                try await controller.attachSession(id: id)
+                try await controller.attachSession(id: id, cols: grid.cols, rows: grid.rows)
                 return controller
             }
 
@@ -852,7 +869,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         } catch {
             recoveryLog.error("attachRemoteSession failed for \(id): \(error.localizedDescription, privacy: .public)")
             if let previousId {
-                try? await sessionController?.resumeSession(id: previousId)
+                try? await sessionController?.resumeSession(
+                    id: previousId, cols: gridForRequest.cols, rows: gridForRequest.rows
+                )
                 wireTerminalOutput(to: previousId)
             }
             if Self.isApplicationLevelError(error) {
