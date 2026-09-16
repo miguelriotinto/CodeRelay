@@ -202,6 +202,42 @@ class SessionCoordinatorTest {
             "a reload that skipped the replay would return no fresh copy at all")
     }
 
+    @Test
+    fun `switchToSession puts the last known grid on the resume`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.recordTerminalSize(104, 33)
+        coord.switchToSession(target)
+        advanceUntilIdle()
+
+        assertTrue("rpc:session_resume" in log)
+        assertEquals(104.toUShort(), surface.lastResumeCols,
+            "the switch resume must carry the pane grid so the server replays and repaints at this width")
+        assertEquals(33.toUShort(), surface.lastResumeRows)
+    }
+
+    @Test
+    fun `switchToSession before any layout sends no grid`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", FakeOwnershipStore(log), config)
+
+        coord.switchToSession(target)
+        advanceUntilIdle()
+
+        assertEquals(null, surface.lastResumeCols)
+        assertEquals(null, surface.lastResumeRows)
+    }
+
     // -------------------------------------------------------------------------
     // ATTACH failure → rollback: resume(previousId) + re-wire(previousId).
     // -------------------------------------------------------------------------

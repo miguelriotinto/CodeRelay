@@ -65,6 +65,12 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
     /** Captured skipReplay from the most recent SessionResume RPC (null if never sent). */
     var lastResumeSkipReplay: Boolean? = null
 
+    /** Captured grid from the most recent SessionResume / SessionAttach RPC. */
+    var lastResumeCols: UShort? = null
+    var lastResumeRows: UShort? = null
+    var lastAttachCols: UShort? = null
+    var lastAttachRows: UShort? = null
+
     override suspend fun send(message: ClientMessage) {
         log.add("rpc:${message.typeString}")
         if (message is ClientMessage.SessionCreate) {
@@ -73,6 +79,12 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
         }
         if (message is ClientMessage.SessionResume) {
             lastResumeSkipReplay = message.skipReplay
+            lastResumeCols = message.cols
+            lastResumeRows = message.rows
+        }
+        if (message is ClientMessage.SessionAttach) {
+            lastAttachCols = message.cols
+            lastAttachRows = message.rows
         }
         sendGate?.invoke(message)
         responder(message)?.let { response ->

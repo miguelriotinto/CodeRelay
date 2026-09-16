@@ -746,6 +746,10 @@ class SessionCoordinator(
         lastKnownTerminalSize = cols.toUShort() to rows.toUShort()
     }
 
+    /** The grid to put on attach/resume requests (the pane is shared by every session on this device). */
+    private val gridCols: UShort? get() = lastKnownTerminalSize?.first
+    private val gridRows: UShort? get() = lastKnownTerminalSize?.second
+
     // MARK: - Create (SharedSessionCoordinator.swift:388-421)
 
     suspend fun createNewSession() {
@@ -825,7 +829,7 @@ class SessionCoordinator(
 
             authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
-                sessionController.resumeSession(id, skipReplay = false)
+                sessionController.resumeSession(id, skipReplay = false, cols = gridCols, rows = gridRows)
             }
 
             _activeSessionId.value = id
@@ -865,7 +869,7 @@ class SessionCoordinator(
         if (vm.isReloadingFromServer.value) return
         vm.beginServerReload()
         try {
-            authCoordinator.withAuth { sessionController.resumeSession(id, skipReplay = false) }
+            authCoordinator.withAuth { sessionController.resumeSession(id, skipReplay = false, cols = gridCols, rows = gridRows) }
         } catch (e: Throwable) {
             // No replay is coming: release the buffering WITHOUT the clear, so the
             // pane keeps what it was showing rather than going blank.
@@ -900,7 +904,7 @@ class SessionCoordinator(
         try {
             authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
-                sessionController.attachSession(id)
+                sessionController.attachSession(id, gridCols, gridRows)
             }
 
             if (previousId != null && previousId != id) {
@@ -936,7 +940,7 @@ class SessionCoordinator(
         } catch (e: Throwable) {
             // Rollback to the previous session (SharedSessionCoordinator.swift:510-514).
             if (previousId != null) {
-                runCatching { sessionController.resumeSession(previousId) }
+                runCatching { sessionController.resumeSession(previousId, cols = gridCols, rows = gridRows) }
                 wireTerminalOutput(previousId)
             }
             if (isApplicationLevelError(e)) {
@@ -1131,7 +1135,7 @@ class SessionCoordinator(
     private suspend fun resumeActiveForRecovery() {
         val activeId = _activeSessionId.value ?: return
         terminalCache.view(activeId)?.resetForReplay()
-        sessionController.resumeSession(activeId, skipReplay = false)
+        sessionController.resumeSession(activeId, skipReplay = false, cols = gridCols, rows = gridRows)
         wireTerminalOutput(activeId)
     }
 
@@ -1216,7 +1220,7 @@ class SessionCoordinator(
             var resumed = false
             try {
                 authCoordinator.withAuth {
-                    sessionController.resumeSession(activeId, skipReplay = false)
+                    sessionController.resumeSession(activeId, skipReplay = false, cols = gridCols, rows = gridRows)
                 }
                 // Re-wire AFTER the resume (recovery semantics), so the replayed
                 // scrollback routes to the active VM's live output handler.

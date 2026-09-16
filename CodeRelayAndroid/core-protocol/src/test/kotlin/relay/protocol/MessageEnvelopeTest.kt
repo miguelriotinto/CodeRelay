@@ -65,6 +65,30 @@ class MessageEnvelopeTest {
         )
     }
 
+    @Test fun `encode session_attach with grid`() {
+        val id = UUID.fromString("11111111-2222-3333-4444-555555555555")
+        assertEquals(
+            """{"type":"session_attach","payload":{"sessionId":"11111111-2222-3333-4444-555555555555","cols":100,"rows":30}}""",
+            MessageEnvelope.encodeClient(ClientMessage.SessionAttach(id, cols = 100u, rows = 30u)),
+        )
+    }
+
+    @Test fun `encode session_attach omits grid when null`() {
+        val id = UUID.fromString("11111111-2222-3333-4444-555555555555")
+        assertEquals(
+            """{"type":"session_attach","payload":{"sessionId":"11111111-2222-3333-4444-555555555555"}}""",
+            MessageEnvelope.encodeClient(ClientMessage.SessionAttach(id)),
+        )
+    }
+
+    @Test fun `encode session_resume with skipReplay and grid`() {
+        val id = UUID.fromString("11111111-2222-3333-4444-555555555555")
+        assertEquals(
+            """{"type":"session_resume","payload":{"sessionId":"11111111-2222-3333-4444-555555555555","skipReplay":true,"cols":80,"rows":24}}""",
+            MessageEnvelope.encodeClient(ClientMessage.SessionResume(id, skipReplay = true, cols = 80u, rows = 24u)),
+        )
+    }
+
     // MARK: - Decoding (wire → server)
 
     @Test fun `decode auth_success`() {
