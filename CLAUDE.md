@@ -367,7 +367,7 @@ The macOS-only surfaces and their Linux replacements (full table in
   `SecRandomCopyBytes`; `RelayLogLevel` replaces `OSLogType` (os.Logger kept
   under `canImport(os)`, stderr → journald on Linux); `TerminalQRRenderer` uses
   CoreImage on macOS and `swift-qrcode-generator` (Linux-only dep) otherwise.
-- **Integration tests** — the 19 tests that drive the server through
+- **Integration tests** — the 20 tests that drive the server through
   `CodeRelayClient` are macOS-only; `TestWebSocketClient` (raw NIO) re-runs the
   same scenarios on both platforms (`WireIntegrationTests`,
   `WireRequestReplyTests`).
