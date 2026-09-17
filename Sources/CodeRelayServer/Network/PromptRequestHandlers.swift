@@ -96,6 +96,9 @@ extension RelayMessageHandler {
                         handler.optimizeWorkTask = nil
                         handler.optimizeGeneration &+= 1
                         handler.optimizeInFlight = false
+                        // `draftKnown == false` means the mirror was lost, not that
+                        // the line is empty — the one outcome that used to log nothing.
+                        RelayLogger.log(.debug, category: "optimizer", "optimize_prompt no_draft (draftKnown=\(promptContext.draftKnown))")
                         handler.sendServerMessage(.optimizePromptResult(status: "no_draft"), context: ctx.value)
                     }
                     return

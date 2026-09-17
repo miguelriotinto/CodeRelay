@@ -28,7 +28,7 @@ enum KeyEvent: Equatable, Sendable {
     /// and do nothing for `CSI 13;5u`; it maps to `InputKey.ctrlJ`.
     case lineFeed
     /// A sequence that is provably inert at an input line: mouse reports,
-    /// DA/DSR/CPR replies, F-keys and other functional kitty codes, kitty
+    /// focus-in/out reports, DA/DSR/CPR replies, F-keys and other functional kitty codes, kitty
     /// release events, `ESC ESC`, a well-formed OSC/DCS string. The tracker
     /// leaves the draft alone.
     case ignored
@@ -263,6 +263,13 @@ struct KeyDecoder: Sendable {
             default: return .end                                // 'F'
             }
         case 0x52: return .ignored                              // 'R': CPR/DSR reply, never a key
+        case 0x49, 0x4F where params.isEmpty:
+            // 'I' / 'O': focus-in / focus-out reports (DECSET 1004). Claude Code
+            // enables the mode at startup and SwiftTerm replies with `CSI I` at
+            // once, then on every first-responder change (iOS keyboard show/hide).
+            // A notification, never a keystroke — as `.unknown` it cost the
+            // mirror on every live claude session and every optimize was `no_draft`.
+            return .ignored
         default: return .unknown
         }
     }
