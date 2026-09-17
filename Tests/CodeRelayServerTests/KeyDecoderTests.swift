@@ -304,6 +304,19 @@ final class KeyDecoderTests: XCTestCase {
         XCTAssertEqual(decode(bytes("\u{1B}[?1;2c")), [.ignored])        // DA reply
     }
 
+    /// Focus reports (DECSET 1004). Claude Code enables the mode at startup and
+    /// SwiftTerm answers with `CSI I` at once, then `CSI I`/`CSI O` on every
+    /// first-responder change (iOS keyboard show/hide, tapping another control).
+    /// They are terminal-to-application notifications, never keystrokes, so they
+    /// must not cost the mirror — before this test they fell to `.unknown` and
+    /// every optimize on a live claude session answered `no_draft`.
+    func testFocusReportsStayIgnored() {
+        XCTAssertEqual(decode(bytes("\u{1B}[I")), [.ignored])   // focus in
+        XCTAssertEqual(decode(bytes("\u{1B}[O")), [.ignored])   // focus out
+        // Typed text around a focus change survives intact.
+        XCTAssertEqual(decode(bytes("hi\u{1B}[Othere")), [.text("hi"), .ignored, .text("there")])
+    }
+
     /// PageUp/PageDown scroll the transcript in both measured agents and never
     /// touch the input line, with or without a modifier field. F13… ride the same
     /// tilde codes as F1…F12 and are just as inert. Insert is *not* in that set:
