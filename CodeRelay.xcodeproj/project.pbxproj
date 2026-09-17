@@ -152,8 +152,8 @@
 		D130F01F66F52B7E7E56E837 /* MenuBarDropdown.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarDropdown.swift; sourceTree = "<group>"; };
 		D9AEC8A26328D8935405B414 /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		DA2E1F5AF84C6C21754F2B59 /* SleepWakeObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepWakeObserver.swift; sourceTree = "<group>"; };
-		DD8D0252EAB00B4A8D268E18 /* CodeRelay-release */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "CodeRelay-release"; path = .; sourceTree = SOURCE_ROOT; };
 		DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertFieldSelectionTests.swift; sourceTree = "<group>"; };
+		E46CD949787B69852ABD4480 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		E6C08F3358A1896291225B83 /* KeyCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyCaptureView.swift; sourceTree = "<group>"; };
 		EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectAllOnBeginEditing.swift; sourceTree = "<group>"; };
 		EF2A47966BF7049A7B54EE51 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -262,7 +262,7 @@
 		80AFF5938A3A7929BC7E4CA9 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				DD8D0252EAB00B4A8D268E18 /* CodeRelay-release */,
+				E46CD949787B69852ABD4480 /* CodeRelay */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -651,7 +651,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = CodeRelayMac/CodeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				INFOPLIST_FILE = CodeRelayMac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
@@ -830,7 +830,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = CodeRelayApp/CodeRelayApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 184;
+				CURRENT_PROJECT_VERSION = 185;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = CodeRelayApp/Info.plist;
@@ -861,7 +861,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = CodeRelayMac/CodeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 105;
+				CURRENT_PROJECT_VERSION = 106;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				INFOPLIST_FILE = CodeRelayMac/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Code[Relay]";
@@ -887,7 +887,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = CodeRelayApp/CodeRelayApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 184;
+				CURRENT_PROJECT_VERSION = 185;
 				DEVELOPMENT_TEAM = T9WF95GC9T;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = CodeRelayApp/Info.plist;

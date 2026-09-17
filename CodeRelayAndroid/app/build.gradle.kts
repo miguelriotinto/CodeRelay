@@ -37,11 +37,11 @@ android {
         applicationId = "com.singular.coderelay"
         minSdk = 28
         targetSdk = 34
-        // M51 version. Milestone naming ("0.3-m51") chosen over a bare "1.0"
+        // M52 version. Milestone naming ("0.3-m52") chosen over a bare "1.0"
         // so the version string stays honest about the pre-1.0 milestone cadence;
         // the App "About" section reads this via BuildConfig (buildConfig = true).
-        versionCode = 50
-        versionName = "0.3-m51"
+        versionCode = 51
+        versionName = "0.3-m52"
     }
 
     buildFeatures {
