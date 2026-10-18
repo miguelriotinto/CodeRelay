@@ -1,21 +1,42 @@
 package relay.feature.workspace.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.splineBasedDecay
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.ViewCompat
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import org.connectbot.terminal.Terminal
 import relay.terminal.RelayTerminalController
 import relay.terminal.TerminalPalette
 import relay.terminal.TerminalSessionVm
+import relay.terminal.WheelTravelBank
+import kotlin.math.abs
 
 /** ARGB int (TerminalPalette) → Compose [Color]. */
 private fun Int.toComposeColor(): Color = Color(this)
@@ -120,6 +141,15 @@ fun TerminalHost(
     // its input view. This is the platform-level API that drives the same IME
     // termlib's ImeInputView uses (`InputMethodManager.showSoftInput`).
     val view = LocalView.current
+    val showKeyboard: () -> Unit = {
+        ViewCompat.getWindowInsetsController(view)?.show(WindowInsetsCompat.Type.ime())
+    }
+
+    // Our handle on termlib's IME input focus. termlib's own tap does
+    // `focusRequester.requestFocus()` then `onTerminalTap()`; while the wheel
+    // overlay below owns touch, its tap has to do the same two things, so the
+    // requester is ours to share rather than termlib's private default.
+    val terminalFocus = remember(vm) { FocusRequester() }
 
     // Session-name tap → force a full-grid repaint to clear rare glyph overlap.
     // We drive it through the engine's damage-based redraw (which re-emits a fresh
@@ -181,20 +211,214 @@ fun TerminalHost(
     //   focus and raises the soft keyboard (termlib requests focus on a fresh
     //   composition), so the tap-to-redraw path goes through `engine.redraw()` above
     //   instead, which repaints without rebuilding this subtree.
-    key(vm) {
-        Terminal(
-            terminalEmulator = engine.emulator,
-            keyboardEnabled = true,
-            // termlib focuses its ImeInputView on tap; we then force the platform IME
-            // up (it stays down on tap after a manual swipe-down otherwise — see above).
-            onTerminalTap = {
-                ViewCompat.getWindowInsetsController(view)?.show(WindowInsetsCompat.Type.ime())
-            },
-            backgroundColor = TerminalPalette.background.toComposeColor(),
-            foregroundColor = TerminalPalette.foreground.toComposeColor(),
-            modifier = modifier
-                .fillMaxSize()
-                .background(TerminalPalette.background.toComposeColor()),
-        )
+    Box(modifier = modifier.fillMaxSize()) {
+        key(vm) {
+            Terminal(
+                terminalEmulator = engine.emulator,
+                keyboardEnabled = true,
+                focusRequester = terminalFocus,
+                // termlib focuses its ImeInputView on tap; we then force the platform IME
+                // up (it stays down on tap after a manual swipe-down otherwise — see above).
+                onTerminalTap = showKeyboard,
+                backgroundColor = TerminalPalette.background.toComposeColor(),
+                foregroundColor = TerminalPalette.foreground.toComposeColor(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(TerminalPalette.background.toComposeColor()),
+            )
+        }
+
+        // A one-finger swipe is a wheel report while a program tracks the mouse,
+        // and termlib's own gesture otherwise — the iOS rule
+        // (`RelayTerminalView.mouseModeChanged`), by a different mechanism. See
+        // [WheelSwipeOverlay] for why it must be a SIBLING that exists only while
+        // tracking is on, rather than a modifier on the terminal.
+        if (engine.mouseTracking.value) {
+            WheelSwipeOverlay(
+                engine = engine,
+                onTap = {
+                    runCatching { terminalFocus.requestFocus() }
+                    showKeyboard()
+                },
+                modifier = Modifier.matchParentSize(),
+            )
+        }
     }
+}
+
+/**
+ * Owns all touch on the terminal while the program is tracking the mouse,
+ * turning vertical finger travel into wheel reports via
+ * [TermlibTerminalEngine.sendWheel], with a fling, and a plain tap into
+ * focus + keyboard exactly as termlib's own tap does.
+ *
+ * ## Why a sibling overlay and not a modifier
+ *
+ * Three facts about termlib 0.1.0 force this shape:
+ *
+ * 1. Claude Code runs in the **alternate screen** (`CSI ?1049h`), which has no
+ *    scrollback by definition. termlib's swipe scrolls its *local* scrollback —
+ *    the primary screen's history from before the program launched — so in an
+ *    agent session a swipe either does nothing or drags stale shell lines over
+ *    the agent's UI, and the transcript never moves. What the agent listens for
+ *    is a **wheel report** (buttons 4/5, SGR-encoded under `CSI ?1006h`), which
+ *    termlib never sends: it has no mouse path at all (libvterm's
+ *    `vterm_mouse_button` is not even linked into its `.so`).
+ * 2. termlib's gesture starts with `awaitFirstDown(requireUnconsumed = false)`,
+ *    so a `pointerInput` modifier layered on the terminal cannot take the
+ *    gesture away by consuming it. If termlib sees the moves it scrolls the
+ *    local scrollback; if it sees them consumed it stays "undetermined", and
+ *    then its 400 ms long-press starts a text selection and its release fires
+ *    the tap, which raises the keyboard on every swipe.
+ * 3. Compose dispatches a pointer only to the **topmost sibling** that hits.
+ *    A sibling drawn above the terminal with its own `pointerInput` therefore
+ *    receives the whole gesture and termlib receives nothing — no selection,
+ *    no tap, no local scroll. Composed only while `mouseTracking` is true, it
+ *    costs a plain shell (where the scrollback really is local) exactly nothing:
+ *    termlib keeps every gesture it has today, including local scrolling,
+ *    pinch zoom and long-press selection.
+ *
+ * The trade-off this accepts: while a program tracks the mouse, long-press
+ * selection and pinch zoom are not available on the terminal, because the
+ * gesture cannot be handed back to termlib mid-flight. Upstream termlib has an
+ * open PR (connectbot/termlib#259) that forks the gesture *inside* termlib on
+ * `mouseTracking` and keeps long-press local; when that ships, this overlay and
+ * the client-side mode tracker should be deleted in favour of it.
+ *
+ * Reports go to the cell under the **initial** touch, as upstream chose: a
+ * program tracking motion (`?1003h`, which Claude Code enables) would otherwise
+ * see a motion report for every row the finger crossed. Direction follows iOS
+ * and macOS: dragging down pulls earlier lines into view, i.e. wheel UP.
+ */
+@Composable
+private fun WheelSwipeOverlay(
+    engine: TermlibTerminalEngine,
+    onTap: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val currentOnTap by rememberUpdatedState(onTap)
+    Box(
+        modifier = modifier.pointerInput(engine) {
+            val touchSlop = viewConfiguration.touchSlop
+            val longPressTimeoutMillis = viewConfiguration.longPressTimeoutMillis
+            // Android's ViewConfiguration minimum fling velocity (50 dp/s);
+            // Compose's ViewConfiguration does not expose it.
+            val minFlingVelocity = 50.dp.toPx()
+            val fallbackRowHeight = 16.dp.toPx()
+            val decay = splineBasedDecay<Float>(this)
+            var flingJob: Job? = null
+
+            coroutineScope {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    // The next touch cancels an in-flight fling, as a scroll view does.
+                    flingJob?.cancel()
+                    flingJob = null
+
+                    val grid = engine.gridMetrics(size, fallbackRowHeight)
+                    val anchorCol = grid.col(down.position.x)
+                    val anchorRow = grid.row(down.position.y)
+                    val bank = WheelTravelBank()
+                    val velocity = VelocityTracker()
+                    velocity.addPosition(down.uptimeMillis, down.position)
+
+                    var dragging = false
+                    var pending = Offset.Zero
+                    var upTime = down.uptimeMillis
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) {
+                            upTime = change.uptimeMillis
+                            change.consume()
+                            break
+                        }
+                        velocity.addPointerInputChange(change)
+                        val delta = change.positionChange()
+                        if (!dragging) {
+                            pending += delta
+                            if (pending.getDistance() > touchSlop) {
+                                dragging = true
+                                // Bank the whole pre-slop travel so the first
+                                // notch arrives as soon as the drag is recognised.
+                                engine.sendWheel(
+                                    bank.take(pending.y, grid.rowHeight, MAX_NOTCHES_PER_SAMPLE, carryExcess = false),
+                                    anchorCol,
+                                    anchorRow,
+                                )
+                            }
+                        } else {
+                            engine.sendWheel(
+                                bank.take(delta.y, grid.rowHeight, MAX_NOTCHES_PER_SAMPLE, carryExcess = false),
+                                anchorCol,
+                                anchorRow,
+                            )
+                        }
+                        change.consume()
+                    }
+
+                    if (!dragging) {
+                        // A tap. A press held past the long-press timeout is not
+                        // one — termlib would have started a selection — so it
+                        // does nothing rather than raise the keyboard.
+                        if (upTime - down.uptimeMillis < longPressTimeoutMillis) currentOnTap()
+                        return@awaitEachGesture
+                    }
+
+                    val verticalVelocity = velocity.calculateVelocity().y
+                    if (abs(verticalVelocity) < minFlingVelocity) return@awaitEachGesture
+                    flingJob = launch {
+                        var last = 0f
+                        Animatable(0f).animateDecay(verticalVelocity, decay) {
+                            val step = value - last
+                            last = value
+                            engine.sendWheel(
+                                bank.take(step, grid.rowHeight, MAX_NOTCHES_PER_SAMPLE, carryExcess = true),
+                                anchorCol,
+                                anchorRow,
+                            )
+                        }
+                        // Drain notches the per-frame cap carried past the end
+                        // of the decay, one capped burst per frame.
+                        while (bank.hasWholeNotch(grid.rowHeight)) {
+                            engine.sendWheel(
+                                bank.take(0f, grid.rowHeight, MAX_NOTCHES_PER_SAMPLE, carryExcess = true),
+                                anchorCol,
+                                anchorRow,
+                            )
+                            withFrameNanos { }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+/**
+ * Most wheel notches sent per pointer sample or animation frame. Programs
+ * commonly throttle a flood of wheel reports, so a fast fling that sends every
+ * notch can scroll *less* far than one that sends a few; this is the value
+ * upstream termlib settled on against Claude Code (connectbot/termlib#259).
+ */
+private const val MAX_NOTCHES_PER_SAMPLE = 8
+
+/**
+ * Pixel geometry of the terminal grid, derived from the overlay's size and the
+ * grid termlib reported — the same self-correcting derivation iOS uses for
+ * `wheelRowHeight`, so font-size changes and rotation need no extra plumbing.
+ * [fallbackRowHeight] only matters before the first resize report.
+ */
+private class GridMetrics(val cellWidth: Float, val rowHeight: Float, val cols: Int, val rows: Int) {
+    fun col(x: Float): Int = if (cellWidth > 0f) (x / cellWidth).toInt().coerceIn(0, maxOf(0, cols - 1)) else 0
+    fun row(y: Float): Int = if (rowHeight > 0f) (y / rowHeight).toInt().coerceIn(0, maxOf(0, rows - 1)) else 0
+}
+
+private fun TermlibTerminalEngine.gridMetrics(size: IntSize, fallbackRowHeight: Float): GridMetrics {
+    val cols = cols
+    val rows = rows
+    val rowHeight = if (rows > 0 && size.height > 0) size.height.toFloat() / rows else fallbackRowHeight
+    val cellWidth = if (cols > 0 && size.width > 0) size.width.toFloat() / cols else 0f
+    return GridMetrics(cellWidth, if (rowHeight >= 1f) rowHeight else fallbackRowHeight, cols, rows)
 }

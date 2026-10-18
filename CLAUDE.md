@@ -152,9 +152,28 @@ keys to zsh and recall shell history.
 
 `gestureRecognizerShouldBegin` is `UIView`'s hook, not the delegate's; the two
 share a selector and `UIScrollView` implements it for its own pan, so every other
-recognizer must fall through to `super`. Android's termlib engine takes input only
-from the keyboard and has no mouse path at all, so it still has gap (1). Guarded
-by `CodeRelayAppTests/TerminalSwipeScrollTests`.
+recognizer must fall through to `super`. Guarded by
+`CodeRelayAppTests/TerminalSwipeScrollTests`.
+
+**Android applies the same rule by a different mechanism.** termlib 0.1.0 has no
+mouse path (libvterm's `vterm_mouse_button` is not even linked into its `.so`)
+and does not surface `VTERM_PROP_MOUSE`, so `TermlibTerminalEngine` mirrors the
+program's DECSET 1000/1002/1003 (+1006/1015 encoding) off the output stream with
+`relay.terminal.MouseTrackingTracker` and encodes the reports itself
+(`WheelReport`, `WheelTravelBank` — same bytes SwiftTerm emits). The gesture
+cannot be taken from termlib by a modifier: its machine starts with
+`awaitFirstDown(requireUnconsumed = false)`, so consumed moves leave it
+"undetermined" and its 400 ms long-press then selects text while its release
+raises the keyboard. `TerminalHost` therefore composes a **sibling overlay**
+(`WheelSwipeOverlay`) above the terminal *only while tracking is on*; Compose
+dispatches a pointer to the topmost hit sibling only, so termlib sees no touch in
+that mode and keeps every gesture (local scroll, pinch, long-press selection) in
+a plain shell. Trade-off: no long-press selection while a program tracks the
+mouse. Upstream connectbot/termlib#259 does this inside termlib; when it ships,
+delete the overlay and tracker in favour of a version bump. Verified on an
+emulator: with tracking on a swipe reaches the PTY as `CSI < 64|65 ; col ; row M`
+at the initial-touch cell; with it off the same swipe scrolls termlib's local
+scrollback and types nothing.
 
 ### Connection Health & Quality Monitoring
 
