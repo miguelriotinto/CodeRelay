@@ -1,11 +1,15 @@
 package relay.feature.workspace.ui
 
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 import org.connectbot.terminal.TerminalDimensions
 import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
+import relay.terminal.MouseTrackingTracker
 import relay.terminal.TerminalEngine
 import relay.terminal.TerminalPalette
+import relay.terminal.WheelReport
 
 /**
  * The real VT100/xterm [TerminalEngine], backed by ConnectBot's `termlib`
@@ -105,7 +109,53 @@ class TermlibTerminalEngine(
 
     override fun feedOutput(bytes: ByteArray) {
         if (bytes.isEmpty()) return
+        // Mirror the program's mouse-tracking modes off the same bytes libvterm
+        // is about to parse. termlib 0.1.0 never surfaces VTERM_PROP_MOUSE, and
+        // the host needs it to decide who owns a swipe (see [mouseTracking]).
+        mouseTracker.feed(bytes)
+        if (_mouseTracking.value != mouseTracker.isTracking) {
+            _mouseTracking.value = mouseTracker.isTracking
+        }
         emulator.writeInput(bytes)
+    }
+
+    /**
+     * Whether the program in this session has mouse tracking on (DECSET
+     * 1000/1002/1003). While true, a one-finger swipe belongs to the program as
+     * wheel reports, not to termlib's local scrollback — Claude Code runs in the
+     * alternate screen, which has no scrollback, so its transcript only moves when
+     * it is *told* to scroll. iOS keys the same decision on SwiftTerm's
+     * `mouseMode`; see [TerminalHost] for how the host acts on it.
+     *
+     * Compose state, written only from [feedOutput] on the main thread.
+     */
+    val mouseTracking: State<Boolean> get() = _mouseTracking
+    private val _mouseTracking = mutableStateOf(false)
+    private val mouseTracker = MouseTrackingTracker()
+
+    /**
+     * Sends [notches] wheel reports at grid cell ([col], [row]) down the keystroke
+     * path, in whatever encoding the program selected. Positive notches are wheel
+     * UP (the finger moved down, pulling earlier content into view), negative are
+     * wheel DOWN. A no-op unless the program is tracking the mouse, so a report
+     * can never leak into a plain shell as typed text.
+     *
+     * Returns the number sent (signed), which is what the host's bookkeeping and
+     * any test assert against.
+     */
+    fun sendWheel(notches: Int, col: Int, row: Int): Int {
+        if (notches == 0 || !mouseTracker.isTracking) return 0
+        val sink = onInput ?: return 0
+        val clampedCol = col.coerceIn(0, maxOf(0, _cols - 1))
+        val clampedRow = row.coerceIn(0, maxOf(0, _rows - 1))
+        val report = WheelReport.encode(up = notches > 0, col = clampedCol, row = clampedRow, encoding = mouseTracker.encoding)
+        val count = kotlin.math.abs(notches)
+        // One frame for the burst rather than one send per notch: the relay
+        // write path is per-message, and a fling can be many notches.
+        val burst = ByteArray(report.size * count)
+        for (i in 0 until count) report.copyInto(burst, i * report.size)
+        sink(burst)
+        return notches
     }
 
     /**
