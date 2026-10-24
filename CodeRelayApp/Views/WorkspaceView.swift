@@ -33,6 +33,15 @@ struct RecoveryOverlay: View {
             .padding(.bottom, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Centre on the sheet's full width, not its safe area. On iPhone Duo
+        // the status bar column is carved out of a sheet's safe area (it is
+        // where the system would put a sheet's vertical toolbar buttons), so
+        // a safe-area-centred stack sat ~85 pt left of the sheet's visual
+        // centre on the closed display. This sheet has nothing in that column,
+        // and in every posture its content is clear of the status pill: below
+        // it when closed in portrait, no status bar when closed in landscape,
+        // and a centred floating card when open.
+        .ignoresSafeArea(.container, edges: .horizontal)
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
     }
