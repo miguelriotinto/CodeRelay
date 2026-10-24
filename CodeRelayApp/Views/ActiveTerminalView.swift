@@ -19,7 +19,6 @@ struct ActiveTerminalView: View {
     /// Driven by `TerminalReloadFade`.
     @State private var reloadCover: Double = 0
     @ObservedObject private var settings = AppSettings.shared
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     /// Wand + keyboard toggle, floated over the terminal's bottom-trailing corner.
     private var floatingButtons: some View {
@@ -89,11 +88,22 @@ struct ActiveTerminalView: View {
                         .padding(.trailing, 16)
                         .padding(.bottom, 12)
                 }
+                // The terminal bleeds under the horizontal safe-area insets —
+                // the notch in iPhone landscape, and on iPhone Duo the column
+                // along one edge where the system draws the status bar as a
+                // frosted pill (and, on the closed display, where the camera
+                // sits). Netflix does the same with its artwork. For a terminal
+                // the price is explicit and accepted: the few cells under the
+                // pill and the camera are unreadable, in exchange for ~8 more
+                // columns over the whole height. The top bar does NOT bleed
+                // (see below), so no control can land under the camera.
+                .ignoresSafeArea(.container, edges: .horizontal)
 
                 if showKeyBar {
                     KeyboardAccessory { data in
                         vm.sendInput(data)
                     }
+                    .ignoresSafeArea(.container, edges: .horizontal)
                 }
             } else {
                 ContentUnavailableView(
@@ -181,17 +191,10 @@ struct ActiveTerminalView: View {
             .background(.black)
         }
         .background(.black)
-        // Horizontal safe areas are honoured whenever the status bar can be
-        // showing. On iPhone Duo the status bar lives in a column along the
-        // right edge of BOTH displays, reported as a horizontal safe-area
-        // inset (asymmetric: it can sit on the left in landscape and Split
-        // View); running the terminal under it put the rightmost columns under
-        // the clock. In a compact-height layout — a phone-sized display in
-        // landscape, including the closed Duo — UIKit hides the status bar,
-        // and the reserved column is then dead space at the edge of a wide
-        // terminal, so the insets are ignored there exactly as this view
-        // always did beside the notch on a landscape iPhone.
-        .ignoresSafeArea(.container, edges: verticalSizeClass == .compact ? .horizontal : [])
+        // Deliberately NO horizontal `ignoresSafeArea` at this level: it would
+        // also widen the `safeAreaInset` top bar above, putting the session
+        // name and QR button under the Duo's status pill — or under the outer
+        // camera when closed. The terminal and key bar opt in individually.
         .preferredColorScheme(.dark)
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: coordinator.activeSessionId) { _, _ in

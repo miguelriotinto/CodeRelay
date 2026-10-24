@@ -40,8 +40,12 @@ no longer bundles the Metal toolchain SwiftTerm's shader needs:
 `xcodebuild -downloadComponent MetalToolchain` once per machine, and
 `xcodebuild -downloadPlatform iOS` for the iOS 27.1 simulator runtime
 (`iPhone Duo` device type; posture controls live in Device Hub, not `simctl`).
-Honour horizontal safe areas in app views: on Duo the status bar column is a
-horizontal inset on both displays and can sit on either side.
+On Duo the status bar column is a horizontal safe-area inset on both displays
+(and can sit on either side). `ActiveTerminalView` lets the terminal and key
+bar bleed under it on purpose — Netflix-style, ~8 more columns for a few
+unreadable cells under the frosted status pill and, when closed, the camera —
+while its custom top bar stays inside the safe area so no control can land
+under the camera. Every other view honours the inset.
 
 **Launchd**: Plist at `~/Library/LaunchAgents/com.claude.relay.plist`. The `load` command locates the server binary via a fallback chain: sibling of the CLI binary, `/opt/homebrew/bin/`, `/usr/local/bin/`, `~/.claude-relay/bin/`.
 
