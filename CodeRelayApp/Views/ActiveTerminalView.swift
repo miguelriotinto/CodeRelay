@@ -19,12 +19,60 @@ struct ActiveTerminalView: View {
     /// Driven by `TerminalReloadFade`.
     @State private var reloadCover: Double = 0
     @ObservedObject private var settings = AppSettings.shared
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// Wand + keyboard toggle, floated over the terminal's bottom-trailing corner.
+    private var floatingButtons: some View {
+        HStack(spacing: 10) {
+            WandButton(
+                coordinator: coordinator,
+                shareScreen: settings.shareScreenWithOptimizer,
+                size: 44,
+                fill: Color.gray.opacity(0.5),
+                onTap: {
+                    if settings.hapticFeedbackEnabled {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    }
+                }
+            )
+
+            Button {
+                if settings.hapticFeedbackEnabled {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+                if isKeyboardVisible {
+                    NotificationCenter.default.post(
+                        name: .terminalResignFocus, object: nil
+                    )
+                } else {
+                    NotificationCenter.default.post(
+                        name: .terminalRequestFocus, object: nil
+                    )
+                }
+            } label: {
+                Image(systemName: isKeyboardVisible
+                      ? "keyboard.chevron.compact.down"
+                      : "keyboard")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(Color.gray.opacity(0.5))
+                    .clipShape(Circle())
+            }
+            .disabled(hasHardwareKeyboard)
+            .opacity(hasHardwareKeyboard ? 0.35 : 1.0)
+        }
+    }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                if let id = coordinator.activeSessionId,
-                   let vm = coordinator.viewModel(for: id) {
+        VStack(spacing: 0) {
+            if let id = coordinator.activeSessionId,
+               let vm = coordinator.viewModel(for: id) {
+                // The floating buttons overlay the TERMINAL only. Overlaying the
+                // whole column put them on top of the key bar's trailing keys
+                // whenever the bar fit on one line — every wide layout, and the
+                // iPhone Duo in either posture.
+                ZStack(alignment: .bottomTrailing) {
                     // Single host reused across session switches so each
                     // terminal's SwiftTerm scrollback survives the swap.
                     TerminalHostView(
@@ -37,64 +85,23 @@ struct ActiveTerminalView: View {
                     // control the user just tapped.
                     .terminalReloadCover(reloadCover)
 
-                    if showKeyBar {
-                        KeyboardAccessory { data in
-                            vm.sendInput(data)
-                        }
-                    }
-                } else {
-                    ContentUnavailableView(
-                        "No Active Session",
-                        systemImage: "terminal",
-                        description: Text("Swipe from the left edge or create a new session.")
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    floatingButtons
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 12)
                 }
-            }
 
-            // Floating buttons: wand + keyboard toggle (only when a terminal session is active)
-            if coordinator.activeSessionId != nil {
-                HStack(spacing: 10) {
-                    WandButton(
-                        coordinator: coordinator,
-                        shareScreen: settings.shareScreenWithOptimizer,
-                        size: 44,
-                        fill: Color.gray.opacity(0.5),
-                        onTap: {
-                            if settings.hapticFeedbackEnabled {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            }
-                        }
-                    )
-
-                    Button {
-                        if settings.hapticFeedbackEnabled {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        }
-                        if isKeyboardVisible {
-                            NotificationCenter.default.post(
-                                name: .terminalResignFocus, object: nil
-                            )
-                        } else {
-                            NotificationCenter.default.post(
-                                name: .terminalRequestFocus, object: nil
-                            )
-                        }
-                    } label: {
-                        Image(systemName: isKeyboardVisible
-                              ? "keyboard.chevron.compact.down"
-                              : "keyboard")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(Color.gray.opacity(0.5))
-                            .clipShape(Circle())
+                if showKeyBar {
+                    KeyboardAccessory { data in
+                        vm.sendInput(data)
                     }
-                    .disabled(hasHardwareKeyboard)
-                    .opacity(hasHardwareKeyboard ? 0.35 : 1.0)
                 }
-                .padding(.trailing, 16)
-                .padding(.bottom, 12)
+            } else {
+                ContentUnavailableView(
+                    "No Active Session",
+                    systemImage: "terminal",
+                    description: Text("Swipe from the left edge or create a new session.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .safeAreaInset(edge: .top) {
@@ -174,14 +181,17 @@ struct ActiveTerminalView: View {
             .background(.black)
         }
         .background(.black)
-        // Horizontal safe areas are honoured on purpose. On iPhone Duo the
-        // status bar lives in a column along the right edge of BOTH displays,
-        // and the system lays navigation bars out vertically beside it; that
-        // column is reported as a horizontal safe-area inset, and Apple notes
-        // the insets are asymmetric (the vertical bar can sit on the left in
-        // landscape and Split View). Ignoring the horizontal insets, as this
-        // view once did to win a few columns beside the notch in iPhone
-        // landscape, would put the rightmost terminal columns under the clock.
+        // Horizontal safe areas are honoured whenever the status bar can be
+        // showing. On iPhone Duo the status bar lives in a column along the
+        // right edge of BOTH displays, reported as a horizontal safe-area
+        // inset (asymmetric: it can sit on the left in landscape and Split
+        // View); running the terminal under it put the rightmost columns under
+        // the clock. In a compact-height layout — a phone-sized display in
+        // landscape, including the closed Duo — UIKit hides the status bar,
+        // and the reserved column is then dead space at the edge of a wide
+        // terminal, so the insets are ignored there exactly as this view
+        // always did beside the notch on a landscape iPhone.
+        .ignoresSafeArea(.container, edges: verticalSizeClass == .compact ? .horizontal : [])
         .preferredColorScheme(.dark)
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: coordinator.activeSessionId) { _, _ in
