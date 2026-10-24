@@ -42,7 +42,7 @@ targets:
         SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
         SUPPORTS_MACCATALYST: NO
         MARKETING_VERSION: "1.4.1"
-        CURRENT_PROJECT_VERSION: "187"
+        CURRENT_PROJECT_VERSION: "188"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: CodeRelayApp/CodeRelayApp.entitlements
     info:
