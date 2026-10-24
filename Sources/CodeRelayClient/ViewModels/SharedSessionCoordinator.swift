@@ -302,7 +302,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 self?.handleSessionRenamed(sessionId: sessionId, name: name)
             }
         }
-        connection.onClipboardUpdate = { sessionId, text in
+        connection.onClipboardUpdate = { [weak self] sessionId, text in
             // F11: mirror an OSC 52 terminal clipboard write to the device
             // clipboard. Only for the session the user is looking at, so a
             // background session's copy can't silently hijack the pasteboard.

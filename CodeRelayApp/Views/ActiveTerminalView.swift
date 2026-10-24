@@ -174,7 +174,14 @@ struct ActiveTerminalView: View {
             .background(.black)
         }
         .background(.black)
-        .ignoresSafeArea(.container, edges: .horizontal)
+        // Horizontal safe areas are honoured on purpose. On iPhone Duo the
+        // status bar lives in a column along the right edge of BOTH displays,
+        // and the system lays navigation bars out vertically beside it; that
+        // column is reported as a horizontal safe-area inset, and Apple notes
+        // the insets are asymmetric (the vertical bar can sit on the left in
+        // landscape and Split View). Ignoring the horizontal insets, as this
+        // view once did to win a few columns beside the notch in iPhone
+        // landscape, would put the rightmost terminal columns under the clock.
         .preferredColorScheme(.dark)
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: coordinator.activeSessionId) { _, _ in

@@ -27,6 +27,22 @@ Note: Service commands are top-level (`claude-relay stop`), while token/session/
 
 **iOS app**: Open `CodeRelay.xcodeproj` in Xcode, Cmd+R. After changing CodeRelayClient or CodeRelayKit sources, rebuild the iOS app in Xcode to pick up changes.
 
+**Ship iOS with Xcode 27.1 or later (iOS 27.1 SDK).** iPhone Duo gates its
+layout on the SDK an app links against, with no Info.plist key or build
+setting: built with the iOS 26 SDK the app runs centred on the open inner
+display with empty space around it and left of the status bar on the closed
+outer display; built with the iOS 27.1 SDK it fills both displays and the
+system lays container toolbars out vertically beside the right-edge status
+bar. The GitHub `macos-26` runner image carries only Xcode 26.x, so CI's
+compile checks run on 26 while the TestFlight archive is made locally; the
+`xcode-27` runner label (preview) has 27.1 if CI ever needs to match. Xcode 27
+no longer bundles the Metal toolchain SwiftTerm's shader needs:
+`xcodebuild -downloadComponent MetalToolchain` once per machine, and
+`xcodebuild -downloadPlatform iOS` for the iOS 27.1 simulator runtime
+(`iPhone Duo` device type; posture controls live in Device Hub, not `simctl`).
+Honour horizontal safe areas in app views: on Duo the status bar column is a
+horizontal inset on both displays and can sit on either side.
+
 **Launchd**: Plist at `~/Library/LaunchAgents/com.claude.relay.plist`. The `load` command locates the server binary via a fallback chain: sibling of the CLI binary, `/opt/homebrew/bin/`, `/usr/local/bin/`, `~/.claude-relay/bin/`.
 
 **Linux server**: the same `CodeRelayServer`/`CodeRelayCLI`/`CodeRelayKit` targets build and run on Linux (Arch/Omarchy and any systemd host) — see `docs/linux-server-spec.md`. `Package.swift` is platform-conditional: under `os(Linux)` the Apple client library (`CodeRelayClient`) is not declared. `swift build && swift test` run there. The service is a **systemd user unit** (`claude-relay.service`), not launchd; `claude-relay load/unload/start/stop/restart` drive `systemctl --user` via the `ServicePlatform` seam (`LaunchdService` on macOS, `SystemdService` on Linux). CI fails if the Linux resolve changes `Package.resolved`. The `linux-server` CI job builds and tests on Ubuntu.
