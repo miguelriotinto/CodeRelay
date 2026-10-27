@@ -220,6 +220,8 @@ final class RecoveryController {
         coordinator.recoveryPhase = .reconnecting
         coordinator.recoveryFailed = false
         coordinator.isRecovering = true
+        // The recovery sheet has its own phases; the loading veil stands down.
+        coordinator.sessionLoadPhase = nil
         coordinator.suppressAllViewModelSends(true)
         defer {
             coordinator.isRecovering = false

@@ -66,6 +66,17 @@ public final class TerminalViewModel: ObservableObject {
     /// terminal size, so the coordinator can remember the last-known geometry
     /// to seed the next `session_create`.
     public var onResize: ((UInt16, UInt16) -> Void)?
+    /// Installed by the coordinator. Fires with the cumulative bytes buffered so
+    /// far each time a replay chunk arrives, so the loading overlay can count up
+    /// while the server streams the ring buffer. Silent outside a replay.
+    public var onReplayProgress: ((Int) -> Void)?
+    /// Installed by the coordinator. Fires exactly once per replay, the instant
+    /// the buffered replay is handed to the terminal view — the first frame the
+    /// user can see, and the moment `SharedSessionCoordinator.sessionLoadPhase`
+    /// goes back to nil. Fires on both flush paths: `endReplay()` when the view
+    /// is already laid out, and the deferred flush in `terminalReady()` when
+    /// `replay_complete` beat layout.
+    public var onReplayDelivered: (() -> Void)?
 
     private var terminalSized = false
     private var isReplaying = false
@@ -187,6 +198,7 @@ public final class TerminalViewModel: ObservableObject {
                 let dropped = pendingOutput.removeFirst()
                 pendingOutputBytes -= dropped.count
             }
+            if isReplaying { onReplayProgress?(pendingOutputBytes) }
         }
         detectInputPrompt(data)
     }
@@ -224,7 +236,10 @@ public final class TerminalViewModel: ObservableObject {
         pendingOutput.removeAll()
         pendingOutputBytes = 0
         if !combined.isEmpty { handler(combined) }
-        if completedReplay { onReplayFlushed?() }
+        if completedReplay {
+            onReplayFlushed?()
+            onReplayDelivered?()
+        }
     }
 
     /// Enters replay-buffering mode. All output is held until `endReplay()`.
@@ -257,6 +272,7 @@ public final class TerminalViewModel: ObservableObject {
             didLogPendingCap = false
             if !combined.isEmpty { handler(combined) }
             onReplayFlushed?()
+            onReplayDelivered?()
             // The server resize-wiggles after every replay (`repaintAfter`), so a
             // full-screen app is about to repaint TWICE ~150 ms apart. Coalesce
             // that burst too, or the reload ends on a flash of the narrow frame.
