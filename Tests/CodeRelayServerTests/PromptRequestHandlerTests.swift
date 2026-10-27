@@ -117,11 +117,15 @@ final class PromptRequestHandlerTests: XCTestCase {
                       draftKnown: draftKnown)
     }
 
-    private func send(_ message: ClientMessage, on fixture: Fixture) async throws {
+    private func textFrame(_ message: ClientMessage) throws -> WebSocketFrame {
         let data = try JSONEncoder().encode(MessageEnvelope.client(message))
         var buf = ByteBufferAllocator().buffer(capacity: data.count)
         buf.writeBytes(data)
-        try await fixture.channel.writeInbound(WebSocketFrame(fin: true, opcode: .text, data: buf))
+        return WebSocketFrame(fin: true, opcode: .text, data: buf)
+    }
+
+    private func send(_ message: ClientMessage, on fixture: Fixture) async throws {
+        try await fixture.channel.writeInbound(textFrame(message))
     }
 
     private func drainOutboundFrames(_ channel: NIOAsyncTestingChannel) async throws -> [WebSocketFrame] {
@@ -798,8 +802,22 @@ final class PromptRequestHandlerTests: XCTestCase {
         let fixture = try await makeFixture(optimizer: nil)
         addTeardownBlock { await self.cleanup(fixture) }
         await fixture.mock.setMockPromptContext(context(draft: "the optimized prompt"))
-        try await send(.replacePrompt(sessionId: fixture.sessionId, text: "the original draft"), on: fixture)
-        _ = try? await fixture.channel.close()
+
+        // Deliver the request and close the channel in ONE event-loop task.
+        // `handleReplacePrompt` hops off the loop (Task) and back
+        // (`eventLoop.execute`) before it writes or answers, so that hop can only
+        // run after this task — after the close — and its `isActive` re-check
+        // must stand it down. Sending with `writeInbound` and then calling
+        // `close()` raced the hop from a different queue: on a slow Linux runner
+        // the reply landed first and the test saw a result on a channel that was
+        // still open when it was written — a verdict about the runner, not the
+        // handler.
+        let frame = try textFrame(.replacePrompt(sessionId: fixture.sessionId, text: "the original draft"))
+        let channel = fixture.channel
+        try await fixture.testingLoop.submit {
+            channel.pipeline.fireChannelRead(frame)
+            channel.close(promise: nil)
+        }.get()
 
         try await assertNoFurtherMessages(fixture, settle: .milliseconds(300),
                                           "a closed channel must not be sent a result")
