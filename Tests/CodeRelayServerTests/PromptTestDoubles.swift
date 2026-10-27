@@ -60,13 +60,24 @@ actor SlowThenFastOptimizer: PromptOptimizing {
 
 /// Never returns and ignores cancellation: the deadline is the only thing that
 /// can resolve a request made against it.
+///
+/// It parks on a continuation nobody resumes — the same shape as `GatedOptimizer`
+/// — and deliberately **not** on a `Task.sleep` loop. The deadline cancels the
+/// task this runs in, and a cancelled `Task.sleep` throws immediately, so
+/// `while true { try? await Task.sleep(…) }` turned into a 100 % CPU spin for the
+/// rest of the process. Worse, XCTest's error observer records every thrown
+/// error together with its call stack, which grew the test process by ~1 GB/s
+/// until the 7 GB CI runner SIGKILLed it (SwiftPM reports that signal silently,
+/// so the job just died 90–140 s in at whatever test happened to be running).
+/// A parked continuation costs nothing and cannot be woken by cancellation.
 actor HangingOptimizer: PromptOptimizing {
     nonisolated let sharesScreen = true
 
     func optimize(_ context: PromptContext) async throws -> OptimizerOutcome {
-        while true {
-            try? await Task.sleep(for: .seconds(100))
+        await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in
+            // Intentionally never resumed.
         }
+        fatalError("HangingOptimizer must never resume")
     }
 }
 
