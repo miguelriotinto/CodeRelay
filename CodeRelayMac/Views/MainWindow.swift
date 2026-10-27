@@ -117,15 +117,23 @@ private struct WorkspaceView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         } detail: {
             VStack(spacing: 0) {
-                if coordinator.activeSessionId != nil {
-                    // Single host reused across session switches so each
-                    // terminal's SwiftTerm scrollback survives the swap.
-                    TerminalContainerView(coordinator: coordinator, fontSize: CGFloat(settings.terminalFontSize))
-                        .padding(.leading, 6)
-                        // Covers only the terminal, not the toolbar or the status
-                        // bar: the session name has to stay visible, since it's
-                        // the control the user just clicked.
-                        .terminalReloadCover(reloadCover)
+                if let activeId = coordinator.activeSessionId {
+                    ZStack {
+                        // Single host reused across session switches so each
+                        // terminal's SwiftTerm scrollback survives the swap.
+                        TerminalContainerView(coordinator: coordinator, fontSize: CGFloat(settings.terminalFontSize))
+                            .padding(.leading, 6)
+                            // Covers only the terminal, not the toolbar or the status
+                            // bar: the session name has to stay visible, since it's
+                            // the control the user just clicked.
+                            .terminalReloadCover(reloadCover)
+                        // "Loading session history… 212 KB" over the black pane
+                        // while the server streams the replay; see SessionLoadPhase.
+                        SessionLoadingOverlay(
+                            phase: coordinator.sessionLoadPhase,
+                            sessionName: coordinator.name(for: activeId)
+                        )
+                    }
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "terminal")

@@ -254,6 +254,63 @@ class SessionCoordinator(
      */
     val isPerformingHandshake: StateFlow<Boolean> = _isPerformingHandshake.asStateFlow()
 
+    private val _sessionLoadPhase = MutableStateFlow<SessionLoadPhase?>(null)
+    /**
+     * What the user is waiting on between picking a session and seeing its first
+     * frame, or null when nothing is pending. Drives the workspace's
+     * session-loading overlay (spinner + phase + byte counter).
+     *
+     * On a slow link the terminal is plain black for several seconds: connect →
+     * authenticate → `session_list` → attach/resume → the server streams its
+     * ring buffer (up to 512 KB) → `replay_complete` → the vm flushes the whole
+     * replay as ONE frame. That single flush is deliberate (it is what stops
+     * history scrolling past), so the fix is to narrate the wait, not to paint
+     * sooner. Writers: [SessionHandshake] for the first three phases; the switch /
+     * attach / create ops for [SessionLoadPhase.Attaching]; the vm's
+     * `onReplayProgress` hook for [SessionLoadPhase.LoadingHistory].
+     *
+     * Cleared the INSTANT the active session's replay is delivered to the view
+     * (`onReplayDelivered`, i.e. the first visible frame) — never on a timer, so
+     * the overlay can neither lift early over a still-black pane nor linger over
+     * a painted one. Also cleared when an op fails, when the active session goes
+     * away (terminate / detach / stolen / failed restore), and when recovery
+     * starts, because the recovery sheet takes over the narration.
+     */
+    val sessionLoadPhase: StateFlow<SessionLoadPhase?> = _sessionLoadPhase.asStateFlow()
+
+    /** Phase writer for [SessionHandshake], which lives outside this class. */
+    internal fun setSessionLoadPhase(phase: SessionLoadPhase?) {
+        _sessionLoadPhase.value = phase
+    }
+
+    /**
+     * Called by [SessionHandshake] once a pass has rendered the server's list.
+     * Clears the phase UNLESS something that will clear it itself is still in
+     * flight: a session op (its own catch / replay hooks own the phase) or a
+     * buffered replay on the active vm (`onReplayDelivered` will). Without this
+     * rule a WAKE handshake over an already-live terminal — pull-to-refresh,
+     * recovery's tail fetch, [restoreActiveOnForeground] — would strand
+     * "Loading sessions…" on screen forever, since none of those run a buffered
+     * replay to dismiss it.
+     */
+    internal fun settleSessionLoadPhaseAfterHandshake() {
+        if (sessionOpsInFlight > 0) return
+        val active = _activeSessionId.value
+        if (active != null && terminalCache.view(active)?.isReplaying == true) return
+        _sessionLoadPhase.value = null
+    }
+
+    /**
+     * The one way the active session is unset. A session that is no longer
+     * active has nothing left to load, so the loading phase goes with it —
+     * otherwise a stolen / terminated session mid-attach would leave its
+     * overlay over the "No Active Session" placeholder.
+     */
+    private fun clearActiveSession() {
+        _activeSessionId.value = null
+        _sessionLoadPhase.value = null
+    }
+
     /**
      * Set by [tearDown]. The handshake checks it at every step so a pass in flight
      * when the session is disposed stops touching state instead of resurrecting a
@@ -411,7 +468,15 @@ class SessionCoordinator(
             // another device took while we were away is announced (we missed its
             // live `session_stolen` push).
             fetchSessions = { performHandshake(SessionHandshake.Reason.WAKE) },
-            suppressSends = { on -> sendsSuppressed = on },
+            // `suppressSends(true)` is the controller's first act after it commits
+            // to a recovery pass (right after `isRecovering` flips), so it doubles
+            // as the "recovery started" edge: the recovery sheet now owns the
+            // narration, and a stale loading phase under it would resurface the
+            // moment the sheet lifts.
+            suppressSends = { on ->
+                sendsSuppressed = on
+                if (on) _sessionLoadPhase.value = null
+            },
             isApplicationLevelError = { isApplicationLevelError(it) },
             onAppLevelRestoreFailure = { handleAppLevelRestoreFailure() },
             nowMs = nowMs,
@@ -458,7 +523,7 @@ class SessionCoordinator(
     private fun handleAppLevelRestoreFailure() {
         _activeSessionId.value?.let { activeId ->
             evictTerminal(activeId)
-            _activeSessionId.value = null
+            clearActiveSession()
         }
     }
 
@@ -759,6 +824,11 @@ class SessionCoordinator(
         sessionOpsInFlight += 1
         try {
             val name = pickDefaultName()
+            // Narrate the detach + create round trip. A fresh PTY has no
+            // scrollback and this path never enters replay buffering, so no
+            // `onReplayDelivered` is coming — the phase is cleared below, once the
+            // new session is wired and live, rather than left for a hook.
+            _sessionLoadPhase.value = SessionLoadPhase.Attaching
             // withAuth: detach the previous session (best-effort), then create.
             val sessionId = authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
@@ -780,6 +850,7 @@ class SessionCoordinator(
             terminalCache.put(sessionId, newTerminalVm())
             wireTerminalOutput(sessionId)
             _activeSessionId.value = sessionId
+            _sessionLoadPhase.value = null // live from here: the prompt arrives unbuffered
             activityCoordinator.markSeen(sessionId)
             terminalCache.touch(sessionId)
             terminalCache.enforceLimit(_activeSessionId.value)
@@ -788,6 +859,7 @@ class SessionCoordinator(
             // `_sessions` immediately (it may be < 500 ms since connect()'s fetch).
             fetchSessions(force = true)
         } catch (e: Throwable) {
+            _sessionLoadPhase.value = null
             presentError(e.message ?: "Failed to create session")
         } finally {
             sessionOpsInFlight -= 1
@@ -828,6 +900,10 @@ class SessionCoordinator(
             terminalCache.view(id)?.beginReplay()
             wireTerminalOutput(id) // BEFORE resume (route replay frames correctly).
 
+            // A replay WILL follow this resume (beginReplay above), so the phase
+            // hands off to the vm hooks installed by wireTerminalOutput:
+            // Attaching → LoadingHistory(bytes) → cleared on first frame.
+            _sessionLoadPhase.value = SessionLoadPhase.Attaching
             authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
                 val g = grid
@@ -841,6 +917,7 @@ class SessionCoordinator(
 
             fetchSessions()
         } catch (e: Throwable) {
+            _sessionLoadPhase.value = null
             presentError(e.message ?: "Failed to switch session")
         } finally {
             sessionOpsInFlight -= 1
@@ -907,6 +984,9 @@ class SessionCoordinator(
         val previousId = _activeSessionId.value
         sessionOpsInFlight += 1
         try {
+            // The attach's replay is buffered (vm.beginReplay below), so the phase
+            // hands off to the vm hooks: Attaching → LoadingHistory → first frame.
+            _sessionLoadPhase.value = SessionLoadPhase.Attaching
             authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
                 val g = grid
@@ -944,6 +1024,7 @@ class SessionCoordinator(
             // including the just-attached session under our token) lands promptly.
             fetchSessions(force = true)
         } catch (e: Throwable) {
+            _sessionLoadPhase.value = null
             // Rollback to the previous session (SharedSessionCoordinator.swift:510-514).
             if (previousId != null) {
                 val g = grid
@@ -968,9 +1049,7 @@ class SessionCoordinator(
         if (recoveryController.isRecovering.value) return
         try {
             connection.send(ClientMessage.SessionTerminate(id))
-            if (_activeSessionId.value == id) {
-                _activeSessionId.value = null
-            }
+            if (_activeSessionId.value == id) clearActiveSession()
             evictTerminal(id)
             activityCoordinator.forgetSession(id)
             // Drop from the pane immediately; the fetch below reconciles against
@@ -1005,7 +1084,7 @@ class SessionCoordinator(
             authCoordinator.withAuth { sessionController.detach() }
             terminalCache.view(id)?.prepareForSwitch()
             evictTerminal(id)
-            _activeSessionId.value = null
+            clearActiveSession()
             fetchSessions(force = true)
         } catch (e: Throwable) {
             presentError(e.message ?: "Failed to detach session")
@@ -1064,7 +1143,7 @@ class SessionCoordinator(
         // Remove from the UI FIRST (clear active, drop from the pane, evict the
         // terminal), THEN raise the popup — so when the user taps OK the UI is
         // already clean. Matches Swift `cleanUpStolenSession` ordering.
-        if (_activeSessionId.value == sessionId) _activeSessionId.value = null
+        if (_activeSessionId.value == sessionId) clearActiveSession()
         removeSessionLocal(sessionId)
         evictTerminal(sessionId)
         if (alert) {
@@ -1119,6 +1198,24 @@ class SessionCoordinator(
             activityCoordinator.isRunningAgent(sessionId)
         connection.onTerminalOutput = { data ->
             terminalCache.view(sessionId)?.receiveOutput(data)
+        }
+        // Loading-phase hooks. Both are gated on this still being the ACTIVE
+        // session so a replay for a session the user has already switched away
+        // from can neither tick the counter nor dismiss the overlay for the one
+        // they are now waiting on. Progress additionally requires a phase to be
+        // in flight: a session-name-tap reload (`beginServerReload`) also buffers
+        // a replay, but it has its own fade-through-black cover and no phase, and
+        // must not conjure one. These fire on the connection's dispatcher, not
+        // the coordinator's; the StateFlow writes are atomic, so that is fine.
+        terminalCache.view(sessionId)?.let { vm ->
+            vm.onReplayProgress = { bytes ->
+                if (_activeSessionId.value == sessionId && _sessionLoadPhase.value != null) {
+                    _sessionLoadPhase.value = SessionLoadPhase.LoadingHistory(bytes)
+                }
+            }
+            vm.onReplayDelivered = {
+                if (_activeSessionId.value == sessionId) _sessionLoadPhase.value = null
+            }
         }
         // M4: Swift also wires `onTitleChanged → terminalTitles` (:642-644);
         // TerminalSessionVm has no `onTitleChanged` yet, so that stays deferred
@@ -1428,6 +1525,7 @@ class SessionCoordinator(
         connection.onSendFailed = null
         connection.onHealthyPing = null
         terminalCache.removeAll()
+        _sessionLoadPhase.value = null
         connection.disconnect()
     }
 

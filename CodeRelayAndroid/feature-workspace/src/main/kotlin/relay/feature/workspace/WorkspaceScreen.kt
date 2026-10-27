@@ -66,12 +66,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.feature.workspace.ui.ConnectionQualityDot
+import relay.feature.workspace.ui.SessionLoadingOverlay
 import relay.feature.workspace.ui.SessionSidebar
 import relay.feature.workspace.ui.SessionTabs
 import relay.feature.workspace.ui.TerminalHost
 import relay.feature.workspace.ui.WorkspaceLogic
 import relay.session.RecoveryPhase
 import relay.session.SessionHandshake
+import relay.session.SessionLoadPhase
 import relay.terminal.KeyboardAccessory
 import java.util.UUID
 
@@ -203,6 +205,7 @@ fun WorkspaceScreen(
     )
     val undoVisible = WandButtonLogic.undoChipVisible(optimizerUndo, activeSessionId)
     val recoveryPhase by coordinator.recoveryPhase.collectAsStateWithLifecycle()
+    val loadPhase by coordinator.sessionLoadPhase.collectAsStateWithLifecycle()
     val connectionTimedOut by coordinator.connectionTimedOut.collectAsStateWithLifecycle()
     // "Cannot Open Session" alert — raised on an app-level restore failure (the
     // connection is fine but the session couldn't be resumed; iOS
@@ -324,6 +327,7 @@ fun WorkspaceScreen(
                 onNameLongPress = { renameActive = true },
                 onKeyHaptic = { haptics.lightTap() },
                 nameFor = ::nameFor,
+                loadPhase = loadPhase,
                 wandOverlay = {
                     OptimizerOverlay(
                         visual = wandVisual,
@@ -539,6 +543,7 @@ private fun TerminalColumn(
     onNameLongPress: () -> Unit,
     onKeyHaptic: () -> Unit,
     nameFor: (UUID) -> String,
+    loadPhase: SessionLoadPhase?,
     wandOverlay: @Composable () -> Unit,
     redrawToken: Int,
 ) {
@@ -715,6 +720,17 @@ private fun TerminalColumn(
                         .background(Color.Black.copy(alpha = coverAlpha)),
                 )
             }
+
+            // Session-loading narration (spinner + phase + replay byte counter),
+            // over both the terminal and the reload cover so a slow attach reads
+            // as progress rather than a black pane. Drawn here, under the wand,
+            // and gated by its own 300 ms delay so a LAN-fast load never flashes
+            // it. Like the cover it never intercepts touches.
+            SessionLoadingOverlay(
+                phase = loadPhase,
+                sessionName = activeSessionId?.let(nameFor),
+                modifier = Modifier.fillMaxSize(),
+            )
 
             // Floating magic-wand button + its Undo chip / notice, bottom-right over
             // the terminal (iOS ActiveTerminalView floating buttons: 16dp end /

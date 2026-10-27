@@ -84,6 +84,13 @@ struct ActiveTerminalView: View {
                     // control the user just tapped.
                     .terminalReloadCover(reloadCover)
 
+                    // "Loading session history… 212 KB" over the black pane
+                    // while the server streams the replay; see SessionLoadPhase.
+                    SessionLoadingOverlay(
+                        phase: coordinator.sessionLoadPhase,
+                        sessionName: coordinator.name(for: id)
+                    )
+
                     floatingButtons
                         .padding(.trailing, 16)
                         .padding(.bottom, 12)

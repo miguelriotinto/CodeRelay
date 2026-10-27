@@ -1499,4 +1499,140 @@ class SessionCoordinatorTest {
         assertEquals(OptimizerStrings.UPDATE_RELAY_HINT, coord.wandHint)
         coord.tearDown()
     }
+
+    // -------------------------------------------------------------------------
+    // SESSION LOADING PHASE: Attaching → LoadingHistory(bytes) → null on the first
+    // delivered frame, driven by the vm hooks wireTerminalOutput installs.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `switch publishes Attaching then LoadingHistory then clears on delivery`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.switchToSession(target)
+        advanceUntilIdle()
+
+        // The resume RPC is answered, but replay_complete has not arrived: the
+        // replay is still pending, so the phase must still be on screen.
+        assertEquals(SessionLoadPhase.Attaching, coord.sessionLoadPhase.value)
+
+        val vm = coord.terminalCache.view(target)!!
+        vm.onTerminalOutput = { }
+        vm.terminalReady()
+        vm.receiveOutput(ByteArray(2048))
+        assertEquals(SessionLoadPhase.LoadingHistory(2048), coord.sessionLoadPhase.value)
+        vm.receiveOutput(ByteArray(1024))
+        assertEquals(SessionLoadPhase.LoadingHistory(3072), coord.sessionLoadPhase.value, "cumulative")
+
+        conn.deliver(ServerMessage.ReplayComplete(target))
+        advanceUntilIdle()
+        assertNull(coord.sessionLoadPhase.value, "first delivered frame dismisses the phase")
+    }
+
+    @Test
+    fun `a background session's replay neither ticks nor dismisses the phase`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val idA = UUID.randomUUID()
+        val idB = UUID.randomUUID()
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(idA, "A"), session(idB, "B"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.switchToSession(idA)
+        advanceUntilIdle()
+        conn.deliver(ServerMessage.ReplayComplete(idA))
+        advanceUntilIdle()
+        coord.switchToSession(idB)
+        advanceUntilIdle()
+        assertEquals(idB, coord.activeSessionId.value)
+        assertEquals(SessionLoadPhase.Attaching, coord.sessionLoadPhase.value)
+
+        // A late replay for A (no longer active) lands on A's cached vm, whose
+        // hooks are still installed. It must not touch B's narration.
+        val vmA = coord.terminalCache.view(idA)!!
+        vmA.onTerminalOutput = { }
+        vmA.terminalReady()
+        vmA.beginReplay()
+        vmA.receiveOutput(ByteArray(512))
+        assertEquals(SessionLoadPhase.Attaching, coord.sessionLoadPhase.value, "A's bytes don't tick B's counter")
+        vmA.endReplay()
+        assertEquals(SessionLoadPhase.Attaching, coord.sessionLoadPhase.value, "A's delivery doesn't dismiss B's phase")
+
+        // B's own replay, delivered to a laid-out view, is what dismisses it.
+        val vmB = coord.terminalCache.view(idB)!!
+        vmB.onTerminalOutput = { }
+        vmB.terminalReady()
+        conn.deliver(ServerMessage.ReplayComplete(idB))
+        advanceUntilIdle()
+        assertNull(coord.sessionLoadPhase.value)
+    }
+
+    @Test
+    fun `handshake clears the phase when nothing is pending but leaves it for a pending replay`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(target, "Arya"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        // Launch: no session is active afterwards, so no overlay may linger over
+        // the "No Active Session" placeholder.
+        coord.connect()
+        advanceUntilIdle()
+        assertNull(coord.sessionLoadPhase.value)
+
+        // A WAKE handshake while the active session's replay is still pending
+        // must NOT clear it — the replay's delivery will.
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        coord.performHandshake(SessionHandshake.Reason.WAKE)
+        advanceUntilIdle()
+        assertNotNull(coord.sessionLoadPhase.value, "replay pending: the handshake leaves the phase alone")
+        val vm = coord.terminalCache.view(target)!!
+        vm.onTerminalOutput = { }
+        vm.terminalReady() // the replay can only be delivered to a laid-out view
+        conn.deliver(ServerMessage.ReplayComplete(target))
+        advanceUntilIdle()
+        assertNull(coord.sessionLoadPhase.value)
+
+        // A WAKE handshake over a live, painted terminal (pull-to-refresh) must
+        // end with no phase, or "Loading sessions…" would be stranded on screen.
+        coord.performHandshake(SessionHandshake.Reason.WAKE)
+        advanceUntilIdle()
+        assertNull(coord.sessionLoadPhase.value)
+    }
+
+    @Test
+    fun `losing the active session and creating a fresh one both leave no phase`() = runTest {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        val conn = FakeCoordinatorConnection(log)
+        val target = UUID.randomUUID()
+        val store = FakeOwnershipStore(log)
+        surface.sessionsOnServer = listOf(session(target, "Arya"), session(FakeConnectionSurface.NEW_SESSION_ID, "Bran"))
+        val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+
+        coord.switchToSession(target)
+        advanceUntilIdle()
+        assertEquals(SessionLoadPhase.Attaching, coord.sessionLoadPhase.value)
+        coord.terminateSession(target)
+        advanceUntilIdle()
+        assertNull(coord.sessionLoadPhase.value, "no active session, nothing to load")
+
+        // A fresh PTY has no replay, so create clears its own Attaching once wired.
+        coord.createNewSession()
+        advanceUntilIdle()
+        assertEquals(FakeConnectionSurface.NEW_SESSION_ID, coord.activeSessionId.value)
+        assertNull(coord.sessionLoadPhase.value)
+    }
 }

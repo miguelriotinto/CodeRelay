@@ -277,4 +277,116 @@ class TerminalSessionVmTest {
 
         assertTrue(received.isEmpty(), "endReplay without an active replay must do nothing")
     }
+
+    // ---- Session-loading hooks (coordinator-installed) ----------------------
+
+    // While replaying, every buffered chunk reports the CUMULATIVE byte count —
+    // the overlay's "N KB" counter must grow, not report chunk sizes.
+    @Test
+    fun replayProgressReportsCumulativeBytesPerChunk() {
+        val vm = makeVm()
+        vm.onTerminalOutput = { }
+        val progress = mutableListOf<Int>()
+        vm.onReplayProgress = { progress.add(it) }
+
+        vm.beginReplay()
+        vm.receiveOutput(ByteArray(100))
+        vm.receiveOutput(ByteArray(50))
+        vm.receiveOutput(ByteArray(1))
+
+        assertEquals(listOf(100, 150, 151), progress)
+    }
+
+    // Bytes buffered merely because the view is not laid out yet are NOT replay
+    // progress: the user is not waiting on a replay then.
+    @Test
+    fun replayProgressDoesNotFireOutsideReplay() {
+        val vm = makeVm()
+        var progressCount = 0
+        vm.onReplayProgress = { progressCount++ }
+
+        vm.receiveOutput(ByteArray(10)) // buffered: not sized, not replaying
+        vm.terminalReady()
+        vm.receiveOutput(ByteArray(10)) // live
+
+        assertEquals(0, progressCount)
+    }
+
+    // Normal order: the view lays out first, then replay_complete → endReplay
+    // flushes and delivers exactly once.
+    @Test
+    fun replayDeliveredFiresOnceOnEndReplayAfterTerminalReady() {
+        val vm = makeVm()
+        vm.onTerminalOutput = { }
+        var delivered = 0
+        vm.onReplayDelivered = { delivered++ }
+
+        vm.beginReplay()
+        vm.terminalReady()
+        vm.receiveOutput(ByteArray(10))
+        assertEquals(0, delivered, "nothing has reached the view yet")
+
+        vm.endReplay()
+        assertEquals(1, delivered)
+
+        vm.endReplay()        // no-op guard: not replaying
+        vm.terminalReady()    // idempotent
+        assertEquals(1, delivered, "exactly once per replay")
+    }
+
+    // Deferred order: replay_complete lands BEFORE the view's first layout, so
+    // the bytes reach the view only in terminalReady — that is the delivery.
+    @Test
+    fun replayDeliveredFiresOnceOnDeferredTerminalReady() {
+        val vm = makeVm()
+        vm.onTerminalOutput = { }
+        var delivered = 0
+        vm.onReplayDelivered = { delivered++ }
+
+        vm.beginReplay()
+        vm.receiveOutput(ByteArray(10))
+        vm.endReplay()
+        assertEquals(0, delivered, "endReplay before layout must not claim delivery")
+
+        vm.terminalReady()
+        assertEquals(1, delivered)
+
+        vm.terminalReady()
+        assertEquals(1, delivered, "exactly once per replay")
+    }
+
+    // No replay, no delivery: a plain pre-layout buffer flush is not a replay.
+    @Test
+    fun replayDeliveredNeverFiresWithoutReplay() {
+        val vm = makeVm()
+        vm.onTerminalOutput = { }
+        var delivered = 0
+        vm.onReplayDelivered = { delivered++ }
+
+        vm.receiveOutput(ByteArray(10))
+        vm.terminalReady()
+        vm.receiveOutput(ByteArray(10))
+        vm.endReplay()
+
+        assertEquals(0, delivered)
+    }
+
+    // The hooks are coordinator-owned for the vm's lifetime: the per-attach
+    // resetState (prepareForReplay) and a view teardown must leave them in
+    // place, or the second attach to a cached session would load silently.
+    @Test
+    fun loadingHooksSurviveResetState() {
+        val vm = makeVm()
+        val progress = { _: Int -> }
+        val delivered = { }
+        vm.onReplayProgress = progress
+        vm.onReplayDelivered = delivered
+
+        vm.prepareForReplay()
+        vm.prepareForSwitch()
+        vm.releaseOwnership(vm.claimOwnership())
+
+        assertTrue(vm.onReplayProgress === progress)
+        assertTrue(vm.onReplayDelivered === delivered)
+    }
 }

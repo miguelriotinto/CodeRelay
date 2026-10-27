@@ -112,6 +112,9 @@ public final class SessionHandshake {
         if inFlight == task {
             inFlight = nil
             coordinator.isPerformingHandshake = false
+            // Every outcome — success, failure, cancellation — ends the
+            // handshake's turn narrating the empty pane.
+            clearLoadPhase()
         }
         return result
     }
@@ -122,6 +125,7 @@ public final class SessionHandshake {
         inFlight?.cancel()
         inFlight = nil
         coordinator.isPerformingHandshake = false
+        coordinator.sessionLoadPhase = nil
     }
 
     // MARK: - The flow
@@ -153,6 +157,7 @@ public final class SessionHandshake {
                 //    connection generation.
                 if connection.state != .connected {
                     coordinator.recoveryPhase = .reconnecting
+                    setLoadPhase(.connecting)
                     try await connection.forceReconnect()
                 }
 
@@ -161,12 +166,14 @@ public final class SessionHandshake {
                 //    socket end to end. A separate ping would tell us less
                 //    (the server answers pings pre-auth) and later.
                 coordinator.recoveryPhase = .authenticating
+                setLoadPhase(.authenticating)
                 let controller = try await coordinator.ensureAuthenticated()
                 guard !coordinator.isTornDown else { return false }
 
                 // 3. Ask the server which sessions this client owns.
                 //    `listSessions()` is TOKEN-scoped server-side — that IS the
                 //    answer to "what do I own", and the server is authoritative.
+                setLoadPhase(.loadingSessions)
                 let owned = try await controller.listSessions()
                 guard !coordinator.isTornDown else { return false }
 
@@ -251,6 +258,24 @@ public final class SessionHandshake {
     /// right response to "couldn't load the list" is to let the user retry
     /// (pull-to-refresh, or the next foreground) against a workspace that is
     /// still on screen.
+    // MARK: - Loading overlay
+
+    /// The handshake narrates itself only while there is no pane to look at.
+    /// With a session already on screen (a `.wake` pass), "Authenticating…"
+    /// over a live terminal would be noise — and wrong, since the terminal is
+    /// not what is loading.
+    private func setLoadPhase(_ phase: SessionLoadPhase) {
+        if coordinator.activeSessionId == nil { coordinator.sessionLoadPhase = phase }
+    }
+
+    /// Stands the overlay down at the end of a pass, unless an F3 restore is
+    /// about to take it over (`switchToSession` then owns the phase).
+    private func clearLoadPhase() {
+        if coordinator.activeSessionId == nil, coordinator.pendingRestoreSessionId == nil {
+            coordinator.sessionLoadPhase = nil
+        }
+    }
+
     private func fail(reason: Reason, error: Error) {
         coordinator.recoveryFailed = true
         let detail = coordinator.friendlyAttachErrorMessage(error)

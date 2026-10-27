@@ -80,6 +80,29 @@ class TerminalSessionVm(
     var onReplayFlushed: (() -> Unit)? = null
 
     /**
+     * Installed by the COORDINATOR (`SessionCoordinator.wireTerminalOutput`),
+     * not the view. Fires from the buffered path of [receiveOutput] on every
+     * chunk held while [isReplaying], with the cumulative [pendingOutputBytes] —
+     * the "N KB" counter of the session-loading overlay. Unlike the view hooks
+     * above these two survive [resetState]: that runs on `prepareForReplay`
+     * BEFORE every attach and on a view rebuild, both of which are precisely
+     * when the next replay is about to need them, and the coordinator installs
+     * them once per vm rather than per binding.
+     */
+    var onReplayProgress: ((Int) -> Unit)? = null
+
+    /**
+     * Coordinator-installed (see [onReplayProgress]). Fires exactly once per
+     * replay, immediately after the buffered replay bytes have been handed to
+     * the view — in [endReplay] when the view is already laid out, otherwise in
+     * [terminalReady] on the deferred path. That hand-off IS the first visible
+     * frame of a freshly attached session, so this is the signal that dismisses
+     * the loading overlay. Never fires for a replay that never buffered (the
+     * live-handler resume recovery performs).
+     */
+    var onReplayDelivered: (() -> Unit)? = null
+
+    /**
      * True when output has been silent long enough that the session is likely
      * waiting for user input. Driven by [detectInputPrompt]. Mirrors Swift's
      * `@Published awaitingInput`.
@@ -98,7 +121,15 @@ class TerminalSessionVm(
     private var promptDebounceJob: Job? = null
 
     private var terminalSized = false
-    private var isReplaying = false
+
+    /**
+     * True between [beginReplay] and [endReplay]: output is being held for the
+     * single-frame flush. Readable so the coordinator can tell, at the end of a
+     * handshake, whether a replay is still going to clear the loading phase for
+     * it or whether it must clear the phase itself.
+     */
+    var isReplaying = false
+        private set
     private var replayComplete = false
 
     private val pendingOutput = ArrayDeque<ByteArray>()
@@ -244,6 +275,9 @@ class TerminalSessionVm(
                 val dropped = pendingOutput.removeFirst()
                 pendingOutputBytes -= dropped.size
             }
+            // Only a REPLAY's buffering is progress the user is waiting on; bytes
+            // held merely because the view hasn't laid out yet are not.
+            if (isReplaying) onReplayProgress?.invoke(pendingOutputBytes)
         }
         // Swift calls detectInputPrompt unconditionally at the end of
         // receiveOutput — on BOTH the live and buffered paths, and for empty
@@ -270,7 +304,10 @@ class TerminalSessionVm(
         replayComplete = false
         if (completedReplay) _isReloadingFromServer.value = false
         flushPending(prefix = if (completedReplay) ReplayProtocol.RIS else ByteArray(0))
-        if (completedReplay) onReplayFlushed?.invoke()
+        if (completedReplay) {
+            onReplayFlushed?.invoke()
+            onReplayDelivered?.invoke()
+        }
     }
 
     /** Enters replay-buffering mode. All output is held until [endReplay]. */
@@ -295,6 +332,7 @@ class TerminalSessionVm(
             _isReloadingFromServer.value = false
             flushPending(prefix = if (isReload) ReplayProtocol.RIS else ByteArray(0))
             onReplayFlushed?.invoke()
+            onReplayDelivered?.invoke()
             // The server resize-wiggles after every replay, so a full-screen app
             // is about to repaint TWICE ~150 ms apart. Coalesce that burst too, or
             // the reload ends on a flash of the narrow frame.

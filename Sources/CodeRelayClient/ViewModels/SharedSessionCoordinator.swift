@@ -20,8 +20,22 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             guard activeSessionId != oldValue else { return }
             ownershipStore.saveActiveSession(activeSessionId)
             clearOptimizerUndo()
+            // No pane, nothing to wait for: a terminate, a steal or a
+            // disconnect must never leave the loading veil up over "No Session".
+            if activeSessionId == nil { sessionLoadPhase = nil }
         }
     }
+    /// What the loading overlay shows while a session is on its way to the
+    /// screen; nil once the first frame is visible. Set by the handshake
+    /// (connect → auth → list), by the attach/resume/create paths, and by the
+    /// replay hooks installed in `wireTerminalOutput`; see `SessionLoadPhase`.
+    /// Only ever describes the ACTIVE session.
+    @Published public internal(set) var sessionLoadPhase: SessionLoadPhase?
+    /// F3 restore scheduled by `reconcile` but not yet started by
+    /// `switchToSession`. While set, the handshake leaves `sessionLoadPhase`
+    /// alone at its end — the restore is about to take it over, and a nil in
+    /// between would make the overlay blink.
+    var pendingRestoreSessionId: UUID?
     /// F3: the active session is restored from persistence exactly once, on the
     /// first successful session fetch — not on every reconnect (which would
     /// fight the user's live selection).
@@ -580,6 +594,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             if activeSessionId == nil,
                let restored = ownershipStore.loadActiveSession(),
                restorableIds.contains(restored) {
+                pendingRestoreSessionId = restored
                 restoreActiveTask = Task { [weak self] in
                     await self?.switchToSession(id: restored)
                 }
@@ -632,6 +647,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     public func createNewSession() async {
         guard !isRecovering else { return }
         let previousId = activeSessionId
+        sessionLoadPhase = .attaching
         do {
             let (name, sessionId) = try await withAuth { controller in
                 if previousId != nil {
@@ -665,6 +681,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             terminalViewModels[sessionId] = vm
             wireTerminalOutput(to: sessionId)
             activeSessionId = sessionId
+            // A new session has no history to replay: the shell's first bytes
+            // stream live, so there is no delivery hook to clear the phase.
+            sessionLoadPhase = nil
             activityCoordinator.markSeen(sessionId)
             terminalCache.touch(sessionId)
             terminalCache.enforceLimit(activeSessionId: activeSessionId)
@@ -674,6 +693,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             // < 0.5 s after connect()'s initial fetch).
             await fetchSessions(force: true)
         } catch {
+            sessionLoadPhase = nil
             presentError(error.localizedDescription)
         }
     }
@@ -695,7 +715,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// from wire latency; the guard on `id != activeSessionId` then also stops an
     /// impatient re-click from queueing a second resume onto a stalled chain.
     public func switchToSession(id: UUID) async {
-        guard !isRecovering, id != activeSessionId else { return }
+        if pendingRestoreSessionId == id { pendingRestoreSessionId = nil }
+        guard !isRecovering, id != activeSessionId else {
+            // The handshake may have left its phase up for this restore.
+            if activeSessionId == nil { sessionLoadPhase = nil }
+            return
+        }
         let previousId = activeSessionId
 
         // A live native terminal for the target means its SwiftTerm scrollback is
@@ -723,6 +748,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             }
             if !hasLiveTerminal {
                 terminalViewModels[id]?.beginReplay()
+                // The pane is black from here until the replay is delivered;
+                // the replay hooks take the phase through loadingHistory to nil.
+                sessionLoadPhase = .attaching
             }
             wireTerminalOutput(to: id)
 
@@ -750,10 +778,14 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
                 )
             }
 
+            // A reused live terminal skipped the replay, so nothing will clear
+            // a phase the handshake may have left behind.
+            if hasLiveTerminal { sessionLoadPhase = nil }
             // force: bypass the debounce so the switched-to session refreshes
             // immediately (see createNewSession).
             await fetchSessions(force: true)
         } catch {
+            sessionLoadPhase = nil
             // The optimistic publish has to be undone, or the pane sits on a
             // session that isn't attached: the server auto-detaches the previous
             // one before it can fail this resume, so after a failure NEITHER is
@@ -827,6 +859,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     public func attachRemoteSession(id: UUID, serverName: String? = nil) async {
         guard !isRecovering else { return }
         let previousId = activeSessionId
+        sessionLoadPhase = .attaching
         do {
             let controller = try await withAuth { controller in
                 if previousId != nil {
@@ -877,6 +910,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
             // in `sessions` now so it appears in the pane (see createNewSession).
             await fetchSessions(force: true)
         } catch {
+            sessionLoadPhase = nil
             recoveryLog.error("attachRemoteSession failed for \(id): \(error.localizedDescription, privacy: .public)")
             if let previousId {
                 let grid = gridForRequest
@@ -1064,6 +1098,19 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         // the record on suppression, and do not move `onResize` below the guard.
         terminalViewModels[sessionId]?.onResize = { [weak self] cols, rows in
             self?.lastKnownTerminalSize = (cols, rows)
+        }
+        // Loading overlay: count the replay up, then drop the veil on the first
+        // visible frame. Active session only — a background replay must not
+        // repaint the veil over the pane the user is looking at — and only
+        // while a phase is pending, so a replay nobody waited for (a skipReplay
+        // switch that still streams a few bytes) conjures nothing.
+        terminalViewModels[sessionId]?.onReplayProgress = { [weak self] bytes in
+            guard let self, self.activeSessionId == sessionId, self.sessionLoadPhase != nil else { return }
+            self.sessionLoadPhase = .loadingHistory(bytes: bytes)
+        }
+        terminalViewModels[sessionId]?.onReplayDelivered = { [weak self] in
+            guard let self, self.activeSessionId == sessionId else { return }
+            self.sessionLoadPhase = nil
         }
     }
 

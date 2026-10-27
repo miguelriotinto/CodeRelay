@@ -140,6 +140,26 @@ The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments
 
 Both apps share `SharedSessionCoordinator` (in CodeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (e.g., macOS registers `SleepWakeObserver`; iOS uses `scenePhase`).
 
+**Session-loading overlay.** Opening a session is black until the replay is
+delivered in one batch (see "Scrollback replay"), which on a slow link is
+seconds. `SharedSessionCoordinator.sessionLoadPhase` (`SessionLoadPhase`:
+connecting → authenticating → loadingSessions → attaching →
+loadingHistory(bytes) → nil) narrates it and `SessionLoadingOverlay`
+(CodeRelayClient/Views, hosted by both apps over the terminal pane) renders it
+after a 300 ms grace so a LAN never flashes it. The phase is set by
+`SessionHandshake` (only while `activeSessionId == nil` — never over a live
+pane), by `switchToSession`/`attachRemoteSession`/`createNewSession`, and is
+driven to `loadingHistory` and then cleared by two `TerminalViewModel` hooks the
+coordinator installs in `wireTerminalOutput`: `onReplayProgress` (cumulative
+buffered bytes) and `onReplayDelivered` (fires once on either flush path — the
+first visible frame). It describes the ACTIVE session only; recovery clears it
+because the Reconnecting sheet has its own phases; `pendingRestoreSessionId`
+stops the handshake from blanking it between "Loading sessions…" and the F3
+restore's "Attaching…". The Kotlin clients mirror it one-to-one:
+`relay.session.SessionLoadPhase`, `SessionCoordinator.sessionLoadPhase`,
+`TerminalSessionVm.onReplayProgress/onReplayDelivered`, and the shared Compose
+`SessionLoadingOverlay` in `feature-workspace`.
+
 **iOS: a one-finger swipe is a wheel report while a program tracks the mouse, and
 the scroll view's own gesture otherwise.** `RelayTerminalView.mouseModeChanged`
 overrides SwiftTerm's (never calling `super`) and swaps its pan for ours. Three

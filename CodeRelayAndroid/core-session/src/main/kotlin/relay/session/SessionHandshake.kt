@@ -176,6 +176,7 @@ class SessionHandshake internal constructor(
                 //    "the socket died since" — including a receive-loop failure,
                 //    which does NOT bump the connection generation.
                 if (!coordinator.connection.isConnected) {
+                    coordinator.setSessionLoadPhase(SessionLoadPhase.Connecting)
                     coordinator.connection.forceReconnect()
                 }
 
@@ -183,12 +184,14 @@ class SessionHandshake internal constructor(
                 //    auth_request → auth_success round-trip exercises the full
                 //    socket end to end. A separate ping would tell us less (the
                 //    server answers pings pre-auth) and later.
+                coordinator.setSessionLoadPhase(SessionLoadPhase.Authenticating)
                 coordinator.authCoordinator.ensureAuthenticated()
                 if (coordinator.isTornDown) return false
 
                 // 3. Ask the server which sessions this client owns.
                 //    `listSessions()` is TOKEN-scoped server-side — that IS the
                 //    answer to "what do I own", and the server is authoritative.
+                coordinator.setSessionLoadPhase(SessionLoadPhase.LoadingSessions)
                 val owned = coordinator.sessionController.listSessions()
                 if (coordinator.isTornDown) return false
 
@@ -199,8 +202,14 @@ class SessionHandshake internal constructor(
                 // A completed handshake means the connection is demonstrably
                 // healthy: clear any stale failure banners from an earlier pass.
                 coordinator.recoveryController.clearTerminalFlags()
+                // The list is on screen; the loading phase is now someone else's
+                // to finish (an attach's replay) or nobody's — the coordinator
+                // knows which. See `settleSessionLoadPhaseAfterHandshake`.
+                coordinator.settleSessionLoadPhaseAfterHandshake()
                 return true
             } catch (cancel: CancellationException) {
+                // Nothing will finish narrating a cancelled pass.
+                coordinator.setSessionLoadPhase(null)
                 throw cancel
             } catch (error: Throwable) {
                 if (isTokenRejection(error)) {
@@ -247,6 +256,9 @@ class SessionHandshake internal constructor(
      * on screen.
      */
     private fun fail(error: Throwable) {
+        // The error banner is the feedback now; a spinner over it would promise
+        // progress that is not coming.
+        coordinator.setSessionLoadPhase(null)
         coordinator.presentHandshakeFailure(error)
     }
 
