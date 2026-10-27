@@ -2,6 +2,7 @@ package relay.feature.workspace
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -30,8 +31,6 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DismissibleDrawerSheet
-import androidx.compose.material3.DismissibleNavigationDrawer
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,10 +46,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
@@ -83,6 +84,20 @@ private val EXPANDED_WIDTH_BREAKPOINT = 840.dp
 // Per-event leftward drag (px) on the two-pane sidebar that triggers a hide. Small
 // so a deliberate swipe-left closes the pane promptly, but above stray jitter.
 private const val SWIPE_CLOSE_THRESHOLD_PX = 8f
+/** Width of the two-pane sidebar; also the amount the terminal pane gives up. */
+private val TWO_PANE_SIDEBAR_WIDTH = 320.dp
+/** Slide duration for the two-pane sidebar; Material's drawer used ~256 ms. */
+private const val TWO_PANE_SIDEBAR_ANIM_MS = 260
+/**
+ * Start-edge strip that reopens the hidden two-pane sidebar on a rightward drag.
+ * Wider than the usual 24 dp because with gesture navigation the system owns
+ * roughly the first 24 dp for its back gesture and the app never sees a drag
+ * that starts there (confirmed on the emulator: the same swipe opens the
+ * sidebar under three-button navigation and triggers Back under gestures).
+ * The extra band gives a drag that starts just past the system zone somewhere
+ * to land. The toggle button remains the primary way to show the sidebar.
+ */
+private val TWO_PANE_EDGE_SWIPE_WIDTH = 40.dp
 
 // Session-name reload, fade through black. Matches Swift `TerminalReloadFade`:
 // quick out (the user just tapped, so the black needs no easing-in to read as a
@@ -240,12 +255,17 @@ fun WorkspaceScreen(
     var redrawToken by remember { mutableStateOf(0) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
-    // Two-pane (fold-open / tablet) drawer. DismissibleNavigationDrawer renders the
-    // sidebar inline (persistent pane look) but, unlike the bespoke Row +
-    // AnimatedVisibility it replaces, ships built-in swipe-to-close/open gesture
-    // handling — so the user can swipe the pane away on a fold-open screen just like
-    // the ModalNavigationDrawer allows in the compact branch. Starts open.
-    val twoPaneDrawerState = rememberDrawerState(DrawerValue.Open)
+    // Two-pane (fold-open / tablet) sidebar: a plain Boolean driving an animated
+    // width in a Row, NOT a DismissibleNavigationDrawer. Material's dismissible
+    // drawer measures its content at the FULL width and only translates it right
+    // by the sheet's width, so with the sidebar open the terminal pane's last
+    // 320 dp — its rightmost columns and the key bar's last keys — sat off the
+    // right edge of the screen (seen on the iPhone-Duo-sized emulator in
+    // landscape). A Row gives the pane the width that is actually left. The two
+    // gestures the drawer used to provide are re-added by hand below: a leftward
+    // drag on the sidebar closes it, a rightward drag from the pane's left edge
+    // opens it. Survives rotation/recreation; starts open.
+    var twoPaneSidebarOpen by rememberSaveable { mutableStateOf(true) }
 
     val sidebar: @Composable () -> Unit = {
         SessionSidebar(
@@ -359,7 +379,7 @@ fun WorkspaceScreen(
             LaunchedEffect(expanded) {
                 sidebarToggleRequests.collect {
                     if (expanded) {
-                        if (twoPaneDrawerState.isOpen) twoPaneDrawerState.close() else twoPaneDrawerState.open()
+                        twoPaneSidebarOpen = !twoPaneSidebarOpen
                     } else {
                         if (drawerState.isOpen) drawerState.close() else drawerState.open()
                     }
@@ -367,49 +387,56 @@ fun WorkspaceScreen(
             }
 
             if (expanded) {
-                // Fold-open / tablet: an inline, persistent-looking sidebar pane that
-                // is ALSO swipe-dismissible (DismissibleNavigationDrawer's built-in
-                // gesture). The menu-button toggle flips the same drawerState, so both
-                // swipe and tap hide/show the pane — matching the compact branch's
-                // ModalNavigationDrawer behaviour the user expects.
-                DismissibleNavigationDrawer(
-                    drawerState = twoPaneDrawerState,
-                    gesturesEnabled = true,
-                    drawerContent = {
-                        DismissibleDrawerSheet(
-                            drawerContainerColor = MaterialTheme.colorScheme.surface,
+                // Fold-open / tablet: sidebar and terminal share the width in a Row.
+                // See `twoPaneSidebarOpen` for why this is not a navigation drawer.
+                val sidebarWidth by animateDpAsState(
+                    targetValue = if (twoPaneSidebarOpen) TWO_PANE_SIDEBAR_WIDTH else 0.dp,
+                    animationSpec = tween(TWO_PANE_SIDEBAR_ANIM_MS),
+                    label = "twoPaneSidebarWidth",
+                )
+                Row(modifier = Modifier.fillMaxSize()) {
+                    if (sidebarWidth > 0.dp) {
+                        // Clip so the pane slides in/out instead of squeezing its
+                        // rows; the inner Box keeps the sidebar at its full width
+                        // while the outer one animates.
+                        Box(
+                            modifier = Modifier
+                                .width(sidebarWidth)
+                                .fillMaxHeight()
+                                .clipToBounds()
+                                .background(MaterialTheme.colorScheme.surface),
                         ) {
-                            // Explicit left-swipe-to-close on the pane itself.
-                            // DismissibleNavigationDrawer's built-in drag region is
-                            // unreliable here (the terminal pane swallows horizontal
-                            // drags and the open pane has no scrim to grab), so a
-                            // leftward drag on the sidebar reliably hides it — matching
-                            // the compact ModalNavigationDrawer swipe the user expects.
                             Box(
                                 modifier = Modifier
-                                    .width(320.dp)
+                                    .width(TWO_PANE_SIDEBAR_WIDTH)
                                     .fillMaxHeight()
+                                    // A leftward drag on the sidebar hides it — the swipe
+                                    // the compact ModalNavigationDrawer users expect.
                                     .pointerInput(Unit) {
                                         detectHorizontalDragGestures { _, dragAmount ->
-                                            if (dragAmount < -SWIPE_CLOSE_THRESHOLD_PX) {
-                                                scope.launch { twoPaneDrawerState.close() }
-                                            }
+                                            if (dragAmount < -SWIPE_CLOSE_THRESHOLD_PX) twoPaneSidebarOpen = false
                                         }
                                     },
                             ) { sidebar() }
                         }
-                    },
-                ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        terminalColumn(
-                            {
-                                scope.launch {
-                                    if (twoPaneDrawerState.isOpen) twoPaneDrawerState.close()
-                                    else twoPaneDrawerState.open()
-                                }
-                            },
-                            false,
-                        )
+                    }
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        terminalColumn({ twoPaneSidebarOpen = !twoPaneSidebarOpen }, false)
+                        // Edge swipe to reopen: a thin strip along the pane's start
+                        // edge that only exists while the sidebar is hidden, so it
+                        // never steals a drag from the terminal otherwise.
+                        if (!twoPaneSidebarOpen) {
+                            Box(
+                                modifier = Modifier
+                                    .width(TWO_PANE_EDGE_SWIPE_WIDTH)
+                                    .fillMaxHeight()
+                                    .pointerInput(Unit) {
+                                        detectHorizontalDragGestures { _, dragAmount ->
+                                            if (dragAmount > SWIPE_CLOSE_THRESHOLD_PX) twoPaneSidebarOpen = true
+                                        }
+                                    },
+                            )
+                        }
                     }
                 }
             } else {

@@ -122,10 +122,24 @@ final class RelayMessageHandlerTests: XCTestCase {
 
     /// Pull the first server message out of the pending outbound frames.
     /// Returns nil if there's no text frame yet.
-    private func firstServerMessage(_ channel: NIOAsyncTestingChannel) async throws -> ServerMessage? {
-        let frames = try await drainOutboundFrames(channel)
-        guard let textFrame = frames.first(where: { $0.opcode == .text }) else { return nil }
-        return try decodeServer(textFrame)
+    /// The first text frame the handler has written, polling until one arrives
+    /// or `timeout` elapses. The reply to a request crosses Task → actor →
+    /// `eventLoop.execute` hops; `send`'s 20 ms yield covers them on a Mac and
+    /// not on a cold Linux CI runner, where a single immediate drain read nil and
+    /// failed `testRegisterPushTokenWhenAuthedAcksAndStores`. Every caller
+    /// expects a reply, so polling costs nothing on the fast path and only
+    /// lengthens the wait where the machine is slow.
+    private func firstServerMessage(_ channel: NIOAsyncTestingChannel,
+                                    timeout: Duration = .seconds(3)) async throws -> ServerMessage? {
+        let deadline = ContinuousClock.now + timeout
+        while true {
+            let frames = try await drainOutboundFrames(channel)
+            if let textFrame = frames.first(where: { $0.opcode == .text }) {
+                return try decodeServer(textFrame)
+            }
+            if ContinuousClock.now >= deadline { return nil }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     /// Drives one inbound frame and yields long enough for the handler's
