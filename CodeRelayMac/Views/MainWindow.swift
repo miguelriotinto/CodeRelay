@@ -61,10 +61,8 @@ private struct WorkspaceView: View {
     @State private var showQRPopover = false
     @State private var showRenameAlert = false
     @State private var renameText = ""
-    /// Blackout opacity for the session-name reload: 0 shows the terminal, 1
-    /// hides it behind opaque black while the server's copy is swapped in.
-    /// Driven by `TerminalReloadFade`.
-    @State private var reloadCover: Double = 0
+    /// One sheet + blackout for switch, session-name refresh and reconnect.
+    @StateObject private var loading = SessionLoadingSheetModel()
 
     private var coordinator: SessionCoordinator? { hub.activeCoordinator }
     /// Drives the surfaces a one-server user expects even with nothing selected
@@ -122,7 +120,11 @@ private struct WorkspaceView: View {
         // the only / first live one) live on a child view that only exists
         // while there is one (spec §8.1: the Reconnecting sheet is per server).
         .background {
-            if let focus { ActiveCoordinatorModifiers(coordinator: focus).id(ObjectIdentifier(focus)) }
+            if let focus {
+                ActiveCoordinatorModifiers(coordinator: focus, loading: loading,
+                                           serverName: hub.sections.first { $0.id == hub.focusServerId }?.title)
+                    .id(ObjectIdentifier(focus))
+            }
         }
         .sheet(isPresented: $hub.isShowingServerList) {
             NavigationStack {
@@ -167,11 +169,8 @@ private struct WorkspaceView: View {
                 // terminal's SwiftTerm scrollback survives the swap.
                 TerminalContainerView(coordinator: coordinator, fontSize: CGFloat(settings.terminalFontSize))
                     .padding(.leading, 6)
-                    .terminalReloadCover(reloadCover)
-                SessionLoadingOverlay(
-                    phase: coordinator.sessionLoadPhase,
-                    sessionName: coordinator.name(for: activeId)
-                )
+                    // Black while the loading sheet is up; both lift on the first frame.
+                    .terminalLoadingCover(loading.isPresented)
             }
             // The container is keyed by the coordinator so a cross-server switch
             // swaps the whole host; within one server the host is reused.
@@ -247,10 +246,7 @@ private struct WorkspaceView: View {
             .background(badged ? Color.white.opacity(0.12) : Color.clear)
             .clipShape(Capsule())
             .onTapGesture {
-                Task {
-                    await TerminalReloadFade.run(
-                        coordinator: coordinator, id: id, cover: $reloadCover)
-                }
+                Task { await TerminalReloadFade.reload(coordinator: coordinator, id: id) }
             }
             .contextMenu {
                 Button("Rename Session…") {
@@ -266,18 +262,32 @@ private struct WorkspaceView: View {
 /// Rendered as an invisible background child so each binding is non-optional.
 private struct ActiveCoordinatorModifiers: View {
     @ObservedObject var coordinator: SessionCoordinator
+    @ObservedObject var loading: SessionLoadingSheetModel
+    let serverName: String?
+
+    private var presentation: SessionLoadingPresentation {
+        SessionLoadingPresentation(loadPhase: coordinator.sessionLoadPhase,
+                                   isRecovering: coordinator.isRecovering,
+                                   recoveryPhase: coordinator.recoveryPhase,
+                                   sessionName: coordinator.activeSessionId.map { coordinator.name(for: $0) },
+                                   serverName: serverName)
+    }
 
     var body: some View {
         Color.clear
             .sheet(isPresented: $coordinator.showQRScanner) {
                 QRScannerSheet(coordinator: coordinator)
             }
-            .sheet(isPresented: $coordinator.isRecovering) {
-                RecoverySheet(
-                    phase: coordinator.recoveryPhase,
-                    onCancel: { coordinator.cancelRecovery() }
-                )
-                .interactiveDismissDisabled()
+            .onChange(of: presentation, initial: true) { _, p in loading.update(p) }
+            // The one loading sheet (parity with iOS): switch, session-name
+            // refresh and reconnect, with the bytes loaded as the largest text.
+            .sheet(isPresented: Binding(get: { loading.isPresented }, set: { _ in })) {
+                if let shown = loading.shown {
+                    SessionLoadingSheet(presentation: shown,
+                                        onCancel: shown.allowsCancel ? { coordinator.cancelRecovery() } : nil)
+                        .frame(width: MainWindowLoading.detentSize.width, height: MainWindowLoading.detentSize.height)
+                        .interactiveDismissDisabled()
+                }
             }
             .alert("Cannot Open Session", isPresented: $coordinator.sessionAttachFailed) {
                 Button("OK", role: .cancel) { coordinator.sessionAttachError = nil }
@@ -332,27 +342,7 @@ private struct HubStatusBar: View {
     }
 }
 
-private struct RecoverySheet: View {
-    let phase: SharedSessionCoordinator.RecoveryPhase
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            ProgressView()
-                .scaleEffect(1.2)
-            Text("Reconnecting")
-                .font(.headline)
-            Text(phase.label)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .contentTransition(.interpolate)
-                .animation(.easeInOut(duration: 0.25), value: phase.label)
-            Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .controlSize(.large)
-                .padding(.bottom, 16)
-        }
-        .frame(width: 280, height: 200)
-    }
+/// Size of the loading sheet as a macOS window sheet (iOS uses a detent).
+enum MainWindowLoading {
+    static let detentSize = CGSize(width: 320, height: 220)
 }
