@@ -60,3 +60,54 @@ public struct SessionLoadingSheet: View {
         .accessibilityAddTraits(.updatesFrequently)
     }
 }
+
+/// Shared geometry for the loading sheet.
+public enum SessionLoadingSheetLayout {
+    /// The macOS window sheet's width; its height always follows the content.
+    public static let macWidth: CGFloat = 320
+    /// First guess for the iOS detent before the content has been measured.
+    static let initialHeight: CGFloat = 300
+}
+
+public extension View {
+    /// Hosts `SessionLoadingSheet` at exactly its natural height. A fixed
+    /// height (a third of the screen on iOS, 220 pt on macOS) clipped the
+    /// spinner and the reconnect Cancel button — worst on a short, wide display
+    /// such as an iPhone in landscape or the iPhone Duo. On iOS the measured
+    /// height becomes the sheet's only detent (and form-sheet idioms such as
+    /// iPad and the open Duo get `.fitted` sizing); on macOS only the width is
+    /// fixed.
+    func sessionLoadingSheetContainer() -> some View {
+        modifier(SessionLoadingSheetContainer())
+    }
+}
+
+struct SessionLoadingSheetContainer: ViewModifier {
+    @State private var height: CGFloat = SessionLoadingSheetLayout.initialHeight
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        sized(content
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measured in
+                if measured > 0 { height = measured.rounded(.up) }
+            }
+            .presentationDetents([.height(height)]))
+        #else
+        content
+            .frame(width: SessionLoadingSheetLayout.macWidth)
+            .fixedSize(horizontal: false, vertical: true)
+        #endif
+    }
+
+    #if os(iOS)
+    @ViewBuilder
+    private func sized(_ view: some View) -> some View {
+        if #available(iOS 18.0, *) {
+            view.presentationSizing(.fitted)
+        } else {
+            view
+        }
+    }
+    #endif
+}
