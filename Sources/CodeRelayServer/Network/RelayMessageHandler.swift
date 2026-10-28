@@ -610,13 +610,10 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
 
         // Label the token after the device so it is identifiable and
         // individually revocable in `claude-relay token list`.
-        let trimmedName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sanitized = trimmedName.isEmpty ? platform : trimmedName
-        // Strip control characters (attacker-controlled deviceName/platform can
-        // embed \n to forge log lines or ANSI escapes to corrupt terminals).
-        let allowedChars = CharacterSet.controlCharacters.union(.newlines).inverted
-        let stripped = sanitized.unicodeScalars.filter { allowedChars.contains($0) }
-        let safeName = String(String.UnicodeScalarView(stripped).prefix(60))
+        // Attacker-controlled deviceName/platform can embed \n to forge log
+        // lines or ANSI escapes to corrupt terminals: one shared rule.
+        var safeName = LabelSanitizer.sanitize(deviceName)
+        if safeName.isEmpty { safeName = LabelSanitizer.sanitize(platform) }
 
         bridgeToEventLoop(
             context: context,

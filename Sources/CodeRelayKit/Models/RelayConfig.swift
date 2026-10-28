@@ -50,6 +50,11 @@ public struct RelayConfig: Codable, Sendable {
     /// warns explicitly when `bindAll` is true without TLS.
     public var bindAll: Bool
 
+    /// Operator-facing name sent to clients in `auth_success`/`pair_success`
+    /// (multi-server spec §6.1). Optional; nil means "use the host name".
+    /// Sanitised on write like a pairing label. Read once at startup.
+    public var serverName: String?
+
     // MARK: - Push notifications (all off / nil by default)
 
     /// Master switch — when false, push tokens are still accepted and stored
@@ -109,6 +114,7 @@ public struct RelayConfig: Codable, Sendable {
         logLevel: String = "info",
         maxSessionsPerToken: Int = 50,
         bindAll: Bool = true,
+        serverName: String? = nil,
         pushEnabled: Bool = false,
         pushNotifyOnFinished: Bool = false,
         apnsKeyPath: String? = nil,
@@ -134,6 +140,7 @@ public struct RelayConfig: Codable, Sendable {
         self.logLevel = logLevel
         self.maxSessionsPerToken = maxSessionsPerToken
         self.bindAll = bindAll
+        self.serverName = serverName
         self.pushEnabled = pushEnabled
         self.pushNotifyOnFinished = pushNotifyOnFinished
         self.apnsKeyPath = apnsKeyPath
@@ -191,7 +198,7 @@ public struct RelayConfig: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case wsPort, adminPort, detachTimeout, scrollbackSize
-        case tlsCert, tlsKey, logLevel, maxSessionsPerToken, bindAll
+        case tlsCert, tlsKey, logLevel, maxSessionsPerToken, bindAll, serverName
         case pushEnabled, pushNotifyOnFinished
         case apnsKeyPath, apnsKeyId, apnsTeamId, apnsBundleId, apnsUseSandbox
         case fcmServiceAccountPath, fcmProjectId
@@ -214,6 +221,7 @@ public struct RelayConfig: Codable, Sendable {
         // this default and keep their previous behavior. Set `bindAll=false`
         // explicitly to bind loopback only.
         self.bindAll = try c.decodeIfPresent(Bool.self, forKey: .bindAll) ?? true
+        self.serverName = try c.decodeIfPresent(String.self, forKey: .serverName)
         self.pushEnabled = try c.decodeIfPresent(Bool.self, forKey: .pushEnabled) ?? false
         self.pushNotifyOnFinished = try c.decodeIfPresent(Bool.self, forKey: .pushNotifyOnFinished) ?? false
         self.apnsKeyPath = try c.decodeIfPresent(String.self, forKey: .apnsKeyPath)

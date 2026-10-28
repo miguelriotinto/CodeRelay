@@ -214,4 +214,26 @@ final class ConfigValidationTests: XCTestCase {
         try AdminRoutes.applyConfigValue("", forKey: "promptOptimizerKeyPath", to: &config)
         XCTAssertNil(config.promptOptimizerKeyPath)
     }
+
+    // MARK: - serverName Validation
+
+    func testServerNameIsSanitisedOnWrite() throws {
+        var config = RelayConfig.default
+        try AdminRoutes.applyConfigValue("  Studio\u{1B}[0m Relay\n", forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "Studio[0m Relay")
+    }
+
+    func testServerNameEmptyClears() throws {
+        var config = RelayConfig(serverName: "Studio")
+        try AdminRoutes.applyConfigValue("", forKey: "serverName", to: &config)
+        XCTAssertNil(config.serverName)
+        try AdminRoutes.applyConfigValue("\n\u{07}", forKey: "serverName", to: &config)
+        XCTAssertNil(config.serverName, "control-only input is empty after sanitising")
+    }
+
+    func testServerNameMustBeAString() {
+        var config = RelayConfig.default
+        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(42, forKey: "serverName", to: &config))
+        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(true, forKey: "serverName", to: &config))
+    }
 }

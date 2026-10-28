@@ -63,20 +63,9 @@ struct ConfigSetCommand: AsyncParsableCommand {
     var value: String
 
     func run() async throws {
-        // Must match server-side AdminRoutes.applyConfigValue accepted keys
-        let validKeys: Set<String> = [
-            "wsPort", "adminPort", "detachTimeout", "scrollbackSize",
-            "tlsCert", "tlsKey", "logLevel", "maxSessionsPerToken",
-            "bindAll",
-            "pushEnabled", "pushNotifyOnFinished",
-            "apnsKeyPath", "apnsKeyId", "apnsTeamId", "apnsBundleId", "apnsUseSandbox",
-            "fcmServiceAccountPath", "fcmProjectId",
-            "promptOptimizerEnabled", "promptOptimizerProvider", "promptOptimizerModel",
-            "promptOptimizerRegion", "promptOptimizerKeyPath", "promptOptimizerShareScreen"
-        ]
-        guard validKeys.contains(key) else {
+        guard Self.validKeys.contains(key) else {
             FileHandle.standardError.write(Data(
-                "Error: unknown config key '\(key)'. Valid keys: \(validKeys.sorted().joined(separator: ", "))\n".utf8))
+                "Error: unknown config key '\(key)'. Valid keys: \(Self.validKeys.sorted().joined(separator: ", "))\n".utf8))
             throw ExitCode.failure
         }
 
@@ -152,7 +141,22 @@ struct ConfigSetCommand: AsyncParsableCommand {
     /// a client can see — the wand stays dimmed — and the operator has no reason to
     /// suspect it. One line closes that gap (review C-2). Returns nil for every
     /// other key, whose writes *are* live.
+    /// Must match server-side `AdminRoutes.applyConfigValue` accepted keys.
+    static let validKeys: Set<String> = [
+        "wsPort", "adminPort", "detachTimeout", "scrollbackSize",
+        "tlsCert", "tlsKey", "logLevel", "maxSessionsPerToken",
+        "bindAll", "serverName",
+        "pushEnabled", "pushNotifyOnFinished",
+        "apnsKeyPath", "apnsKeyId", "apnsTeamId", "apnsBundleId", "apnsUseSandbox",
+        "fcmServiceAccountPath", "fcmProjectId",
+        "promptOptimizerEnabled", "promptOptimizerProvider", "promptOptimizerModel",
+        "promptOptimizerRegion", "promptOptimizerKeyPath", "promptOptimizerShareScreen"
+    ]
+
     static func restartHint(forKey key: String) -> String? {
+        if key == "serverName" {
+            return "Note: serverName is read at startup — run 'claude-relay restart' to apply."
+        }
         guard key.hasPrefix("promptOptimizer") else { return nil }
         return "Note: optimizer settings are read at startup — run 'claude-relay restart' to apply."
     }

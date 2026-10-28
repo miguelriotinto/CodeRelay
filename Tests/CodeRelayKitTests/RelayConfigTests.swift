@@ -228,4 +228,19 @@ final class RelayConfigTests: XCTestCase {
         XCTAssertFalse(RelayConfig.isValidOptimizerRegion("us-east-1/evil"))
         XCTAssertFalse(RelayConfig.isValidOptimizerRegion("US-EAST-1"))
     }
+
+    // MARK: - serverName (multi-server spec §6.1)
+
+    func testServerNameDefaultsToNil() throws {
+        XCTAssertNil(RelayConfig.default.serverName)
+        let decoded = try decoder.decode(RelayConfig.self, from: Data("{}".utf8))
+        XCTAssertNil(decoded.serverName, "a pre-v3 config.json has no serverName")
+    }
+
+    func testServerNameRoundTrips() throws {
+        let config = RelayConfig(serverName: "Studio Relay")
+        let data = try encoder.encode(config)
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"serverName\" : \"Studio Relay\""))
+        XCTAssertEqual(try decoder.decode(RelayConfig.self, from: data).serverName, "Studio Relay")
+    }
 }

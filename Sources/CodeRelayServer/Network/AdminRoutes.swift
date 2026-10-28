@@ -123,15 +123,9 @@ enum AdminRoutes {
         if let body, let data = body.getData(at: body.readerIndex, length: body.readableBytes),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let rawLabel = json["label"] as? String {
-            let trimmed = rawLabel.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty {
-                // Apply the same sanitization as deviceName in handlePairRequest:
-                // strip control characters and cap at 60 chars.
-                let allowedChars = CharacterSet.controlCharacters.union(.newlines).inverted
-                let stripped = trimmed.unicodeScalars.filter { allowedChars.contains($0) }
-                label = String(String.UnicodeScalarView(stripped).prefix(60))
-                if label?.isEmpty == true { label = nil }
-            }
+            // Same rule as deviceName in handlePairRequest and the serverName key.
+            let clean = LabelSanitizer.sanitize(rawLabel)
+            label = clean.isEmpty ? nil : clean
         }
 
         let grant = await pairingStore.mint(label: label)
@@ -454,6 +448,10 @@ enum AdminRoutes {
         case "bindAll":
             guard let val = value as? Bool else { throw ConfigError(message: "bindAll must be a boolean") }
             config.bindAll = val
+        case "serverName":
+            guard let val = value as? String else { throw ConfigError(message: "serverName must be a string") }
+            let clean = LabelSanitizer.sanitize(val)
+            config.serverName = clean.isEmpty ? nil : clean
         case "pushEnabled":
             guard let val = value as? Bool else { throw ConfigError(message: "pushEnabled must be a boolean") }
             config.pushEnabled = val
