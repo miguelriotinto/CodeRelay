@@ -18,7 +18,21 @@ enum MacServerHubFactory {
     }
 
     static func make(defaults: UserDefaults = .standard) -> MacServerHub {
-        ServerHub(
+        #if DEBUG
+        if HubPreviewSeed.isEnabled {
+            let seed = HubPreviewSeed.makeStores(keyPrefix: SessionCoordinator.keyPrefix,
+                                                 deviceId: DeviceIdentifier().currentID)
+            return ServerHub(
+                bookmarks: seed.bookmarks,
+                tokens: seed.tokens,
+                stateStore: seed.state,
+                keyPrefix: SessionCoordinator.keyPrefix,
+                lastServerIdKey: lastServerIdKey,
+                defaults: seed.defaults,
+                factory: { config, token in makeCoordinator(config: config, token: token) })
+        }
+        #endif
+        return ServerHub(
             bookmarks: CodeRelayMacApp.savedConnections,
             tokens: AuthManager.shared,
             stateStore: HubStateStore(keyPrefix: SessionCoordinator.keyPrefix,

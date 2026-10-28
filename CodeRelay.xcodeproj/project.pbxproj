@@ -10,6 +10,7 @@
 		012F50F6760E057E309FB327 /* ModifierFlagsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2915E91C1DA4FC72AF6EBA3 /* ModifierFlagsTests.swift */; };
 		051438AA3CED441B1CA8CEA3 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A32DE56B50F45FC20E0EAD49 /* QRScannerView.swift */; };
 		06C55262523D7C9EAFB3312D /* CodeRelayMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9811DD833847D309CB69C378 /* CodeRelayMacApp.swift */; };
+		094FAA33489448E5C94C5A46 /* HubPreviewSeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55719C3D9366D323E70ADB6D /* HubPreviewSeed.swift */; };
 		0A2F13A1616D3539C4F3BF83 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C4A4A53A54C85D2BDFE7327 /* WorkspaceView.swift */; };
 		0A304EC22DA76BD8B298A963 /* ImagePasteHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B090224A2F32FF6AA6DCAD /* ImagePasteHandler.swift */; };
 		0C6B11DBFA2D605D05506B93 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4A5A11FFBA6C50A66206D19C /* Assets.xcassets */; };
@@ -126,6 +127,7 @@
 		4C3AABD0A1EDCDF3D99C2813 /* TerminalPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPalette.swift; sourceTree = "<group>"; };
 		4C4A4A53A54C85D2BDFE7327 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		519C055662248EBE2FCC54F4 /* ServerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListView.swift; sourceTree = "<group>"; };
+		55719C3D9366D323E70ADB6D /* HubPreviewSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubPreviewSeed.swift; sourceTree = "<group>"; };
 		5A9C224C001A6A792F9D58C8 /* MenuBarActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarActivityTests.swift; sourceTree = "<group>"; };
 		5B33AE8EE6C033A2403B7BF3 /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
 		60465BA09A0A9870E9E03B23 /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
@@ -226,6 +228,14 @@
 			path = CodeRelayAppTests;
 			sourceTree = "<group>";
 		};
+		3142009FB9E61C19AB534908 /* Debug */ = {
+			isa = PBXGroup;
+			children = (
+				55719C3D9366D323E70ADB6D /* HubPreviewSeed.swift */,
+			);
+			path = Debug;
+			sourceTree = "<group>";
+		};
 		34D1050EFBED59F1D66641F7 /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
@@ -321,6 +331,7 @@
 				31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */,
 				05446DA7A910D4397B33AFD1 /* CodeRelayMac.entitlements */,
 				9811DD833847D309CB69C378 /* CodeRelayMacApp.swift */,
+				3142009FB9E61C19AB534908 /* Debug */,
 				C69885DCACB1794E450A069F /* Helpers */,
 				A25B9B5D71BB4A8003E7F361 /* Models */,
 				B7062D5B31E8B8EEA5D0F38A /* ViewModels */,
@@ -594,6 +605,7 @@
 				75BB5A192BBB2F405FE8BE49 /* AppSettings.swift in Sources */,
 				4FC3D0363147468C7CCA6BE8 /* AttachRemoteSessionSheet.swift in Sources */,
 				06C55262523D7C9EAFB3312D /* CodeRelayMacApp.swift in Sources */,
+				094FAA33489448E5C94C5A46 /* HubPreviewSeed.swift in Sources */,
 				675E01D193B0C8FA1D6AAE34 /* HubSidebarView.swift in Sources */,
 				0A304EC22DA76BD8B298A963 /* ImagePasteHandler.swift in Sources */,
 				22809ECBA2EC7298B6F062E6 /* KeyCaptureInterceptor.swift in Sources */,

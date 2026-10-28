@@ -12,6 +12,8 @@ public enum ServerSectionStatus: Equatable, Sendable {
 
     public var isLive: Bool { self == .live }
 
+    // Six named inputs beat a one-use parameter struct; every caller is a test or `publish()`.
+    // swiftlint:disable function_parameter_count
     /// Pure derivation from a coordinator's published flags. Order matters:
     /// a rejected token beats everything (recovery will not retry it), recovery
     /// beats the raw socket state, and a connected socket still mid-handshake
@@ -22,6 +24,7 @@ public enum ServerSectionStatus: Equatable, Sendable {
                               isPerformingHandshake: Bool,
                               authRejected: Bool,
                               recoveryFailed: Bool) -> ServerSectionStatus {
+        // swiftlint:enable function_parameter_count
         guard enabled else { return .disabled }
         if authRejected { return .authFailed("Token rejected by the relay") }
         if isRecovering { return .reconnecting }

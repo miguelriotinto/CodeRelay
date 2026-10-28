@@ -140,6 +140,26 @@ The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments
 
 Both apps share `SharedSessionCoordinator` (in CodeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (e.g., macOS registers `SleepWakeObserver`; iOS uses `scenePhase`).
 
+**Multi-server (macOS first; spec `docs/superpowers/specs/2026-10-28-multi-server-sessions-design.md`).**
+`ServerHub<Slot>` (CodeRelayClient/Hub) owns one per-server coordinator per
+**enabled** bookmark and the single global `activeRef: SessionRef` (bookmark
+id + session id — never the server instance id). Coordinators are unchanged
+except four additive hooks (`ownershipKeyPrefix`, `detachActive()`,
+`serverIdentity`, `isAuthRejected`); the hub reaches them through
+`ServerSlotCoordinating`, so hub tests run against a scripted fake. A
+cross-server switch awaits a bounded `detachActive()` on the previous
+coordinator before attaching (one attachment across all servers). An offline
+server keeps its cached rows; selecting one triggers that server's recovery and
+the selection is applied when a live list proves the session still exists.
+Foreground/wake/network events fan out through the hub with a 150 ms stagger —
+macOS coordinators no longer register their own wake observers. Deep links
+(`SessionDeepLink`, scheme `coderelay`, optional `?server=<instanceId>`) route
+instance id → unique session → single server's remote attach → not found.
+`HubMigration` runs once: only the previously last-used bookmark stays enabled.
+`ServerStatusChecker` polls only **disabled** bookmarks; the live connection is
+the status for enabled ones. `CODERELAY_HUB_SEED=1` (DEBUG, macOS) seeds three
+canned bookmarks in an isolated defaults suite for screenshot verification.
+
 **Session-loading overlay.** Opening a session is black until the replay is
 delivered in one batch (see "Scrollback replay"), which on a slow link is
 seconds. `SharedSessionCoordinator.sessionLoadPhase` (`SessionLoadPhase`:

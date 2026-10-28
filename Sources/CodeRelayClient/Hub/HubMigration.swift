@@ -11,6 +11,8 @@ import CodeRelayKit
 @MainActor
 public enum HubMigration {
 
+    // The migration is called once, from `ServerHub.init`; its inputs are the hub's own.
+    // swiftlint:disable function_parameter_count
     @discardableResult
     public static func run(defaults: UserDefaults,
                            keyPrefix: String,
@@ -18,6 +20,7 @@ public enum HubMigration {
                            bookmarks: SavedConnectionStore,
                            lastServerIdKey: String,
                            stateStore: HubStateStore) -> Bool {
+        // swiftlint:enable function_parameter_count
         guard !stateStore.isMigrated else { return false }
         var all = bookmarks.loadAll()
         let lastId = defaults.string(forKey: lastServerIdKey).flatMap(UUID.init(uuidString:))
