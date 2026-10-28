@@ -60,7 +60,7 @@ final class FCMClientTests: XCTestCase {
         let client = try FCMClient(serviceAccountJSON: testServiceAccount(), projectId: "test-proj", http: http)
         let result = await client.send(deviceToken: "dev1", platform: .fcm, topic: nil, title: "demo",
                                        body: "blocked", deepLink: "coderelay://session/x",
-                                       collapseKey: "ws_hash")
+                                       collapseKey: "ws_hash", serverId: "srv-1")
         XCTAssertEqual(result, .delivered)
 
         let reqs = await http.all()
@@ -73,6 +73,7 @@ final class FCMClientTests: XCTestCase {
         XCTAssertEqual(msg["token"] as? String, "dev1")
         XCTAssertEqual((msg["notification"] as? [String: Any])?["title"] as? String, "demo")
         XCTAssertEqual((msg["data"] as? [String: Any])?["deepLink"] as? String, "coderelay://session/x")
+        XCTAssertEqual((msg["data"] as? [String: Any])?["serverId"] as? String, "srv-1")
         XCTAssertEqual((msg["android"] as? [String: Any])?["collapse_key"] as? String, "ws_hash")
     }
 
@@ -85,8 +86,10 @@ final class FCMClientTests: XCTestCase {
         let http = FCMMockHTTP()
         await http.configureSend(status: 200)
         let client = try FCMClient(serviceAccountJSON: testServiceAccount(), projectId: "test-proj", http: http)
-        _ = await client.send(deviceToken: "d1", platform: .fcm, topic: nil, title: "t", body: "b", deepLink: "l", collapseKey: "k")
-        _ = await client.send(deviceToken: "d2", platform: .fcm, topic: nil, title: "t", body: "b", deepLink: "l", collapseKey: "k")
+        _ = await client.send(deviceToken: "d1", platform: .fcm, topic: nil, title: "t", body: "b",
+                              deepLink: "l", collapseKey: "k", serverId: "srv-1")
+        _ = await client.send(deviceToken: "d2", platform: .fcm, topic: nil, title: "t", body: "b",
+                              deepLink: "l", collapseKey: "k", serverId: "srv-1")
         let oauthCalls = await http.all().filter { $0.url.contains("oauth2") }.count
         XCTAssertEqual(oauthCalls, 1, "access token should be cached, not re-minted per send")
     }

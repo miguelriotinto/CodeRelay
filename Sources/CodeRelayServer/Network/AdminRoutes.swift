@@ -27,6 +27,7 @@ enum AdminRoutes {
         tokenStore: TokenStore,
         pairingStore: PairingCodeStore,
         config: RelayConfig,
+        identity: ServerIdentity? = nil,
         optimizer: (any PromptOptimizing)? = nil,
         optimizeDeadline: Duration = PromptOptimizer.deadline
     ) async -> AdminResponse {
@@ -39,7 +40,7 @@ enum AdminRoutes {
         case (.GET, "health"):
             return handleHealth(components)
         case (.GET, "status"):
-            return await handleStatus(components, sessionManager: sessionManager)
+            return await handleStatus(components, sessionManager: sessionManager, identity: identity)
         case (.GET, "sessions"):
             return await handleGetSessions(components, sessionManager: sessionManager)
         case (.DELETE, "sessions"):
@@ -123,15 +124,9 @@ enum AdminRoutes {
         if let body, let data = body.getData(at: body.readerIndex, length: body.readableBytes),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let rawLabel = json["label"] as? String {
-            let trimmed = rawLabel.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty {
-                // Apply the same sanitization as deviceName in handlePairRequest:
-                // strip control characters and cap at 60 chars.
-                let allowedChars = CharacterSet.controlCharacters.union(.newlines).inverted
-                let stripped = trimmed.unicodeScalars.filter { allowedChars.contains($0) }
-                label = String(String.UnicodeScalarView(stripped).prefix(60))
-                if label?.isEmpty == true { label = nil }
-            }
+            // Same rule as deviceName in handlePairRequest and the serverName key.
+            let clean = LabelSanitizer.sanitize(rawLabel)
+            label = clean.isEmpty ? nil : clean
         }
 
         let grant = await pairingStore.mint(label: label)
@@ -213,7 +208,8 @@ enum AdminRoutes {
 
     private static func handleStatus(
         _ components: [String],
-        sessionManager: SessionManager
+        sessionManager: SessionManager,
+        identity: ServerIdentity?
     ) async -> AdminResponse {
         guard components == ["status"] else { return .error("Not found", status: 404) }
         let sessions = await sessionManager.listSessions()
@@ -227,7 +223,7 @@ enum AdminRoutes {
         } else {
             uptimeSeconds = 0
         }
-        let info: [String: Any] = [
+        var info: [String: Any] = [
             "status": "running",
             "version": CodeRelayKit.version,
             "protocolVersion": CodeRelayKit.protocolVersion,
@@ -235,6 +231,10 @@ enum AdminRoutes {
             "uptime_seconds": uptimeSeconds,
             "session_count": sessions.count
         ]
+        if let identity {
+            info["instanceId"] = identity.id.uuidString
+            info["serverName"] = identity.name
+        }
         return .json(info)
     }
 
@@ -454,6 +454,12 @@ enum AdminRoutes {
         case "bindAll":
             guard let val = value as? Bool else { throw ConfigError(message: "bindAll must be a boolean") }
             config.bindAll = val
+        case "serverName":
+            // Older CLIs infer `42`/`true` into typed JSON; the text the operator
+            // typed must survive the round trip, so scalars are stringified.
+            guard let text = scalarText(value) else { throw ConfigError(message: "serverName must be a string") }
+            let clean = LabelSanitizer.sanitize(text)
+            config.serverName = clean.isEmpty ? nil : clean
         case "pushEnabled":
             guard let val = value as? Bool else { throw ConfigError(message: "pushEnabled must be a boolean") }
             config.pushEnabled = val
@@ -510,6 +516,26 @@ enum AdminRoutes {
             config.promptOptimizerShareScreen = val
         default:
             throw ConfigError(message: "Unknown config key: \(key)")
+        }
+    }
+
+    /// The text a JSON scalar represents, or nil for arrays/objects/null.
+    ///
+    /// Order matters: on both Darwin and Linux, `JSONSerialization` bridges
+    /// JSON `true` to an `NSNumber` that also matches `as? Int` (as 1), so a
+    /// boolean is recognised first by its encoded type (`objCType` "c", the
+    /// one-byte encoding both Foundations use for Bool; parsed integers are
+    /// "q"). `NSNumber(1) as? Bool` would otherwise read a typed `1` as "true",
+    /// so Int is matched before Bool.
+    private static func scalarText(_ value: Any) -> String? {
+        if let number = value as? NSNumber, String(cString: number.objCType) == "c" {
+            return number.boolValue ? "true" : "false"
+        }
+        switch value {
+        case let s as String: return s
+        case let i as Int: return String(i)
+        case let b as Bool: return b ? "true" : "false"
+        default: return nil
         }
     }
 

@@ -93,6 +93,10 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     private let maxPushMutations = 20
 
     private let pairingStore: PairingCodeStore
+    /// This relay's persisted identity, sent on every `auth_success` and
+    /// `pair_success` (multi-server spec §6.2). Injected like `pairingStore`:
+    /// constructed once in main.swift, never defaulted per connection.
+    let identity: ServerIdentity
     /// Bad pairing codes on this connection. Mirrors `authAttempts`.
     private(set) var pairAttempts = 0
     private static let maxPairAttempts = 3
@@ -101,6 +105,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
          clipboardService: ClipboardService,
          pushStore: PushRegistrationStore = PushRegistrationStore(directory: RelayConfig.configDirectory),
          pairingStore: PairingCodeStore,
+         identity: ServerIdentity,
          optimizer: (any PromptOptimizing)? = nil,
          optimizerBudget: OptimizerBudget) {
         self.sessionManager = sessionManager
@@ -109,6 +114,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         self.clipboardService = clipboardService
         self.pushStore = pushStore
         self.pairingStore = pairingStore
+        self.identity = identity
         self.optimizer = optimizer
         self.optimizerBudget = optimizerBudget
     }
@@ -524,7 +530,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                     "Auth success for token \(payload.tokenId) (protocol v\(payload.clientVersion))")
                 handler.sendServerMessage(
                     .authSuccess(protocolVersion: CodeRelayKit.protocolVersion, tokenId: payload.tokenId,
-                                 capabilities: handler.optimizer == nil ? nil : [CodeRelayKit.promptOptimizerCapability]),
+                                 capabilities: handler.optimizer == nil ? nil : [CodeRelayKit.promptOptimizerCapability],
+                                 server: handler.identity),
                     context: ctx
                 )
             },
@@ -610,13 +617,10 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
 
         // Label the token after the device so it is identifiable and
         // individually revocable in `claude-relay token list`.
-        let trimmedName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sanitized = trimmedName.isEmpty ? platform : trimmedName
-        // Strip control characters (attacker-controlled deviceName/platform can
-        // embed \n to forge log lines or ANSI escapes to corrupt terminals).
-        let allowedChars = CharacterSet.controlCharacters.union(.newlines).inverted
-        let stripped = sanitized.unicodeScalars.filter { allowedChars.contains($0) }
-        let safeName = String(String.UnicodeScalarView(stripped).prefix(60))
+        // Attacker-controlled deviceName/platform can embed \n to forge log
+        // lines or ANSI escapes to corrupt terminals: one shared rule.
+        var safeName = LabelSanitizer.sanitize(deviceName)
+        if safeName.isEmpty { safeName = LabelSanitizer.sanitize(platform) }
 
         bridgeToEventLoop(
             context: context,
@@ -662,7 +666,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                 RelayLogger.log(category: "auth",
                     "Pairing succeeded for \(payload.label) — minted token \(payload.tokenId)")
                 handler.sendServerMessage(
-                    .pairSuccess(token: payload.token, tokenId: payload.tokenId, label: payload.label),
+                    .pairSuccess(token: payload.token, tokenId: payload.tokenId, label: payload.label,
+                                 server: handler.identity),
                     context: ctx
                 )
             },

@@ -42,6 +42,7 @@ final class PairRequestHandlerTests: XCTestCase {
             clipboardService: NoopClipboardService(),
             pushStore: PushRegistrationStore(directory: tempDir),
             pairingStore: pairingStore,
+            identity: ServerIdentity(id: UUID(), name: "test-relay"),
             optimizerBudget: OptimizerBudget()
         )
         let channel = await NIOAsyncTestingChannel(handler: handler)
@@ -98,7 +99,7 @@ final class PairRequestHandlerTests: XCTestCase {
 
         let messages = try await serverMessages(fixture.channel)
         guard let success = messages.compactMap({ msg -> (String, String, String)? in
-            if case .pairSuccess(let token, let tokenId, let label) = msg { return (token, tokenId, label) }
+            if case .pairSuccess(let token, let tokenId, let label, _) = msg { return (token, tokenId, label) }
             return nil
         }).first else {
             return XCTFail("expected pair_success, got \(messages)")
@@ -133,7 +134,7 @@ final class PairRequestHandlerTests: XCTestCase {
         let grant = await store.mint(label: "iPhone")
         try await send(pairFrame(code: grant.code), on: fixture)
         let paired = try await serverMessages(fixture.channel)
-        guard case .pairSuccess(let token, _, _)? = paired.first(where: {
+        guard case .pairSuccess(let token, _, _, _)? = paired.first(where: {
             if case .pairSuccess = $0 { return true } else { return false }
         }) else { return XCTFail("expected pair_success") }
 

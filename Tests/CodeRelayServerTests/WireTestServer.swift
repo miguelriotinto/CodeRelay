@@ -44,6 +44,7 @@ final class WireTestServer {
             sessionManager: sessionManager, tokenStore: tokenStore,
             rateLimiter: rateLimiter,
             pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay"),
             optimizer: optimizer
         )
     }

@@ -23,6 +23,12 @@ do {
     Foundation.exit(1)
 }
 
+// Server identity (multi-server spec §6.1): a UUID minted once and persisted
+// in instance.json, plus the operator-facing name. Both go out on every
+// auth_success/pair_success and into push payloads so clients can tell
+// relays apart. `serverName` is read here, once — a `config set` needs a restart.
+let identity = ServerIdentityStore.load(configuredName: config.serverName)
+
 let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
 
 let tokenStore = TokenStore(directory: RelayConfig.configDirectory)
@@ -76,6 +82,7 @@ if config.pushEnabled, let sender = PushSenderFactory.make(config: config, group
         tokenProvider: { await pushStore.registrations(forTokenId: $0) },
         sender: sender,
         config: PushNotifyConfig(debounceInterval: 15, notifyOnFinished: config.pushNotifyOnFinished),
+        serverId: identity.id.uuidString,
         onDeadToken: { token in Task { await pushStore.removeToken(token) } }
     )
     await sessionManager.addGlobalActivityObserver { sessionId, tokenId, activity, agentState, revision in
@@ -106,6 +113,7 @@ let wsServer = WebSocketServer(
     rateLimiter: rateLimiter,
     pushStore: pushStore,
     pairingStore: pairingStore,
+    identity: identity,
     optimizer: optimizer,
     optimizerBudget: optimizerBudget
 )
@@ -113,6 +121,7 @@ let adminServer = AdminHTTPServer(
     group: group, port: config.adminPort,
     sessionManager: sessionManager, tokenStore: tokenStore,
     pairingStore: pairingStore,
+    identity: identity,
     config: config,
     rateLimiter: rateLimiter,
     optimizer: optimizer
@@ -140,10 +149,11 @@ do {
 }
 
 let wsHost = config.bindAll ? "0.0.0.0" : "127.0.0.1"
-RelayLogger.log(category: "server", "Server started — WebSocket: \(wsHost):\(config.wsPort), Admin: 127.0.0.1:\(config.adminPort)")
+RelayLogger.log(category: "server", "Server started — WebSocket: \(wsHost):\(config.wsPort), Admin: 127.0.0.1:\(config.adminPort), identity \(identity.id.uuidString) '\(identity.name)'")
 print("CodeRelay server running")
 print("  WebSocket: \(wsHost):\(config.wsPort)")
 print("  Admin API: 127.0.0.1:\(config.adminPort)")
+print("  Identity:  \(identity.name) (\(identity.id.uuidString))")
 
 // Auto-reap child processes (PTY shells) to prevent zombies.
 signal(SIGCHLD, SIG_IGN)

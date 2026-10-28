@@ -214,4 +214,55 @@ final class ConfigValidationTests: XCTestCase {
         try AdminRoutes.applyConfigValue("", forKey: "promptOptimizerKeyPath", to: &config)
         XCTAssertNil(config.promptOptimizerKeyPath)
     }
+
+    // MARK: - serverName Validation
+
+    func testServerNameIsSanitisedOnWrite() throws {
+        var config = RelayConfig.default
+        try AdminRoutes.applyConfigValue("  Studio\u{1B}[0m Relay\n", forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "Studio[0m Relay")
+    }
+
+    func testServerNameEmptyClears() throws {
+        var config = RelayConfig(serverName: "Studio")
+        try AdminRoutes.applyConfigValue("", forKey: "serverName", to: &config)
+        XCTAssertNil(config.serverName)
+        try AdminRoutes.applyConfigValue("\n\u{07}", forKey: "serverName", to: &config)
+        XCTAssertNil(config.serverName, "control-only input is empty after sanitising")
+    }
+
+    func testServerNameAcceptsScalarsAsText() throws {
+        // `config set serverName 42` arrives as an Int (ConfigValue.infer): a
+        // numeric display name is legitimate, so scalars are stringified.
+        var config = RelayConfig.default
+        try AdminRoutes.applyConfigValue(42, forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "42")
+        try AdminRoutes.applyConfigValue(true, forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "true")
+    }
+
+    func testServerNameFromTheJSONWireKeepsBooleanAndIntegerText() throws {
+        // The CLI body is parsed with JSONSerialization; on Darwin JSON `true`
+        // bridges to an NSNumber that also matches `as? Int` (as 1). The text the
+        // operator typed must survive: true → "true", 42 → "42", 1 → "1".
+        func wire(_ json: String) throws -> Any {
+            let obj = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
+            return obj["value"]!
+        }
+        var config = RelayConfig.default
+        try AdminRoutes.applyConfigValue(try wire(#"{"value":true}"#), forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "true")
+        try AdminRoutes.applyConfigValue(try wire(#"{"value":42}"#), forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "42")
+        try AdminRoutes.applyConfigValue(try wire(#"{"value":1}"#), forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "1")
+        try AdminRoutes.applyConfigValue(try wire(#"{"value":"Studio"}"#), forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "Studio")
+    }
+
+    func testServerNameRejectsNonScalars() {
+        var config = RelayConfig.default
+        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(["a"], forKey: "serverName", to: &config))
+        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(["k": "v"], forKey: "serverName", to: &config))
+    }
 }

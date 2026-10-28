@@ -423,8 +423,8 @@ All WebSocket messages use `MessageEnvelope` with JSON encoding:
 - `ping` - Keep-alive ping
 
 **Server Messages:**
-- `pair_success` - Pairing code redeemed; carries the minted `token`, `tokenId`, and `label`
-- `auth_success` / `auth_failure` - Authentication result (includes optional `protocolVersion`)
+- `pair_success` - Pairing code redeemed; carries the minted `token`, `tokenId`, `label`, and (v3) the relay's `serverId`/`serverName`
+- `auth_success` / `auth_failure` - Authentication result (includes optional `protocolVersion`, `capabilities`, and (v3) `serverId`/`serverName`)
 - `session_created` - Session creation result
 - `session_attached` - Attachment confirmation
 - `session_resumed` - Resume confirmation

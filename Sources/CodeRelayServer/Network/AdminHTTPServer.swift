@@ -10,6 +10,7 @@ public final class AdminHTTPServer {
     private let sessionManager: SessionManager
     private let tokenStore: TokenStore
     private let pairingStore: PairingCodeStore
+    private let identity: ServerIdentity
     private let rateLimiter: RateLimiter
     private let config: RelayConfig
     private let optimizer: (any PromptOptimizing)?
@@ -19,6 +20,7 @@ public final class AdminHTTPServer {
     public init(group: EventLoopGroup, port: UInt16,
                 sessionManager: SessionManager, tokenStore: TokenStore,
                 pairingStore: PairingCodeStore,
+                identity: ServerIdentity,
                 config: RelayConfig,
                 rateLimiter: RateLimiter = RateLimiter(maxAttempts: 30, windowSeconds: 60),
                 optimizer: (any PromptOptimizing)? = nil) {
@@ -27,6 +29,7 @@ public final class AdminHTTPServer {
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
         self.pairingStore = pairingStore
+        self.identity = identity
         self.config = config
         self.rateLimiter = rateLimiter
         self.optimizer = optimizer
@@ -36,6 +39,7 @@ public final class AdminHTTPServer {
         let sessionManager = self.sessionManager
         let tokenStore = self.tokenStore
         let pairingStore = self.pairingStore
+        let identity = self.identity
         let config = self.config
         let rateLimiter = self.rateLimiter
         let optimizer = self.optimizer
@@ -49,6 +53,7 @@ public final class AdminHTTPServer {
                         sessionManager: sessionManager,
                         tokenStore: tokenStore,
                         pairingStore: pairingStore,
+                        identity: identity,
                         config: config,
                         rateLimiter: rateLimiter,
                         optimizer: optimizer
@@ -78,6 +83,7 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     private let sessionManager: SessionManager
     private let tokenStore: TokenStore
     private let pairingStore: PairingCodeStore
+    private let identity: ServerIdentity
     private let config: RelayConfig
     private let rateLimiter: RateLimiter
     private let optimizer: (any PromptOptimizing)?
@@ -87,11 +93,12 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     private var requestBodyOverflow: Bool = false
 
     init(sessionManager: SessionManager, tokenStore: TokenStore,
-         pairingStore: PairingCodeStore, config: RelayConfig, rateLimiter: RateLimiter,
+         pairingStore: PairingCodeStore, identity: ServerIdentity, config: RelayConfig, rateLimiter: RateLimiter,
          optimizer: (any PromptOptimizing)?) {
         self.sessionManager = sessionManager
         self.tokenStore = tokenStore
         self.pairingStore = pairingStore
+        self.identity = identity
         self.config = config
         self.rateLimiter = rateLimiter
         self.optimizer = optimizer
@@ -142,6 +149,7 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
             let sessionManager = self.sessionManager
             let tokenStore = self.tokenStore
             let pairingStore = self.pairingStore
+            let identity = self.identity
             let config = self.config
             let rateLimiter = self.rateLimiter
             let optimizer = self.optimizer
@@ -184,6 +192,7 @@ final class AdminHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                     tokenStore: tokenStore,
                     pairingStore: pairingStore,
                     config: config,
+                    identity: identity,
                     optimizer: optimizer
                 )
 

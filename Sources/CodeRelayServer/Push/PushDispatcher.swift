@@ -46,6 +46,9 @@ public actor PushDispatcher {
     private let sessionProvider: SessionProvider
     private let tokenProvider: TokenProvider
     private let sender: PushSending
+    /// This relay's instance id (`ServerIdentity.id.uuidString`): appended to
+    /// every deep link and mixed into every collapse key (spec §6.3, §10).
+    private let serverId: String
     private let config: PushNotifyConfig
     private let onDeadToken: @Sendable (String) -> Void
     private let now: @Sendable () -> Date
@@ -64,12 +67,14 @@ public actor PushDispatcher {
                 tokenProvider: @escaping TokenProvider,
                 sender: PushSending,
                 config: PushNotifyConfig,
+                serverId: String,
                 onDeadToken: @escaping @Sendable (String) -> Void,
                 now: @escaping @Sendable () -> Date = { Date() }) {
         self.sessionProvider = sessionProvider
         self.tokenProvider = tokenProvider
         self.sender = sender
         self.config = config
+        self.serverId = serverId
         self.onDeadToken = onDeadToken
         self.now = now
         let (stream, cont) = AsyncStream<ActivityEvent>.makeStream()
@@ -150,8 +155,8 @@ public actor PushDispatcher {
             let ls = severity(lhs.agentState), rs = severity(rhs.agentState)
             return ls != rs ? ls > rs : lhs.id.uuidString < rhs.id.uuidString
         } ?? triggering
-        let deepLink = "coderelay://session/\(target.id.uuidString)"
-        let collapseKey = Self.collapseKey(for: groupId)
+        let deepLink = "coderelay://session/\(target.id.uuidString)?server=\(serverId)"
+        let collapseKey = Self.collapseKey(for: groupId, serverId: serverId)
 
         let registrations = await tokenProvider(event.tokenId)
         var delivered = false
@@ -160,7 +165,8 @@ public actor PushDispatcher {
             if edge == .finished, !reg.notifyOnFinished { continue }
             let result = await sender.send(
                 deviceToken: reg.token, platform: reg.platform, topic: reg.topic,
-                title: displayTitle, body: body, deepLink: deepLink, collapseKey: collapseKey)
+                title: displayTitle, body: body, deepLink: deepLink, collapseKey: collapseKey,
+                serverId: serverId)
             switch result {
             case .delivered:    delivered = true
             case .unregistered: onDeadToken(reg.token)
@@ -201,10 +207,12 @@ public actor PushDispatcher {
         return (groupId as NSString).lastPathComponent
     }
 
-    /// Privacy-safe, bounded collapse id: hashes the group so a raw host path
-    /// never reaches APNs/FCM.
-    static func collapseKey(for groupId: String) -> String {
-        let digest = SHA256.hash(data: Data(groupId.utf8))
+    /// Privacy-safe, bounded collapse id: hashes the group **and** the relay's
+    /// instance id, so a raw host path never reaches APNs/FCM and two relays
+    /// with a checkout at the same path do not overwrite each other's
+    /// notifications (spec §6.3).
+    static func collapseKey(for groupId: String, serverId: String) -> String {
+        let digest = SHA256.hash(data: Data((serverId + "\n" + groupId).utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined()
         return "ws_" + hex.prefix(16)
     }

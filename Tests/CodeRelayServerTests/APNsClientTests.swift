@@ -69,7 +69,7 @@ final class APNsClientTests: XCTestCase {
         let client = try APNsClient(config: config(sandbox: true), http: http)
         let result = await client.send(deviceToken: "abc123", platform: .apns, topic: nil,
                                        title: "demo", body: "1 agent blocked",
-                                       deepLink: "coderelay://session/xyz", collapseKey: "ws_hash")
+                                       deepLink: "coderelay://session/xyz", collapseKey: "ws_hash", serverId: "srv-1")
         XCTAssertEqual(result, .delivered)
 
         let url = await http.url()
@@ -88,6 +88,7 @@ final class APNsClientTests: XCTestCase {
         XCTAssertEqual(alert?["title"] as? String, "demo")
         XCTAssertEqual(alert?["body"] as? String, "1 agent blocked")
         XCTAssertEqual(json?["deepLink"] as? String, "coderelay://session/xyz")
+        XCTAssertEqual(json?["serverId"] as? String, "srv-1")
     }
 
     func testStatus410MapsToUnregistered() {
@@ -108,7 +109,7 @@ final class APNsClientTests: XCTestCase {
         await http.configure(status: 410)
         let client = try APNsClient(config: config(), http: http)
         let result = await client.send(deviceToken: "dead", platform: .apns, topic: nil, title: "t", body: "b",
-                                       deepLink: "d", collapseKey: "k")
+                                       deepLink: "d", collapseKey: "k", serverId: "srv-1")
         XCTAssertEqual(result, .unregistered)
     }
 
@@ -117,7 +118,7 @@ final class APNsClientTests: XCTestCase {
         await http.configure(status: 200)
         let client = try APNsClient(config: config(sandbox: true), http: http)
         _ = await client.send(deviceToken: "abc123", platform: .apns, topic: "com.claude.relay.mac",
-                              title: "t", body: "b", deepLink: "d", collapseKey: "k")
+                              title: "t", body: "b", deepLink: "d", collapseKey: "k", serverId: "srv-1")
         let headers = await http.headers()
         XCTAssertTrue(headers.contains { $0.0 == "apns-topic" && $0.1 == "com.claude.relay.mac" },
                       "a per-device topic must override the configured bundle id")

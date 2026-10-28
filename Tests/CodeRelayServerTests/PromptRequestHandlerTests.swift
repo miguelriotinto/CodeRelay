@@ -83,6 +83,7 @@ final class PromptRequestHandlerTests: XCTestCase {
             clipboardService: NoopClipboardService(),
             pushStore: PushRegistrationStore(directory: tempDir),
             pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay"),
             optimizer: optimizer,
             optimizerBudget: budget)
         let channel = await NIOAsyncTestingChannel(handler: handler)

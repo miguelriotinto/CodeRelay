@@ -554,7 +554,7 @@ final class ServerMessageTests: ProtocolTestCase {
         XCTAssertNil((obj["payload"] as? [String: Any])?["tokenId"])
 
         let decoded = try decoder.decode(MessageEnvelope.self, from: data)
-        guard case .server(.authSuccess(_, let tokenId, _)) = decoded else {
+        guard case .server(.authSuccess(_, let tokenId, _, _)) = decoded else {
             XCTFail("Expected .authSuccess"); return
         }
         XCTAssertNil(tokenId)

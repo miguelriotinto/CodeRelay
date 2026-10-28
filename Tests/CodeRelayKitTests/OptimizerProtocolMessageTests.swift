@@ -111,7 +111,9 @@ final class OptimizerProtocolMessageTests: ProtocolTestCase {
     }
 
     func testProtocolVersionAndCapabilityName() {
-        XCTAssertEqual(CodeRelayKit.protocolVersion, 2)
+        // The optimizer needs protocol >= 2; the exact current version is pinned
+        // in ServerIdentityMessageTests (v3 added server identity).
+        XCTAssertGreaterThanOrEqual(CodeRelayKit.protocolVersion, 2)
         XCTAssertEqual(CodeRelayKit.minProtocolVersion, 0, "older clients keep connecting")
         XCTAssertEqual(CodeRelayKit.promptOptimizerCapability, "prompt_optimizer")
     }

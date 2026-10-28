@@ -8,7 +8,7 @@ private actor FakeSender: PushSending {
     var result: PushResult = .delivered
     func setResult(_ r: PushResult) { result = r }
     func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
-              body: String, deepLink: String, collapseKey: String) async -> PushResult {
+              body: String, deepLink: String, collapseKey: String, serverId: String) async -> PushResult {
         sent.append((deviceToken, body, collapseKey, deepLink, topic))
         return result
     }
@@ -41,6 +41,7 @@ final class PushDispatcherTests: XCTestCase {
             tokenProvider: { tokens($0) },
             sender: sender,
             config: PushNotifyConfig(debounceInterval: 100, notifyOnFinished: notifyOnFinished),
+            serverId: "11111111-1111-1111-1111-111111111111",
             onDeadToken: onDead,
             now: clock)
     }

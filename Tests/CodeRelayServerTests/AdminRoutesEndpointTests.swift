@@ -12,6 +12,7 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
         body: [String: Any]? = nil,
         manager: SessionManager? = nil,
         config: RelayConfig = .default,
+        identity: ServerIdentity? = nil,
         optimizer: (any PromptOptimizing)? = nil,
         optimizeDeadline: Duration = PromptOptimizer.deadline
     ) async -> (status: Int, json: [String: Any]?) {
@@ -32,6 +33,7 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
             tokenStore: tokenStore,
             pairingStore: PairingCodeStore(),
             config: config,
+            identity: identity,
             optimizer: optimizer,
             optimizeDeadline: optimizeDeadline
         )
@@ -61,6 +63,20 @@ final class AdminRoutesEndpointTests: SessionManagerTestCase {
         // lazily-initialized `Date()`. It must be a valid non-negative integer.
         let uptime = try XCTUnwrap(json?["uptime_seconds"] as? Int)
         XCTAssertGreaterThanOrEqual(uptime, 0)
+    }
+
+    func testStatusReportsServerIdentityWhenInjected() async throws {
+        let identity = ServerIdentity(id: UUID(), name: "studio")
+        let (status, json) = await route(.GET, "/status", identity: identity)
+        XCTAssertEqual(status, 200)
+        XCTAssertEqual(json?["instanceId"] as? String, identity.id.uuidString)
+        XCTAssertEqual(json?["serverName"] as? String, "studio")
+    }
+
+    func testStatusOmitsIdentityWhenNotInjected() async throws {
+        let (_, json) = await route(.GET, "/status")
+        XCTAssertNil(json?["instanceId"])
+        XCTAssertNil(json?["serverName"])
     }
 
     // MARK: - Sessions
