@@ -86,8 +86,10 @@ final class FCMClientTests: XCTestCase {
         let http = FCMMockHTTP()
         await http.configureSend(status: 200)
         let client = try FCMClient(serviceAccountJSON: testServiceAccount(), projectId: "test-proj", http: http)
-        _ = await client.send(deviceToken: "d1", platform: .fcm, topic: nil, title: "t", body: "b", deepLink: "l", collapseKey: "k", serverId: "srv-1")
-        _ = await client.send(deviceToken: "d2", platform: .fcm, topic: nil, title: "t", body: "b", deepLink: "l", collapseKey: "k", serverId: "srv-1")
+        _ = await client.send(deviceToken: "d1", platform: .fcm, topic: nil, title: "t", body: "b",
+                              deepLink: "l", collapseKey: "k", serverId: "srv-1")
+        _ = await client.send(deviceToken: "d2", platform: .fcm, topic: nil, title: "t", body: "b",
+                              deepLink: "l", collapseKey: "k", serverId: "srv-1")
         let oauthCalls = await http.all().filter { $0.url.contains("oauth2") }.count
         XCTAssertEqual(oauthCalls, 1, "access token should be cached, not re-minted per send")
     }

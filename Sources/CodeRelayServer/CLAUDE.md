@@ -238,6 +238,25 @@ Relatedly, `attachSession` cancels any live detach-expiry timer (as `resumeSessi
 **Hook-based state authority (F6)**: An optional local Claude Code hook can report authoritative lifecycle state, overriding screen detection while fresh. `PTYSession` injects `CLAUDE_RELAY_SESSION_ID` + `CLAUDE_RELAY_ADMIN_PORT` into each session's shell env (admin port threaded through the default `PTYFactory` closure; the `PTYFactory` typealias is unchanged so test mocks are unaffected). The shipped hook (`Scripts/hooks/claude-relay-state-hook.sh`) POSTs `{sessionId, state}` to the localhost-only `POST /hook/state` admin route → `SessionManager.reportHookState` → `SessionActivityMonitor.applyHookState`. Hook state is trusted for a 10 s TTL (`hookStateTTL`); `updateScreenDetection` no-ops while a fresh hook state exists, then screen detection resumes automatically when it goes stale. The hook reports **state only** — agent *identity* stays owned by the foreground poll, so a hook can never assert or evict an agent. With no hook installed, behavior is identical to screen-detection-only. Install docs: `Scripts/hooks/README.md`.
 
 
+## Server Identity (multi-server spec §6)
+
+`ServerIdentityStore.load` runs once in `main.swift`, right after the config
+load, and the resulting `ServerIdentity` is **injected** into
+`RelayMessageHandler` (required parameter, same rule as `PairingCodeStore`:
+a per-connection default would mint a different id per socket),
+`AdminHTTPServer` and `PushDispatcher`. Three invariants:
+
+- `instance.json` is created once and reused; a corrupt file is replaced with a
+  fresh id and an error log, never a crash (clients re-learn the id on the next
+  handshake). It is written `0o600` like `tokens.json`.
+- The name is **not** persisted: `serverName` config key (sanitised by
+  `LabelSanitizer`, the same rule as pairing labels) else host name minus
+  `.local`, else `"CodeRelay"`. Read once — a `config set serverName` needs a
+  restart, and the CLI says so.
+- Push collapse keys are `sha256(instanceId + "\n" + groupId)`, so two relays
+  with a checkout at the same path do not collapse into one notification; the
+  deep link is `coderelay://session/<uuid>?server=<instanceId>`.
+
 ## Prompt Optimizer
 
 Spec: `docs/superpowers/specs/2026-09-13-server-prompt-optimizer-design.md`.
