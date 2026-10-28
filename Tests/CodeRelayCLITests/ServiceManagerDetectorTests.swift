@@ -104,4 +104,52 @@ final class ServiceManagerDetectorTests: XCTestCase {
         XCTAssertNotNil(nudge)
         XCTAssertTrue(nudge!.contains("claude-relay setup"), nudge!)
     }
+
+    // MARK: - Homebrew label compatibility (sh.brew. and legacy homebrew.mxcl.)
+
+    func testCurrentHomebrewLabelIsRecognised() {
+        // The current Homebrew label prefix is sh.brew.
+        let d = ServiceManagerDetector(
+            homebrewPlistExists: true,
+            homebrewPlistName: "sh.brew.clauderelay.plist",
+            launchAgentPlistExists: false,
+            binaryPath: "/opt/homebrew/bin/claude-relay"
+        )
+        XCTAssertEqual(d.owner, .homebrew)
+        XCTAssertEqual(d.startCommand(), "brew services start clauderelay")
+    }
+
+    func testLegacyHomebrewLabelIsStillRecognised() {
+        // Older Homebrew installs may still have homebrew.mxcl. labels.
+        let d = ServiceManagerDetector(
+            homebrewPlistExists: true,
+            homebrewPlistName: "homebrew.mxcl.clauderelay.plist",
+            launchAgentPlistExists: false,
+            binaryPath: "/opt/homebrew/bin/claude-relay"
+        )
+        XCTAssertEqual(d.owner, .homebrew)
+        XCTAssertEqual(d.startCommand(), "brew services start clauderelay")
+    }
+
+    func testCurrentHomebrewPlusAgentIsBoth() {
+        // Current Homebrew label + CLI agent = two-manager hazard.
+        let d = ServiceManagerDetector(
+            homebrewPlistExists: true,
+            homebrewPlistName: "sh.brew.clauderelay.plist",
+            launchAgentPlistExists: true,
+            binaryPath: "/opt/homebrew/bin/claude-relay"
+        )
+        XCTAssertEqual(d.owner, .both)
+    }
+
+    func testLegacyHomebrewPlusAgentIsBoth() {
+        // Legacy Homebrew label + CLI agent = two-manager hazard.
+        let d = ServiceManagerDetector(
+            homebrewPlistExists: true,
+            homebrewPlistName: "homebrew.mxcl.clauderelay.plist",
+            launchAgentPlistExists: true,
+            binaryPath: "/opt/homebrew/bin/claude-relay"
+        )
+        XCTAssertEqual(d.owner, .both)
+    }
 }

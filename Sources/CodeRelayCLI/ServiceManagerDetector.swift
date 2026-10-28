@@ -17,10 +17,10 @@ enum ServiceVerb: String {
 ///
 /// Two managers exist and they are mutually exclusive in practice:
 ///
-/// | Manager             | Label / plist                  |
-/// | ------------------- | ------------------------------ |
-/// | `brew services`     | `homebrew.mxcl.clauderelay`    |
-/// | `claude-relay load` | `com.claude.relay`             |
+/// | Manager             | Label / plist                                          |
+/// | ------------------- | ------------------------------------------------------ |
+/// | `brew services`     | `sh.brew.clauderelay` (legacy: `homebrew.mxcl.clauderelay`) |
+/// | `claude-relay load` | `com.claude.relay`                                     |
 ///
 /// Every service command used to hardcode `com.claude.relay`, so on a Homebrew
 /// install — the documented path — `start`/`stop`/`restart`/`unload` failed with
@@ -28,15 +28,22 @@ enum ServiceVerb: String {
 /// `status`/`health` were unaffected because they talk to the admin HTTP API.
 struct ServiceManagerDetector {
 
-    static let homebrewPlistName = "homebrew.mxcl.clauderelay.plist"
+    // Homebrew renamed its label prefix from homebrew.mxcl. to sh.brew.
+    // We recognise both for compatibility.
+    static let homebrewPlistNames = [
+        "sh.brew.clauderelay.plist",          // current
+        "homebrew.mxcl.clauderelay.plist"     // legacy
+    ]
     static let launchAgentPlistName = "com.claude.relay.plist"
 
     private let homebrewPlistExists: Bool
+    private let homebrewPlistName: String?  // which specific Homebrew plist was found
     private let launchAgentPlistExists: Bool
     private let binaryPath: String
 
-    init(homebrewPlistExists: Bool, launchAgentPlistExists: Bool, binaryPath: String) {
+    init(homebrewPlistExists: Bool, homebrewPlistName: String? = nil, launchAgentPlistExists: Bool, binaryPath: String) {
         self.homebrewPlistExists = homebrewPlistExists
+        self.homebrewPlistName = homebrewPlistName
         self.launchAgentPlistExists = launchAgentPlistExists
         self.binaryPath = binaryPath
     }
@@ -46,9 +53,19 @@ struct ServiceManagerDetector {
         let launchAgents = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents")
         let fm = FileManager.default
+
+        // Check for either Homebrew plist name
+        var foundHomebrewPlist: String? = nil
+        for plistName in homebrewPlistNames {
+            if fm.fileExists(atPath: launchAgents.appendingPathComponent(plistName).path) {
+                foundHomebrewPlist = plistName
+                break
+            }
+        }
+
         return ServiceManagerDetector(
-            homebrewPlistExists: fm.fileExists(
-                atPath: launchAgents.appendingPathComponent(homebrewPlistName).path),
+            homebrewPlistExists: foundHomebrewPlist != nil,
+            homebrewPlistName: foundHomebrewPlist,
             launchAgentPlistExists: fm.fileExists(
                 atPath: launchAgents.appendingPathComponent(launchAgentPlistName).path),
             binaryPath: CommandLine.arguments.first ?? ""
@@ -90,6 +107,9 @@ struct ServiceManagerDetector {
     /// launchctl silently invoking brew would be surprising, and the nudge
     /// teaches the right tool for next time.
     func nudge(for verb: ServiceVerb) -> String? {
+        // Prefer the actual found Homebrew plist name, or the current one as default
+        let brewPlist = homebrewPlistName ?? Self.homebrewPlistNames[0]
+
         switch owner {
         case .both:
             // In the .both state, `unload` must be able to proceed — it is the
@@ -101,7 +121,7 @@ struct ServiceManagerDetector {
             }
             return """
             Two service managers are installed for clauderelay:
-              • \(Self.homebrewPlistName) (Homebrew)
+              • \(brewPlist) (Homebrew)
               • \(Self.launchAgentPlistName) (claude-relay load)
             Both will try to bind the WebSocket port. Remove one before continuing:
               brew services stop clauderelay     # keep the CLI-managed agent

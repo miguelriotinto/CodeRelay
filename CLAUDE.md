@@ -393,14 +393,15 @@ received, so there is exactly one path to an authenticated connection.
 
 ### Service manager awareness
 
-Two launchd managers can own the server: `homebrew.mxcl.clauderelay` (from
-`brew services`) and `com.claude.relay` (from `claude-relay load`). They must
-never both exist — both would bind `wsPort`. `ServiceManagerDetector` resolves
-the owner and every service command nudges with the correct command instead of
-driving the wrong label; `load` refuses to create a second manager unless
-`--force` is passed. Before this existed, `start`/`stop`/`restart`/`unload`
-failed outright on a Homebrew install while `status`/`health` worked, because
-only the latter two go through the admin HTTP API.
+Two launchd managers can own the server: `sh.brew.clauderelay` (from
+`brew services`; legacy `homebrew.mxcl.clauderelay` also recognised) and
+`com.claude.relay` (from `claude-relay load`). They must never both exist — both
+would bind `wsPort`. `ServiceManagerDetector` resolves the owner and every
+service command nudges with the correct command instead of driving the wrong
+label; `load` refuses to create a second manager unless `--force` is passed.
+Before this existed, `start`/`stop`/`restart`/`unload` failed outright on a
+Homebrew install while `status`/`health` worked, because only the latter two go
+through the admin HTTP API.
 
 On **Linux** the equivalent is `SystemdUnitDetector`: one unit name
 (`claude-relay.service`) with up to two files — packaged
