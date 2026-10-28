@@ -3,11 +3,35 @@ import CodeRelayClient
 import CodeRelayKit
 import GameController
 
-/// Detail pane: thin toolbar + terminal + optional key bar.
+/// The session tab strip's rows, pure for tests (spec §8.2: tabs span servers).
+enum SessionTabStripModel {
+    struct Tab: Equatable {
+        let ref: SessionRef
+        let number: Int
+        let isSelected: Bool
+        /// Server name for the spoken label; nil when only one server is enabled (G8).
+        let serverTitle: String?
+    }
+
+    static func tabs(sections: [ServerSection], activeRef: SessionRef?) -> [Tab] {
+        let enabled = sections.filter(\.config.enabled)
+        let titled = enabled.count > 1
+        var number = 0
+        return enabled.flatMap { section in
+            section.sessions.map { session in
+                number += 1
+                let ref = SessionRef(serverId: section.id, sessionId: session.id)
+                return Tab(ref: ref, number: number, isSelected: ref == activeRef, serverTitle: titled ? section.title : nil)
+            }
+        }
+    }
+}
+
+/// Detail pane: thin toolbar + terminal + optional key bar, hosting the hub's
+/// ACTIVE coordinator (multi-server spec §8.2).
 struct ActiveTerminalView: View {
-    @ObservedObject var coordinator: SessionCoordinator
+    @ObservedObject var hub: IOSServerHub
     @Binding var columnVisibility: NavigationSplitViewVisibility
-    var onDisconnect: () -> Void
     @State private var showKeyBar = true
     @State private var isKeyboardVisible = false
     @State private var hasHardwareKeyboard = GCKeyboard.coalesced != nil
@@ -20,8 +44,20 @@ struct ActiveTerminalView: View {
     @State private var reloadCover: Double = 0
     @ObservedObject private var settings = AppSettings.shared
 
+    private var coordinator: SessionCoordinator? { hub.activeCoordinator }
+
+    /// Keyed host: a cross-server switch swaps the whole SwiftTerm host; within
+    /// one server the host is reused so each terminal's scrollback survives.
+    static func hostKey(for coordinator: SessionCoordinator?) -> ObjectIdentifier? {
+        coordinator.map(ObjectIdentifier.init)
+    }
+
+    private var tabs: [SessionTabStripModel.Tab] {
+        SessionTabStripModel.tabs(sections: hub.sections, activeRef: hub.activeRef)
+    }
+
     /// Wand + keyboard toggle, floated over the terminal's bottom-trailing corner.
-    private var floatingButtons: some View {
+    private func floatingButtons(_ coordinator: SessionCoordinator) -> some View {
         HStack(spacing: 10) {
             WandButton(
                 coordinator: coordinator,
@@ -65,7 +101,7 @@ struct ActiveTerminalView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let id = coordinator.activeSessionId,
+            if let coordinator, let id = coordinator.activeSessionId,
                let vm = coordinator.viewModel(for: id) {
                 // The floating buttons overlay the TERMINAL only. Overlaying the
                 // whole column put them on top of the key bar's trailing keys
@@ -91,10 +127,13 @@ struct ActiveTerminalView: View {
                         sessionName: coordinator.name(for: id)
                     )
 
-                    floatingButtons
+                    floatingButtons(coordinator)
                         .padding(.trailing, 16)
                         .padding(.bottom, 12)
                 }
+                // The container is keyed by the coordinator so a cross-server
+                // switch swaps the whole host; within one server it is reused.
+                .id(Self.hostKey(for: coordinator))
                 // The terminal bleeds under the horizontal safe-area insets —
                 // the notch in iPhone landscape, and on iPhone Duo the column
                 // along one edge where the system draws the status bar as a
@@ -113,11 +152,15 @@ struct ActiveTerminalView: View {
                     .ignoresSafeArea(.container, edges: .horizontal)
                 }
             } else {
-                ContentUnavailableView(
-                    "No Active Session",
-                    systemImage: "terminal",
-                    description: Text("Swipe from the left edge or create a new session.")
-                )
+                ContentUnavailableView {
+                    Label(emptyTitle, systemImage: "terminal")
+                } description: {
+                    Text("Swipe from the left edge or create a new session.")
+                } actions: {
+                    if hub.aggregate.enabledServers == 0 {
+                        Button("Servers") { hub.isShowingServerList = true }
+                    }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -129,17 +172,18 @@ struct ActiveTerminalView: View {
                     }
                 }
                 .accessibilityLabel("Toggle Sidebar")
-                ToolbarIconButton(icon: "server.rack") { onDisconnect() }
-                    .accessibilityLabel("Disconnect")
+                ToolbarIconButton(icon: "server.rack") { hub.isShowingServerList = true }
+                    .accessibilityLabel("Servers")
                 ToolbarIconButton(icon: "fn", isActive: showKeyBar) { showKeyBar.toggle() }
                     .accessibilityLabel(showKeyBar ? "Hide Key Bar" : "Show Key Bar")
 
-                ConnectionQualityDot(quality: coordinator.connection.connectionQuality, size: 8)
+                if let coordinator {
+                    ConnectionQualityDot(quality: coordinator.connection.connectionQuality, size: 8)
+                }
 
-                if let id = coordinator.activeSessionId {
-                    if let createdAt = coordinator.createdAt(for: id) {
-                        SessionUptimeView(since: createdAt)
-                    }
+                if let coordinator, let id = coordinator.activeSessionId,
+                   let createdAt = coordinator.createdAt(for: id) {
+                    SessionUptimeView(since: createdAt)
                 }
 
                 if anyTabNeedsFlash {
@@ -151,14 +195,14 @@ struct ActiveTerminalView: View {
                     sessionTabBar(flashOn: false)
                 }
 
-                if coordinator.activeSessionId != nil {
+                if coordinator?.activeSessionId != nil {
                     ToolbarIconButton(icon: "qrcode") {
                         showQROverlay = true
                     }
                     .accessibilityLabel("Share Session")
                 }
 
-                if let id = coordinator.activeSessionId {
+                if let coordinator, let id = coordinator.activeSessionId {
                     Text(coordinator.name(for: id))
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.white)
@@ -204,7 +248,7 @@ struct ActiveTerminalView: View {
         // camera when closed. The terminal and key bar opt in individually.
         .preferredColorScheme(.dark)
         .toolbar(.hidden, for: .navigationBar)
-        .onChange(of: coordinator.activeSessionId) { _, _ in
+        .onChange(of: hub.activeRef) { _, _ in
             showQROverlay = false
         }
         .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidConnect)) { _ in
@@ -217,7 +261,7 @@ struct ActiveTerminalView: View {
             TextField("Name", text: $renameText)
             Button("Rename") {
                 let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty, let id = coordinator.activeSessionId {
+                if !trimmed.isEmpty, let coordinator, let id = coordinator.activeSessionId {
                     coordinator.setName(trimmed, for: id)
                 }
             }
@@ -225,26 +269,36 @@ struct ActiveTerminalView: View {
         }
         .selectAllOnBeginEditing(while: showRenameAlert)
         .overlay {
-            if showQROverlay, let id = coordinator.activeSessionId {
+            if showQROverlay, let coordinator, let id = coordinator.activeSessionId {
                 QRCodeOverlay(
                     sessionId: id,
                     sessionName: coordinator.name(for: id),
+                    serverInstanceId: hub.sections.first { $0.id == hub.activeRef?.serverId }?.config.instanceId,
                     onDismiss: { showQROverlay = false }
                 )
             }
         }
     }
 
-    /// True when any active session's tab should be flashing — a blocked or
-    /// waiting (idle) agent via fine-grained state, or the legacy awaiting-input
-    /// set when no fine-grained state is reported. Gates the flash TimelineView.
-    private var anyTabNeedsFlash: Bool {
-        coordinator.activeSessions.contains { session in
-            if let state = coordinator.agentState(for: session.id) {
-                return state == .blocked || state == .idle
-            }
-            return coordinator.sessionsAwaitingInput.contains(session.id)
+    private var emptyTitle: String {
+        if hub.aggregate.enabledServers == 0 { return "No Servers Enabled" }
+        if hub.aggregate.liveServers == 0 { return "Connecting…" }
+        return "No Active Session"
+    }
+
+    /// Whether a tab wants attention — a blocked or waiting (idle) agent via
+    /// fine-grained state, or the legacy awaiting-input set when none is reported.
+    private func needsAttention(_ tab: SessionTabStripModel.Tab) -> Bool {
+        guard let slot = hub.slot(for: tab.ref.serverId) else { return false }
+        if let state = slot.agentState(for: tab.ref.sessionId) {
+            return state == .blocked || state == .idle
         }
+        return slot.sessionsAwaitingInput.contains(tab.ref.sessionId)
+    }
+
+    /// True when any tab should be flashing. Gates the flash TimelineView.
+    private var anyTabNeedsFlash: Bool {
+        tabs.contains(where: needsAttention)
     }
 
     @ViewBuilder
@@ -252,34 +306,26 @@ struct ActiveTerminalView: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(Array(coordinator.activeSessions.enumerated()), id: \.element.id) { index, session in
-                        let isSelected = session.id == coordinator.activeSessionId
-                        let agentId = coordinator.activeAgent(for: session.id)
-                        let agentState = coordinator.agentState(for: session.id)
-                        // A blocked agent flashes for attention (parity with the
-                        // sidebar's blinking blocked dot and the Android tab); when no
-                        // fine-grained state is reported, fall back to the legacy
-                        // awaiting-input pulse.
-                        let needsAttention = agentState != nil
-                            ? (agentState == .blocked || agentState == .idle)
-                            : coordinator.sessionsAwaitingInput.contains(session.id)
+                    ForEach(tabs, id: \.ref) { tab in
+                        let slot = hub.slot(for: tab.ref.serverId)
                         Button {
                             if settings.hapticFeedbackEnabled {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             }
-                            Task { await coordinator.switchToSession(id: session.id) }
+                            Task { await hub.select(tab.ref) }
                         } label: {
                             SessionTab(
-                                number: index + 1,
-                                isSelected: isSelected,
-                                agentId: agentId,
-                                needsAttention: needsAttention,
+                                number: tab.number,
+                                isSelected: tab.isSelected,
+                                agentId: slot?.activeAgent(for: tab.ref.sessionId),
+                                needsAttention: needsAttention(tab),
                                 flashOn: flashOn,
-                                agentState: agentState
+                                agentState: slot?.agentState(for: tab.ref.sessionId)
                             )
                         }
                         .buttonStyle(.plain)
-                        .id(session.id)
+                        .accessibilityLabel(tab.serverTitle.map { "\($0), session \(tab.number)" } ?? "Session \(tab.number)")
+                        .id(tab.ref)
                     }
                 }
             }
@@ -289,21 +335,21 @@ struct ActiveTerminalView: View {
                 }
             )
             .onPreferenceChange(TabStripWidthKey.self) { _ in
-                if let id = coordinator.activeSessionId {
+                if let ref = hub.activeRef {
                     withAnimation(.easeInOut(duration: 0.25)) {
-                        proxy.scrollTo(id, anchor: nil)
+                        proxy.scrollTo(ref, anchor: nil)
                     }
                 }
             }
-            .onChange(of: coordinator.activeSessionId) { _, newID in
-                guard let newID else { return }
+            .onChange(of: hub.activeRef) { _, newRef in
+                guard let newRef else { return }
                 withAnimation(.easeInOut(duration: 0.25)) {
-                    proxy.scrollTo(newID, anchor: nil)
+                    proxy.scrollTo(newRef, anchor: nil)
                 }
             }
             .onAppear {
-                if let id = coordinator.activeSessionId {
-                    proxy.scrollTo(id, anchor: nil)
+                if let ref = hub.activeRef {
+                    proxy.scrollTo(ref, anchor: nil)
                 }
             }
         }
