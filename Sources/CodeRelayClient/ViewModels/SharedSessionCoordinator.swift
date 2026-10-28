@@ -318,6 +318,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
+        connectionState = connection.state
+        connectionStateSubscription = connection.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in self?.connectionState = state }
 
         connection.onReplayComplete = { [weak self] sessionId in
             Task { @MainActor [weak self] in
@@ -1216,7 +1220,13 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     public var isAuthRejected: Bool { recoveryController.isAuthRejected }
 
     /// The socket state, for the hub's section status (spec §7.2).
-    public var connectionState: RelayConnection.ConnectionState { connection.state }
+    /// Mirrors `connection.state` as a published value so the hub's
+    /// `objectWillChange` subscription fires on every socket transition
+    /// (`ServerSectionStatus.derive` reads it). Computed, it fired nothing: the
+    /// macOS subclass happened to mirror the state into its own `isConnected`,
+    /// iOS did not, and a dropped socket there stayed "live" in the sidebar.
+    @Published public private(set) var connectionState: RelayConnection.ConnectionState = .disconnected
+    private var connectionStateSubscription: AnyCancellable?
 
     /// Opens the socket and runs the launch handshake. The shared base has no
     /// bookmark to dial, so this is a no-op here; platform subclasses override
