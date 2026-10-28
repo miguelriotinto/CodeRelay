@@ -1846,6 +1846,13 @@ Then fold "Task 7/8" into Task 6's docs step: in `CLAUDE.md`'s "Session-loading 
 
 ---
 
+## Follow-ups this plan creates for Plans 3 and 4 (user request, 2026-10-28: "implement these changes in all clients")
+
+The Kotlin clients (Android `CodeRelayAndroid/`, Linux `CodeRelayLinux/`) compile one copy of `feature-workspace`, so one implementation covers both:
+
+- **Loading sheet, same rules as Task 7:** a `SessionLoadingPresentation` (Kotlin data class in `core-session`) from `TerminalSessionVm`'s load phase + `SessionCoordinator.isRecovering`/recovery phase; a `SessionLoadingSheetModel` with the 600 ms minimum hold; a Compose `ModalBottomSheet` (Android) / `Dialog` anchored bottom (Linux) with the byte counter as the largest text, reserved from the first phase ("0 KB"); the terminal `Box` fades to black under it with the same 0.16 s / 0.22 s curves; the existing Compose `SessionLoadingOverlay` is removed. The load phase must be published at the START of every switch (also when the local terminal buffer lets the resume skip the replay) and of the session-name reload, and cleared on every failure path.
+- **Multi-server (spec §8.4, §8.5):** the Kotlin `ServerHub` with the same semantics as the Swift one (one `pendingRef == activeRef`, `selectionGeneration`, reconcile from the coordinator, concurrent start/fan-out, `focusCoordinator`, cap on reload, push unregister on disable, lenient bookmark decoding), grouped sidebar, management screen with Enabled toggles, deep-link routing (Android: FCM taps with `?server=`; Linux: `coderelay://` via `SingleInstance`), one-time migration of `lastConnectedServerId`.
+
 ## Self-review notes
 
 - **Loading sheet (user request, 2026-10-28):** one presentation for switch / name-label refresh / reconnect (T7 shared model + iOS, T8 macOS); the byte counter is the largest text on the sheet, reserved from the first phase ("0 KB") and rolling with `.numericText()`; "always" is honoured by setting the phase at the start of every switch and reload and by the 600 ms minimum hold; the sheet dismisses and the black lifts on the first visible frame; every failure path clears the inputs (Review Focus 0).

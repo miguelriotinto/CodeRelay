@@ -38,7 +38,17 @@ enum HubPreviewSeed {
         store.saveAll(list)
         let state = HubStateStore(keyPrefix: keyPrefix, deviceId: deviceId, defaults: defaults)
         state.markMigrated()
-        return (defaults, store, Tokens(tokenId: list[0].id, borrowed: nil), state)
+        return (defaults, store, Tokens(tokenId: list[0].id, borrowed: borrowLoopbackToken()), state)
+    }
+
+    /// The first bookmark borrows the real token of the user's loopback bookmark
+    /// when there is one — a made-up token would burn the local relay's auth
+    /// budget (10 failures / 60 s blocks the IP). On a simulator there is
+    /// usually none, so the first section renders authFailed; that is fine.
+    private static func borrowLoopbackToken() -> String? {
+        CodeRelayApp.savedConnections.loadAll()
+            .first(where: { ["127.0.0.1", "localhost", "::1"].contains($0.host) })
+            .flatMap { try? AuthManager.shared.loadToken(for: $0.id) }
     }
 }
 #endif

@@ -32,6 +32,12 @@ struct SessionSidebarView: View {
         }
     }
 
+    /// The "Connecting…" indicator is for a connection in progress only — never
+    /// for a rejected token or an offline server, which have their own headers.
+    static func isConnecting(_ sections: [ServerSection]) -> Bool {
+        sections.contains { $0.config.enabled && ($0.status == .connecting || $0.status == .reconnecting) }
+    }
+
     /// A rejected token is fixed on the management screen (Re-pair); anything
     /// else is a recovery of that one server.
     static func retryAction(for section: ServerSection) -> RetryAction {
@@ -110,7 +116,7 @@ struct SessionSidebarView: View {
         // doubles as the user's retry affordance.
         .refreshable { await hub.handleForegroundTransition(userInitiated: true) }
         .overlay {
-            if hub.aggregate.enabledServers > 0, hub.aggregate.liveServers == 0,
+            if Self.isConnecting(hub.sections), hub.aggregate.liveServers == 0,
                hub.sections.allSatisfy({ $0.sessions.isEmpty }) {
                 ProgressView("Connecting…")
             }

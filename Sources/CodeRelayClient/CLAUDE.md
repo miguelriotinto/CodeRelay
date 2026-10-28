@@ -68,3 +68,23 @@ UI atoms both apps host (`Views/`).
   single-namespace ownership keys move under it, the rest are disabled.
 - `ServerStatusChecker` polls only **disabled** bookmarks; for enabled ones the
   live connection is the status (`ServerSectionStatus.derive`).
+- `SharedSessionCoordinator.connectionState` is `@Published`, mirrored from
+  `connection.$state`; a computed property fired no `objectWillChange`, so
+  without a subclass mirror (iOS) the hub never saw a dropped socket.
+
+## Session loading sheet (`Views/SessionLoadingPresentation.swift`, `SessionLoadingSheet.swift`)
+
+- `SessionLoadingPresentation(loadPhase:isRecovering:recoveryPhase:sessionName:serverName:)`
+  is the one rule for what the sheet says: title "Loading session" / "Reconnecting",
+  the phase label as status, the byte counter as `detail` (reserved as "0 KB" from
+  the first active phase so the layout never jumps), "session · server", Cancel only
+  while recovering.
+- `SessionLoadingSheetModel.update(_:)` presents immediately, holds at least
+  `minimumVisible` (600 ms) and dismisses when nothing is loading; `shown` keeps the
+  last text while the sheet animates down. The terminal blackout
+  (`View.terminalLoadingCover(_:)`) follows `isPresented` so both lift together.
+- Producers: `switchToSession` publishes `.attaching` on EVERY switch (also with a
+  cached terminal), `reloadTerminalFromServer` publishes it before its RPC and
+  clears it in its `catch`; the replay hooks clear it on the first visible frame.
+  `TerminalReloadFade.reload(coordinator:id:)` is the session-name tap.
+

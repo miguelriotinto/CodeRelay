@@ -20,6 +20,18 @@ final class SidebarSectionsTests: XCTestCase {
         XCTAssertEqual(rows.map(\.isCached), [false, false, true], "offline rows are cached (D4)")
     }
 
+    func testConnectingIndicatorOnlyWhileSomeServerIsStillConnecting() {
+        // Seen on the simulator: two auth-failed servers and a disabled one showed
+        // "Connecting…" forever. The spinner is for a connection in progress, not
+        // for a token that was rejected or a server that is offline.
+        let authFailed = section("a", .authFailed("No token stored for this server"), sessions: 0)
+        let connecting = section("b", .connecting, sessions: 0)
+        let offline = section("c", .offline, sessions: 0)
+        XCTAssertFalse(SessionSidebarView.isConnecting([authFailed, offline]))
+        XCTAssertTrue(SessionSidebarView.isConnecting([authFailed, connecting]))
+        XCTAssertFalse(SessionSidebarView.isConnecting([section("d", .live, sessions: 1)]))
+    }
+
     func testAuthFailedHeaderRetryOpensManagement() {
         XCTAssertEqual(SessionSidebarView.retryAction(for: section("a", .authFailed("Token rejected"), sessions: 0)), .openManagement,
                        "re-pairing happens on the management screen, not by retrying the rejected token")

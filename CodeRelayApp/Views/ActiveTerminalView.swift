@@ -270,7 +270,7 @@ struct ActiveTerminalView: View {
 
     private var emptyTitle: String {
         if hub.aggregate.enabledServers == 0 { return "No Servers Enabled" }
-        if hub.aggregate.liveServers == 0 { return "Connecting…" }
+        if hub.aggregate.liveServers == 0, SessionSidebarView.isConnecting(hub.sections) { return "Connecting…" }
         return "No Active Session"
     }
 

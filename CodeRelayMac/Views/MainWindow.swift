@@ -278,7 +278,7 @@ private struct ActiveCoordinatorModifiers: View {
             .sheet(isPresented: $coordinator.showQRScanner) {
                 QRScannerSheet(coordinator: coordinator)
             }
-            .onChange(of: presentation, initial: true) { _, p in loading.update(p) }
+            .onChange(of: presentation, initial: true) { _, current in loading.update(current) }
             // The one loading sheet (parity with iOS): switch, session-name
             // refresh and reconnect, with the bytes loaded as the largest text.
             .sheet(isPresented: Binding(get: { loading.isPresented }, set: { _ in })) {

@@ -7,7 +7,7 @@ struct QRCodeSheet: View {
     let sessionName: String?
     /// The relay's instance id when known: another device then routes the link
     /// to that exact server (spec §10) instead of searching by session id.
-    var serverInstanceId: UUID? = nil
+    var serverInstanceId: UUID?
     @Environment(\.dismiss) private var dismiss
 
     private var deepLink: String {

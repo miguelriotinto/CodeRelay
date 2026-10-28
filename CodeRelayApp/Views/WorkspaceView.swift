@@ -148,7 +148,7 @@ private struct FocusCoordinatorModifiers: View {
 
     var body: some View {
         Color.clear
-            .onChange(of: presentation, initial: true) { _, p in loading.update(p) }
+            .onChange(of: presentation, initial: true) { _, current in loading.update(current) }
             // The one loading sheet: switch, session-name refresh and reconnect
             // all rise from the bottom with the step and the bytes loaded, while
             // the terminal behind fades to black; both lift on the first frame.

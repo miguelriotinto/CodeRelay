@@ -28,7 +28,7 @@ struct QRCodeGenerator {
 struct QRCodeOverlay: View {
     let sessionId: UUID
     let sessionName: String
-    var serverInstanceId: UUID? = nil
+    var serverInstanceId: UUID?
     let onDismiss: () -> Void
 
     var body: some View {
