@@ -27,6 +27,7 @@
 		3C01AF545C145E1F47E2E571 /* AddEditServerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D40B83590E3F91399DC24BD /* AddEditServerView.swift */; };
 		41C2FC86A1097DFE23246497 /* AddEditServerViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AFC371D175A35B37794ACFE /* AddEditServerViewModelTests.swift */; };
 		42B24E1D08E4489ACD7B3202 /* SessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A49FB62428479BAE8D6B9FD /* SessionCoordinator.swift */; };
+		457F5A52C7525DF87825A241 /* MacServerHubTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE559F478FDF029A84AE064 /* MacServerHubTests.swift */; };
 		49AF18631DCC4666D098FDE5 /* ServerListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C5476368DFFD611E304BB17 /* ServerListViewModel.swift */; };
 		4D5757BCC40B0EB7F2CBEEAB /* LaunchAtLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2D38AF522487CD65B4178AC /* LaunchAtLogin.swift */; };
 		4EF651CDC5BED64870C112F4 /* ServerListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 519C055662248EBE2FCC54F4 /* ServerListView.swift */; };
@@ -35,6 +36,7 @@
 		594B82B95E32F0529AC9A258 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 032B2629F2A1D548EB620340 /* QRScannerView.swift */; };
 		5FA79A317583249F9A7D5750 /* ScrollbackClearScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */; };
 		61B865F9D79CFC959FC07A8B /* TerminalContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF37B18586BBB7B511433716 /* TerminalContainerView.swift */; };
+		675E01D193B0C8FA1D6AAE34 /* HubSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 048DF89741F08E0FAFA2250C /* HubSidebarView.swift */; };
 		6CF76DB5A91180967B19A9B7 /* AddEditServerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200D7FB7016273E202A9EE6A /* AddEditServerViewModel.swift */; };
 		6E9B9D3C005CE5D0E17E34FB /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82AA3DF58773D4439629F50D /* SessionSidebarView.swift */; };
 		737A97F8F5248D8FB46D8342 /* TerminalSwipeScrollTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF97F6314474452F10F2F8D1 /* TerminalSwipeScrollTests.swift */; };
@@ -60,6 +62,7 @@
 		C5DD1A1FBD979234C8F1AFF8 /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C3AABD0A1EDCDF3D99C2813 /* TerminalPalette.swift */; };
 		C9DD34A70DE6928A07B69807 /* SleepWakeObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2E1F5AF84C6C21754F2B59 /* SleepWakeObserver.swift */; };
 		CA0083BA8B5FD10C3726C545 /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3694216ED2375FD2BA6D9CD7 /* PairWithHostSheet.swift */; };
+		CDE9C1D1D1F51DC956FBDC2A /* MacServerHub.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C7E5669588AC911A4AB5E38 /* MacServerHub.swift */; };
 		D08D4443A0CF018E9E593203 /* MenuBarViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14DB6DCF944C782F893809EE /* MenuBarViewModel.swift */; };
 		D1A08368206BB64AB10BF416 /* ServerListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFDE7B6F21D0081D0855981A /* ServerListViewModel.swift */; };
 		D9CEA37AF583C181BADFF2BE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AA229F172065DCCAABD4EE1 /* AppDelegate.swift */; };
@@ -75,6 +78,7 @@
 		F7065C1D6A48FC570B4C3F5A /* SplashScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 707F2EFA3E2B2F9ADBAEB98F /* SplashScreenView.swift */; };
 		FBD5477565B04270237B56F6 /* SessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60465BA09A0A9870E9E03B23 /* SessionCoordinator.swift */; };
 		FF96BA9FE9609DA88A14EF05 /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7EE17741C04A3558512D65A /* SessionSidebarView.swift */; };
+		FFA759500D9BF1B1F9DB6E5E /* HubSidebarOrderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCFE7D591EEF5598533A0AB /* HubSidebarOrderTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -96,6 +100,7 @@
 
 /* Begin PBXFileReference section */
 		032B2629F2A1D548EB620340 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		048DF89741F08E0FAFA2250C /* HubSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubSidebarView.swift; sourceTree = "<group>"; };
 		05446DA7A910D4397B33AFD1 /* CodeRelayMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodeRelayMac.entitlements; sourceTree = "<group>"; };
 		0CA2B78194726A22344FEB41 /* AppSettingsSpeechRemovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsSpeechRemovalTests.swift; sourceTree = "<group>"; };
 		1169B69C981A52324361A485 /* QRCodePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodePopover.swift; sourceTree = "<group>"; };
@@ -127,6 +132,8 @@
 		67B090224A2F32FF6AA6DCAD /* ImagePasteHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePasteHandler.swift; sourceTree = "<group>"; };
 		6AA229F172065DCCAABD4EE1 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		6C05C1B0CCB8EFB46D499F4A /* KeyCaptureInterceptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyCaptureInterceptor.swift; sourceTree = "<group>"; };
+		6C7E5669588AC911A4AB5E38 /* MacServerHub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerHub.swift; sourceTree = "<group>"; };
+		6DE559F478FDF029A84AE064 /* MacServerHubTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerHubTests.swift; sourceTree = "<group>"; };
 		707F2EFA3E2B2F9ADBAEB98F /* SplashScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashScreenView.swift; sourceTree = "<group>"; };
 		7596942A365DC1BC26A481E2 /* CodeRelayMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodeRelayMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		81DB257E1E21CA0D82D01A3B /* AttachRemoteSessionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachRemoteSessionSheet.swift; sourceTree = "<group>"; };
@@ -141,6 +148,7 @@
 		9C08E1E10ABEC111CA605BE4 /* QRCodeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeSheet.swift; sourceTree = "<group>"; };
 		9C5476368DFFD611E304BB17 /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
 		A32DE56B50F45FC20E0EAD49 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		ACCFE7D591EEF5598533A0AB /* HubSidebarOrderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubSidebarOrderTests.swift; sourceTree = "<group>"; };
 		AE5AC490671735ED0BB142CA /* SessionNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionNavigationTests.swift; sourceTree = "<group>"; };
 		B2D38AF522487CD65B4178AC /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		B40D60334B831231F0CC7991 /* StatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarView.swift; sourceTree = "<group>"; };
@@ -272,6 +280,8 @@
 			children = (
 				4AFC371D175A35B37794ACFE /* AddEditServerViewModelTests.swift */,
 				0CA2B78194726A22344FEB41 /* AppSettingsSpeechRemovalTests.swift */,
+				ACCFE7D591EEF5598533A0AB /* HubSidebarOrderTests.swift */,
+				6DE559F478FDF029A84AE064 /* MacServerHubTests.swift */,
 				5A9C224C001A6A792F9D58C8 /* MenuBarActivityTests.swift */,
 				F2915E91C1DA4FC72AF6EBA3 /* ModifierFlagsTests.swift */,
 				AE5AC490671735ED0BB142CA /* SessionNavigationTests.swift */,
@@ -284,6 +294,7 @@
 			children = (
 				F7F4D875CD3FF65E067E646D /* AddEditServerView.swift */,
 				81DB257E1E21CA0D82D01A3B /* AttachRemoteSessionSheet.swift */,
+				048DF89741F08E0FAFA2250C /* HubSidebarView.swift */,
 				124B4982AAFCA447B75B2FC8 /* MainWindow.swift */,
 				D130F01F66F52B7E7E56E837 /* MenuBarDropdown.swift */,
 				3694216ED2375FD2BA6D9CD7 /* PairWithHostSheet.swift */,
@@ -327,6 +338,7 @@
 			isa = PBXGroup;
 			children = (
 				200D7FB7016273E202A9EE6A /* AddEditServerViewModel.swift */,
+				6C7E5669588AC911A4AB5E38 /* MacServerHub.swift */,
 				14DB6DCF944C782F893809EE /* MenuBarViewModel.swift */,
 				D9AEC8A26328D8935405B414 /* PairingViewModel.swift */,
 				9C5476368DFFD611E304BB17 /* ServerListViewModel.swift */,
@@ -548,6 +560,8 @@
 			files = (
 				41C2FC86A1097DFE23246497 /* AddEditServerViewModelTests.swift in Sources */,
 				29E42E9BE2B5383AA5137A26 /* AppSettingsSpeechRemovalTests.swift in Sources */,
+				FFA759500D9BF1B1F9DB6E5E /* HubSidebarOrderTests.swift in Sources */,
+				457F5A52C7525DF87825A241 /* MacServerHubTests.swift in Sources */,
 				F6D838BE9B9BC00A46A2F11C /* MenuBarActivityTests.swift in Sources */,
 				012F50F6760E057E309FB327 /* ModifierFlagsTests.swift in Sources */,
 				81236181959BA642708E2E5B /* SessionNavigationTests.swift in Sources */,
@@ -576,9 +590,11 @@
 				75BB5A192BBB2F405FE8BE49 /* AppSettings.swift in Sources */,
 				4FC3D0363147468C7CCA6BE8 /* AttachRemoteSessionSheet.swift in Sources */,
 				06C55262523D7C9EAFB3312D /* CodeRelayMacApp.swift in Sources */,
+				675E01D193B0C8FA1D6AAE34 /* HubSidebarView.swift in Sources */,
 				0A304EC22DA76BD8B298A963 /* ImagePasteHandler.swift in Sources */,
 				22809ECBA2EC7298B6F062E6 /* KeyCaptureInterceptor.swift in Sources */,
 				4D5757BCC40B0EB7F2CBEEAB /* LaunchAtLogin.swift in Sources */,
+				CDE9C1D1D1F51DC956FBDC2A /* MacServerHub.swift in Sources */,
 				F48556B90993213A81FE4C77 /* MainWindow.swift in Sources */,
 				9EAE3BDE8C9AE361EF9F3D71 /* MenuBarDropdown.swift in Sources */,
 				D08D4443A0CF018E9E593203 /* MenuBarViewModel.swift in Sources */,

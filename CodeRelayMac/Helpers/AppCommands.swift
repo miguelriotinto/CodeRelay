@@ -12,6 +12,17 @@ extension FocusedValues {
     }
 }
 
+struct ServerHubKey: FocusedValueKey {
+    typealias Value = MacServerHub
+}
+
+extension FocusedValues {
+    var serverHub: MacServerHub? {
+        get { self[ServerHubKey.self] }
+        set { self[ServerHubKey.self] = newValue }
+    }
+}
+
 struct SidebarVisibilityKey: FocusedValueKey {
     typealias Value = Binding<NavigationSplitViewVisibility>
 }
@@ -25,17 +36,21 @@ extension FocusedValues {
 
 struct AppCommands: Commands {
     @FocusedValue(\.sessionCoordinator) var coordinator: SessionCoordinator?
+    @FocusedValue(\.serverHub) var hub: MacServerHub?
     @FocusedValue(\.sidebarVisibility) var sidebarVisibility: Binding<NavigationSplitViewVisibility>?
 
     var body: some Commands {
         // Replace the default New item in the File menu.
         CommandGroup(replacing: .newItem) {
             Button("New Session") {
-                guard let coordinator else { return }
-                Task { await coordinator.createNewSession() }
+                // On the active server, else the first live one.
+                guard let hub,
+                      let serverId = hub.activeRef?.serverId ?? hub.sections.first(where: { $0.status.isLive })?.id
+                else { return }
+                Task { await hub.createSession(on: serverId) }
             }
             .keyboardShortcut("t", modifiers: .command)
-            .disabled(coordinator == nil)
+            .disabled(hub?.sections.contains(where: { $0.status.isLive }) != true)
         }
 
         // Add a Session menu between View and Window.
@@ -57,12 +72,14 @@ struct AppCommands: Commands {
             Divider()
 
             Button("Next Session") {
-                coordinator?.switchToNextSession()
+                guard let hub else { return }
+                Task { await hub.selectNext() }
             }
             .keyboardShortcut("]", modifiers: [.command, .shift])
 
             Button("Previous Session") {
-                coordinator?.switchToPreviousSession()
+                guard let hub else { return }
+                Task { await hub.selectPrevious() }
             }
             .keyboardShortcut("[", modifiers: [.command, .shift])
 
@@ -70,7 +87,10 @@ struct AppCommands: Commands {
 
             ForEach(1...9, id: \.self) { index in
                 Button("Session \(index)") {
-                    coordinator?.switchToSession(atIndex: index - 1)
+                    guard let hub else { return }
+                    let refs = hub.orderedRefs
+                    guard index - 1 < refs.count else { return }
+                    Task { await hub.select(refs[index - 1]) }
                 }
                 .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
             }

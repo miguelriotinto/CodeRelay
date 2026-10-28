@@ -15,7 +15,6 @@ final class SessionCoordinator: SharedSessionCoordinator {
     // MARK: - Dependencies
 
     private let config: ConnectionConfig
-    private var recoveryObservers: [NSObjectProtocol] = []
 
     // MARK: - Configuration
 
@@ -32,9 +31,11 @@ final class SessionCoordinator: SharedSessionCoordinator {
 
     private var stateObserver: AnyCancellable?
 
-    init(config: ConnectionConfig, token: String) {
+    /// - Parameter ownershipKeyPrefix: per-server UserDefaults namespace from
+    ///   the hub (multi-server D8); nil keeps the single-server default.
+    init(config: ConnectionConfig, token: String, ownershipKeyPrefix: String? = nil) {
         self.config = config
-        super.init(connection: RelayConnection(), token: token)
+        super.init(connection: RelayConnection(), token: token, ownershipKeyPrefix: ownershipKeyPrefix)
         stateObserver = connection.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
@@ -44,7 +45,10 @@ final class SessionCoordinator: SharedSessionCoordinator {
 
     // MARK: - Start
 
-    func start() async {
+    /// Wake and network-restored events are fanned out by the hub with a
+    /// stagger (multi-server D10); this coordinator installs no observers of
+    /// its own, or every wake would reconnect it twice.
+    override func start() async {
         do {
             try await connection.connect(config: config, token: token)
         } catch {
@@ -52,7 +56,6 @@ final class SessionCoordinator: SharedSessionCoordinator {
             // Fall through to the handshake anyway: it reconnects on its own, so
             // a failed first dial becomes a retry rather than a dead workspace.
         }
-        registerRecoveryObservers()
         // Authenticate + fetch the sessions this client owns, in one
         // single-flight retrying unit. Also the only auth call on this path —
         // the handshake owns it, so a wake trigger firing mid-launch joins this
@@ -62,35 +65,6 @@ final class SessionCoordinator: SharedSessionCoordinator {
 
     override func didAuthenticate() {
         isAuthenticated = true
-    }
-
-    // MARK: - Recovery Observers
-
-    private func registerRecoveryObservers() {
-        startNetworkRecovery()
-        let wakeObs = NotificationCenter.default.addObserver(
-            forName: SleepWakeObserver.systemDidWake,
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.triggerUserRecovery()
-            }
-        }
-        recoveryObservers = [wakeObs]
-    }
-
-    private func unregisterRecoveryObservers() {
-        for obs in recoveryObservers {
-            NotificationCenter.default.removeObserver(obs)
-        }
-        recoveryObservers.removeAll()
-    }
-
-    // MARK: - Teardown
-
-    override func tearDown() {
-        unregisterRecoveryObservers()
-        super.tearDown()
     }
 
     // MARK: - Navigation

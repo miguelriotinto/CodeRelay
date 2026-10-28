@@ -73,9 +73,8 @@ struct CodeRelayMacApp: App {
         // Handle session deep links
         guard let link = SessionDeepLink(url: url) else { return }
         Task { @MainActor in
-            if let coordinator = ActiveCoordinatorRegistry.shared.coordinator {
-                await coordinator.attachRemoteSession(id: link.sessionId)
-            }
+            guard let hub = ActiveCoordinatorRegistry.shared.hub else { return }
+            _ = await hub.handleDeepLink(link)
         }
     }
 }

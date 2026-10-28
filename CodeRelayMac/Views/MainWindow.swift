@@ -1,106 +1,61 @@
 import SwiftUI
 import CodeRelayClient
+import CodeRelayKit
 
+/// The one window. It owns the `ServerHub` (multi-server spec §7, §8.3): one
+/// coordinator per enabled bookmark, one attached session across all of them.
 struct MainWindow: View {
     @ObservedObject private var settings = AppSettings.shared
-    @State private var coordinator: SessionCoordinator?
-    @State private var showServerList = false
-    @State private var loadFailure: String?
+    @StateObject private var hub = MacServerHubFactory.make()
 
     var body: some View {
-        Group {
-            if let coordinator {
-                WorkspaceView(
-                    coordinator: coordinator,
-                    settings: settings
-                )
-            } else if let failure = loadFailure {
-                FailureView(message: failure) { showServerList = true }
-            } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "server.rack")
-                        .font(.system(size: 36))
-                        .foregroundStyle(.secondary)
-                    Text("Select a server to connect")
-                        .foregroundStyle(.secondary)
-                    Button("Choose Server") { showServerList = true }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .background(.black)
-        .task { await presentServerList() }
-        .sheet(isPresented: $showServerList) {
-            NavigationStack {
-                ServerListWindow { config in
-                    Task { await connect(to: config) }
-                    showServerList = false
-                }
-            }
+        WorkspaceView(hub: hub, settings: settings)
             .background(.black)
-            .presentationBackground(.black)
-        }
-        .onDisappear {
-            coordinator?.tearDown()
-            ActiveCoordinatorRegistry.shared.clear()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .showServerList)) { _ in
-            showServerList = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .connectToServer)) { notification in
-            if let config = notification.object as? ConnectionConfig {
-                Task { await connect(to: config) }
+            .task {
+                ActiveCoordinatorRegistry.shared.register(hub: hub)
+                await hub.start()
+                await syncPush()
             }
-        }
-        // Re-sync push registration when APNs vends/rotates a token or the user
-        // changes push settings (parity with iOS WorkspaceView).
-        .onReceive(PushTokenBridge.shared.$deviceToken) { _ in Task { await syncPush() } }
-        .onChange(of: settings.pushNotificationsEnabled) { _, _ in Task { await syncPush() } }
-        .onChange(of: settings.pushNotifyOnFinished) { _, _ in Task { await syncPush() } }
-        .preferredColorScheme(.dark)
-        .focusedValue(\.sessionCoordinator, coordinator)
+            .onDisappear {
+                hub.stop()
+                ActiveCoordinatorRegistry.shared.clear()
+            }
+            // Wake and network-restored fan out through the hub with a stagger
+            // (D10); coordinators no longer listen on their own.
+            .onReceive(NotificationCenter.default.publisher(for: SleepWakeObserver.systemDidWake)) { _ in
+                Task { await hub.handleForegroundTransition(userInitiated: true) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NetworkMonitor.connectivityRestored)) { _ in
+                Task { await hub.handleForegroundTransition(userInitiated: true) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showServerList)) { _ in
+                hub.isShowingServerList = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .connectToServer)) { notification in
+                // A freshly paired bookmark is saved enabled; reloading the store
+                // builds its coordinator.
+                if notification.object is ConnectionConfig { hub.reloadBookmarks() }
+            }
+            // Re-sync push registration when APNs vends/rotates a token or the user
+            // changes push settings (parity with iOS WorkspaceView).
+            .onReceive(PushTokenBridge.shared.$deviceToken) { _ in Task { await syncPush() } }
+            .onChange(of: settings.pushNotificationsEnabled) { _, _ in Task { await syncPush() } }
+            .onChange(of: settings.pushNotifyOnFinished) { _, _ in Task { await syncPush() } }
+            .preferredColorScheme(.dark)
+            .focusedValue(\.sessionCoordinator, hub.activeCoordinator)
+            .focusedValue(\.serverHub, hub)
     }
 
-    /// Reconcile this device's push registration with current settings/token.
+    /// Reconcile every enabled relay's push registration with current settings/token.
     private func syncPush() async {
-        guard let coordinator else { return }
-        await coordinator.syncPushRegistration(
+        await hub.syncPushRegistration(
             pushEnabled: settings.pushNotificationsEnabled,
             notifyOnFinished: settings.pushNotifyOnFinished)
     }
-
-    private func presentServerList() async {
-        showServerList = true
-    }
-
-    private func connect(to config: ConnectionConfig) async {
-        loadFailure = nil
-        do {
-            guard let token = try AuthManager.shared.loadToken(for: config.id) else {
-                loadFailure = "No token stored for this server."
-                return
-            }
-            let c = SessionCoordinator(config: config, token: token)
-            coordinator = c
-            await c.start()
-            if let err = c.errorMessage {
-                loadFailure = err
-                coordinator = nil
-            } else {
-                ActiveCoordinatorRegistry.shared.register(coordinator: c, serverName: config.name)
-                await c.syncPushRegistration(
-                    pushEnabled: AppSettings.shared.pushNotificationsEnabled,
-                    notifyOnFinished: AppSettings.shared.pushNotifyOnFinished)
-            }
-        } catch {
-            loadFailure = error.localizedDescription
-        }
-    }
-
 }
 
 private struct WorkspaceView: View {
-    @ObservedObject var coordinator: SessionCoordinator
+    @ObservedObject var hub: MacServerHub
     @ObservedObject var settings: AppSettings
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showQRPopover = false
@@ -111,74 +66,47 @@ private struct WorkspaceView: View {
     /// Driven by `TerminalReloadFade`.
     @State private var reloadCover: Double = 0
 
+    private var coordinator: SessionCoordinator? { hub.activeCoordinator }
+
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SessionSidebarView(coordinator: coordinator)
+            HubSidebarView(hub: hub)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         } detail: {
             VStack(spacing: 0) {
-                if let activeId = coordinator.activeSessionId {
-                    ZStack {
-                        // Single host reused across session switches so each
-                        // terminal's SwiftTerm scrollback survives the swap.
-                        TerminalContainerView(coordinator: coordinator, fontSize: CGFloat(settings.terminalFontSize))
-                            .padding(.leading, 6)
-                            // Covers only the terminal, not the toolbar or the status
-                            // bar: the session name has to stay visible, since it's
-                            // the control the user just clicked.
-                            .terminalReloadCover(reloadCover)
-                        // "Loading session history… 212 KB" over the black pane
-                        // while the server streams the replay; see SessionLoadPhase.
-                        SessionLoadingOverlay(
-                            phase: coordinator.sessionLoadPhase,
-                            sessionName: coordinator.name(for: activeId)
-                        )
-                    }
-                } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "terminal")
-                            .font(.system(size: 48))
-                            .foregroundStyle(.secondary)
-                        Text("No session selected")
-                            .foregroundStyle(.secondary)
-                        Button("New Session") {
-                            Task { await coordinator.createNewSession() }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                detail
                 Divider()
-                StatusBarView(coordinator: coordinator)
+                if let coordinator {
+                    StatusBarView(coordinator: coordinator)
+                } else {
+                    HubStatusBar(hub: hub)
+                }
             }
             .background(.black)
         }
         .toolbar {
-            // LEFT: the sidebar toggle is auto-injected by NavigationSplitView
-            // at the standard spot (after the traffic lights). Everything else
-            // goes in `.primaryAction`, which trail-aligns to the right edge of
-            // the detail toolbar — matching the reference app. `.fixed` spacers
-            // (macOS 26) break the shared glass so QR and the name get their own
-            // pills.
             ToolbarItem(placement: .primaryAction) { serversToolbarButton }
-            ToolbarItem(placement: .primaryAction) { wandToolbarButton }
+            if let coordinator {
+                ToolbarItem(placement: .primaryAction) {
+                    WandButton(coordinator: coordinator,
+                               shareScreen: settings.shareScreenWithOptimizer,
+                               size: 26, fill: Color.gray.opacity(0.5))
+                }
+            }
             if #available(macOS 26.0, *) {
                 ToolbarSpacer(.fixed, placement: .primaryAction)
                 ToolbarItem(placement: .primaryAction) { qrToolbarButton }
-                if let id = coordinator.activeSessionId {
-                    // Own pill, separated from QR. On macOS 26 the toolbar wraps
-                    // the item in its own glass, so DON'T draw a second inner
-                    // background (that nested pill left a visible gap) — pass
-                    // badged: false and let the system glass be the pill.
+                if let coordinator, let id = coordinator.activeSessionId {
                     ToolbarSpacer(.fixed, placement: .primaryAction)
                     ToolbarItem(placement: .primaryAction) {
-                        sessionNameLabel(id: id, badged: false)
+                        sessionNameLabel(coordinator: coordinator, id: id, badged: false)
                     }
                 }
             } else {
                 ToolbarItem(placement: .primaryAction) { qrToolbarButton }
-                if let id = coordinator.activeSessionId {
+                if let coordinator, let id = coordinator.activeSessionId {
                     ToolbarItem(placement: .primaryAction) {
-                        sessionNameLabel(id: id, badged: true)
+                        sessionNameLabel(coordinator: coordinator, id: id, badged: true)
                     }
                 }
             }
@@ -186,73 +114,109 @@ private struct WorkspaceView: View {
         .toolbarBackground(.black, for: .windowToolbar)
         .toolbarBackground(.visible, for: .windowToolbar)
         .focusedValue(\.sidebarVisibility, $columnVisibility)
-        .sheet(isPresented: $coordinator.showQRScanner) {
-            QRScannerSheet(coordinator: coordinator)
+        // SwiftUI cannot bind a sheet through an optional, so the sheets and
+        // alerts that belong to the ACTIVE coordinator live on a child view
+        // that only exists while there is one (spec §8.1: the Reconnecting
+        // sheet shows for the active server only).
+        .background {
+            if let coordinator { ActiveCoordinatorModifiers(coordinator: coordinator) }
         }
-        .sheet(isPresented: $coordinator.isRecovering) {
-            RecoverySheet(
-                phase: coordinator.recoveryPhase,
-                onCancel: {
-                    coordinator.cancelRecovery()
+        .sheet(isPresented: $hub.isShowingServerList) {
+            NavigationStack {
+                ServerListWindow { config in
+                    hub.reloadBookmarks()
+                    hub.isShowingServerList = false
+                    _ = config
                 }
-            )
-            .interactiveDismissDisabled()
-        }
-        .alert("Cannot Open Session", isPresented: $coordinator.sessionAttachFailed) {
-            Button("OK", role: .cancel) {
-                coordinator.sessionAttachError = nil
             }
-        } message: {
-            Text(coordinator.sessionAttachError ?? "Unable to attach to this session.")
+            .background(.black)
+            .presentationBackground(.black)
         }
-        .alert("Connection Lost", isPresented: $coordinator.connectionTimedOut) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Unable to reconnect to the server. Check your network and try reconnecting.")
+        .overlay(alignment: .top) {
+            if let notice = hub.notice {
+                Text(notice)
+                    .font(.callout)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(for: .seconds(4))
+                        if hub.notice == notice { hub.notice = nil }
+                    }
+            }
         }
         .alert("Rename Session", isPresented: $showRenameAlert) {
             TextField("Name", text: $renameText)
             Button("Rename") {
                 let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty, let id = coordinator.activeSessionId {
+                if !trimmed.isEmpty, let coordinator, let id = coordinator.activeSessionId {
                     coordinator.setName(trimmed, for: id)
                 }
             }
             Button("Cancel", role: .cancel) {}
         }
-        .alert(
-            "Session Moved",
-            isPresented: Binding(
-                get: { coordinator.activityCoordinator.showSessionStolen },
-                set: { coordinator.activityCoordinator.showSessionStolen = $0 }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            if let name = coordinator.activityCoordinator.stolenSessionName,
-               let shortId = coordinator.activityCoordinator.stolenSessionShortId {
-                Text("\(name) (\(shortId)) was attached from another device.")
+    }
+
+    // MARK: - Detail
+
+    @ViewBuilder
+    private var detail: some View {
+        if let coordinator, let activeId = coordinator.activeSessionId {
+            ZStack {
+                // Single host reused across session switches so each
+                // terminal's SwiftTerm scrollback survives the swap.
+                TerminalContainerView(coordinator: coordinator, fontSize: CGFloat(settings.terminalFontSize))
+                    .padding(.leading, 6)
+                    .terminalReloadCover(reloadCover)
+                SessionLoadingOverlay(
+                    phase: coordinator.sessionLoadPhase,
+                    sessionName: coordinator.name(for: activeId)
+                )
             }
+            // The container is keyed by the coordinator so a cross-server switch
+            // swaps the whole host; within one server the host is reused.
+            .id(ObjectIdentifier(coordinator))
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.secondary)
+                Text(emptyTitle)
+                    .foregroundStyle(.secondary)
+                if let serverId = firstLiveServerId {
+                    Button("New Session") {
+                        Task { await hub.createSession(on: serverId) }
+                    }
+                } else if hub.aggregate.enabledServers == 0 {
+                    Button("Servers…") { hub.isShowingServerList = true }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var firstLiveServerId: UUID? {
+        if let id = hub.activeRef?.serverId, hub.sections.contains(where: { $0.id == id && $0.status.isLive }) {
+            return id
+        }
+        return hub.sections.first(where: { $0.status.isLive })?.id
+    }
+
+    private var emptyTitle: String {
+        if hub.aggregate.enabledServers == 0 { return "No servers enabled" }
+        if hub.aggregate.liveServers == 0 { return "Connecting to servers…" }
+        return "No session selected"
     }
 
     // MARK: - Toolbar Item Contents
 
     private var serversToolbarButton: some View {
         Button {
-            NotificationCenter.default.post(name: .showServerList, object: nil)
+            hub.isShowingServerList = true
         } label: {
             Label("Servers", systemImage: "server.rack")
         }
-    }
-
-    private var wandToolbarButton: some View {
-        WandButton(
-            coordinator: coordinator,
-            shareScreen: settings.shareScreenWithOptimizer,
-            size: 26,
-            fill: Color.gray.opacity(0.5)
-        )
     }
 
     private var qrToolbarButton: some View {
@@ -261,42 +225,26 @@ private struct WorkspaceView: View {
         } label: {
             Label("Share via QR Code", systemImage: "qrcode")
         }
-        .disabled(coordinator.activeSessionId == nil)
+        .disabled(coordinator?.activeSessionId == nil)
         .popover(isPresented: $showQRPopover, arrowEdge: .bottom) {
-            if let id = coordinator.activeSessionId {
+            if let coordinator, let id = coordinator.activeSessionId {
                 QRCodePopover(sessionId: id, sessionName: coordinator.name(for: id))
             }
         }
     }
 
-    /// Session-name badge (matches iOS/Android). Click → ask the server to
-    /// SIGWINCH the session's foreground process group so the running app
-    /// re-emits its screen (fresh bytes, not a repaint of the possibly-stale
-    /// local grid), plus the swipe flash. Right-click → rename.
-    ///
-    /// We deliberately do NOT post `.terminalForceRedraw` here: a local repaint
-    /// paints the current (stale) buffer immediately, then the SIGWINCH reply
-    /// repaints with genuinely fresh bytes a round-trip later — two paints that
-    /// differ slightly, which reads as a flicker. The SIGWINCH re-emit is the
-    /// authoritative refresh on its own.
-    ///
-    /// The pill sizes to the session name (no fixed width) — it grows and
-    /// shrinks with the text, capped so a very long name truncates instead of
-    /// shoving the toolbar. `badged` keeps the manual pill (used on all OS
-    /// versions here so the label always reads as a tappable chip).
+    /// Session-name badge (matches iOS/Android). Click → reload the terminal
+    /// from the server's ring buffer; right-click → rename. See the pre-hub
+    /// history of this view for why no local repaint is posted here.
     @ViewBuilder
-    private func sessionNameLabel(id: UUID, badged: Bool) -> some View {
+    private func sessionNameLabel(coordinator: SessionCoordinator, id: UUID, badged: Bool) -> some View {
         Text(coordinator.name(for: id))
             .font(.system(size: 13, weight: .medium, design: .rounded))
             .foregroundStyle(.white)
             .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)   // size to text
-            // Only horizontal padding — let the toolbar drive the vertical
-            // metric so the pill matches the adjacent glass icon group's height
-            // instead of an over-tall hand-set frame. Capsule matches the
-            // group's rounding.
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 10)
-            .frame(maxWidth: 260)                            // truncate, don't shove
+            .frame(maxWidth: 260)
             .background(badged ? Color.white.opacity(0.12) : Color.clear)
             .clipShape(Capsule())
             .onTapGesture {
@@ -312,6 +260,76 @@ private struct WorkspaceView: View {
                 }
             }
             .help("Click to reload from server · right-click to rename")
+    }
+}
+
+/// Sheets and alerts bound to the active coordinator's published flags.
+/// Rendered as an invisible background child so each binding is non-optional.
+private struct ActiveCoordinatorModifiers: View {
+    @ObservedObject var coordinator: SessionCoordinator
+
+    var body: some View {
+        Color.clear
+            .sheet(isPresented: $coordinator.showQRScanner) {
+                QRScannerSheet(coordinator: coordinator)
+            }
+            .sheet(isPresented: $coordinator.isRecovering) {
+                RecoverySheet(
+                    phase: coordinator.recoveryPhase,
+                    onCancel: { coordinator.cancelRecovery() }
+                )
+                .interactiveDismissDisabled()
+            }
+            .alert("Cannot Open Session", isPresented: $coordinator.sessionAttachFailed) {
+                Button("OK", role: .cancel) { coordinator.sessionAttachError = nil }
+            } message: {
+                Text(coordinator.sessionAttachError ?? "Unable to attach to this session.")
+            }
+            .alert("Connection Lost", isPresented: $coordinator.connectionTimedOut) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Unable to reconnect to the server. Check your network and try reconnecting.")
+            }
+            .alert(
+                "Session Moved",
+                isPresented: Binding(
+                    get: { coordinator.activityCoordinator.showSessionStolen },
+                    set: { coordinator.activityCoordinator.showSessionStolen = $0 }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                if let name = coordinator.activityCoordinator.stolenSessionName,
+                   let shortId = coordinator.activityCoordinator.stolenSessionShortId {
+                    Text("\(name) (\(shortId)) was attached from another device.")
+                }
+            }
+    }
+}
+
+/// Status bar shown when no session is attached: the hub's aggregate.
+private struct HubStatusBar: View {
+    @ObservedObject var hub: MacServerHub
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(hub.aggregate.liveServers > 0 ? Color.green : (hub.aggregate.enabledServers > 0 ? .orange : .secondary))
+                .frame(width: 6, height: 6)
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(Color.black)
+    }
+
+    private var label: String {
+        let a = hub.aggregate
+        if a.enabledServers == 0 { return "No servers enabled" }
+        return a.enabledServers == 1
+            ? (a.liveServers == 1 ? "Connected" : "Connecting…")
+            : "\(a.liveServers)/\(a.enabledServers) servers connected"
     }
 }
 
@@ -339,25 +357,3 @@ private struct RecoverySheet: View {
         .frame(width: 280, height: 200)
     }
 }
-
-private struct FailureView: View {
-    let message: String
-    let onChooseServer: () -> Void
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 36))
-                .foregroundStyle(.orange)
-            Text("Cannot connect")
-                .font(.title2)
-            Text(message)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            Button("Choose Server") { onChooseServer() }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-

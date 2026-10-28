@@ -9,20 +9,21 @@ import CodeRelayKit
 final class ActiveCoordinatorRegistry: ObservableObject {
     static let shared = ActiveCoordinatorRegistry()
 
-    @Published private(set) var coordinator: SessionCoordinator?
-    @Published private(set) var serverName: String?
+    /// The one hub the main window owns. Menu bar and app commands read the
+    /// active coordinator through it.
+    @Published private(set) var hub: MacServerHub?
+
+    /// Convenience for callers that act on the attached session's relay.
+    var coordinator: SessionCoordinator? { hub?.activeCoordinator }
+    var serverName: String? {
+        guard let hub, let ref = hub.activeRef else { return nil }
+        return hub.sections.first(where: { $0.id == ref.serverId })?.title
+    }
 
     private init() {}
 
-    func register(coordinator: SessionCoordinator, serverName: String) {
-        self.coordinator = coordinator
-        self.serverName = serverName
-    }
-
-    func clear() {
-        coordinator = nil
-        serverName = nil
-    }
+    func register(hub: MacServerHub) { self.hub = hub }
+    func clear() { hub = nil }
 }
 
 /// Menu bar dropdown's view model — derived from ActiveCoordinatorRegistry.
@@ -36,6 +37,7 @@ final class MenuBarViewModel: ObservableObject {
     @Published private(set) var activeSessionId: UUID?
 
     private var registryTask: Task<Void, Never>?
+    private var hubTask: Task<Void, Never>?
     private var coordinatorTasks: [Task<Void, Never>] = []
 
     init() {
@@ -46,13 +48,12 @@ final class MenuBarViewModel: ObservableObject {
         registryTask?.cancel()
         let registry = ActiveCoordinatorRegistry.shared
         registryTask = Task { [weak self] in
-            for await coordinator in registry.$coordinator.values {
+            for await hub in registry.$hub.values {
                 guard let self else { return }
                 self.cancelCoordinatorTasks()
-                if let coordinator {
-                    self.connectionLabel = registry.serverName ?? "Connected"
-                    self.connectionColor = coordinator.isConnected ? .green : .orange
-                    self.followCoordinator(coordinator)
+                self.hubTask?.cancel()
+                if let hub {
+                    self.followHub(hub)
                 } else {
                     self.connectionLabel = "Not connected"
                     self.connectionColor = .secondary
@@ -60,6 +61,29 @@ final class MenuBarViewModel: ObservableObject {
                     self.activityStates = [:]
                     self.agentIds = [:]
                     self.activeSessionId = nil
+                }
+            }
+        }
+    }
+
+    /// Re-follows the hub's active coordinator whenever the active ref moves to
+    /// another server; Task 10 adds the per-server grouping on top.
+    private func followHub(_ hub: MacServerHub) {
+        hubTask = Task { [weak self] in
+            for await ref in hub.$activeRef.values {
+                guard let self else { return }
+                self.cancelCoordinatorTasks()
+                self.activeSessionId = ref?.sessionId
+                if let coordinator = hub.activeCoordinator {
+                    self.connectionLabel = ActiveCoordinatorRegistry.shared.serverName ?? "Connected"
+                    self.connectionColor = coordinator.isConnected ? .green : .orange
+                    self.followCoordinator(coordinator)
+                } else {
+                    self.connectionLabel = hub.sections.first(where: { $0.config.enabled })?.title ?? "Not connected"
+                    self.connectionColor = hub.aggregate.liveServers > 0 ? .green : .secondary
+                    self.sessions = []
+                    self.activityStates = [:]
+                    self.agentIds = [:]
                 }
             }
         }
@@ -141,6 +165,7 @@ final class MenuBarViewModel: ObservableObject {
 
     deinit {
         registryTask?.cancel()
+        hubTask?.cancel()
         for task in coordinatorTasks { task.cancel() }
     }
 }
