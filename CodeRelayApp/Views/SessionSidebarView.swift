@@ -347,11 +347,7 @@ private struct QRScannerSheet: View {
     }
 
     private func handleScannedCode(_ value: String) {
-        guard let url = URL(string: value),
-              url.scheme == "clauderelay",
-              url.host == "session",
-              let uuidString = url.pathComponents.dropFirst().first,
-              let sessionId = UUID(uuidString: uuidString) else {
+        guard let sessionId = SessionDeepLink(string: value)?.sessionId else {
             return  // Invalid QR code — silently ignore, keep scanning
         }
 

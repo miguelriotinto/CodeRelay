@@ -71,15 +71,10 @@ struct CodeRelayMacApp: App {
         }
 
         // Handle session deep links
-        guard url.scheme == "clauderelay",
-              url.host == "session",
-              let uuidString = url.pathComponents.dropFirst().first,
-              let uuid = UUID(uuidString: uuidString) else {
-            return
-        }
+        guard let link = SessionDeepLink(url: url) else { return }
         Task { @MainActor in
             if let coordinator = ActiveCoordinatorRegistry.shared.coordinator {
-                await coordinator.attachRemoteSession(id: uuid)
+                await coordinator.attachRemoteSession(id: link.sessionId)
             }
         }
     }
