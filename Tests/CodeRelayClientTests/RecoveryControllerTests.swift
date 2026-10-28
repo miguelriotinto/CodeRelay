@@ -127,6 +127,20 @@ final class RecoveryControllerTests: XCTestCase {
         )
     }
 
+    func testConcurrentForegroundTransitionsRunOneRecovery() async {
+        // scenePhase → .active and NetworkMonitor.connectivityRestored fire
+        // together after a network drop; the hub fans both out. Two recoveries
+        // on one coordinator: the first aborts and its defer lowers isRecovering
+        // (and the loading sheet) while the second is still reconnecting.
+        let (coordinator, controller) = makeCoordinatorAndController()
+        coordinator.connection._testOnly_setState(.connected)
+        coordinator.connection._testOnly_setLastConnectedAt(Date().addingTimeInterval(-60))
+        async let first: Void = controller.handleForegroundTransition(userInitiated: true)
+        async let second: Void = controller.handleForegroundTransition(userInitiated: true)
+        _ = await (first, second)
+        XCTAssertEqual(controller.recoveryGenerationForTest, 1, "exactly one recovery for two concurrent triggers")
+    }
+
     // MARK: - cancel
 
     func testCancelBumpsGenerationAndSuspends() {

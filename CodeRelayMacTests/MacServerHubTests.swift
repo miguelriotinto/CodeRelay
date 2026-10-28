@@ -31,4 +31,13 @@ final class MacServerHubTests: XCTestCase {
         XCTAssertEqual(p.subtitle, "Arya · studio")
         XCTAssertEqual(MainWindowLoading.detentSize, CGSize(width: 320, height: 220))
     }
+
+    func testEditingALiveServerDoesNotRebuildItsCoordinator() {
+        func section(_ status: ServerSectionStatus) -> ServerSection {
+            ServerSection(config: ConnectionConfig(name: "a", host: "a"), status: status, sessions: [], isCached: false,
+                          rollups: [], awaitingInput: 0, isCollapsed: false)
+        }
+        XCTAssertFalse(ServerListWindow.shouldRebuild(afterEditing: section(.live)))
+        XCTAssertTrue(ServerListWindow.shouldRebuild(afterEditing: section(.authFailed("x"))))
+    }
 }

@@ -18,9 +18,15 @@ struct WorkspaceView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
     @ObservedObject var hub: IOSServerHub
+    /// A pairing link from the App (Camera scan / `coderelay://pair`). Presented
+    /// here, or handed to the management sheet while that is up — a second sheet
+    /// on the same presenter would be queued behind one that cannot close.
+    @Binding var pendingPairing: PairingURL?
     @ObservedObject private var settings = AppSettings.shared
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
     @State private var showSidebarSheet = false
+    /// A pairing link handed to the management sheet (see `onChange(of: pendingPairing)`).
+    @State private var managementPairing: PairingURL?
     /// Kept alive for the view's lifetime so `connectivityRestored` posts; the
     /// coordinators no longer arm their own monitor (the hub fans out, D10).
     @StateObject private var networkMonitor = NetworkMonitor()
@@ -101,9 +107,9 @@ struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: NetworkMonitor.connectivityRestored)) { _ in
             Task { await hub.handleForegroundTransition(userInitiated: true) }
         }
-        // The sheets and alerts that belong to one coordinator live on a child
-        // view that exists only while the focus coordinator does (the active
-        // server, else the only / first live one — G8).
+        // The alerts that belong to one coordinator live on a child view that
+        // exists only while the focus coordinator does (the active server, else
+        // the only / first live one — G8); it also FEEDS the loading model.
         .background {
             if let focus = hub.focusCoordinator {
                 FocusCoordinatorModifiers(coordinator: focus, loading: loading,
@@ -111,8 +117,46 @@ struct WorkspaceView: View {
                     .id(ObjectIdentifier(focus))
             }
         }
+        // iOS presents one sheet per presenter: the sidebar sheet (compact), the
+        // management sheet and the loading sheet all hang off this view, so the
+        // sidebar steps aside the moment either of the others is wanted.
+        .onChange(of: hub.isShowingServerList) { _, showing in if showing { showSidebarSheet = false } }
+        .onChange(of: loading.isPresented) { _, presented in if presented { showSidebarSheet = false } }
+        .onChange(of: pendingPairing) { _, pairing in
+            // While management is up (and un-dismissable with nothing enabled) it
+            // takes the link, so a Camera scan on first run still pairs.
+            if pairing != nil, hub.isShowingServerList { managementPairing = pairing; pendingPairing = nil }
+        }
         .sheet(isPresented: $hub.isShowingServerList) {
-            ServerListView(hub: hub)
+            ServerListView(hub: hub, externalPairing: $managementPairing)
+        }
+        .sheet(item: Binding(get: { hub.isShowingServerList ? nil : pendingPairing },
+                             set: { pendingPairing = $0 })) { pairing in
+            PairWithHostSheet(onPaired: { _ in
+                // The paired bookmark is saved enabled; reloading builds its
+                // coordinator (the cap is enforced by the hub).
+                hub.reloadBookmarks()
+            }, prefill: pairing)
+        }
+        // The one loading sheet: switch, session-name refresh and reconnect all
+        // rise from the bottom with the step and the bytes loaded, while the
+        // terminal behind fades to black; both lift on the first frame. Hosted
+        // HERE, not on the re-keyed focus child, so a cross-server switch
+        // mid-load does not dismiss and re-present it.
+        .sheet(isPresented: Binding(get: { loading.isPresented && !showSidebarSheet && !hub.isShowingServerList },
+                                    set: { _ in })) {
+            if let shown = loading.shown {
+                SessionLoadingSheet(presentation: shown,
+                                    onCancel: shown.allowsCancel ? { hub.focusCoordinator?.cancelRecovery() } : nil)
+                    .presentationDetents([.fraction(0.32)])
+                    .presentationDragIndicator(.hidden)
+                    .presentationBackgroundInteraction(.disabled)
+                    .interactiveDismissDisabled()
+                    // Full width, not the safe area: on iPhone Duo the status
+                    // bar column is carved out of a sheet's safe area, which
+                    // put a safe-area-centred stack ~85 pt off centre.
+                    .ignoresSafeArea(.container, edges: .horizontal)
+            }
         }
         .overlay(alignment: .top) {
             if let notice = hub.notice {
@@ -142,6 +186,9 @@ private struct FocusCoordinatorModifiers: View {
         SessionLoadingPresentation(loadPhase: coordinator.sessionLoadPhase,
                                    isRecovering: coordinator.isRecovering,
                                    recoveryPhase: coordinator.recoveryPhase,
+                                   // The handshake narrates a server, not a session, unless one is
+                                   // attached or about to be restored.
+                                   expectsSession: coordinator.expectsSessionToLoad,
                                    sessionName: coordinator.activeSessionId.map { coordinator.name(for: $0) },
                                    serverName: serverName)
     }
@@ -149,23 +196,6 @@ private struct FocusCoordinatorModifiers: View {
     var body: some View {
         Color.clear
             .onChange(of: presentation, initial: true) { _, current in loading.update(current) }
-            // The one loading sheet: switch, session-name refresh and reconnect
-            // all rise from the bottom with the step and the bytes loaded, while
-            // the terminal behind fades to black; both lift on the first frame.
-            .sheet(isPresented: Binding(get: { loading.isPresented }, set: { _ in })) {
-                if let shown = loading.shown {
-                    SessionLoadingSheet(presentation: shown,
-                                        onCancel: shown.allowsCancel ? { coordinator.cancelRecovery() } : nil)
-                        .presentationDetents([.fraction(0.32)])
-                        .presentationDragIndicator(.hidden)
-                        .presentationBackgroundInteraction(.disabled)
-                        .interactiveDismissDisabled()
-                        // Full width, not the safe area: on iPhone Duo the status
-                        // bar column is carved out of a sheet's safe area, which
-                        // put a safe-area-centred stack ~85 pt off centre.
-                        .ignoresSafeArea(.container, edges: .horizontal)
-                }
-            }
             .alert("Connection Lost", isPresented: $coordinator.connectionTimedOut) {
                 Button("OK", role: .cancel) {}
             } message: {

@@ -21,10 +21,10 @@ public enum TerminalReloadFade {
     /// Longer than the fade out, so the fresh screen resolves instead of
     /// snapping in.
     public static let coverInDuration: TimeInterval = 0.22
-    /// Ceiling on the black hold. `TerminalViewModel`'s 5 s reload backstop
-    /// already guarantees the flag clears (as do `prepareForSwitch` /
-    /// `prepareForReplay`), so this is belt as well as braces: a pane stuck
-    /// black is the one failure mode the user can't tell from a hung app.
+    /// Ceiling on how long `reload` waits for the fresh screen before returning
+    /// to its caller. The visible blackout is no longer bound here — it follows
+    /// `SessionLoadingSheetModel`, whose stall timer lowers sheet and cover
+    /// together — so this only keeps the awaiting caller from hanging.
     private static let maxHold = DispatchQueue.SchedulerTimeType.Stride.seconds(8)
 
     /// The session-name tap: reload the pane from the server's scrollback. The

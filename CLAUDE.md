@@ -188,19 +188,28 @@ and `NetworkMonitor.connectivityRestored` fan out through
 
 **Session-loading sheet.** Opening a session is black until the replay is
 delivered in one batch (see "Scrollback replay"), which on a slow link is
-seconds. Every path that brings a session to the screen — `switchToSession`
-(also when a cached terminal skips the replay), the session-name reload
-(`reloadTerminalFromServer`), recovery — publishes
+seconds. `switchToSession` (also when a cached terminal skips the replay) and
+the session-name reload (`reloadTerminalFromServer`) publish
 `SharedSessionCoordinator.sessionLoadPhase` (`SessionLoadPhase`: connecting →
-authenticating → loadingSessions → attaching → loadingHistory(bytes) → nil)
-from its first line, and `SessionLoadingPresentation` + `SessionLoadingSheetModel`
-(CodeRelayClient/Views) turn that plus `isRecovering` into ONE bottom sheet both
-apps present (`SessionLoadingSheet`: step text, and the **bytes loaded as the
-largest text**, reserved as "0 KB" from the first phase), held at least 600 ms so
-an instant switch does not flicker, while the terminal fades to black behind it
-(`terminalLoadingCover`); both lift together on the first visible frame. Every
-failure path (failed resume, rejected token, cancelled recovery, the view model's
-5 s reload backstop) clears the inputs, so the sheet can never stay up. The inline
+authenticating → loadingSessions → attaching → loadingHistory(bytes) → nil) from
+their first line; recovery publishes `isRecovering`/`recoveryPhase` instead
+(`RecoveryController` sets the load phase to nil). `SessionLoadingPresentation`
++ `SessionLoadingSheetModel` (CodeRelayClient/Views) turn those into ONE bottom
+sheet both apps present (`SessionLoadingSheet`: step text, and the **bytes loaded
+as the largest text**, a literal "0 KB" from the first phase), held at least
+600 ms so an instant switch does not flicker, while the terminal fades to black
+behind it (`terminalLoadingCover`); both lift together when the phase clears —
+on the first visible frame of a replay, or right after a replay-skipping resume
+returns. The handshake's connecting/authenticating/loadingSessions phases raise
+the sheet only while a session is attached or pending restore
+(`expectsSession`), never for a bare launch against a slow host. The model is
+also the one enforcer of "never stays up": a presentation unchanged for 15 s
+(`stallTimeout`) lowers the sheet until progress resumes, covering a replay that
+never delivers and an RPC chain parked behind a 20 s optimize; the view model's
+5 s backstop covers the reload path only. The sheet is hosted on the workspace
+view, NOT on the per-coordinator child (which is re-keyed on a cross-server
+switch), and on iPhone the sidebar sheet steps aside before it or the
+management sheet presents (one sheet per presenter). The inline
 `SessionLoadingOverlay` is gone on Apple platforms; the Kotlin clients still have
 theirs until Plans 3–4 port the sheet. The phase is set by
 `SessionHandshake` (only while `activeSessionId == nil` — never over a live

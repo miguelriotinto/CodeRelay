@@ -97,7 +97,7 @@ struct CodeRelayApp: App {
     var body: some Scene {
         WindowGroup {
             ZStack {
-                WorkspaceView(hub: hub)
+                WorkspaceView(hub: hub, pendingPairing: $pendingPairing)
 
                 if showSplash {
                     SplashScreenView {
@@ -119,13 +119,6 @@ struct CodeRelayApp: App {
                 if AppSettings.shared.pushNotificationsEnabled {
                     pushDelegate.requestAndRegister()
                 }
-            }
-            .sheet(item: $pendingPairing) { pairing in
-                PairWithHostSheet(onPaired: { _ in
-                    // The paired bookmark is saved enabled; reloading builds its
-                    // coordinator (the cap is enforced by the hub).
-                    hub.reloadBookmarks()
-                }, prefill: pairing)
             }
         }
     }

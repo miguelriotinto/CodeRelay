@@ -7,6 +7,8 @@ import CodeRelayKit
 /// workspace, disabled ones are only probed by the status poller.
 struct ServerListView: View {
     @ObservedObject var hub: IOSServerHub
+    /// A pairing link that arrived while this sheet was up (`WorkspaceView`).
+    @Binding var externalPairing: PairingURL?
     @StateObject private var viewModel = ServerListViewModel()
     @Environment(\.dismiss) private var dismiss
     @State private var showAddSheet = false
@@ -53,8 +55,11 @@ struct ServerListView: View {
                         viewModel.refreshServers()
                         hub.reloadBookmarks()
                         // The hub cannot see the keychain: a pasted token only
-                        // reaches the relay through a fresh coordinator.
-                        hub.rebuildSlot(saved.id)
+                        // reaches the relay through a fresh coordinator — but a
+                        // rebuild detaches, so a live server is left alone.
+                        if let section = hub.sections.first(where: { $0.id == saved.id }), Self.shouldRebuild(afterEditing: section) {
+                            hub.rebuildSlot(saved.id)
+                        }
                     }, onDelete: {
                         Task { await hub.removeServer(server.id); viewModel.refreshServers() }
                     })
@@ -79,8 +84,17 @@ struct ServerListView: View {
                 }
                 .onAppear { viewModel.refreshServers() }
                 .onDisappear { viewModel.stopPolling() }
+                .onChange(of: externalPairing, initial: true) { _, pairing in
+                    if let pairing { scannedPairing = pairing; externalPairing = nil }
+                }
         }
         .interactiveDismissDisabled(hub.aggregate.enabledServers == 0)
+    }
+
+    /// Only a server that is not live needs the fresh coordinator a pasted
+    /// token requires; rebuilding a live one would detach its session.
+    static func shouldRebuild(afterEditing section: ServerSection) -> Bool {
+        !section.status.isLive
     }
 
     private func paired() {

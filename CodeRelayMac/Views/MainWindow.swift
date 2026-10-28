@@ -126,6 +126,18 @@ private struct WorkspaceView: View {
                     .id(ObjectIdentifier(focus))
             }
         }
+        // The one loading sheet (parity with iOS): switch, session-name refresh
+        // and reconnect, with the bytes loaded as the largest text. Hosted HERE,
+        // not on the re-keyed focus child, so a cross-server switch mid-load
+        // does not dismiss and re-present it.
+        .sheet(isPresented: Binding(get: { loading.isPresented }, set: { _ in })) {
+            if let shown = loading.shown {
+                SessionLoadingSheet(presentation: shown,
+                                    onCancel: shown.allowsCancel ? { hub.focusCoordinator?.cancelRecovery() } : nil)
+                    .frame(width: MainWindowLoading.detentSize.width, height: MainWindowLoading.detentSize.height)
+                    .interactiveDismissDisabled()
+            }
+        }
         .sheet(isPresented: $hub.isShowingServerList) {
             NavigationStack {
                 ServerListWindow(hub: hub)
@@ -269,6 +281,7 @@ private struct ActiveCoordinatorModifiers: View {
         SessionLoadingPresentation(loadPhase: coordinator.sessionLoadPhase,
                                    isRecovering: coordinator.isRecovering,
                                    recoveryPhase: coordinator.recoveryPhase,
+                                   expectsSession: coordinator.expectsSessionToLoad,
                                    sessionName: coordinator.activeSessionId.map { coordinator.name(for: $0) },
                                    serverName: serverName)
     }
@@ -279,16 +292,6 @@ private struct ActiveCoordinatorModifiers: View {
                 QRScannerSheet(coordinator: coordinator)
             }
             .onChange(of: presentation, initial: true) { _, current in loading.update(current) }
-            // The one loading sheet (parity with iOS): switch, session-name
-            // refresh and reconnect, with the bytes loaded as the largest text.
-            .sheet(isPresented: Binding(get: { loading.isPresented }, set: { _ in })) {
-                if let shown = loading.shown {
-                    SessionLoadingSheet(presentation: shown,
-                                        onCancel: shown.allowsCancel ? { coordinator.cancelRecovery() } : nil)
-                        .frame(width: MainWindowLoading.detentSize.width, height: MainWindowLoading.detentSize.height)
-                        .interactiveDismissDisabled()
-                }
-            }
             .alert("Cannot Open Session", isPresented: $coordinator.sessionAttachFailed) {
                 Button("OK", role: .cancel) { coordinator.sessionAttachError = nil }
             } message: {

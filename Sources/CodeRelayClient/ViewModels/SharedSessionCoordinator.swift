@@ -1285,6 +1285,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// Test hook: whether `startNetworkRecovery()` armed its monitor.
     public var hasNetworkRecoveryForTest: Bool { networkMonitor != nil }
 
+    /// A session is attached or about to be restored — the handshake phases
+    /// then narrate a session loading rather than a bare server, and the
+    /// loading sheet may show them (`SessionLoadingPresentation.expectsSession`).
+    public var expectsSessionToLoad: Bool { activeSessionId != nil || pendingRestoreSessionId != nil }
+
     // MARK: - Cleanup
 
     open func tearDown() {

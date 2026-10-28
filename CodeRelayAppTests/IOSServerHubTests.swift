@@ -32,14 +32,22 @@ final class IOSServerHubTests: XCTestCase {
         coordinator.tearDown()
     }
 
-    func testHubStartsWithTheSavedBookmarksInAnIsolatedSuite() async {
+    func testHubStartsOverTheInjectedStoresOnly() async {
+        // Hermetic: an isolated bookmark store and no tokens — the test must not
+        // read (or, through the migration, REWRITE) the app's real bookmarks.
         let suite = "IOSServerHubTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
-        let hub = IOSServerHubFactory.make(defaults: defaults)
+        let store = SavedConnectionStore(key: "test.bookmarks", defaults: defaults)
+        store.saveAll([ConnectionConfig(name: "a", host: "a.local"), ConnectionConfig(name: "b", host: "b.local")])
+        final class NoTokens: TokenProviding { func loadToken(for connectionId: UUID) throws -> String? { nil } }
+        let before = CodeRelayApp.savedConnections.loadAll()
+        let hub = IOSServerHubFactory.make(defaults: defaults, bookmarks: store, tokens: NoTokens())
         await hub.start()
-        XCTAssertEqual(hub.aggregate.totalServers, CodeRelayApp.savedConnections.loadAll().count,
-                       "the factory reads the app's bookmark store; the hub state lives in the given defaults")
+        XCTAssertEqual(hub.aggregate.totalServers, 2)
+        XCTAssertTrue(hub.sections.allSatisfy { if case .authFailed = $0.status { return true } else { return $0.config.enabled == false } },
+                      "no token → authFailed, no dial")
+        XCTAssertEqual(CodeRelayApp.savedConnections.loadAll(), before, "the real store is untouched")
         hub.stop()
     }
 }

@@ -17,7 +17,13 @@ enum IOSServerHubFactory {
                            ownershipKeyPrefix: "\(SessionCoordinator.keyPrefix).\(config.id.uuidString)")
     }
 
-    static func make(defaults: UserDefaults = .standard) -> IOSServerHub {
+    /// - Parameters:
+    ///   - bookmarks/tokens: injectable so tests run over an isolated store and
+    ///     stub tokens — the one-time migration REWRITES the bookmark store it is
+    ///     given, so a test over the real one would disable the user's servers.
+    static func make(defaults: UserDefaults = .standard,
+                     bookmarks: SavedConnectionStore = CodeRelayApp.savedConnections,
+                     tokens: TokenProviding = AuthManager.shared) -> IOSServerHub {
         #if DEBUG
         if HubPreviewSeed.isEnabled {
             let seed = HubPreviewSeed.makeStores(keyPrefix: SessionCoordinator.keyPrefix,
@@ -33,8 +39,8 @@ enum IOSServerHubFactory {
         }
         #endif
         return ServerHub(
-            bookmarks: CodeRelayApp.savedConnections,
-            tokens: AuthManager.shared,
+            bookmarks: bookmarks,
+            tokens: tokens,
             stateStore: HubStateStore(keyPrefix: SessionCoordinator.keyPrefix,
                                       deviceId: DeviceIdentifier().currentID, defaults: defaults),
             keyPrefix: SessionCoordinator.keyPrefix,

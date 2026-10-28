@@ -62,6 +62,10 @@ final class RecoveryController {
     /// from racing across the suspension point at the top of
     /// `handleForegroundTransition`.
     private var isRecoveryDispatched = false
+    /// A `handleForegroundTransition` pass is between its first and last await.
+    private var foregroundInFlight = false
+    /// Test hook: how many recoveries have been started.
+    var recoveryGenerationForTest: UInt64 { recoveryGeneration }
     /// Timestamp set by `cancel`. `triggerUserRecovery` ignores calls within
     /// 1 s of a cancel to avoid sheet-dismiss → scenePhase → re-trigger.
     private var lastCancelledAt: Date = .distantPast
@@ -169,6 +173,21 @@ final class RecoveryController {
 
     // MARK: - Recovery flow
 
+    /// Torn down, mid-handshake or already recovering: nothing for a foreground
+    /// pass to do (the handshake and the running recovery own the socket).
+    private var canStartForegroundPass: Bool {
+        if coordinator.isTornDown { return false }
+        if coordinator.isPerformingHandshake {
+            recoveryLog.debug("handleForegroundTransition: handshake in flight, skipping")
+            return false
+        }
+        if coordinator.isRecovering {
+            recoveryLog.debug("handleForegroundTransition: already recovering, skipping")
+            return false
+        }
+        return true
+    }
+
     /// - Parameter userInitiated: true when triggered by an explicit
     ///   user-intent signal (scenePhase active, network restored, manual
     ///   retry). Such signals clear the auto-suspend circuit breaker.
@@ -176,15 +195,18 @@ final class RecoveryController {
     ///   on loss.
     func handleForegroundTransition(userInitiated: Bool) async {
         defer { isRecoveryDispatched = false }
-        guard !coordinator.isTornDown else { return }
-        guard !coordinator.isPerformingHandshake else {
-            recoveryLog.debug("handleForegroundTransition: handshake in flight, skipping")
+        // Single-flight: scenePhase and connectivityRestored fire together after
+        // a network drop and the hub fans both out. Without this, two passes
+        // raced past the `isRecovering` check below (it is read before the
+        // `isAlive()` await), both reconnected, and the first one's defer
+        // lowered `isRecovering` — and the loading sheet — mid-reconnect.
+        guard !foregroundInFlight else {
+            recoveryLog.debug("handleForegroundTransition: already in flight, skipping")
             return
         }
-        guard !coordinator.isRecovering else {
-            recoveryLog.debug("handleForegroundTransition: already recovering, skipping")
-            return
-        }
+        foregroundInFlight = true
+        defer { foregroundInFlight = false }
+        guard canStartForegroundPass else { return }
 
         // A just-established socket (e.g. on cold launch, `scenePhase` flips to
         // `.active` right after connect()) is alive by construction — its first
