@@ -1,69 +1,37 @@
 import SwiftUI
 import CodeRelayClient
+import CodeRelayKit
 
-// MARK: - Recovery Overlay (shown during in-session reconnection)
-
-struct RecoveryOverlay: View {
-    let phase: SharedSessionCoordinator.RecoveryPhase
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            ProgressView()
-                .scaleEffect(1.5)
-
-            Text("Reconnecting")
-                .font(.headline)
-
-            Text(phase.label)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .contentTransition(.interpolate)
-                .animation(.easeInOut(duration: 0.25), value: phase.label)
-
-            Spacer()
-
-            Button("Cancel", role: .cancel) {
-                onCancel()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-            .padding(.bottom, 40)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Centre on the sheet's full width, not its safe area. On iPhone Duo
-        // the status bar column is carved out of a sheet's safe area (it is
-        // where the system would put a sheet's vertical toolbar buttons), so
-        // a safe-area-centred stack sat ~85 pt left of the sheet's visual
-        // centre on the closed display. This sheet has nothing in that column,
-        // and in every posture its content is clear of the status pill: below
-        // it when closed in portrait, no status bar when closed in landscape,
-        // and a centred floating card when open.
-        .ignoresSafeArea(.container, edges: .horizontal)
-        .presentationDetents([.medium])
-        .presentationDragIndicator(.visible)
+/// Pure rules the root view is built on, kept out of SwiftUI for tests.
+enum WorkspaceRoot {
+    /// With no enabled server there is nothing to show behind the terminal:
+    /// present the management sheet (spec §8.1 "root screen is the workspace;
+    /// with zero bookmarks it shows the existing add/pair empty state").
+    static func shouldPresentManagement(aggregate: HubAggregate) -> Bool {
+        aggregate.enabledServers == 0
     }
 }
 
-/// Main workspace: NavigationSplitView with a session sidebar and terminal detail.
+/// Main workspace over the hub: NavigationSplitView with a grouped session
+/// sidebar and the active coordinator's terminal (spec §8.2).
 struct WorkspaceView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @StateObject private var coordinator: SessionCoordinator
+    @ObservedObject var hub: IOSServerHub
+    /// A pairing link from the App (Camera scan / `coderelay://pair`). Presented
+    /// here, or handed to the management sheet while that is up — a second sheet
+    /// on the same presenter would be queued behind one that cannot close.
+    @Binding var pendingPairing: PairingURL?
+    @ObservedObject private var settings = AppSettings.shared
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
     @State private var showSidebarSheet = false
-    @Environment(\.dismiss) private var dismiss
-    private let pendingAttachSessionId: UUID?
-
-    init(connection: RelayConnection, token: String, pendingAttachSessionId: UUID? = nil) {
-        self.pendingAttachSessionId = pendingAttachSessionId
-        _coordinator = StateObject(wrappedValue: SessionCoordinator(
-            connection: connection,
-            token: token
-        ))
-    }
+    /// A pairing link handed to the management sheet (see `onChange(of: pendingPairing)`).
+    @State private var managementPairing: PairingURL?
+    /// Kept alive for the view's lifetime so `connectivityRestored` posts; the
+    /// coordinators no longer arm their own monitor (the hub fans out, D10).
+    @StateObject private var networkMonitor = NetworkMonitor()
+    /// One sheet + blackout for switch, session-name refresh and reconnect.
+    @StateObject private var loading = SessionLoadingSheetModel()
 
     /// Maps the sidebar button's columnVisibility toggle directly to showSidebarSheet on iPhone.
     private var sidebarSheetBinding: Binding<NavigationSplitViewVisibility> {
@@ -73,43 +41,35 @@ struct WorkspaceView: View {
         )
     }
 
-    /// Reconcile this device's push registration with current settings/token.
+    /// Reconcile every enabled relay's push registration with settings/token.
     private func syncPush() async {
-        await coordinator.syncPushRegistration(
-            pushEnabled: AppSettings.shared.pushNotificationsEnabled,
-            notifyOnFinished: AppSettings.shared.pushNotifyOnFinished)
+        await hub.syncPushRegistration(
+            pushEnabled: settings.pushNotificationsEnabled,
+            notifyOnFinished: settings.pushNotifyOnFinished)
     }
 
     var body: some View {
         Group {
             if sizeClass == .compact {
-                // iPhone: detail-only with sidebar as a sheet
-                ActiveTerminalView(
-                    coordinator: coordinator,
-                    columnVisibility: sidebarSheetBinding,
-                    onDisconnect: { dismiss() }
-                )
-                .sheet(isPresented: $showSidebarSheet) {
-                    NavigationStack {
-                        SessionSidebarView(coordinator: coordinator)
-                            .toolbar {
-                                ToolbarItem(placement: .topBarTrailing) {
-                                    Button("Done") { showSidebarSheet = false }
+                // iPhone: detail-only with the sidebar as a sheet
+                ActiveTerminalView(hub: hub, columnVisibility: sidebarSheetBinding, loading: loading)
+                    .sheet(isPresented: $showSidebarSheet) {
+                        NavigationStack {
+                            SessionSidebarView(hub: hub)
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarTrailing) {
+                                        Button("Done") { showSidebarSheet = false }
+                                    }
                                 }
-                            }
+                        }
+                        .presentationDetents([.medium, .large])
                     }
-                    .presentationDetents([.medium, .large])
-                }
             } else {
                 // iPad: full split view
                 NavigationSplitView(columnVisibility: $columnVisibility) {
-                    SessionSidebarView(coordinator: coordinator)
+                    SessionSidebarView(hub: hub)
                 } detail: {
-                    ActiveTerminalView(
-                        coordinator: coordinator,
-                        columnVisibility: $columnVisibility,
-                        onDisconnect: { dismiss() }
-                    )
+                    ActiveTerminalView(hub: hub, columnVisibility: $columnVisibility, loading: loading)
                 }
                 .navigationSplitViewStyle(.prominentDetail)
                 .navigationBarHidden(true)
@@ -117,46 +77,20 @@ struct WorkspaceView: View {
             }
         }
         .task {
-            coordinator.startNetworkRecovery()
-            // The launch flow, unconditionally: authenticate, ask the server
-            // which sessions this client owns, render them in the sidebar. It is
-            // single-flight, so the `scenePhase → .active` trigger firing at the
-            // same instant joins this pass instead of racing it — and it retries
-            // rather than leaving the pane silently empty. `.launch` keeps quiet
-            // about sessions another client took while this app was closed.
-            await coordinator.performHandshake(reason: .launch)
-            // A deep-linked attach runs AFTER the handshake, never before it.
-            // `attachRemoteSession` is not covered by the handshake gate, so an
-            // attach issued first races the recovery pass `startNetworkRecovery()`
-            // just armed and the `scenePhase → .active` handshake — either can
-            // replace the socket mid-attach. Going second means the attach runs
-            // over a socket the handshake has already proven live and
-            // authenticated, and its own `fetchSessions(force:)` re-renders the
-            // pane with the newly-owned session on top of the handshake's list.
-            if let sessionId = pendingAttachSessionId {
-                await coordinator.attachRemoteSession(id: sessionId)
-            }
+            await hub.start()
             await syncPush()
-            if coordinator.activeSessionId == nil {
-                if sizeClass == .compact {
-                    showSidebarSheet = true
-                } else {
-                    columnVisibility = .all
-                }
+            if WorkspaceRoot.shouldPresentManagement(aggregate: hub.aggregate) {
+                hub.isShowingServerList = true
+            } else if hub.activeRef == nil {
+                if sizeClass == .compact { showSidebarSheet = true } else { columnVisibility = .all }
             }
         }
         // Re-sync push registration when the OS vends/rotates a token or the
         // user changes push settings.
-        .onReceive(PushTokenBridge.shared.$deviceToken) { _ in
-            Task { await syncPush() }
-        }
-        .onChange(of: AppSettings.shared.pushNotificationsEnabled) { _, _ in
-            Task { await syncPush() }
-        }
-        .onChange(of: AppSettings.shared.pushNotifyOnFinished) { _, _ in
-            Task { await syncPush() }
-        }
-        .onChange(of: coordinator.activeSessionId) { _, newValue in
+        .onReceive(PushTokenBridge.shared.$deviceToken) { _ in Task { await syncPush() } }
+        .onChange(of: settings.pushNotificationsEnabled) { _, _ in Task { await syncPush() } }
+        .onChange(of: settings.pushNotifyOnFinished) { _, _ in Task { await syncPush() } }
+        .onChange(of: hub.activeRef) { _, newValue in
             if newValue != nil {
                 withAnimation {
                     columnVisibility = .detailOnly
@@ -164,62 +98,132 @@ struct WorkspaceView: View {
                 }
             }
         }
-        .onDisappear {
-            coordinator.tearDown()
-        }
+        .onDisappear { hub.stop() }
+        // Foreground and network-restored fan out through the hub with a
+        // stagger (D10); coordinators install no observers of their own.
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
-                coordinator.triggerUserRecovery()
+            if newPhase == .active { Task { await hub.handleForegroundTransition(userInitiated: true) } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NetworkMonitor.connectivityRestored)) { _ in
+            Task { await hub.handleForegroundTransition(userInitiated: true) }
+        }
+        // The alerts that belong to one coordinator live on a child view that
+        // exists only while the focus coordinator does (the active server, else
+        // the only / first live one — G8); it also FEEDS the loading model.
+        .background {
+            if let focus = hub.focusCoordinator {
+                FocusCoordinatorModifiers(coordinator: focus, loading: loading,
+                                          serverName: hub.sections.first { $0.id == hub.focusServerId }?.title)
+                    .id(ObjectIdentifier(focus))
             }
         }
-        .sheet(isPresented: $coordinator.isRecovering) {
-            RecoveryOverlay(
-                phase: coordinator.recoveryPhase,
-                onCancel: {
-                    coordinator.cancelRecovery()
+        // iOS presents one sheet per presenter: the sidebar sheet (compact), the
+        // management sheet and the loading sheet all hang off this view, so the
+        // sidebar steps aside the moment either of the others is wanted.
+        .onChange(of: hub.isShowingServerList) { _, showing in if showing { showSidebarSheet = false } }
+        .onChange(of: loading.isPresented) { _, presented in if presented { showSidebarSheet = false } }
+        .onChange(of: pendingPairing) { _, pairing in
+            // While management is up (and un-dismissable with nothing enabled) it
+            // takes the link, so a Camera scan on first run still pairs.
+            if pairing != nil, hub.isShowingServerList { managementPairing = pairing; pendingPairing = nil }
+        }
+        .sheet(isPresented: $hub.isShowingServerList) {
+            ServerListView(hub: hub, externalPairing: $managementPairing)
+        }
+        .sheet(item: Binding(get: { hub.isShowingServerList ? nil : pendingPairing },
+                             set: { pendingPairing = $0 })) { pairing in
+            PairWithHostSheet(onPaired: { _ in
+                // The paired bookmark is saved enabled; reloading builds its
+                // coordinator (the cap is enforced by the hub).
+                hub.reloadBookmarks()
+            }, prefill: pairing)
+        }
+        // The one loading sheet: switch, session-name refresh and reconnect all
+        // rise from the bottom with the step and the bytes loaded, while the
+        // terminal behind fades to black; both lift on the first frame. Hosted
+        // HERE, not on the re-keyed focus child, so a cross-server switch
+        // mid-load does not dismiss and re-present it.
+        .sheet(isPresented: Binding(get: { loading.isPresented && !showSidebarSheet && !hub.isShowingServerList },
+                                    set: { _ in })) {
+            if let shown = loading.shown {
+                SessionLoadingSheet(presentation: shown,
+                                    onCancel: shown.allowsCancel ? { hub.focusCoordinator?.cancelRecovery() } : nil)
+                    .presentationDetents([.fraction(0.32)])
+                    .presentationDragIndicator(.hidden)
+                    .presentationBackgroundInteraction(.disabled)
+                    .interactiveDismissDisabled()
+                    // Full width, not the safe area: on iPhone Duo the status
+                    // bar column is carved out of a sheet's safe area, which
+                    // put a safe-area-centred stack ~85 pt off centre.
+                    .ignoresSafeArea(.container, edges: .horizontal)
+            }
+        }
+        .overlay(alignment: .top) {
+            if let notice = hub.notice {
+                Text(notice)
+                    .font(.callout)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .task(id: notice) {
+                        try? await Task.sleep(for: .seconds(4))
+                        if hub.notice == notice { hub.notice = nil }
+                    }
+            }
+        }
+    }
+}
+
+/// Sheets and alerts bound to one coordinator's published flags, rendered as an
+/// invisible background child so each binding is non-optional.
+private struct FocusCoordinatorModifiers: View {
+    @ObservedObject var coordinator: SessionCoordinator
+    @ObservedObject var loading: SessionLoadingSheetModel
+    let serverName: String?
+
+    private var presentation: SessionLoadingPresentation {
+        SessionLoadingPresentation(loadPhase: coordinator.sessionLoadPhase,
+                                   isRecovering: coordinator.isRecovering,
+                                   recoveryPhase: coordinator.recoveryPhase,
+                                   // The handshake narrates a server, not a session, unless one is
+                                   // attached or about to be restored.
+                                   expectsSession: coordinator.expectsSessionToLoad,
+                                   sessionName: coordinator.activeSessionId.map { coordinator.name(for: $0) },
+                                   serverName: serverName)
+    }
+
+    var body: some View {
+        Color.clear
+            .onChange(of: presentation, initial: true) { _, current in loading.update(current) }
+            .alert("Connection Lost", isPresented: $coordinator.connectionTimedOut) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Unable to reconnect to \(serverName ?? "the server"). Check your network, then pull to refresh.")
+            }
+            .alert("Error", isPresented: $coordinator.showError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(coordinator.errorMessage ?? "Unknown error")
+            }
+            .alert("Cannot Open Session", isPresented: $coordinator.sessionAttachFailed) {
+                Button("OK", role: .cancel) { coordinator.sessionAttachError = nil }
+            } message: {
+                Text(coordinator.sessionAttachError ?? "Unable to attach to this session.")
+            }
+            .alert(
+                "Session Moved",
+                isPresented: Binding(
+                    get: { coordinator.activityCoordinator.showSessionStolen },
+                    set: { coordinator.activityCoordinator.showSessionStolen = $0 }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                if let name = coordinator.activityCoordinator.stolenSessionName,
+                   let shortId = coordinator.activityCoordinator.stolenSessionShortId {
+                    Text("\(name) (\(shortId)) was attached from another device.")
                 }
-            )
-            .interactiveDismissDisabled()
-        }
-        .alert("Connection Timed Out",
-               isPresented: Binding(
-                   get: { coordinator.connectionTimedOut },
-                   set: { newValue in
-                       if !newValue {
-                           coordinator.connectionTimedOut = false
-                       }
-                   })) {
-            Button("OK", role: .cancel) {
-                dismiss()
             }
-        } message: {
-            Text("Connection timed out. Please reconnect.")
-        }
-        .alert("Error", isPresented: $coordinator.showError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(coordinator.errorMessage ?? "Unknown error")
-        }
-        .alert("Cannot Open Session", isPresented: $coordinator.sessionAttachFailed) {
-            Button("OK", role: .cancel) {
-                coordinator.sessionAttachError = nil
-            }
-        } message: {
-            Text(coordinator.sessionAttachError ?? "Unable to attach to this session.")
-        }
-        .alert(
-            "Session Moved",
-            isPresented: Binding(
-                get: { coordinator.activityCoordinator.showSessionStolen },
-                set: { coordinator.activityCoordinator.showSessionStolen = $0 }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            if let name = coordinator.activityCoordinator.stolenSessionName,
-               let shortId = coordinator.activityCoordinator.stolenSessionShortId {
-                Text("\(name) (\(shortId)) was attached from another device.")
-            }
-        }
     }
 }

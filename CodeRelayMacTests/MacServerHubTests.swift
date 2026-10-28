@@ -23,11 +23,21 @@ final class MacServerHubTests: XCTestCase {
         coordinator.tearDown()
     }
 
-    func testRegistryExposesTheActiveCoordinatorOfTheHub() {
-        let registry = ActiveCoordinatorRegistry.shared
-        registry.clear()
-        XCTAssertNil(registry.hub)
-        XCTAssertNil(registry.coordinator)
-        XCTAssertNil(registry.serverName)
+    func testLoadingPresentationNamesTheFocusServer() {
+        // The Mac sheet reads the same presentation as iOS; the server name is
+        // the section title of the focus server.
+        let p = SessionLoadingPresentation(loadPhase: .attaching, isRecovering: false, recoveryPhase: .reconnecting,
+                                           sessionName: "Arya", serverName: "studio")
+        XCTAssertEqual(p.subtitle, "Arya · studio")
+        XCTAssertEqual(MainWindowLoading.detentSize, CGSize(width: 320, height: 220))
+    }
+
+    func testEditingALiveServerDoesNotRebuildItsCoordinator() {
+        func section(_ status: ServerSectionStatus) -> ServerSection {
+            ServerSection(config: ConnectionConfig(name: "a", host: "a"), status: status, sessions: [], isCached: false,
+                          rollups: [], awaitingInput: 0, isCollapsed: false)
+        }
+        XCTAssertFalse(ServerListWindow.shouldRebuild(afterEditing: section(.live)))
+        XCTAssertTrue(ServerListWindow.shouldRebuild(afterEditing: section(.authFailed("x"))))
     }
 }

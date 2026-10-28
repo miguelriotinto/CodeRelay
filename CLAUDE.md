@@ -140,7 +140,7 @@ The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments
 
 Both apps share `SharedSessionCoordinator` (in CodeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (iOS uses `scenePhase`; on macOS the wake/network observers belong to `MainWindow`, which fans them out through the hub below).
 
-**Multi-server (macOS first; spec `docs/superpowers/specs/2026-10-28-multi-server-sessions-design.md`).**
+**Multi-server (macOS and iOS; spec `docs/superpowers/specs/2026-10-28-multi-server-sessions-design.md`).**
 `ServerHub<Slot>` (CodeRelayClient/Hub) owns one per-server coordinator per
 **enabled** bookmark and the single global `activeRef: SessionRef` (bookmark
 id + session id — never the server instance id). Coordinators are unchanged
@@ -173,16 +173,45 @@ saved enabled by add/pair. Deep links
 instance id → unique session → single server's remote attach → not found.
 `HubMigration` runs once: only the previously last-used bookmark stays enabled.
 `ServerStatusChecker` polls only **disabled** bookmarks; the live connection is
-the status for enabled ones. `CODERELAY_HUB_SEED=1` (DEBUG, macOS) seeds three
-canned bookmarks in an isolated defaults suite for screenshot verification.
+the status for enabled ones. `CODERELAY_HUB_SEED=1` (DEBUG, macOS and iOS) seeds
+three canned bookmarks in an isolated defaults suite for screenshot verification.
+On iOS `CodeRelayApp` owns the hub (`IOSServerHubFactory`, migration key
+`lastConnectedServerId`); `WorkspaceView(hub:)` is the root, `ServerListView(hub:)`
+the management sheet (presented automatically while no server is enabled), the
+sidebar renders `ServerSectionHeader`s over the unchanged tiles, and the tab strip
+numbers sessions across servers (`SessionTabStripModel`); `scenePhase → .active`
+and `NetworkMonitor.connectivityRestored` fan out through
+`hub.handleForegroundTransition`, so the iOS coordinator no longer calls
+`startNetworkRecovery()`. `SharedSessionCoordinator.connectionState` is
+`@Published` (mirrored from `connection.$state`) — computed, it fired no
+`objectWillChange`, so without a subclass mirror the hub never saw a dropped socket.
 
-**Session-loading overlay.** Opening a session is black until the replay is
+**Session-loading sheet.** Opening a session is black until the replay is
 delivered in one batch (see "Scrollback replay"), which on a slow link is
-seconds. `SharedSessionCoordinator.sessionLoadPhase` (`SessionLoadPhase`:
-connecting → authenticating → loadingSessions → attaching →
-loadingHistory(bytes) → nil) narrates it and `SessionLoadingOverlay`
-(CodeRelayClient/Views, hosted by both apps over the terminal pane) renders it
-after a 300 ms grace so a LAN never flashes it. The phase is set by
+seconds. `switchToSession` (also when a cached terminal skips the replay) and
+the session-name reload (`reloadTerminalFromServer`) publish
+`SharedSessionCoordinator.sessionLoadPhase` (`SessionLoadPhase`: connecting →
+authenticating → loadingSessions → attaching → loadingHistory(bytes) → nil) from
+their first line; recovery publishes `isRecovering`/`recoveryPhase` instead
+(`RecoveryController` sets the load phase to nil). `SessionLoadingPresentation`
++ `SessionLoadingSheetModel` (CodeRelayClient/Views) turn those into ONE bottom
+sheet both apps present (`SessionLoadingSheet`: step text, and the **bytes loaded
+as the largest text**, a literal "0 KB" from the first phase), held at least
+600 ms so an instant switch does not flicker, while the terminal fades to black
+behind it (`terminalLoadingCover`); both lift together when the phase clears —
+on the first visible frame of a replay, or right after a replay-skipping resume
+returns. The handshake's connecting/authenticating/loadingSessions phases raise
+the sheet only while a session is attached or pending restore
+(`expectsSession`), never for a bare launch against a slow host. The model is
+also the one enforcer of "never stays up": a presentation unchanged for 15 s
+(`stallTimeout`) lowers the sheet until progress resumes, covering a replay that
+never delivers and an RPC chain parked behind a 20 s optimize; the view model's
+5 s backstop covers the reload path only. The sheet is hosted on the workspace
+view, NOT on the per-coordinator child (which is re-keyed on a cross-server
+switch), and on iPhone the sidebar sheet steps aside before it or the
+management sheet presents (one sheet per presenter). The inline
+`SessionLoadingOverlay` is gone on Apple platforms; the Kotlin clients still have
+theirs until Plans 3–4 port the sheet. The phase is set by
 `SessionHandshake` (only while `activeSessionId == nil` — never over a live
 pane), by `switchToSession`/`attachRemoteSession`/`createNewSession`, and is
 driven to `loadingHistory` and then cleared by two `TerminalViewModel` hooks the

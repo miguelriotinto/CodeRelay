@@ -23,6 +23,12 @@ struct ServerListWindow: View {
         }
     }
 
+    /// Only a server that is not live needs the fresh coordinator a pasted
+    /// token requires; rebuilding a live one would detach its session.
+    static func shouldRebuild(afterEditing section: ServerSection) -> Bool {
+        !section.status.isLive
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             List(selection: $viewModel.selectedConnectionId) {
@@ -90,7 +96,11 @@ struct ServerListWindow: View {
                 hub.reloadBookmarks()
                 // The hub cannot see the keychain: a pasted token only reaches the
                 // relay through a fresh coordinator.
-                if case .edit = target { hub.rebuildSlot(newConnection.id) }
+                if case .edit = target,
+                   let section = hub.sections.first(where: { $0.id == newConnection.id }),
+                   Self.shouldRebuild(afterEditing: section) {
+                    hub.rebuildSlot(newConnection.id)
+                }
                 addEditTarget = nil
             }
         }

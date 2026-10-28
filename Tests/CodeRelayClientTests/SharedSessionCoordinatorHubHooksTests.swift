@@ -74,6 +74,23 @@ final class SharedSessionCoordinatorHubHooksTests: XCTestCase {
         XCTAssertNil(c.pendingRestoreSessionId)
     }
 
+    func testConnectionStateIsPublishedAsTheSocketMoves() async {
+        // The hub republishes on the coordinator's objectWillChange. A computed
+        // `connectionState` never fired it, so on iOS (no subclass mirror) a
+        // dropped socket left the section "live" until something else changed.
+        let c = SharedSessionCoordinator(connection: RelayConnection(), token: "t", defaults: isolatedDefaults())
+        var seen: [RelayConnection.ConnectionState] = []
+        let sub = c.$connectionState.sink { seen.append($0) }
+        defer { sub.cancel() }
+        // Nothing listens on this port: the dial fails fast, so the state goes
+        // .disconnected → .connecting → .disconnected without a server.
+        try? await c.connection.connect(config: ConnectionConfig(name: "x", host: "127.0.0.1", port: 1), token: "t")
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(seen.contains(.connecting), "saw \(seen)")
+        XCTAssertEqual(seen.last, .disconnected)
+        XCTAssertEqual(c.connectionState, .disconnected)
+    }
+
     func testIsAuthRejectedStartsFalse() {
         let c = SharedSessionCoordinator(connection: RelayConnection(), token: "t", defaults: isolatedDefaults())
         XCTAssertFalse(c.isAuthRejected)

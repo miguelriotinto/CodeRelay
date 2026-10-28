@@ -81,4 +81,70 @@ final class SharedSessionCoordinatorLoadPhaseTests: XCTestCase {
         coordinator.activeSessionId = nil
         XCTAssertNil(coordinator.sessionLoadPhase)
     }
+
+    func testReloadFromServerPublishesAttachingThenClearsOnFailure() async {
+        // The name-label tap must raise the sheet immediately, and a failed
+        // resume (no controller here) must not leave it up.
+        let coordinator = makeCoordinator()
+        let id = UUID()
+        _ = installVM(in: coordinator, id: id)
+        coordinator.activeSessionId = id
+        var seen: [SessionLoadPhase?] = []
+        let sub = coordinator.$sessionLoadPhase.dropFirst().sink { seen.append($0) }
+        defer { sub.cancel() }
+        await coordinator.reloadTerminalFromServer(id: id)
+        XCTAssertEqual(seen.first, .attaching, "sheet up at the tap, not at the first replay byte")
+        XCTAssertNil(coordinator.sessionLoadPhase, "a failed reload clears the phase; the pane keeps its text")
+    }
+
+    func testSwitchPublishesAttachingEvenWithALiveTerminal() async {
+        // A cached SwiftTerm view skips the replay, so nothing used to set the
+        // phase: the switch was invisible. The sheet must rise on every switch.
+        let coordinator = makeCoordinator()
+        let from = UUID(), to = UUID()
+        _ = installVM(in: coordinator, id: from)
+        _ = installVM(in: coordinator, id: to)
+        coordinator.registerLiveTerminal(for: to, view: NSObject())
+        coordinator.activeSessionId = from
+        var seen: [SessionLoadPhase?] = []
+        let sub = coordinator.$sessionLoadPhase.dropFirst().sink { seen.append($0) }
+        defer { sub.cancel() }
+        await coordinator.switchToSession(id: to)      // no controller: the resume fails and rolls back
+        XCTAssertEqual(seen.first, .attaching)
+        XCTAssertNil(coordinator.sessionLoadPhase)
+    }
+
+    func testCachedTerminalSwitchSucceedsAndClearsThePhase() async {
+        // The one line whose removal would pin the sheet forever: a resume that
+        // SKIPS the replay (cached terminal) has no replay hooks to clear the
+        // phase, so switchToSession must clear it itself after the RPC.
+        let coordinator = makeCoordinator()
+        let fake = FakeConnection()
+        fake.autoRespond = { message in
+            switch message {
+            case .authRequest: return .authSuccess()
+            case .sessionDetach: return .sessionDetached
+            case .sessionResume(let id, _, _, _): return .sessionResumed(sessionId: id)
+            case .sessionList: return .sessionList(sessions: [])
+            default: return nil
+            }
+        }
+        let controller = SessionController(connection: fake)
+        try? await controller.authenticate(token: "t")
+        coordinator.sessionController = controller
+        let from = UUID(), to = UUID()
+        _ = installVM(in: coordinator, id: from)
+        _ = installVM(in: coordinator, id: to)
+        coordinator.registerLiveTerminal(for: to, view: NSObject())
+        coordinator.activeSessionId = from
+        var seen: [SessionLoadPhase?] = []
+        let sub = coordinator.$sessionLoadPhase.dropFirst().sink { seen.append($0) }
+        defer { sub.cancel() }
+        await coordinator.switchToSession(id: to)
+        XCTAssertEqual(coordinator.activeSessionId, to, "the resume succeeded")
+        XCTAssertTrue(fake.sentMessages.contains { if case .sessionResume(_, let skip, _, _) = $0 { return skip } else { return false } },
+                      "the cached terminal made the resume skip the replay")
+        XCTAssertEqual(seen.first, .attaching)
+        XCTAssertNil(coordinator.sessionLoadPhase, "no replay is coming: the switch clears the phase itself")
+    }
 }
