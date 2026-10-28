@@ -521,17 +521,16 @@ enum AdminRoutes {
 
     /// The text a JSON scalar represents, or nil for arrays/objects/null.
     ///
-    /// Order matters on Darwin: `JSONSerialization` bridges JSON `true` to an
-    /// `NSNumber` that also matches `as? Int` (as 1), so booleans are detected
-    /// by their CF type first; `NSNumber(1) as? Bool` would otherwise read a
-    /// typed `1` as "true", so Int is matched before Bool. On Linux the parser
-    /// yields native `Bool`/`Int`, which the same order handles.
+    /// Order matters: on both Darwin and Linux, `JSONSerialization` bridges
+    /// JSON `true` to an `NSNumber` that also matches `as? Int` (as 1), so a
+    /// boolean is recognised first by its encoded type (`objCType` "c", the
+    /// one-byte encoding both Foundations use for Bool; parsed integers are
+    /// "q"). `NSNumber(1) as? Bool` would otherwise read a typed `1` as "true",
+    /// so Int is matched before Bool.
     private static func scalarText(_ value: Any) -> String? {
-        #if canImport(Darwin)
-        if let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+        if let number = value as? NSNumber, String(cString: number.objCType) == "c" {
             return number.boolValue ? "true" : "false"
         }
-        #endif
         switch value {
         case let s as String: return s
         case let i as Int: return String(i)
