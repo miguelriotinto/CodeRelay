@@ -1275,6 +1275,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// Test hook: persist the in-memory names through the ownership store.
     public func persistNamesForTest() { ownershipStore.saveNames(sessionNames) }
 
+    /// Test hook: whether `startNetworkRecovery()` armed its monitor.
+    public var hasNetworkRecoveryForTest: Bool { networkMonitor != nil }
+
     // MARK: - Cleanup
 
     open func tearDown() {
