@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** The iOS app shows every enabled relay's sessions in one workspace — sidebar grouped by server, one attached session across servers, management screen with per-bookmark Enabled — on the `ServerHub` that shipped for macOS in v0.3.32.
+**Goal:** The iOS app shows every enabled relay's sessions in one workspace — sidebar grouped by server, one attached session across servers, management screen with per-bookmark Enabled — on the `ServerHub` that shipped for macOS in v0.3.32. Plus one piece of visual feedback both apps share: whenever a session is on its way to the screen (switch, session-name refresh, reconnect) a bottom sheet names the step and the bytes loaded while the terminal fades to black, and both lift together the moment the session is ready.
 
-**Architecture:** `CodeRelayApp` owns one `ServerHub<SessionCoordinator>` (`IOSServerHub`) built by `IOSServerHubFactory`; `WorkspaceView` becomes the root (the splash stays on top), `ServerListView` becomes the management sheet, `SessionSidebarView` renders one `ServerSectionHeader` per section over the unchanged workspace tiles, and `ActiveTerminalView` hosts the active coordinator's terminal with a session tab strip that spans servers. The iOS `SessionCoordinator` gains the same `init(config:token:ownershipKeyPrefix:)` / `start()` shape as the macOS one. One shared-library change: `SharedSessionCoordinator.connectionState` becomes `@Published` (mirrored from `connection.$state`) so the hub learns of socket changes on every platform, not only where a subclass mirrors them.
+**Architecture:** `CodeRelayApp` owns one `ServerHub<SessionCoordinator>` (`IOSServerHub`) built by `IOSServerHubFactory`; `WorkspaceView` becomes the root (the splash stays on top), `ServerListView` becomes the management sheet, `SessionSidebarView` renders one `ServerSectionHeader` per section over the unchanged workspace tiles, and `ActiveTerminalView` hosts the active coordinator's terminal with a session tab strip that spans servers. The iOS `SessionCoordinator` gains the same `init(config:token:ownershipKeyPrefix:)` / `start()` shape as the macOS one. Two shared-library changes: `SharedSessionCoordinator.connectionState` becomes `@Published` (mirrored from `connection.$state`) so the hub learns of socket changes on every platform, not only where a subclass mirrors them; and the three loading paths converge on one published signal (`sessionLoadPhase` is set at the START of every switch and every name-label reload, recovery keeps `isRecovering`/`recoveryPhase`) that a shared `SessionLoadingPresentation` turns into the sheet's text and a shared `SessionLoadingSheetModel` turns into "present / hold at least 600 ms / dismiss", which both the sheet and the terminal blackout follow.
 
 **Tech Stack:** Swift 6.2, SwiftUI (iOS 17+), Combine, XCTest; XcodeGen (`project.yml`); SwiftTerm (unchanged).
 
@@ -23,11 +23,13 @@
 
 ## Review Focus
 
+0. **The loading sheet must never stay up** (the one failure a user cannot tell from a hung app): every path that sets `sessionLoadPhase` or `isRecovering` must clear it on success AND on failure (RPC error, auth rejected, cancelled recovery, replay never delivered — `TerminalViewModel`'s 5 s reload backstop). Task 7's `testPresentationClearsOnEveryTerminalPath` plus `SharedSessionCoordinatorLoadPhaseTests.testReloadFromServerPublishesAttachingThenClearsOnFailure`.
 1. **A push tap or `coderelay://` link arriving before `hub.start()` has finished (cold launch)** must attach the right session on the right server after the handshakes, not be dropped or attached on "the first server" as `ServerListView:126` did. Covered by `ServerHubRoutingTests.testDeepLinkBeforeStartIsQueued` (Plan 1) plus Task 3's `testDeepLinkBeforeHubIsRegisteredIsHeldUntilStart`.
 2. **iPhone (compact): tapping a row on another server** must dismiss the sidebar sheet and show the *new* coordinator's terminal — the terminal host is keyed by coordinator identity (`.id(ObjectIdentifier(coordinator))`), otherwise SwiftTerm keeps hosting the old coordinator's view. Task 5's `testTerminalHostKeyChangesAcrossServers`.
 3. **Zero bookmarks at launch** must present the management sheet over an explanatory empty state, never a black terminal; adding or pairing the first server builds a slot with no relaunch (`hub.reloadBookmarks()`). Task 3's `testEmptyStateOpensManagementAndFirstBookmarkStartsWithoutRelaunch`.
 4. **Bookmarks restored from an iCloud backup to a new iPhone without their keychain tokens** (the Keychain items are device-scoped) must render every enabled section as `authFailed("No token stored…")` with a Re-pair action that opens the management screen, where editing the token rebuilds the slot — no crash, no silent blank. Covered by hub tests (`testMissingTokenBecomesAuthFailedSection`, `testRebuildSlotReplacesTheCoordinator`) plus Task 4's header test `testAuthFailedHeaderRetryOpensManagement`.
 5. **Backgrounding with two servers enabled**: `scenePhase → .active` fans out through the hub once per server with the stagger; no coordinator installs its own observer, so nothing reconnects twice. Task 2's `testCoordinatorInstallsNoObserversOfItsOwn` and the hub's `testForegroundFanOutDoesNotSerializeBehindASlowServer`.
+6. **A same-server switch to a session whose terminal is still cached** (SwiftTerm view alive, replay skipped) finishes in well under 100 ms: the sheet must still rise and settle cleanly rather than flicker, so the model holds it for a minimum of 600 ms and the blackout follows the same hold. Task 7's `testSheetHoldsAMinimumEvenWhenLoadingIsInstant` and `SharedSessionCoordinatorLoadPhaseTests.testSwitchPublishesAttachingEvenWithALiveTerminal`.
 
 ---
 
@@ -1424,10 +1426,412 @@ PR title: `feat(ios): multi-server workspace on ServerHub (plan 2)`. Body: Tasks
 
 ---
 
+### Task 7: Shared + iOS — one loading sheet for switch, refresh and reconnect; terminal fades to black underneath
+
+**Files:**
+- Modify: `Sources/CodeRelayClient/ViewModels/SharedSessionCoordinator.swift` (`switchToSession` ~line 778; `reloadTerminalFromServer` ~line 855)
+- Create: `Sources/CodeRelayClient/Views/SessionLoadingPresentation.swift`, `Sources/CodeRelayClient/Views/SessionLoadingSheet.swift`
+- Modify: `Sources/CodeRelayClient/Views/TerminalReloadFade.swift` (the cover is no longer driven here)
+- Delete: `Sources/CodeRelayClient/Views/SessionLoadingOverlay.swift` (the inline veil; both apps move to the sheet — the Kotlin clients keep their own `SessionLoadingOverlay`, untouched)
+- Modify: `CodeRelayApp/Views/WorkspaceView.swift`, `CodeRelayApp/Views/ActiveTerminalView.swift`
+- Test: `Tests/CodeRelayClientTests/SharedSessionCoordinatorLoadPhaseTests.swift`, `Tests/CodeRelayClientTests/SessionLoadingPresentationTests.swift` (new)
+
+**Interfaces:**
+- Consumes: `SharedSessionCoordinator.sessionLoadPhase` (`SessionLoadPhase?`, published), `isRecovering`, `recoveryPhase` (`RecoveryPhase`, `.label`), `registerLiveTerminal(for:view:)`, `reloadTerminalFromServer(id:)`, `cancelRecovery()`; `TerminalViewModel.beginReplay/receiveOutput/endReplay` (for tests).
+- Produces:
+  - `SessionLoadingPresentation` (pure value): `init(loadPhase: SessionLoadPhase?, isRecovering: Bool, recoveryPhase: SharedSessionCoordinator.RecoveryPhase, sessionName: String?, serverName: String?)`; `isActive: Bool`; `title: String` ("Reconnecting" while recovering, else "Loading session"); `status: String` (the phase label, e.g. "Authenticating…", "Loading session history…"); `detail: String?` (formatted bytes while `loadingHistory`); `subtitle: String?` ("<session> · <server>"); `allowsCancel: Bool` (recovery only).
+  - `SessionLoadingSheetModel` (`@MainActor final class, ObservableObject`): `@Published private(set) var isPresented`, `@Published private(set) var shown: SessionLoadingPresentation?` (the last active presentation, kept while the sheet animates down), `static let minimumVisible: Duration = .milliseconds(600)`, `func update(_ presentation: SessionLoadingPresentation)`, `init(sleep:)` for tests.
+  - `SessionLoadingSheet(presentation:onCancel:)` SwiftUI view: spinner, title, status, detail (monospaced digits, `.numericText()` transition), subtitle, Cancel when `allowsCancel`.
+  - `TerminalReloadFade.reload(coordinator:id:)` replaces `run(coordinator:id:cover:)`; `TerminalReloadFade.coverDuration` (0.16 s to black, 0.22 s back) and `View.terminalReloadCover(_:)` stay.
+  - Coordinator: `switchToSession` publishes `.attaching` at its start on every path (also when the cached terminal lets it skip the replay); `reloadTerminalFromServer` publishes `.attaching` before its RPC and clears the phase in its `catch` (the replay hooks clear it on success as today).
+
+- [ ] **Step 1: Write the failing coordinator tests**
+
+Append to `SharedSessionCoordinatorLoadPhaseTests`:
+
+```swift
+    func testReloadFromServerPublishesAttachingThenClearsOnFailure() async {
+        // The name-label tap must raise the sheet immediately, and a failed
+        // resume (no controller here) must not leave it up.
+        let coordinator = makeCoordinator()
+        let id = UUID()
+        _ = installVM(in: coordinator, id: id)
+        coordinator.activeSessionId = id
+        var seen: [SessionLoadPhase?] = []
+        let sub = coordinator.$sessionLoadPhase.dropFirst().sink { seen.append($0) }
+        defer { sub.cancel() }
+        await coordinator.reloadTerminalFromServer(id: id)
+        XCTAssertEqual(seen.first, .attaching, "sheet up at the tap, not at the first replay byte")
+        XCTAssertNil(coordinator.sessionLoadPhase, "a failed reload clears the phase; the pane keeps its text")
+    }
+
+    func testSwitchPublishesAttachingEvenWithALiveTerminal() async {
+        // A cached SwiftTerm view skips the replay, so nothing used to set the
+        // phase: the switch was invisible. The sheet must rise on every switch.
+        let coordinator = makeCoordinator()
+        let from = UUID(), to = UUID()
+        _ = installVM(in: coordinator, id: from)
+        _ = installVM(in: coordinator, id: to)
+        coordinator.registerLiveTerminal(for: to, view: NSObject())
+        coordinator.activeSessionId = from
+        var seen: [SessionLoadPhase?] = []
+        let sub = coordinator.$sessionLoadPhase.dropFirst().sink { seen.append($0) }
+        defer { sub.cancel() }
+        await coordinator.switchToSession(id: to)      // no controller: the resume fails and rolls back
+        XCTAssertEqual(seen.first, .attaching)
+        XCTAssertNil(coordinator.sessionLoadPhase)
+    }
+```
+
+- [ ] **Step 2: Write the failing presentation/model tests**
+
+`Tests/CodeRelayClientTests/SessionLoadingPresentationTests.swift`:
+
+```swift
+import XCTest
+@testable import CodeRelayClient
+
+@MainActor
+final class SessionLoadingPresentationTests: XCTestCase {
+    private func make(_ phase: SessionLoadPhase?, recovering: Bool = false,
+                      recovery: SharedSessionCoordinator.RecoveryPhase = .reconnecting) -> SessionLoadingPresentation {
+        SessionLoadingPresentation(loadPhase: phase, isRecovering: recovering, recoveryPhase: recovery,
+                                   sessionName: "Arya", serverName: "studio")
+    }
+
+    func testInactiveWhenNothingLoads() {
+        XCTAssertFalse(make(nil).isActive)
+    }
+
+    func testLoadPhasesDriveTitleStatusAndBytes() {
+        let p = make(.loadingHistory(bytes: 212_000))
+        XCTAssertTrue(p.isActive)
+        XCTAssertEqual(p.title, "Loading session")
+        XCTAssertEqual(p.status, "Loading session history…")
+        XCTAssertEqual(p.detail, SessionLoadPhase.formatBytes(212_000))
+        XCTAssertEqual(p.subtitle, "Arya · studio")
+        XCTAssertFalse(p.allowsCancel)
+        XCTAssertEqual(make(.authenticating).status, "Authenticating…")
+        XCTAssertNil(make(.attaching).detail)
+    }
+
+    func testRecoveryWinsTheTitleAndOffersCancel() {
+        let p = make(nil, recovering: true, recovery: .authenticating)
+        XCTAssertTrue(p.isActive)
+        XCTAssertEqual(p.title, "Reconnecting")
+        XCTAssertEqual(p.status, "Authenticating…")
+        XCTAssertTrue(p.allowsCancel)
+        // Recovery then resumes the session: the replay phase takes over the status line.
+        XCTAssertEqual(make(.loadingHistory(bytes: 10), recovering: true, recovery: .resuming).status, "Loading session history…")
+    }
+
+    func testSheetHoldsAMinimumEvenWhenLoadingIsInstant() async {
+        var sleeps: [Duration] = []
+        var release: CheckedContinuation<Void, Never>?
+        let model = SessionLoadingSheetModel(sleep: { d in sleeps.append(d); await withCheckedContinuation { release = $0 } })
+        model.update(make(.attaching))
+        XCTAssertTrue(model.isPresented, "up immediately on the first active presentation")
+        model.update(make(nil))                              // loading finished 5 ms later
+        XCTAssertTrue(model.isPresented, "held: a 5 ms sheet reads as a flicker")
+        XCTAssertEqual(sleeps, [SessionLoadingSheetModel.minimumVisible])
+        release?.resume(); release = nil
+        await Task.yield(); try? await Task.sleep(for: .milliseconds(10))
+        XCTAssertFalse(model.isPresented, "dismissed once the hold elapsed and nothing is loading")
+        XCTAssertEqual(model.shown?.status, "Attaching to session…", "the text stays while the sheet animates down")
+    }
+
+    func testSheetStaysWhileLoadingOutlivesTheHold() async {
+        var release: CheckedContinuation<Void, Never>?
+        let model = SessionLoadingSheetModel(sleep: { _ in await withCheckedContinuation { release = $0 } })
+        model.update(make(.attaching))
+        release?.resume(); release = nil
+        await Task.yield(); try? await Task.sleep(for: .milliseconds(10))
+        XCTAssertTrue(model.isPresented, "the hold elapsed but the load is still running")
+        model.update(make(.loadingHistory(bytes: 4096)))
+        XCTAssertEqual(model.shown?.detail, SessionLoadPhase.formatBytes(4096))
+        model.update(make(nil))
+        await Task.yield()
+        XCTAssertFalse(model.isPresented, "past the hold, dismissal is immediate")
+    }
+
+    func testPresentationClearsOnEveryTerminalPath() {
+        // Recovery cancelled, auth rejected, replay never delivered: the inputs go
+        // back to nil/false and the presentation must be inactive — the model
+        // then dismisses. (Each producer's own tests prove it resets its input.)
+        XCTAssertFalse(make(nil, recovering: false).isActive)
+    }
+}
+```
+
+Check `SessionLoadPhase.formatBytes` is `public static` (`grep -n "formatBytes" Sources/CodeRelayClient/ViewModels/SessionLoadPhase.swift`); make it so if it is internal.
+
+- [ ] **Step 3: Run to verify they fail**
+
+Run: `swift build --build-tests 2>&1 | grep -E "error:" | head -5`
+Expected: `cannot find 'SessionLoadingPresentation' in scope`, `cannot find 'SessionLoadingSheetModel' in scope`; then after stubs exist, the two coordinator tests fail on `seen.first` being `nil`/absent.
+
+- [ ] **Step 4: Implement the shared pieces**
+
+`Sources/CodeRelayClient/Views/SessionLoadingPresentation.swift`:
+
+```swift
+import Foundation
+
+/// What the loading sheet says, derived from the coordinator's two published
+/// signals. One rule for the three ways a session reaches the screen — a
+/// switch, the session-name refresh, a reconnect — so they look identical.
+public struct SessionLoadingPresentation: Equatable {
+    public let isActive: Bool
+    public let title: String
+    public let status: String
+    public let detail: String?
+    public let subtitle: String?
+    public let allowsCancel: Bool
+
+    public init(loadPhase: SessionLoadPhase?,
+                isRecovering: Bool,
+                recoveryPhase: SharedSessionCoordinator.RecoveryPhase,
+                sessionName: String?,
+                serverName: String?) {
+        isActive = loadPhase != nil || isRecovering
+        title = isRecovering ? "Reconnecting" : "Loading session"
+        // The replay phase is the more specific status once it starts, even mid-recovery.
+        status = loadPhase?.label ?? (isRecovering ? recoveryPhase.label : "")
+        detail = loadPhase?.detail
+        let parts = [sessionName, serverName].compactMap { $0 }.filter { !$0.isEmpty }
+        subtitle = parts.isEmpty ? nil : parts.joined(separator: " · ")
+        allowsCancel = isRecovering
+    }
+}
+
+/// Presents the sheet the instant something loads, holds it at least
+/// `minimumVisible` so an instant switch still reads as a response rather
+/// than a flicker, and dismisses it when nothing is loading any more. The
+/// terminal blackout follows `isPresented` so sheet and black lift together.
+@MainActor
+public final class SessionLoadingSheetModel: ObservableObject {
+    public static let minimumVisible: Duration = .milliseconds(600)
+
+    @Published public private(set) var isPresented = false
+    /// The last active presentation, kept while the sheet animates down.
+    @Published public private(set) var shown: SessionLoadingPresentation?
+
+    private var active = false
+    private var holdElapsed = true
+    private var holdTask: Task<Void, Never>?
+    private let sleep: @MainActor (Duration) async -> Void
+
+    public init(sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }) {
+        self.sleep = sleep
+    }
+
+    public func update(_ presentation: SessionLoadingPresentation) {
+        active = presentation.isActive
+        if presentation.isActive { shown = presentation }
+        if active, !isPresented {
+            isPresented = true
+            holdElapsed = false
+            holdTask?.cancel()
+            holdTask = Task { [weak self] in
+                guard let self else { return }
+                await self.sleep(Self.minimumVisible)
+                guard !Task.isCancelled else { return }
+                self.holdElapsed = true
+                self.settle()
+            }
+        }
+        settle()
+    }
+
+    private func settle() {
+        if isPresented, !active, holdElapsed { isPresented = false }
+    }
+}
+```
+
+`Sources/CodeRelayClient/Views/SessionLoadingSheet.swift`:
+
+```swift
+import SwiftUI
+
+/// The bottom sheet shown while a session is on its way to the screen. Hosted
+/// by both apps (iOS as a detented sheet, macOS as a window sheet).
+public struct SessionLoadingSheet: View {
+    public let presentation: SessionLoadingPresentation
+    public let onCancel: (() -> Void)?
+
+    public init(presentation: SessionLoadingPresentation, onCancel: (() -> Void)? = nil) {
+        self.presentation = presentation
+        self.onCancel = onCancel
+    }
+
+    public var body: some View {
+        VStack(spacing: 14) {
+            ProgressView().controlSize(.large)
+            Text(presentation.title).font(.headline)
+            Text(presentation.status)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .contentTransition(.interpolate)
+                .animation(.easeInOut(duration: 0.25), value: presentation.status)
+            if let detail = presentation.detail {
+                Text(detail)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+            }
+            if let subtitle = presentation.subtitle {
+                Text(subtitle).font(.footnote).foregroundStyle(.tertiary).lineLimit(1)
+            }
+            if presentation.allowsCancel, let onCancel {
+                Button("Cancel", role: .cancel) { onCancel() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .padding(.top, 4)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+}
+```
+
+`TerminalReloadFade.swift`: replace `run(coordinator:id:cover:)` with
+
+```swift
+    /// The session-name tap: reload the pane from the server's scrollback. The
+    /// coordinator publishes `.attaching` first, which raises the loading sheet
+    /// and the blackout; the replay hooks clear it on the first visible frame.
+    public static func reload(coordinator: SharedSessionCoordinator, id: UUID) async {
+        await coordinator.reloadTerminalFromServer(id: id)
+        if let vm = coordinator.viewModel(for: id) { await waitForReloadToLand(vm) }
+    }
+```
+
+keeping `waitForReloadToLand`, the two durations (now named `coverOutDuration`/`coverInDuration`, both still public) and the `terminalReloadCover` extension. Delete `SessionLoadingOverlay.swift`.
+
+Coordinator (`SharedSessionCoordinator.swift`): in `switchToSession`, move `sessionLoadPhase = .attaching` out of the `if !hasLiveTerminal` block so it runs on every switch (keep `beginReplay()` inside it); the existing `if hasLiveTerminal { sessionLoadPhase = nil }` after the resume and the `catch`'s `sessionLoadPhase = nil` already clear it. In `reloadTerminalFromServer`, add `sessionLoadPhase = .attaching` right after `vm.beginServerReload()` and `sessionLoadPhase = nil` in the `catch` before `vm.cancelServerReload()`. Update the doc comment on `sessionLoadPhase`'s declaration to say it is set for every switch and reload.
+
+- [ ] **Step 5: iOS adoption**
+
+`WorkspaceView`: add `@StateObject private var loading = SessionLoadingSheetModel()`, pass it to `ActiveTerminalView(hub:columnVisibility:loading:)`, and drive it from the focus coordinator inside `FocusCoordinatorModifiers` (which already observes that coordinator):
+
+```swift
+    // in FocusCoordinatorModifiers
+    @ObservedObject var loading: SessionLoadingSheetModel
+    private var presentation: SessionLoadingPresentation {
+        SessionLoadingPresentation(loadPhase: coordinator.sessionLoadPhase,
+                                   isRecovering: coordinator.isRecovering,
+                                   recoveryPhase: coordinator.recoveryPhase,
+                                   sessionName: coordinator.activeSessionId.map { coordinator.name(for: $0) },
+                                   serverName: serverName)
+    }
+    // body: replace the `.sheet(isPresented: $coordinator.isRecovering)` RecoveryOverlay with
+            .onChange(of: presentation, initial: true) { _, p in loading.update(p) }
+            .sheet(isPresented: Binding(get: { loading.isPresented }, set: { _ in })) {
+                if let shown = loading.shown {
+                    SessionLoadingSheet(presentation: shown,
+                                        onCancel: shown.allowsCancel ? { coordinator.cancelRecovery() } : nil)
+                        .presentationDetents([.fraction(0.32)])
+                        .presentationDragIndicator(.hidden)
+                        .presentationBackgroundInteraction(.disabled)
+                        .interactiveDismissDisabled()
+                        // Full width, not the safe area: see the iPhone Duo note that used to live on RecoveryOverlay.
+                        .ignoresSafeArea(.container, edges: .horizontal)
+                }
+            }
+```
+
+Delete `RecoveryOverlay` from `WorkspaceView.swift` (nothing else uses it: `grep -rn RecoveryOverlay CodeRelayApp`).
+
+`ActiveTerminalView`: add `@ObservedObject var loading: SessionLoadingSheetModel`; remove `SessionLoadingOverlay(...)` from the `ZStack`; the cover becomes
+
+```swift
+                    .terminalReloadCover(loading.isPresented ? 1 : 0)
+                    .animation(.easeOut(duration: loading.isPresented ? TerminalReloadFade.coverOutDuration
+                                                                      : TerminalReloadFade.coverInDuration),
+                               value: loading.isPresented)
+```
+
+and the name-label tap becomes `Task { await TerminalReloadFade.reload(coordinator: coordinator, id: id) }`; delete the `reloadCover` `@State`. The sheet comes up from the bottom and the pane goes black together; when the coordinator clears the phase on the first visible frame, the model dismisses (after the hold) and both lift together.
+
+- [ ] **Step 6: Run the tests and gates**
+
+Run: `swift test --filter "SharedSessionCoordinatorLoadPhaseTests|SessionLoadingPresentationTests" 2>&1 | grep -E "Executed|error:|failed" | tail -4; echo EXIT=${pipestatus[1]}` → `EXIT=0`, 7 + 6 tests.
+Then the iOS tests, the iOS build, and — because `SessionLoadingOverlay`, `TerminalReloadFade.run` and `RecoverySheet` are still referenced by `CodeRelayMac/Views/MainWindow.swift` — **the Mac build fails until Task 8**. Do Task 8 in the same build cycle (ruling, same shape as Tasks 3–5) and commit them as two commits.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add Sources/CodeRelayClient/ViewModels/SharedSessionCoordinator.swift Sources/CodeRelayClient/Views/SessionLoadingPresentation.swift Sources/CodeRelayClient/Views/SessionLoadingSheet.swift Sources/CodeRelayClient/Views/TerminalReloadFade.swift Tests/CodeRelayClientTests/SharedSessionCoordinatorLoadPhaseTests.swift Tests/CodeRelayClientTests/SessionLoadingPresentationTests.swift CodeRelayApp/Views/WorkspaceView.swift CodeRelayApp/Views/ActiveTerminalView.swift
+git rm -q Sources/CodeRelayClient/Views/SessionLoadingOverlay.swift
+git commit -m "feat(client,ios): one loading sheet for switch, refresh and reconnect; the terminal fades to black underneath
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 8: macOS — adopt the same loading sheet (parity)
+
+**Files:**
+- Modify: `CodeRelayMac/Views/MainWindow.swift` (`ActiveCoordinatorModifiers`, the `detail` ZStack, `sessionNameLabel`, delete `RecoverySheet`)
+
+**Interfaces:**
+- Consumes: Task 7's `SessionLoadingPresentation`, `SessionLoadingSheetModel`, `SessionLoadingSheet`, `TerminalReloadFade.reload(coordinator:id:)`, `coverOutDuration`/`coverInDuration`; `hub.focusCoordinator`, `hub.focusServerId`, `hub.sections`.
+- Produces: nothing new; the Mac shows the identical sheet (as a window sheet, fixed 320×220) and blackout.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `CodeRelayMacTests/MacServerHubTests.swift` (replacing the vacuous `testRegistryExposesTheActiveCoordinatorOfTheHub`, which asserts nothing about a hub — note the swap in the ledger):
+
+```swift
+    func testLoadingPresentationNamesTheFocusServer() {
+        // The Mac sheet reads the same presentation as iOS; the server name is
+        // the section title of the focus server.
+        let p = SessionLoadingPresentation(loadPhase: .attaching, isRecovering: false, recoveryPhase: .reconnecting,
+                                           sessionName: "Arya", serverName: "studio")
+        XCTAssertEqual(p.subtitle, "Arya · studio")
+        XCTAssertEqual(MainWindowLoading.detentSize, CGSize(width: 320, height: 220))
+    }
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Expected: `cannot find 'MainWindowLoading' in scope` (the Mac build also fails on the Task 7 removals until Step 3).
+
+- [ ] **Step 3: Implement**
+
+In `MainWindow.swift`:
+- Add `enum MainWindowLoading { static let detentSize = CGSize(width: 320, height: 220) }` (file scope, internal).
+- `WorkspaceView` gains `@StateObject private var loading = SessionLoadingSheetModel()`; remove `@State private var reloadCover`; the detail `ZStack` drops `SessionLoadingOverlay(...)` and its `.terminalReloadCover(reloadCover)` becomes the same `loading.isPresented`-driven cover + animation as iOS (Task 7 Step 5).
+- `ActiveCoordinatorModifiers(coordinator: focus, …)` gains `loading: loading` and `serverName: hub.sections.first { $0.id == hub.focusServerId }?.title`; inside it replace the `.sheet(isPresented: $coordinator.isRecovering) { RecoverySheet(...) }` with the same `.onChange(of: presentation, initial: true)` + `.sheet(isPresented:)` pair as iOS, with `.frame(width: MainWindowLoading.detentSize.width, height: MainWindowLoading.detentSize.height)` instead of the detent modifiers. Delete `RecoverySheet`.
+- `sessionNameLabel`'s tap: `Task { await TerminalReloadFade.reload(coordinator: coordinator, id: id) }`.
+
+- [ ] **Step 4: Gates**
+
+Mac build-for-testing + test-without-building → `TEST EXECUTE SUCCEEDED`, 49 tests (48 + this one, minus none); `swift test` `EXIT=0`; iOS tests + build green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add CodeRelayMac/Views/MainWindow.swift CodeRelayMacTests/MacServerHubTests.swift
+git commit -m "feat(mac): adopt the shared loading sheet and blackout for switch, refresh and reconnect
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+Then fold "Task 7/8" into Task 6's docs step: in `CLAUDE.md`'s "Session-loading overlay" paragraph, rename it "**Session-loading sheet.**" and rewrite the first sentences: "Opening a session is black until the replay is delivered in one batch. Every path that brings a session to the screen — `switchToSession` (also when a cached terminal skips the replay), the session-name reload, recovery — publishes `sessionLoadPhase` from its first line, and `SessionLoadingSheetModel` (CodeRelayClient/Views) turns that plus `isRecovering` into a bottom sheet both apps present, held for at least 600 ms so an instant switch does not flicker, while the terminal fades to black behind it; both lift together on the first visible frame (`onReplayDelivered`). The inline `SessionLoadingOverlay` is gone on Apple platforms; the Kotlin clients still have theirs." Keep the rest of the paragraph (hooks, `pendingRestoreSessionId`) as is.
+
+---
+
 ## Self-review notes
 
+- **Loading sheet (user request, 2026-10-28):** one presentation for switch / name-label refresh / reconnect (T7 shared model + iOS, T8 macOS); "always" is honoured by setting the phase at the start of every switch and reload and by the 600 ms minimum hold; the sheet dismisses and the black lifts on the first visible frame; every failure path clears the inputs (Review Focus 0).
 - **Spec coverage (§8.1, §8.2, §9, §10, §11, §15.3):** root is the workspace (T3), sections + header + cached rows (T4), `hub.select` on tap (T4), New in the section header (T4), management screen with Enabled/duplicate/instance id and no Connect (T3), Reconnecting sheet names the server and shows for the focus coordinator only (T3), auth failure → Re-pair opens management (T4), Auto Connect setting removed and `lastConnectedServerId` retired by the migration (T2/T3), deep links routed by the hub and queued before start (T3), scenePhase fan-out (T3), QR share carries `?server=` (T4/T5), debug seed + `simctl openurl` (T6).
 - **Placeholders:** none; where a signature must be confirmed the step names the exact `grep`.
 - **Type consistency:** `IOSServerHub`, `IOSServerHubFactory.make/makeCoordinator/lastServerIdKey` (T2) used by T3–T6; `SessionSidebarView.rows/retryAction` (T4); `SessionTabStripModel.tabs` and `ActiveTerminalView.hostKey` (T5); `DeepLinkRouter`, `WorkspaceRoot.shouldPresentManagement`, `RecoveryOverlay(phase:serverName:onCancel:)` (T3); `QRCodeSheet(sessionId:sessionName:serverInstanceId:)` (T4, used by T5's overlay through `QRCodeComponents`).
 - **Review Focus:** each of the five lines names the test that pins it.
-- **Known coupling:** Tasks 3, 4 and 5 compile only together (the root view references the new sidebar and terminal initializers). Execute them in one build cycle and commit per task, with a ledger ruling — the same shape as Plan 1 Tasks 8/9.
+- **Known coupling:** Tasks 7 and 8 compile only together (the Mac window references the removed overlay, fade and recovery sheet until it adopts the new ones); Tasks 3, 4 and 5 compile only together (the root view references the new sidebar and terminal initializers). Execute them in one build cycle and commit per task, with a ledger ruling — the same shape as Plan 1 Tasks 8/9.
