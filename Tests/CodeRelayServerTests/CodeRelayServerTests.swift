@@ -42,7 +42,8 @@ final class CodeRelayServerTests: XCTestCase {
             config: config,
             sessionManager: sessionManager,
             tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
 
         // Start server (this will fail if TLS config is invalid)
@@ -71,7 +72,8 @@ final class CodeRelayServerTests: XCTestCase {
             config: config,
             sessionManager: sessionManager,
             tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
 
         // Start server without TLS
@@ -96,7 +98,8 @@ final class CodeRelayServerTests: XCTestCase {
         let sessionManager = SessionManager(config: config, tokenStore: tokenStore)
         let wsServer = WebSocketServer(
             group: group, config: config,
-            sessionManager: sessionManager, tokenStore: tokenStore, pairingStore: PairingCodeStore()
+            sessionManager: sessionManager, tokenStore: tokenStore, pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await wsServer.start()
         defer { Task { try? await wsServer.stop() } }
@@ -118,7 +121,8 @@ final class CodeRelayServerTests: XCTestCase {
         let sessionManager = SessionManager(config: config, tokenStore: tokenStore)
         let wsServer = WebSocketServer(
             group: group, config: config,
-            sessionManager: sessionManager, tokenStore: tokenStore, pairingStore: PairingCodeStore()
+            sessionManager: sessionManager, tokenStore: tokenStore, pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await wsServer.start()
         defer { Task { try? await wsServer.stop() } }

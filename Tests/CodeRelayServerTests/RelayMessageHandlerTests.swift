@@ -55,6 +55,7 @@ final class RelayMessageHandlerTests: XCTestCase {
             clipboardService: NoopClipboardService(),
             pushStore: pushStore,
             pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay"),
             optimizerBudget: OptimizerBudget()
         )
 

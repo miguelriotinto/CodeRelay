@@ -42,6 +42,7 @@ final class PairRequestHandlerTests: XCTestCase {
             clipboardService: NoopClipboardService(),
             pushStore: PushRegistrationStore(directory: tempDir),
             pairingStore: pairingStore,
+            identity: ServerIdentity(id: UUID(), name: "test-relay"),
             optimizerBudget: OptimizerBudget()
         )
         let channel = await NIOAsyncTestingChannel(handler: handler)

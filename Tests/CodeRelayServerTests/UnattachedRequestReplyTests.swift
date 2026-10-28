@@ -63,7 +63,8 @@ final class UnattachedRequestReplyTests: XCTestCase {
         let server = WebSocketServer(
             group: group, config: config,
             sessionManager: sessionManager, tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -142,7 +143,8 @@ final class UnattachedRequestReplyTests: XCTestCase {
         let server = WebSocketServer(
             group: group, config: config,
             sessionManager: sessionManager, tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -215,7 +217,8 @@ final class UnattachedRequestReplyTests: XCTestCase {
         let server = WebSocketServer(
             group: group, config: config,
             sessionManager: sessionManager, tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
         defer { Task { try? await server.stop() } }

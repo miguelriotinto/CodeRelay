@@ -27,6 +27,7 @@ enum AdminRoutes {
         tokenStore: TokenStore,
         pairingStore: PairingCodeStore,
         config: RelayConfig,
+        identity: ServerIdentity? = nil,
         optimizer: (any PromptOptimizing)? = nil,
         optimizeDeadline: Duration = PromptOptimizer.deadline
     ) async -> AdminResponse {
@@ -39,7 +40,7 @@ enum AdminRoutes {
         case (.GET, "health"):
             return handleHealth(components)
         case (.GET, "status"):
-            return await handleStatus(components, sessionManager: sessionManager)
+            return await handleStatus(components, sessionManager: sessionManager, identity: identity)
         case (.GET, "sessions"):
             return await handleGetSessions(components, sessionManager: sessionManager)
         case (.DELETE, "sessions"):
@@ -207,7 +208,8 @@ enum AdminRoutes {
 
     private static func handleStatus(
         _ components: [String],
-        sessionManager: SessionManager
+        sessionManager: SessionManager,
+        identity: ServerIdentity?
     ) async -> AdminResponse {
         guard components == ["status"] else { return .error("Not found", status: 404) }
         let sessions = await sessionManager.listSessions()
@@ -221,7 +223,7 @@ enum AdminRoutes {
         } else {
             uptimeSeconds = 0
         }
-        let info: [String: Any] = [
+        var info: [String: Any] = [
             "status": "running",
             "version": CodeRelayKit.version,
             "protocolVersion": CodeRelayKit.protocolVersion,
@@ -229,6 +231,10 @@ enum AdminRoutes {
             "uptime_seconds": uptimeSeconds,
             "session_count": sessions.count
         ]
+        if let identity {
+            info["instanceId"] = identity.id.uuidString
+            info["serverName"] = identity.name
+        }
         return .json(info)
     }
 

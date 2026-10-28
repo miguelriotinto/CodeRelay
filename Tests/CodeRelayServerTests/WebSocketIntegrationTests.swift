@@ -49,7 +49,8 @@ final class WebSocketIntegrationTests: XCTestCase {
             config: config,
             sessionManager: sessionManager,
             tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
 
@@ -121,7 +122,8 @@ final class WebSocketIntegrationTests: XCTestCase {
             config: config,
             sessionManager: sessionManager,
             tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
         try? await Task.sleep(for: .milliseconds(100))
@@ -184,7 +186,8 @@ final class WebSocketIntegrationTests: XCTestCase {
             config: config,
             sessionManager: sessionManager,
             tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
 
@@ -258,7 +261,8 @@ final class WebSocketIntegrationTests: XCTestCase {
             group: group, config: config,
             sessionManager: sessionManager, tokenStore: tokenStore,
             rateLimiter: limiter,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -356,7 +360,8 @@ final class WebSocketIntegrationTests: XCTestCase {
         let server = WebSocketServer(
             group: group, config: config,
             sessionManager: sessionManager, tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -422,7 +427,8 @@ final class WebSocketIntegrationTests: XCTestCase {
         let server = WebSocketServer(
             group: group, config: config,
             sessionManager: sessionManager, tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -491,7 +497,8 @@ final class WebSocketIntegrationTests: XCTestCase {
         let server = WebSocketServer(
             group: group, config: config,
             sessionManager: sessionManager, tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
@@ -567,7 +574,8 @@ final class WebSocketIntegrationTests: XCTestCase {
         let server = WebSocketServer(
             group: group, config: config,
             sessionManager: sessionManager, tokenStore: tokenStore,
-            pairingStore: PairingCodeStore()
+            pairingStore: PairingCodeStore(),
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         try await server.start()
         defer { Task { try? await server.stop() } }
