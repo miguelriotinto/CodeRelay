@@ -58,6 +58,25 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
     }
 }
 
+/// Routes an incoming URL: pairing links open the pairing sheet; session links
+/// go to the hub, which queues them until `start()` has finished (spec §10).
+@MainActor
+struct DeepLinkRouter {
+    enum Outcome: Equatable {
+        case pairing(PairingURL)
+        case session(IOSServerHub.DeepLinkOutcome)
+        case ignored
+    }
+
+    let hub: IOSServerHub
+
+    func open(_ url: URL) async -> Outcome {
+        if url.host == "pair", let pairing = PairingURL(url: url) { return .pairing(pairing) }
+        guard let link = SessionDeepLink(url: url) else { return .ignored }
+        return .session(await hub.handleDeepLink(link))
+    }
+}
+
 @main
 struct CodeRelayApp: App {
     @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
@@ -69,18 +88,16 @@ struct CodeRelayApp: App {
         legacyKeys: ["com.coderemote.savedConnections"]
     )
 
+    /// The one hub (multi-server spec §8.2): owned here, not by a view that can
+    /// be recreated, so a deep link that arrives during launch has a target.
+    @StateObject private var hub = IOSServerHubFactory.make()
     @State private var showSplash = true
-    @State private var pendingSessionId: UUID?
     @State private var pendingPairing: PairingURL?
-    @State private var pendingConnectConfig: ConnectionConfig?
 
     var body: some Scene {
         WindowGroup {
             ZStack {
-                ServerListView(
-                    pendingSessionId: $pendingSessionId,
-                    pendingConnectConfig: $pendingConnectConfig
-                )
+                WorkspaceView(hub: hub)
 
                 if showSplash {
                     SplashScreenView {
@@ -90,10 +107,10 @@ struct CodeRelayApp: App {
                 }
             }
             .onOpenURL { url in
-                handleDeepLink(url)
+                Task { await route(url) }
             }
             .onReceive(PushTokenBridge.shared.$pendingDeepLink.compactMap { $0 }) { url in
-                handleDeepLink(url)
+                Task { await route(url) }
                 PushTokenBridge.shared.pendingDeepLink = nil
             }
             .task {
@@ -104,24 +121,19 @@ struct CodeRelayApp: App {
                 }
             }
             .sheet(item: $pendingPairing) { pairing in
-                PairWithHostSheet(onPaired: { config in
-                    pendingConnectConfig = config
+                PairWithHostSheet(onPaired: { _ in
+                    // The paired bookmark is saved enabled; reloading builds its
+                    // coordinator (the cap is enforced by the hub).
+                    hub.reloadBookmarks()
                 }, prefill: pairing)
             }
         }
     }
 
-    private func handleDeepLink(_ url: URL) {
-        // Handle pairing deep links
-        if url.host == "pair", let pairing = PairingURL(url: url) {
-            pendingPairing = pairing
-            return
+    private func route(_ url: URL) async {
+        switch await DeepLinkRouter(hub: hub).open(url) {
+        case .pairing(let pairing): pendingPairing = pairing
+        case .session, .ignored: break    // the hub published a notice for .notFound
         }
-
-        // Handle session deep links
-        // Phase 1 (iOS) will route on `link.serverInstanceId`; until then the
-        // single coordinator attaches by session id as before.
-        guard let link = SessionDeepLink(url: url) else { return }
-        pendingSessionId = link.sessionId
     }
 }

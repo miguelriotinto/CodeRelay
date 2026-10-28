@@ -13,14 +13,6 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    Toggle("Auto Connect", isOn: $settings.autoConnectEnabled)
-                } header: {
-                    Text("Connection")
-                } footer: {
-                    Text("Automatically reconnect to the last server on launch.")
-                }
-
-                Section {
                     Toggle("Push Notifications", isOn: $settings.pushNotificationsEnabled)
                     if settings.pushNotificationsEnabled {
                         Toggle("Notify When Finished", isOn: $settings.pushNotifyOnFinished)
