@@ -147,4 +147,49 @@ final class SharedSessionCoordinatorLoadPhaseTests: XCTestCase {
         XCTAssertEqual(seen.first, .attaching)
         XCTAssertNil(coordinator.sessionLoadPhase, "no replay is coming: the switch clears the phase itself")
     }
+
+    func testAFailedSwitchIsMarkedFailedBeforeItsPhaseClears() async {
+        // The sheet shows "Ready" when the phase clears with nothing failed. The
+        // switch's failure path awaits a rollback resume before presenting its
+        // error, so without an explicit flag set FIRST the sheet said Ready over
+        // a failed switch.
+        let coordinator = makeCoordinator()
+        let from = UUID(), to = UUID()
+        _ = installVM(in: coordinator, id: from)
+        _ = installVM(in: coordinator, id: to)
+        coordinator.activeSessionId = from
+        var failedWhenCleared: Bool?
+        let sub = coordinator.$sessionLoadPhase.dropFirst().sink { [weak coordinator] phase in
+            if phase == nil, failedWhenCleared == nil { failedWhenCleared = coordinator?.lastLoadFailed }
+        }
+        defer { sub.cancel() }
+        await coordinator.switchToSession(id: to)      // no controller: fails
+        XCTAssertEqual(failedWhenCleared, true)
+    }
+
+    func testASuccessfulSwitchResetsTheFailureFlag() async {
+        let coordinator = makeCoordinator()
+        let fake = FakeConnection()
+        fake.autoRespond = { message in
+            switch message {
+            case .authRequest: return .authSuccess()
+            case .sessionDetach: return .sessionDetached
+            case .sessionResume(let id, _, _, _): return .sessionResumed(sessionId: id)
+            case .sessionList: return .sessionList(sessions: [])
+            default: return nil
+            }
+        }
+        let a = UUID(), b = UUID()
+        _ = installVM(in: coordinator, id: a)
+        _ = installVM(in: coordinator, id: b)
+        coordinator.activeSessionId = a
+        await coordinator.switchToSession(id: b)                // fails: no controller
+        XCTAssertTrue(coordinator.lastLoadFailed)
+        let controller = SessionController(connection: fake)
+        try? await controller.authenticate(token: "t")
+        coordinator.sessionController = controller
+        coordinator.registerLiveTerminal(for: b, view: NSObject())
+        await coordinator.switchToSession(id: b)
+        XCTAssertFalse(coordinator.lastLoadFailed, "a new load starts clean")
+    }
 }

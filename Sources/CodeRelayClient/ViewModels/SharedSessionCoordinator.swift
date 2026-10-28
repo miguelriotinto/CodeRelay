@@ -31,6 +31,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// replay hooks installed in `wireTerminalOutput`; see `SessionLoadPhase`.
     /// Only ever describes the ACTIVE session.
     @Published public internal(set) var sessionLoadPhase: SessionLoadPhase?
+    /// The most recent switch / create / attach / reload ended in failure. Set
+    /// at the TOP of each failure branch, before the phase clears (a switch's
+    /// rollback awaits a resume before it presents its error), and reset when
+    /// the next load starts. The loading sheet shows "Ready" only when a load
+    /// ends with this false.
+    @Published public private(set) var lastLoadFailed = false
     /// F3 restore scheduled by `reconcile` but not yet started by
     /// `switchToSession`. While set, the handshake leaves `sessionLoadPhase`
     /// alone at its end — the restore is about to take it over, and a nil in
@@ -677,6 +683,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         guard !isRecovering else { return }
         let previousId = activeSessionId
         sessionLoadPhase = .attaching
+        lastLoadFailed = false
         let epoch = attachEpoch
         do {
             let (name, sessionId) = try await withAuth { controller in
@@ -727,6 +734,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             // < 0.5 s after connect()'s initial fetch).
             await fetchSessions(force: true)
         } catch {
+            lastLoadFailed = true
             sessionLoadPhase = nil
             presentError(error.localizedDescription)
         }
@@ -789,6 +797,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             // after the RPC below). With a replay, the hooks take the phase
             // through loadingHistory to nil on the first visible frame.
             sessionLoadPhase = .attaching
+            lastLoadFailed = false
             wireTerminalOutput(to: id)
 
             // Optimistic: publish the selection now so the sidebar highlight and
@@ -826,6 +835,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             // immediately (see createNewSession).
             await fetchSessions(force: true)
         } catch {
+            lastLoadFailed = true
             sessionLoadPhase = nil
             // The optimistic publish has to be undone, or the pane sits on a
             // session that isn't attached: the server auto-detaches the previous
@@ -867,6 +877,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         // Raises the loading sheet and the blackout at the tap; the replay hooks
         // clear it on the first visible frame.
         sessionLoadPhase = .attaching
+        lastLoadFailed = false
         do {
             try await withAuth {
                 // Read at the call site, not hoisted: `withAuth`'s re-auth retry
@@ -878,6 +889,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             // No replay is coming: release the buffering WITHOUT the clear, so
             // the pane keeps what it was showing rather than going blank — and
             // lower the sheet, or it would sit over a pane that is fine.
+            lastLoadFailed = true
             sessionLoadPhase = nil
             vm.cancelServerReload()
             presentError(error.localizedDescription)
@@ -906,6 +918,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         guard !isRecovering else { return }
         let previousId = activeSessionId
         sessionLoadPhase = .attaching
+        lastLoadFailed = false
         let epoch = attachEpoch
         do {
             let controller = try await withAuth { controller in
@@ -961,6 +974,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             // in `sessions` now so it appears in the pane (see createNewSession).
             await fetchSessions(force: true)
         } catch {
+            lastLoadFailed = true
             sessionLoadPhase = nil
             recoveryLog.error("attachRemoteSession failed for \(id): \(error.localizedDescription, privacy: .public)")
             if let previousId {
@@ -1289,6 +1303,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// then narrate a session loading rather than a bare server, and the
     /// loading sheet may show them (`SessionLoadingPresentation.expectsSession`).
     public var expectsSessionToLoad: Bool { activeSessionId != nil || pendingRestoreSessionId != nil }
+
+    /// A load just ended badly: its own failure flag, or an error the user is
+    /// about to see. The loading sheet never says "Ready" over either.
+    public var loadEndedInFailure: Bool {
+        lastLoadFailed || showError || sessionAttachFailed || connectionTimedOut
+    }
 
     // MARK: - Cleanup
 

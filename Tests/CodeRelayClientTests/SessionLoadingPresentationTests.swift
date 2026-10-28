@@ -6,9 +6,98 @@ import SwiftUI
 final class SessionLoadingPresentationTests: XCTestCase {
     private func make(_ phase: SessionLoadPhase?, recovering: Bool = false,
                       recovery: SharedSessionCoordinator.RecoveryPhase = .reconnecting,
-                      expectsSession: Bool = true) -> SessionLoadingPresentation {
+                      expectsSession: Bool = true,
+                      sessionAttached: Bool = true, failed: Bool = false,
+                      recoveryFailed: Bool = false) -> SessionLoadingPresentation {
         SessionLoadingPresentation(loadPhase: phase, isRecovering: recovering, recoveryPhase: recovery,
-                                   expectsSession: expectsSession, sessionName: "Arya", serverName: "studio")
+                                   expectsSession: expectsSession, sessionAttached: sessionAttached,
+                                   loadFailed: failed, recoveryFailed: recoveryFailed,
+                                   sessionName: "Arya", serverName: "studio")
+    }
+
+    /// Scripted sleeps: each call parks until the test releases it, in order.
+    @MainActor
+    final class Sleeper {
+        private(set) var parked: [(Duration, CheckedContinuation<Void, Never>)] = []
+        var durations: [Duration] { parked.map(\.0) }
+        func sleep(_ d: Duration) async { await withCheckedContinuation { parked.append((d, $0)) } }
+        func release(_ d: Duration) {
+            guard let i = parked.firstIndex(where: { $0.0 == d }) else { return }
+            parked.remove(at: i).1.resume()
+        }
+    }
+
+    private func settle() async { await Task.yield(); try? await Task.sleep(for: .milliseconds(10)) }
+
+    // MARK: - Ready (user request: "show 0 KB, then the bytes, then Ready for 0.6 s")
+
+    func testAFullySyncedSessionShowsZeroThenReadyThenDismisses() async {
+        // A cached-terminal switch (or a session already in sync) streams no
+        // bytes: the counter used to sit at "0 KB" and the sheet just vanished.
+        let sleeper = Sleeper()
+        let model = SessionLoadingSheetModel(sleep: { await sleeper.sleep($0) })
+        model.update(make(.attaching))
+        XCTAssertEqual(model.shown?.detail, "0 KB")
+        XCTAssertFalse(model.shown?.isReady ?? true)
+        model.update(make(nil))                                  // loaded, session attached, no error
+        XCTAssertTrue(model.isPresented, "still up: Ready is shown before the sheet goes")
+        XCTAssertEqual(model.shown?.isReady, true)
+        XCTAssertEqual(model.shown?.status, "Ready")
+        XCTAssertEqual(model.shown?.detail, "0 KB", "nothing streamed: 0 KB, then Ready")
+        await settle()
+        XCTAssertTrue(sleeper.durations.contains(SessionLoadingSheetModel.readyDwell))
+        sleeper.release(SessionLoadingSheetModel.minimumVisible)
+        await settle()
+        XCTAssertTrue(model.isPresented, "Ready holds for its own dwell, not the minimum hold")
+        sleeper.release(SessionLoadingSheetModel.readyDwell)
+        await settle()
+        XCTAssertFalse(model.isPresented, "dismissed after Ready")
+    }
+
+    func testReadyKeepsTheFinalByteCount() {
+        let model = SessionLoadingSheetModel(sleep: { _ in await withCheckedContinuation { _ in } })
+        model.update(make(.attaching))
+        model.update(make(.loadingHistory(bytes: 212_000)))
+        model.update(make(nil))
+        XCTAssertEqual(model.shown?.isReady, true)
+        XCTAssertEqual(model.shown?.detail, SessionLoadPhase.formatBytes(212_000), "Ready next to the bytes that synced")
+        XCTAssertFalse(model.shown?.allowsCancel ?? true)
+    }
+
+    func testAFailedLoadNeverSaysReady() {
+        let model = SessionLoadingSheetModel(sleep: { _ in await withCheckedContinuation { _ in } })
+        model.update(make(.attaching))
+        model.update(make(nil, failed: true))
+        XCTAssertNotEqual(model.shown?.isReady, true, "an error alert follows; Ready would be a lie")
+        model.update(make(.attaching))
+        model.update(make(nil, sessionAttached: false))
+        XCTAssertNotEqual(model.shown?.isReady, true, "nothing attached (e.g. a handshake that gave up)")
+    }
+
+    func testACancelledReconnectNeverSaysReady() {
+        let model = SessionLoadingSheetModel(sleep: { _ in await withCheckedContinuation { _ in } })
+        model.update(make(nil, recovering: true))
+        model.update(make(nil, recovering: false, recoveryFailed: true))
+        XCTAssertNotEqual(model.shown?.isReady, true)
+        // A successful reconnect does.
+        let ok = SessionLoadingSheetModel(sleep: { _ in await withCheckedContinuation { _ in } })
+        ok.update(make(nil, recovering: true))
+        ok.update(make(nil))
+        XCTAssertEqual(ok.shown?.isReady, true)
+    }
+
+    func testANewLoadDuringReadyTakesOver() async {
+        let sleeper = Sleeper()
+        let model = SessionLoadingSheetModel(sleep: { await sleeper.sleep($0) })
+        model.update(make(.attaching))
+        model.update(make(nil))                                  // Ready
+        XCTAssertEqual(model.shown?.isReady, true)
+        model.update(make(.attaching))                           // the user tapped another tab
+        XCTAssertEqual(model.shown?.isReady, false)
+        await settle()
+        sleeper.release(SessionLoadingSheetModel.readyDwell)
+        await settle()
+        XCTAssertTrue(model.isPresented, "the earlier Ready's dwell must not dismiss the new load")
     }
 
     func testHandshakePhasesDoNotRaiseTheSheetWithoutASessionToShow() {
@@ -92,7 +181,7 @@ final class SessionLoadingPresentationTests: XCTestCase {
         })
         model.update(make(.attaching))
         XCTAssertTrue(model.isPresented, "up immediately on the first active presentation")
-        model.update(make(nil))                              // loading finished 5 ms later
+        model.update(make(nil, failed: true))                // failed 5 ms later (no Ready on failure)
         XCTAssertTrue(model.isPresented, "held: a 5 ms sheet reads as a flicker")
         await Task.yield(); try? await Task.sleep(for: .milliseconds(10))
         XCTAssertTrue(sleeps.contains(SessionLoadingSheetModel.minimumVisible))
@@ -112,9 +201,9 @@ final class SessionLoadingPresentationTests: XCTestCase {
         XCTAssertTrue(model.isPresented, "the hold elapsed but the load is still running")
         model.update(make(.loadingHistory(bytes: 4096)))
         XCTAssertEqual(model.shown?.detail, SessionLoadPhase.formatBytes(4096))
-        model.update(make(nil))
+        model.update(make(nil, failed: true))
         await Task.yield()
-        XCTAssertFalse(model.isPresented, "past the hold, dismissal is immediate")
+        XCTAssertFalse(model.isPresented, "past the hold, a failed load dismisses immediately")
     }
 
 }

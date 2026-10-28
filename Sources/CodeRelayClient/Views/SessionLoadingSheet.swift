@@ -18,7 +18,18 @@ public struct SessionLoadingSheet: View {
 
     public var body: some View {
         VStack(spacing: 12) {
-            ProgressView().controlSize(.large)
+            Group {
+                if presentation.isReady {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(.green)
+                        .transition(.scale.combined(with: .opacity))
+                } else {
+                    ProgressView().controlSize(.large)
+                }
+            }
+            .frame(height: 34)
+            .animation(.spring(duration: 0.3), value: presentation.isReady)
             Text(presentation.title).font(.headline)
             if let detail = presentation.detail {
                 Text(detail)
