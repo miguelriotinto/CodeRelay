@@ -182,6 +182,11 @@ public struct RelayConfig: Codable, Sendable {
     /// The tokens file: `~/.claude-relay/tokens.json`.
     public static let tokensFile: URL = configDirectory.appendingPathComponent("tokens.json")
 
+    /// Persisted server instance identity (multi-server spec §6.1): a UUID
+    /// minted once per install so clients can tell relays apart across
+    /// restarts, host renames and port changes. Written `0o600`.
+    public static let instanceFile: URL = configDirectory.appendingPathComponent("instance.json")
+
     // MARK: - Codable
 
     private enum CodingKeys: String, CodingKey {
