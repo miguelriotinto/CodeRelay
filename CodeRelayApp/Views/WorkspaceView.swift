@@ -2,42 +2,6 @@ import SwiftUI
 import CodeRelayClient
 import CodeRelayKit
 
-// MARK: - Recovery Overlay (shown while the ACTIVE server reconnects)
-
-struct RecoveryOverlay: View {
-    let phase: SharedSessionCoordinator.RecoveryPhase
-    /// Spec §8.1: the sheet names the server, since other servers keep working.
-    let serverName: String?
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            ProgressView().scaleEffect(1.5)
-            Text(serverName.map { "Reconnecting to \($0)" } ?? "Reconnecting")
-                .font(.headline)
-            Text(phase.label)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .contentTransition(.interpolate)
-                .animation(.easeInOut(duration: 0.25), value: phase.label)
-            Spacer()
-            Button("Cancel", role: .cancel) { onCancel() }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .padding(.bottom, 40)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Centre on the sheet's full width, not its safe area. On iPhone Duo
-        // the status bar column is carved out of a sheet's safe area, so a
-        // safe-area-centred stack sat ~85 pt off the sheet's visual centre on
-        // the closed display. This sheet has nothing in that column.
-        .ignoresSafeArea(.container, edges: .horizontal)
-        .presentationDetents([.medium])
-        .presentationDragIndicator(.visible)
-    }
-}
-
 /// Pure rules the root view is built on, kept out of SwiftUI for tests.
 enum WorkspaceRoot {
     /// With no enabled server there is nothing to show behind the terminal:
@@ -60,6 +24,8 @@ struct WorkspaceView: View {
     /// Kept alive for the view's lifetime so `connectivityRestored` posts; the
     /// coordinators no longer arm their own monitor (the hub fans out, D10).
     @StateObject private var networkMonitor = NetworkMonitor()
+    /// One sheet + blackout for switch, session-name refresh and reconnect.
+    @StateObject private var loading = SessionLoadingSheetModel()
 
     /// Maps the sidebar button's columnVisibility toggle directly to showSidebarSheet on iPhone.
     private var sidebarSheetBinding: Binding<NavigationSplitViewVisibility> {
@@ -80,7 +46,7 @@ struct WorkspaceView: View {
         Group {
             if sizeClass == .compact {
                 // iPhone: detail-only with the sidebar as a sheet
-                ActiveTerminalView(hub: hub, columnVisibility: sidebarSheetBinding)
+                ActiveTerminalView(hub: hub, columnVisibility: sidebarSheetBinding, loading: loading)
                     .sheet(isPresented: $showSidebarSheet) {
                         NavigationStack {
                             SessionSidebarView(hub: hub)
@@ -97,7 +63,7 @@ struct WorkspaceView: View {
                 NavigationSplitView(columnVisibility: $columnVisibility) {
                     SessionSidebarView(hub: hub)
                 } detail: {
-                    ActiveTerminalView(hub: hub, columnVisibility: $columnVisibility)
+                    ActiveTerminalView(hub: hub, columnVisibility: $columnVisibility, loading: loading)
                 }
                 .navigationSplitViewStyle(.prominentDetail)
                 .navigationBarHidden(true)
@@ -140,7 +106,7 @@ struct WorkspaceView: View {
         // server, else the only / first live one — G8).
         .background {
             if let focus = hub.focusCoordinator {
-                FocusCoordinatorModifiers(coordinator: focus,
+                FocusCoordinatorModifiers(coordinator: focus, loading: loading,
                                           serverName: hub.sections.first { $0.id == hub.focusServerId }?.title)
                     .id(ObjectIdentifier(focus))
             }
@@ -169,14 +135,36 @@ struct WorkspaceView: View {
 /// invisible background child so each binding is non-optional.
 private struct FocusCoordinatorModifiers: View {
     @ObservedObject var coordinator: SessionCoordinator
+    @ObservedObject var loading: SessionLoadingSheetModel
     let serverName: String?
+
+    private var presentation: SessionLoadingPresentation {
+        SessionLoadingPresentation(loadPhase: coordinator.sessionLoadPhase,
+                                   isRecovering: coordinator.isRecovering,
+                                   recoveryPhase: coordinator.recoveryPhase,
+                                   sessionName: coordinator.activeSessionId.map { coordinator.name(for: $0) },
+                                   serverName: serverName)
+    }
 
     var body: some View {
         Color.clear
-            .sheet(isPresented: $coordinator.isRecovering) {
-                RecoveryOverlay(phase: coordinator.recoveryPhase, serverName: serverName,
-                                onCancel: { coordinator.cancelRecovery() })
-                    .interactiveDismissDisabled()
+            .onChange(of: presentation, initial: true) { _, p in loading.update(p) }
+            // The one loading sheet: switch, session-name refresh and reconnect
+            // all rise from the bottom with the step and the bytes loaded, while
+            // the terminal behind fades to black; both lift on the first frame.
+            .sheet(isPresented: Binding(get: { loading.isPresented }, set: { _ in })) {
+                if let shown = loading.shown {
+                    SessionLoadingSheet(presentation: shown,
+                                        onCancel: shown.allowsCancel ? { coordinator.cancelRecovery() } : nil)
+                        .presentationDetents([.fraction(0.32)])
+                        .presentationDragIndicator(.hidden)
+                        .presentationBackgroundInteraction(.disabled)
+                        .interactiveDismissDisabled()
+                        // Full width, not the safe area: on iPhone Duo the status
+                        // bar column is carved out of a sheet's safe area, which
+                        // put a safe-area-centred stack ~85 pt off centre.
+                        .ignoresSafeArea(.container, edges: .horizontal)
+                }
             }
             .alert("Connection Lost", isPresented: $coordinator.connectionTimedOut) {
                 Button("OK", role: .cancel) {}

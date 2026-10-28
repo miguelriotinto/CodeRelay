@@ -32,16 +32,14 @@ enum SessionTabStripModel {
 struct ActiveTerminalView: View {
     @ObservedObject var hub: IOSServerHub
     @Binding var columnVisibility: NavigationSplitViewVisibility
+    /// Drives the blackout under the loading sheet (see `FocusCoordinatorModifiers`).
+    @ObservedObject var loading: SessionLoadingSheetModel
     @State private var showKeyBar = true
     @State private var isKeyboardVisible = false
     @State private var hasHardwareKeyboard = GCKeyboard.coalesced != nil
     @State private var showQROverlay = false
     @State private var showRenameAlert = false
     @State private var renameText = ""
-    /// Blackout opacity for the session-name reload: 0 shows the terminal, 1
-    /// hides it behind opaque black while the server's copy is swapped in.
-    /// Driven by `TerminalReloadFade`.
-    @State private var reloadCover: Double = 0
     @ObservedObject private var settings = AppSettings.shared
 
     private var coordinator: SessionCoordinator? { hub.activeCoordinator }
@@ -115,17 +113,10 @@ struct ActiveTerminalView: View {
                         fontSize: CGFloat(settings.terminalFontSize),
                         isKeyboardVisible: $isKeyboardVisible
                     )
-                    // Covers only the terminal, not the toolbar or the key bar:
-                    // the session name has to stay visible, since it's the
-                    // control the user just tapped.
-                    .terminalReloadCover(reloadCover)
-
-                    // "Loading session history… 212 KB" over the black pane
-                    // while the server streams the replay; see SessionLoadPhase.
-                    SessionLoadingOverlay(
-                        phase: coordinator.sessionLoadPhase,
-                        sessionName: coordinator.name(for: id)
-                    )
+                    // Black while the loading sheet is up (switch, name-label
+                    // refresh, reconnect); covers only the terminal, not the
+                    // toolbar or the key bar, so the session name stays visible.
+                    .terminalLoadingCover(loading.isPresented)
 
                     floatingButtons(coordinator)
                         .padding(.trailing, 16)
@@ -226,10 +217,7 @@ struct ActiveTerminalView: View {
                             if settings.hapticFeedbackEnabled {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             }
-                            Task {
-                                await TerminalReloadFade.run(
-                                    coordinator: coordinator, id: id, cover: $reloadCover)
-                            }
+                            Task { await TerminalReloadFade.reload(coordinator: coordinator, id: id) }
                         }
                         .onLongPressGesture {
                             renameText = coordinator.name(for: id)

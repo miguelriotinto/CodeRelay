@@ -783,10 +783,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             }
             if !hasLiveTerminal {
                 terminalViewModels[id]?.beginReplay()
-                // The pane is black from here until the replay is delivered;
-                // the replay hooks take the phase through loadingHistory to nil.
-                sessionLoadPhase = .attaching
             }
+            // The loading sheet rises from here on EVERY switch — also when a
+            // cached terminal lets the resume skip the replay (cleared right
+            // after the RPC below). With a replay, the hooks take the phase
+            // through loadingHistory to nil on the first visible frame.
+            sessionLoadPhase = .attaching
             wireTerminalOutput(to: id)
 
             // Optimistic: publish the selection now so the sidebar highlight and
@@ -862,6 +864,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         // overlapping replays paint the screen twice, one below the other.
         guard !vm.isReloadingFromServer else { return }
         vm.beginServerReload()
+        // Raises the loading sheet and the blackout at the tap; the replay hooks
+        // clear it on the first visible frame.
+        sessionLoadPhase = .attaching
         do {
             try await withAuth {
                 // Read at the call site, not hoisted: `withAuth`'s re-auth retry
@@ -871,7 +876,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             }
         } catch {
             // No replay is coming: release the buffering WITHOUT the clear, so
-            // the pane keeps what it was showing rather than going blank.
+            // the pane keeps what it was showing rather than going blank — and
+            // lower the sheet, or it would sit over a pane that is fine.
+            sessionLoadPhase = nil
             vm.cancelServerReload()
             presentError(error.localizedDescription)
         }
