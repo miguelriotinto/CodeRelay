@@ -35,10 +35,10 @@ enum ServerIdentityStore {
     private static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { decoder in
-            // Lenient: any string (or nothing parseable) is fine; the date is
-            // never used for a decision.
-            let raw = try decoder.singleValueContainer().decode(String.self)
-            return ISO8601DateFormatter().date(from: raw) ?? Date.distantPast
+            // Lenient: a string, a number or anything else all decode; the date
+            // is informational and never used for a decision.
+            let raw = try? decoder.singleValueContainer().decode(String.self)
+            return raw.flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date.distantPast
         }
         return d
     }()

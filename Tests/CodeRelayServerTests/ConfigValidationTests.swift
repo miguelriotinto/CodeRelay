@@ -241,6 +241,25 @@ final class ConfigValidationTests: XCTestCase {
         XCTAssertEqual(config.serverName, "true")
     }
 
+    func testServerNameFromTheJSONWireKeepsBooleanAndIntegerText() throws {
+        // The CLI body is parsed with JSONSerialization; on Darwin JSON `true`
+        // bridges to an NSNumber that also matches `as? Int` (as 1). The text the
+        // operator typed must survive: true → "true", 42 → "42", 1 → "1".
+        func wire(_ json: String) throws -> Any {
+            let obj = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
+            return obj["value"]!
+        }
+        var config = RelayConfig.default
+        try AdminRoutes.applyConfigValue(try wire(#"{"value":true}"#), forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "true")
+        try AdminRoutes.applyConfigValue(try wire(#"{"value":42}"#), forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "42")
+        try AdminRoutes.applyConfigValue(try wire(#"{"value":1}"#), forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "1")
+        try AdminRoutes.applyConfigValue(try wire(#"{"value":"Studio"}"#), forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "Studio")
+    }
+
     func testServerNameRejectsNonScalars() {
         var config = RelayConfig.default
         XCTAssertThrowsError(try AdminRoutes.applyConfigValue(["a"], forKey: "serverName", to: &config))

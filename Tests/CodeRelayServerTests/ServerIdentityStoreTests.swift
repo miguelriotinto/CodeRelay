@@ -58,6 +58,9 @@ final class ServerIdentityStoreTests: XCTestCase {
         try Data(#"{"id":"\#(keep.uuidString)","createdAt":"2026-10-28T11:40:06.143Z"}"#.utf8).write(to: file)
         XCTAssertEqual(ServerIdentityStore.load(directory: dir, configuredName: nil, hostName: "h").id, keep,
                        "fractional-second timestamps must not read as corruption")
+        try Data(#"{"id":"\#(keep.uuidString)","createdAt":1730000000}"#.utf8).write(to: file)
+        XCTAssertEqual(ServerIdentityStore.load(directory: dir, configuredName: nil, hostName: "h").id, keep,
+                       "a numeric createdAt is not corruption either")
     }
 
     func testMissingDirectoryIsCreated() {

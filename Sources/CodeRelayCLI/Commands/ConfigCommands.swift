@@ -69,7 +69,7 @@ struct ConfigSetCommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        let typedValue = ConfigValue.infer(from: value)
+        let typedValue = Self.wireValue(forKey: key, raw: value)
         if let message = Self.optimizerValidationError(key: key, value: typedValue) {
             FileHandle.standardError.write(Data("Error: \(message)\n".utf8))
             throw ExitCode.failure
@@ -154,6 +154,14 @@ struct ConfigSetCommand: AsyncParsableCommand {
     /// suspect it. One line closes that gap (review C-2). `serverName` is read once at
     /// startup too (`ServerIdentityStore`). Returns nil for every other key,
     /// whose writes *are* live.
+    /// Free-text keys ship the operator's string verbatim; everything else is
+    /// inferred so unquoted `1024`, `true`, `info` arrive typed. Inferring a
+    /// display name would turn `0042` into 42 and `true` into a boolean the
+    /// server has to stringify back.
+    static func wireValue(forKey key: String, raw: String) -> ConfigValue {
+        key == "serverName" ? .string(raw) : ConfigValue.infer(from: raw)
+    }
+
     static func restartHint(forKey key: String) -> String? {
         if key == "serverName" {
             return "Note: serverName is read at startup — run 'claude-relay restart' to apply."
@@ -269,7 +277,7 @@ struct ConfigValidateCommand: AsyncParsableCommand {
     }
 }
 
-enum ConfigValue: Codable, CustomStringConvertible {
+enum ConfigValue: Codable, Equatable, CustomStringConvertible {
     case string(String)
     case int(Int)
     case bool(Bool)

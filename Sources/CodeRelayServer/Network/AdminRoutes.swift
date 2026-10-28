@@ -455,15 +455,9 @@ enum AdminRoutes {
             guard let val = value as? Bool else { throw ConfigError(message: "bindAll must be a boolean") }
             config.bindAll = val
         case "serverName":
-            // `config set serverName 42` arrives as an Int (ConfigValue.infer);
-            // a numeric or boolean-looking display name is legitimate text.
-            let text: String
-            switch value {
-            case let s as String: text = s
-            case let i as Int: text = String(i)
-            case let b as Bool: text = String(b)
-            default: throw ConfigError(message: "serverName must be a string")
-            }
+            // Older CLIs infer `42`/`true` into typed JSON; the text the operator
+            // typed must survive the round trip, so scalars are stringified.
+            guard let text = scalarText(value) else { throw ConfigError(message: "serverName must be a string") }
             let clean = LabelSanitizer.sanitize(text)
             config.serverName = clean.isEmpty ? nil : clean
         case "pushEnabled":
@@ -522,6 +516,27 @@ enum AdminRoutes {
             config.promptOptimizerShareScreen = val
         default:
             throw ConfigError(message: "Unknown config key: \(key)")
+        }
+    }
+
+    /// The text a JSON scalar represents, or nil for arrays/objects/null.
+    ///
+    /// Order matters on Darwin: `JSONSerialization` bridges JSON `true` to an
+    /// `NSNumber` that also matches `as? Int` (as 1), so booleans are detected
+    /// by their CF type first; `NSNumber(1) as? Bool` would otherwise read a
+    /// typed `1` as "true", so Int is matched before Bool. On Linux the parser
+    /// yields native `Bool`/`Int`, which the same order handles.
+    private static func scalarText(_ value: Any) -> String? {
+        #if canImport(Darwin)
+        if let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return number.boolValue ? "true" : "false"
+        }
+        #endif
+        switch value {
+        case let s as String: return s
+        case let i as Int: return String(i)
+        case let b as Bool: return b ? "true" : "false"
+        default: return nil
         }
     }
 
