@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreImage
 import UIKit
+import CodeRelayKit
 
 // MARK: - QR Code Generation
 
@@ -27,6 +28,7 @@ struct QRCodeGenerator {
 struct QRCodeOverlay: View {
     let sessionId: UUID
     let sessionName: String
+    var serverInstanceId: UUID? = nil
     let onDismiss: () -> Void
 
     var body: some View {
@@ -37,7 +39,7 @@ struct QRCodeOverlay: View {
 
             VStack(spacing: 16) {
                 if let image = QRCodeGenerator.generate(
-                    from: "coderelay://session/\(sessionId.uuidString)",
+                    from: SessionDeepLink(sessionId: sessionId, serverInstanceId: serverInstanceId).urlString,
                     size: 200
                 ) {
                     Image(uiImage: image)

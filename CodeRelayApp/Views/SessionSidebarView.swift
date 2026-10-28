@@ -2,64 +2,90 @@ import SwiftUI
 import CodeRelayClient
 import CodeRelayKit
 
-/// Sidebar content for the workspace: session list with quick switching.
+/// Sidebar content for the workspace: one collapsible section per server
+/// (spec §8.1/§8.2), each holding the unchanged workspace tiles and session
+/// rows of that server. Tapping a row calls `hub.select(ref)`.
 struct SessionSidebarView: View {
-    @ObservedObject var coordinator: SessionCoordinator
+    @ObservedObject var hub: IOSServerHub
     @State private var showAttachSheet = false
     @State private var attachableSessions: [SessionInfo] = []
     @State private var isLoadingAttachable = false
     @State private var showQRSheet = false
-    @State private var qrSessionId: UUID?
-    @State private var collapse = SidebarCollapseModel()
+    @State private var qrRef: SessionRef?
+
+    struct Row: Equatable {
+        let ref: SessionRef
+        let session: SessionInfo
+        let isCached: Bool
+    }
+
+    enum RetryAction: Equatable { case recover, openManagement }
+
+    /// Flattened rows in sidebar order, skipping collapsed sections. Pure, for
+    /// tests and for parity with `ServerHub.orderedRefs`.
+    static func rows(for sections: [ServerSection]) -> [Row] {
+        sections.flatMap { section -> [Row] in
+            guard !section.isCollapsed else { return [] }
+            return section.sessions.map {
+                Row(ref: SessionRef(serverId: section.id, sessionId: $0.id), session: $0, isCached: section.isCached)
+            }
+        }
+    }
+
+    /// A rejected token is fixed on the management screen (Re-pair); anything
+    /// else is a recovery of that one server.
+    static func retryAction(for section: ServerSection) -> RetryAction {
+        if case .authFailed = section.status { return .openManagement }
+        return .recover
+    }
 
     var body: some View {
         List {
             Section {
-                Button {
-                    Task { await coordinator.createNewSession() }
-                } label: {
-                    Label("New Session", systemImage: "plus.rectangle")
-                }
-                Button {
-                    isLoadingAttachable = true
-                    Task {
-                        attachableSessions = await coordinator.fetchAttachableSessions()
-                        isLoadingAttachable = false
-                        showAttachSheet = true
+                if let focus = hub.focusCoordinator {
+                    Button {
+                        isLoadingAttachable = true
+                        Task {
+                            attachableSessions = await focus.fetchAttachableSessions()
+                            isLoadingAttachable = false
+                            showAttachSheet = true
+                        }
+                    } label: {
+                        Label("Attach Session", systemImage: "arrow.triangle.branch")
                     }
-                } label: {
-                    Label("Attach Session", systemImage: "arrow.triangle.branch")
+                    .disabled(isLoadingAttachable)
                 }
-                .disabled(isLoadingAttachable)
+                Button {
+                    hub.isShowingServerList = true
+                } label: {
+                    Label("Servers", systemImage: "server.rack")
+                }
             }
-            // Keeps the actions card visually separate from the tiles below, now
-            // that the List-level spacing is collapsed to the tile gap.
             .listSectionSpacing(20)
 
-            if coordinator.activeSessions.isEmpty && !coordinator.isLoading {
-                ContentUnavailableView(
-                    "No Sessions",
-                    systemImage: "terminal",
-                    description: Text("Create a new session to get started.")
-                )
-            } else {
-                let sessions = coordinator.activeSessions
-                let byId = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
-                ForEach(coordinator.activityCoordinator.rollups(for: sessions)) { group in
-                    // Each group renders as one rounded tile. The header is a
-                    // plain row rather than a Section header so it can share the
-                    // tile's background; the session rows stay direct List rows
-                    // so `.swipeActions` (swipe-to-kill) keeps working.
-                    let members = group.sessionIds.compactMap { byId[$0] }
-                    let collapsed = collapse.isCollapsed(group.id) || members.isEmpty
-                    Section {
-                        rollupHeader(group, isCollapsed: collapsed)
-                            .workspaceTileRow(collapsed ? .only : .top)
-                        if !collapsed {
-                            ForEach(Array(members.enumerated()), id: \.element.id) { index, session in
-                                sessionRow(session)
-                                    .workspaceTileRow(.forSession(index: index, of: members.count))
+            ForEach(hub.sections) { section in
+                Section {
+                    ServerSectionHeader(
+                        model: ServerSectionHeaderModel(section: section),
+                        isCollapsed: section.isCollapsed,
+                        onToggle: { hub.setCollapsed(section.id, !section.isCollapsed) },
+                        onRetry: {
+                            switch Self.retryAction(for: section) {
+                            case .openManagement: hub.isShowingServerList = true
+                            case .recover: hub.triggerUserRecovery(serverId: section.id)
                             }
+                        },
+                        onNew: section.status.isLive ? { Task { await hub.createSession(on: section.id) } } : nil)
+                    .listRowSeparator(.hidden)
+                }
+                if !section.isCollapsed, let coordinator = hub.slot(for: section.id) {
+                    ServerSessionRows(hub: hub, coordinator: coordinator, section: section,
+                                      onShareQR: { ref in qrRef = ref; showQRSheet = true })
+                } else if !section.isCollapsed, !section.sessions.isEmpty {
+                    // Disabled or token-less bookmark with cached rows: plain, greyed, inert.
+                    Section {
+                        ForEach(section.sessions, id: \.id) { s in
+                            Text(s.name ?? String(s.id.uuidString.prefix(8))).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -68,91 +94,85 @@ struct SessionSidebarView: View {
         // Pinned, not inherited: the tiles get their rounded corners from the
         // inset-grouped section shape this style clips row backgrounds to (see
         // `WorkspaceTileBackground`). That style is only the *implicit* default in
-        // the iPhone sheet. On iPad this same view is the sidebar column of a
-        // `NavigationSplitView`, where the implicit style is `.sidebar` — which
-        // does no such clipping, so every tile rendered square-cornered and the
-        // actions rows lost their card entirely. Stating the style makes the
-        // assumption the tile background depends on true on both idioms.
+        // the iPhone sheet; on iPad the implicit style is `.sidebar`, which does
+        // no such clipping.
         .listStyle(.insetGrouped)
-        // Each workspace group is its own `Section`, so SwiftUI's default
-        // inter-section spacing (~35pt) — not the row insets — is what separates
-        // the tiles. This is where `tileGap` has to be applied to take effect.
         .listSectionSpacing(WorkspaceTileMetrics.tileGap)
         .navigationTitle("Sessions")
-        .onAppear {
-            // F3: seed collapse layout from persistence once per appear.
-            collapse = SidebarCollapseModel(collapsed: coordinator.loadCollapsedGroups())
-        }
         .sheet(isPresented: $showQRSheet) {
-            if let sessionId = qrSessionId {
-                QRCodeSheet(
-                    sessionId: sessionId,
-                    sessionName: coordinator.name(for: sessionId)
-                )
+            if let ref = qrRef, let coordinator = hub.slot(for: ref.serverId) {
+                QRCodeSheet(sessionId: ref.sessionId,
+                            sessionName: coordinator.name(for: ref.sessionId),
+                            serverInstanceId: hub.sections.first { $0.id == ref.serverId }?.config.instanceId)
             }
         }
-        // Pull-to-refresh runs the full handshake, not a bare list fetch, so it
-        // doubles as the user's retry affordance if the launch handshake failed
-        // (it will reconnect and re-authenticate as needed).
-        .refreshable {
-            await coordinator.performHandshake(reason: .wake)
-        }
+        // Pull-to-refresh fans the wake transition out to every server, so it
+        // doubles as the user's retry affordance.
+        .refreshable { await hub.handleForegroundTransition(userInitiated: true) }
         .overlay {
-            if (coordinator.isLoading || coordinator.isPerformingHandshake) && coordinator.sessions.isEmpty {
-                ProgressView("Loading...")
+            if hub.aggregate.enabledServers > 0, hub.aggregate.liveServers == 0,
+               hub.sections.allSatisfy({ $0.sessions.isEmpty }) {
+                ProgressView("Connecting…")
             }
         }
         .sheet(isPresented: $showAttachSheet) {
-            AttachSessionSheet(
-                sessions: attachableSessions,
-                coordinator: coordinator,
-                isPresented: $showAttachSheet
-            )
-        }
-    }
-
-    private func agentId(for id: UUID) -> String? {
-        coordinator.activeAgent(for: id)
-    }
-
-    /// A single session row with its tap / swipe actions.
-    @ViewBuilder
-    private func sessionRow(_ session: SessionInfo) -> some View {
-        SessionRow(
-            session: session,
-            name: coordinator.name(for: session.id),
-            isActive: session.id == coordinator.activeSessionId,
-            activity: coordinator.activityState(for: session.id),
-            agentId: agentId(for: session.id),
-            agentState: coordinator.agentState(for: session.id),
-            seen: !coordinator.isUnseen(session.id),
-            onRename: { newName in coordinator.setName(newName, for: session.id) },
-            onShareQR: {
-                qrSessionId = session.id
-                showQRSheet = true
-            }
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            Task { await coordinator.switchToSession(id: session.id) }
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) {
-                Task { await coordinator.terminateSession(id: session.id) }
-            } label: {
-                Label("Kill", systemImage: "xmark.circle")
+            if let focus = hub.focusCoordinator {
+                AttachSessionSheet(sessions: attachableSessions, coordinator: focus, hub: hub, isPresented: $showAttachSheet)
             }
         }
     }
+}
 
-    /// Collapsible tile header: rollup dot + folder title + attention count +
-    /// trailing chevron. Shared with the macOS sidebar via `WorkspaceTileHeader`.
-    @ViewBuilder
-    private func rollupHeader(_ group: WorkspaceRollup, isCollapsed: Bool) -> some View {
-        WorkspaceTileHeader(group: group, isCollapsed: isCollapsed) {
-            collapse.toggle(group.id)
-            coordinator.saveCollapsedGroups(collapse.collapsedGroupIds)  // F3
+/// One server's rows: the workspace tiles and session rows exactly as the
+/// single-server sidebar drew them. Rows at half opacity when the section is
+/// cached (offline). Tap → `hub.select(ref)`; swipe → terminate on that server.
+private struct ServerSessionRows: View {
+    @ObservedObject var hub: IOSServerHub
+    @ObservedObject var coordinator: SessionCoordinator
+    let section: ServerSection
+    let onShareQR: (SessionRef) -> Void
+    @State private var collapse = SidebarCollapseModel()
+
+    var body: some View {
+        let sessions = section.sessions
+        let byId = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        ForEach(coordinator.activityCoordinator.rollups(for: sessions)) { group in
+            let members = group.sessionIds.compactMap { byId[$0] }
+            let collapsed = collapse.isCollapsed(group.id) || members.isEmpty
+            Section {
+                WorkspaceTileHeader(group: group, isCollapsed: collapsed) {
+                    collapse.toggle(group.id)
+                    coordinator.saveCollapsedGroups(collapse.collapsedGroupIds)  // F3
+                }
+                .workspaceTileRow(collapsed ? .only : .top)
+                if !collapsed {
+                    ForEach(Array(members.enumerated()), id: \.element.id) { index, session in
+                        let ref = SessionRef(serverId: section.id, sessionId: session.id)
+                        SessionRow(
+                            session: session,
+                            name: coordinator.name(for: session.id),
+                            isActive: hub.activeRef == ref,
+                            activity: coordinator.activityState(for: session.id),
+                            agentId: coordinator.activeAgent(for: session.id),
+                            agentState: coordinator.agentState(for: session.id),
+                            seen: !coordinator.isUnseen(session.id),
+                            onRename: { newName in coordinator.setName(newName, for: session.id) },
+                            onShareQR: { onShareQR(ref) }
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { Task { await hub.select(ref) } }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                Task { await coordinator.terminateSession(id: session.id) }
+                            } label: { Label("Kill", systemImage: "xmark.circle") }
+                        }
+                        .workspaceTileRow(.forSession(index: index, of: members.count))
+                        .opacity(section.isCached ? 0.5 : 1)
+                    }
+                }
+            }
         }
+        .onAppear { collapse = SidebarCollapseModel(collapsed: coordinator.loadCollapsedGroups()) }
     }
 }
 
@@ -242,6 +262,7 @@ private struct SessionRow: View {
 private struct AttachSessionSheet: View {
     let sessions: [SessionInfo]
     let coordinator: SessionCoordinator
+    let hub: IOSServerHub
     @Binding var isPresented: Bool
     @State private var showScanner = false
 
@@ -308,7 +329,7 @@ private struct AttachSessionSheet: View {
                 }
             }
             .sheet(isPresented: $showScanner) {
-                QRScannerSheet(coordinator: coordinator, isAttachSheetPresented: $isPresented, isScannerPresented: $showScanner)
+                QRScannerSheet(hub: hub, isAttachSheetPresented: $isPresented, isScannerPresented: $showScanner)
             }
         }
         .presentationDetents([.medium])
@@ -326,7 +347,7 @@ private struct AttachSessionSheet: View {
 // MARK: - QR Scanner Sheet
 
 private struct QRScannerSheet: View {
-    let coordinator: SessionCoordinator
+    let hub: IOSServerHub
     @Binding var isAttachSheetPresented: Bool
     @Binding var isScannerPresented: Bool
 
@@ -347,12 +368,14 @@ private struct QRScannerSheet: View {
     }
 
     private func handleScannedCode(_ value: String) {
-        guard let sessionId = SessionDeepLink(string: value)?.sessionId else {
+        guard let link = SessionDeepLink(string: value) else {
             return  // Invalid QR code — silently ignore, keep scanning
         }
 
         isScannerPresented = false
         isAttachSheetPresented = false
-        Task { await coordinator.attachRemoteSession(id: sessionId) }
+        // Through the hub, so a `?server=` in the code routes to that relay
+        // (spec §10) and a missing session surfaces as the hub's notice.
+        Task { _ = await hub.handleDeepLink(link) }
     }
 }

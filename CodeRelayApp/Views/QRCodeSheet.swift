@@ -1,13 +1,17 @@
 import SwiftUI
 import CoreImage
+import CodeRelayKit
 
 struct QRCodeSheet: View {
     let sessionId: UUID
     let sessionName: String?
+    /// The relay's instance id when known: another device then routes the link
+    /// to that exact server (spec §10) instead of searching by session id.
+    var serverInstanceId: UUID? = nil
     @Environment(\.dismiss) private var dismiss
 
     private var deepLink: String {
-        "coderelay://session/\(sessionId.uuidString)"
+        SessionDeepLink(sessionId: sessionId, serverInstanceId: serverInstanceId).urlString
     }
 
     var body: some View {
