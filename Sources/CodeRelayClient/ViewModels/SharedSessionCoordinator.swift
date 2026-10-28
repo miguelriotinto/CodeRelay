@@ -6,7 +6,7 @@ import CodeRelayKit
 private let recoveryLog = Logger(subsystem: "com.coderelay.client", category: "Recovery")
 
 @MainActor
-open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
+open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, ServerSlotCoordinating {
 
     // MARK: - Published State
 
