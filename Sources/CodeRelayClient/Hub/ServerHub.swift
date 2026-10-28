@@ -47,6 +47,8 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     private var missingToken: Set<UUID> = []
     private var collapsedServers: Set<UUID> = []
     private var started = false
+    /// Deep links that arrived before `start()` finished wait here.
+    private var startGate: [CheckedContinuation<Void, Never>] = []
     /// serverId → sessionId chosen while that server was not live; applied by
     /// `slotDidChange` once a live list proves the session still exists (D4).
     private(set) var pendingSelection: [UUID: UUID] = [:]
@@ -103,6 +105,8 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
             index += 1
         }
         publish()
+        for c in startGate { c.resume() }
+        startGate.removeAll()
     }
 
     public func stop() {
@@ -356,6 +360,98 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
             notice = "That session has ended"
             publish()
         }
+    }
+
+    // MARK: - Fan-out (spec §7.3, D10)
+
+    /// Foreground / wake / network-restored: every coordinator gets the event,
+    /// staggered so N servers do not reconnect in lockstep. Offline ones are
+    /// included — this is how they come back.
+    public func handleForegroundTransition(userInitiated: Bool) async {
+        var index = 0
+        for config in bookmarks where config.enabled {
+            guard let slot = slots[config.id] else { continue }
+            let delay = stagger * index
+            recordedSleeps.append(delay)
+            await sleep(delay)
+            await slot.handleForegroundTransition(userInitiated: userInitiated)
+            index += 1
+        }
+        publish()
+    }
+
+    /// One server (the section's Retry) or all of them (menu bar / shortcut).
+    public func triggerUserRecovery(serverId: UUID? = nil) {
+        if let serverId { slots[serverId]?.triggerUserRecovery(); return }
+        for (_, slot) in slots { slot.triggerUserRecovery() }
+    }
+
+    /// Push registration is per relay: each coordinator decides and sends for
+    /// its own socket (spec §10).
+    public func syncPushRegistration(pushEnabled: Bool, notifyOnFinished: Bool) async {
+        for (_, slot) in slots {
+            await slot.syncPushRegistration(pushEnabled: pushEnabled, notifyOnFinished: notifyOnFinished)
+        }
+    }
+
+    // MARK: - Deep links (spec §10)
+
+    public enum DeepLinkOutcome: Equatable {
+        case selected(SessionRef)
+        case enabledAndSelected(SessionRef)
+        case attachingRemote(serverId: UUID)
+        case notFound(serverName: String?)
+    }
+
+    /// Routing precedence: instance id → unique session across live sections →
+    /// single enabled server's cross-device attach → not found. A link that
+    /// arrives before `start()` finished waits for it.
+    public func handleDeepLink(_ link: SessionDeepLink) async -> DeepLinkOutcome {
+        if !started || (slots.isEmpty && bookmarks.contains(where: \.enabled)) {
+            await withCheckedContinuation { startGate.append($0) }
+        }
+        // 1. The relay named itself.
+        if let instanceId = link.serverInstanceId,
+           let config = bookmarks.first(where: { $0.instanceId == instanceId }) {
+            let ref = SessionRef(serverId: config.id, sessionId: link.sessionId)
+            if !config.enabled {
+                if setEnabled(config.id, true) {
+                    notice = "Enabled \(config.displayName ?? config.name) to open this session"
+                    activeRef = ref
+                    stateStore.saveActiveRef(ref)
+                    pendingSelection[config.id] = link.sessionId
+                    publish()
+                    return .enabledAndSelected(ref)
+                }
+                return .notFound(serverName: config.displayName ?? config.name)
+            }
+            await select(ref)
+            return .selected(ref)
+        }
+        // 2. Exactly one live section lists the session.
+        let hits = sections.filter { $0.status.isLive && $0.sessions.contains(where: { $0.id == link.sessionId }) }
+        if hits.count == 1 {
+            let ref = SessionRef(serverId: hits[0].id, sessionId: link.sessionId)
+            await select(ref)
+            return .selected(ref)
+        }
+        // 3. One enabled server: the pre-hub cross-device attach.
+        let enabled = bookmarks.filter(\.enabled)
+        if enabled.count == 1, let slot = slots[enabled[0].id] {
+            if let previous = activeRef, previous.serverId != enabled[0].id, let from = slots[previous.serverId] {
+                await detachBounded(from)
+            }
+            await slot.attachRemoteSession(id: link.sessionId, serverName: nil)
+            if let id = slot.activeSessionId {
+                activeRef = SessionRef(serverId: enabled[0].id, sessionId: id)
+                stateStore.saveActiveRef(activeRef)
+            }
+            publish()
+            return .attachingRemote(serverId: enabled[0].id)
+        }
+        // 4. Nothing to route to.
+        notice = "Session not found on any enabled server"
+        return .notFound(serverName: nil)
     }
 
     // MARK: - Collapse (per device)
