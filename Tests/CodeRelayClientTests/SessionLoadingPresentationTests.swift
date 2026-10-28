@@ -207,3 +207,39 @@ final class SessionLoadingPresentationTests: XCTestCase {
     }
 
 }
+
+#if os(macOS)
+import AppKit
+
+/// The sheet must be sized by its content, never by a fixed height: with the
+/// reconnect Cancel button it is taller than the fixed heights it used to get
+/// (macOS 220 pt; iOS a third of a short landscape / iPhone Duo display), and
+/// the spinner and the button were clipped.
+@MainActor
+final class SessionLoadingSheetSizingTests: XCTestCase {
+    private func reconnecting() -> SessionLoadingPresentation {
+        SessionLoadingPresentation(loadPhase: nil, isRecovering: true, recoveryPhase: .authenticating,
+                                   sessionName: "Mac Mini M6 Configuration", serverName: "TESSARION")
+    }
+
+    private func fittingHeight(_ view: some View, width: CGFloat) -> CGFloat {
+        let host = NSHostingView(rootView: view.frame(width: width))
+        host.layoutSubtreeIfNeeded()
+        return host.fittingSize.height
+    }
+
+    func testTheSheetWithCancelIsTallerThanTheOldFixedHeights() {
+        let natural = fittingHeight(SessionLoadingSheet(presentation: reconnecting(), onCancel: {}), width: 320)
+        XCTAssertGreaterThan(natural, 220, "the old macOS sheet frame clipped it")
+        XCTAssertGreaterThan(natural, 0.32 * 393, "a third of an iPhone's landscape height clipped it")
+    }
+
+    func testTheMacSheetContainerIsSizedByItsContent() {
+        // The container the Mac app hosts the sheet in must not fix a height.
+        let content = SessionLoadingSheet(presentation: reconnecting(), onCancel: {})
+        let natural = fittingHeight(content, width: SessionLoadingSheetLayout.macWidth)
+        let hosted = fittingHeight(content.sessionLoadingSheetContainer(), width: SessionLoadingSheetLayout.macWidth)
+        XCTAssertGreaterThanOrEqual(hosted, natural, "nothing may be cut: the container is at least as tall as its content")
+    }
+}
+#endif

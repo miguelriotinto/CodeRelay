@@ -51,4 +51,23 @@ enum HubPreviewSeed {
             .flatMap { try? AuthManager.shared.loadToken(for: $0.id) }
     }
 }
+/// `CODERELAY_LOADING_PREVIEW=reconnecting` (with Cancel) or `=history`
+/// (212 KB streaming): the loading sheet held up for a screenshot. The model's
+/// 15 s stall timer still lowers it, so capture within that window.
+@MainActor
+enum LoadingSheetPreview {
+    static var presentation: SessionLoadingPresentation? {
+        switch ProcessInfo.processInfo.environment["CODERELAY_LOADING_PREVIEW"] {
+        case "reconnecting":
+            return SessionLoadingPresentation(loadPhase: nil, isRecovering: true, recoveryPhase: .authenticating,
+                                              sessionName: "Mac Mini M6 Configuration", serverName: "TESSARION")
+        case "history":
+            return SessionLoadingPresentation(loadPhase: .loadingHistory(bytes: 212_000), isRecovering: false,
+                                              recoveryPhase: .reconnecting,
+                                              sessionName: "Mac Mini M6 Configuration", serverName: "TESSARION")
+        default:
+            return nil
+        }
+    }
+}
 #endif

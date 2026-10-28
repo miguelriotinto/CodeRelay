@@ -79,6 +79,16 @@ struct WorkspaceView: View {
         .task {
             await hub.start()
             await syncPush()
+            #if DEBUG
+            // `CODERELAY_LOADING_PREVIEW=reconnecting|history` holds the loading
+            // sheet up over the empty pane for screenshot verification.
+            if let preview = LoadingSheetPreview.presentation {
+                showSidebarSheet = false
+                columnVisibility = .detailOnly
+                loading.update(preview)
+                return
+            }
+            #endif
             if WorkspaceRoot.shouldPresentManagement(aggregate: hub.aggregate) {
                 hub.isShowingServerList = true
             } else if hub.activeRef == nil {
@@ -148,7 +158,10 @@ struct WorkspaceView: View {
             if let shown = loading.shown {
                 SessionLoadingSheet(presentation: shown,
                                     onCancel: shown.allowsCancel ? { hub.focusCoordinator?.cancelRecovery() } : nil)
-                    .presentationDetents([.fraction(0.32)])
+                    // Exactly as tall as its content, never a fixed fraction:
+                    // with the reconnect Cancel a third of a short landscape or
+                    // iPhone Duo display clipped the spinner and the button.
+                    .sessionLoadingSheetContainer()
                     .presentationDragIndicator(.hidden)
                     .presentationBackgroundInteraction(.disabled)
                     .interactiveDismissDisabled()

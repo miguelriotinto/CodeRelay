@@ -134,7 +134,9 @@ private struct WorkspaceView: View {
             if let shown = loading.shown {
                 SessionLoadingSheet(presentation: shown,
                                     onCancel: shown.allowsCancel ? { hub.focusCoordinator?.cancelRecovery() } : nil)
-                    .frame(width: MainWindowLoading.detentSize.width, height: MainWindowLoading.detentSize.height)
+                    // Width fixed, height from the content: a fixed 220 pt
+                    // clipped the reconnect Cancel button.
+                    .sessionLoadingSheetContainer()
                     .interactiveDismissDisabled()
             }
         }
@@ -346,9 +348,4 @@ private struct HubStatusBar: View {
             ? (a.liveServers == 1 ? "Connected" : "Connecting…")
             : "\(a.liveServers)/\(a.enabledServers) servers connected"
     }
-}
-
-/// Size of the loading sheet as a macOS window sheet (iOS uses a detent).
-enum MainWindowLoading {
-    static let detentSize = CGSize(width: 320, height: 220)
 }
