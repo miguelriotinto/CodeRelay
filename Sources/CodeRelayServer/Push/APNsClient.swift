@@ -83,7 +83,7 @@ public actor APNsClient: PushSending {
     // MARK: - Send
 
     public func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
-                     body: String, deepLink: String, collapseKey: String) async -> PushResult {
+                     body: String, deepLink: String, collapseKey: String, serverId: String) async -> PushResult {
         do {
             let jwt = try currentJWT()
             // The device reports its own bundle id (iOS vs macOS differ); fall
@@ -96,6 +96,7 @@ public actor APNsClient: PushSending {
                     "thread-id": collapseKey,
                 ],
                 "deepLink": deepLink,
+                "serverId": serverId,
             ]
             let bodyData = try JSONSerialization.data(withJSONObject: payload)
             let url = "https://\(host)/3/device/\(deviceToken)"

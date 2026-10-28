@@ -18,8 +18,10 @@ public enum PushResult: Equatable, Sendable {
 /// APNs provider fan out to distinct iOS/macOS apps. `nil` means "use the
 /// configured default"; FCM ignores it.
 public protocol PushSending: Sendable {
+    /// `serverId` is the relay's instance id (multi-server spec §10); providers
+    /// put it in the payload so a tap can be routed to the right relay.
     func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
-              body: String, deepLink: String, collapseKey: String) async -> PushResult
+              body: String, deepLink: String, collapseKey: String, serverId: String) async -> PushResult
 }
 
 /// Routes each send to the provider matching the device's platform. Missing a
@@ -34,7 +36,7 @@ public struct CompositePushSender: PushSending {
     }
 
     public func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
-                     body: String, deepLink: String, collapseKey: String) async -> PushResult {
+                     body: String, deepLink: String, collapseKey: String, serverId: String) async -> PushResult {
         let sender: PushSending?
         switch platform {
         case .apns: sender = apns
@@ -42,6 +44,7 @@ public struct CompositePushSender: PushSending {
         }
         guard let sender else { return .failed("no sender configured for \(platform.rawValue)") }
         return await sender.send(deviceToken: deviceToken, platform: platform, topic: topic,
-                                 title: title, body: body, deepLink: deepLink, collapseKey: collapseKey)
+                                 title: title, body: body, deepLink: deepLink, collapseKey: collapseKey,
+                                 serverId: serverId)
     }
 }

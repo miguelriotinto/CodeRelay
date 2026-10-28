@@ -82,6 +82,7 @@ if config.pushEnabled, let sender = PushSenderFactory.make(config: config, group
         tokenProvider: { await pushStore.registrations(forTokenId: $0) },
         sender: sender,
         config: PushNotifyConfig(debounceInterval: 15, notifyOnFinished: config.pushNotifyOnFinished),
+        serverId: identity.id.uuidString,
         onDeadToken: { token in Task { await pushStore.removeToken(token) } }
     )
     await sessionManager.addGlobalActivityObserver { sessionId, tokenId, activity, agentState, revision in
