@@ -40,7 +40,9 @@ public enum OutputFormatter {
         version: String?,
         pid: Int?,
         uptime: Int?,
-        sessions: Int
+        sessions: Int,
+        serverName: String? = nil,
+        instanceId: String? = nil
     ) -> String {
         var lines: [String] = []
 
@@ -49,6 +51,14 @@ public enum OutputFormatter {
 
         if let version = version {
             lines.append("Version:    \(version)")
+        }
+
+        if let serverName {
+            lines.append("Name:       \(serverName)")
+        }
+
+        if let instanceId {
+            lines.append("Instance:   \(instanceId)")
         }
 
         if let pid = pid {

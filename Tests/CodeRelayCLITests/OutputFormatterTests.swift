@@ -193,4 +193,18 @@ final class OutputFormatterTests: XCTestCase {
         XCTAssertTrue(output.contains("Caf\u{00E9}"))
         XCTAssertTrue(output.contains("OK"))
     }
+
+    func testHumanStatusShowsIdentityWhenPresent() {
+        let output = OutputFormatter.formatStatus(
+            running: true, version: "0.3.31", pid: 1, uptime: 10, sessions: 0,
+            serverName: "studio", instanceId: "0F2C1D9A-5B8E-4C7D-9A1B-2E3F4A5B6C7D")
+        XCTAssertTrue(output.contains("Name:       studio"))
+        XCTAssertTrue(output.contains("Instance:   0F2C1D9A-5B8E-4C7D-9A1B-2E3F4A5B6C7D"))
+    }
+
+    func testHumanStatusOmitsIdentityAgainstOlderServers() {
+        let output = OutputFormatter.formatStatus(running: true, version: "0.3.30", pid: 1, uptime: 10, sessions: 0)
+        XCTAssertFalse(output.contains("Name:"))
+        XCTAssertFalse(output.contains("Instance:"))
+    }
 }

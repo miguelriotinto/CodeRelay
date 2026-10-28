@@ -191,7 +191,9 @@ struct StatusCommand: AsyncParsableCommand {
                     version: response.version,
                     pid: response.pid,
                     uptime: response.uptime,
-                    sessions: response.sessions
+                    sessions: response.sessions,
+                    serverName: response.serverName,
+                    instanceId: response.instanceId
                 ))
                 if !globals.quiet {
                     print("  Managed by: \(platform.managerDescription)")
@@ -243,11 +245,15 @@ struct StatusResponse: Codable {
     let pid: Int?
     let uptimeSeconds: Int?
     let sessionCount: Int?
+    let instanceId: String?
+    let serverName: String?
 
     enum CodingKeys: String, CodingKey {
         case status
         case version
         case pid
+        case instanceId
+        case serverName
         case uptimeSeconds = "uptime_seconds"
         case sessionCount = "session_count"
     }
