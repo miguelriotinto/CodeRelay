@@ -1441,7 +1441,7 @@ PR title: `feat(ios): multi-server workspace on ServerHub (plan 2)`. Body: Tasks
 - Produces:
   - `SessionLoadingPresentation` (pure value): `init(loadPhase: SessionLoadPhase?, isRecovering: Bool, recoveryPhase: SharedSessionCoordinator.RecoveryPhase, sessionName: String?, serverName: String?)`; `isActive: Bool`; `title: String` ("Reconnecting" while recovering, else "Loading session"); `status: String` (the phase label, e.g. "Authenticating…", "Loading session history…"); `detail: String?` (formatted bytes while `loadingHistory`); `subtitle: String?` ("<session> · <server>"); `allowsCancel: Bool` (recovery only).
   - `SessionLoadingSheetModel` (`@MainActor final class, ObservableObject`): `@Published private(set) var isPresented`, `@Published private(set) var shown: SessionLoadingPresentation?` (the last active presentation, kept while the sheet animates down), `static let minimumVisible: Duration = .milliseconds(600)`, `func update(_ presentation: SessionLoadingPresentation)`, `init(sleep:)` for tests.
-  - `SessionLoadingSheet(presentation:onCancel:)` SwiftUI view: spinner, title, status, detail (monospaced digits, `.numericText()` transition), subtitle, Cancel when `allowsCancel`.
+  - `SessionLoadingSheet(presentation:onCancel:)` SwiftUI view: spinner, title, status, **the byte counter as the largest text on the sheet** (`SessionLoadingSheet.bytesFont` = `.title2.monospacedDigit().weight(.semibold)`, `.numericText()` transition so the digits roll rather than flash; the slot is reserved from the first phase and reads "0 KB" until history starts, so the layout never jumps), subtitle, Cancel when `allowsCancel`.
   - `TerminalReloadFade.reload(coordinator:id:)` replaces `run(coordinator:id:cover:)`; `TerminalReloadFade.coverDuration` (0.16 s to black, 0.22 s back) and `View.terminalReloadCover(_:)` stay.
   - Coordinator: `switchToSession` publishes `.attaching` at its start on every path (also when the cached terminal lets it skip the replay); `reloadTerminalFromServer` publishes `.attaching` before its RPC and clears the phase in its `catch` (the replay hooks clear it on success as today).
 
@@ -1512,7 +1512,16 @@ final class SessionLoadingPresentationTests: XCTestCase {
         XCTAssertEqual(p.subtitle, "Arya · studio")
         XCTAssertFalse(p.allowsCancel)
         XCTAssertEqual(make(.authenticating).status, "Authenticating…")
-        XCTAssertNil(make(.attaching).detail)
+        XCTAssertEqual(make(.attaching).detail, SessionLoadPhase.formatBytes(0),
+                       "the counter slot is reserved from the first phase so the layout never jumps")
+        XCTAssertNil(make(nil).detail)
+    }
+
+    func testBytesAreTheLargestTextOnTheSheet() {
+        // The counter is the one line that proves progress is real; it must not
+        // be a caption under the status.
+        XCTAssertEqual(SessionLoadingSheet.bytesFont, .title2.monospacedDigit().weight(.semibold))
+        XCTAssertEqual(SessionLoadingSheet.statusFont, .subheadline)
     }
 
     func testRecoveryWinsTheTitleAndOffersCancel() {
@@ -1584,6 +1593,9 @@ public struct SessionLoadingPresentation: Equatable {
     public let isActive: Bool
     public let title: String
     public let status: String
+    /// Bytes loaded so far, formatted — nil only while nothing is loading.
+    /// Reserved from the first phase ("0 KB") so the sheet's layout is stable and
+    /// the user sees the counter start moving the moment history streams.
     public let detail: String?
     public let subtitle: String?
     public let allowsCancel: Bool
@@ -1597,7 +1609,7 @@ public struct SessionLoadingPresentation: Equatable {
         title = isRecovering ? "Reconnecting" : "Loading session"
         // The replay phase is the more specific status once it starts, even mid-recovery.
         status = loadPhase?.label ?? (isRecovering ? recoveryPhase.label : "")
-        detail = loadPhase?.detail
+        detail = isActive ? (loadPhase?.detail ?? SessionLoadPhase.formatBytes(0)) : nil
         let parts = [sessionName, serverName].compactMap { $0 }.filter { !$0.isEmpty }
         subtitle = parts.isEmpty ? nil : parts.joined(separator: " · ")
         allowsCancel = isRecovering
@@ -1665,21 +1677,28 @@ public struct SessionLoadingSheet: View {
         self.onCancel = onCancel
     }
 
+    /// The byte counter is deliberately the largest text on the sheet: it is
+    /// the one line that proves the load is progressing.
+    public static let bytesFont: Font = .title2.monospacedDigit().weight(.semibold)
+    public static let statusFont: Font = .subheadline
+
     public var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             ProgressView().controlSize(.large)
             Text(presentation.title).font(.headline)
+            if let detail = presentation.detail {
+                Text(detail)
+                    .font(Self.bytesFont)
+                    .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
+                    .animation(.easeOut(duration: 0.2), value: detail)
+                    .accessibilityLabel("\(detail) loaded")
+            }
             Text(presentation.status)
-                .font(.subheadline)
+                .font(Self.statusFont)
                 .foregroundStyle(.secondary)
                 .contentTransition(.interpolate)
                 .animation(.easeInOut(duration: 0.25), value: presentation.status)
-            if let detail = presentation.detail {
-                Text(detail)
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-            }
             if let subtitle = presentation.subtitle {
                 Text(subtitle).font(.footnote).foregroundStyle(.tertiary).lineLimit(1)
             }
@@ -1829,7 +1848,7 @@ Then fold "Task 7/8" into Task 6's docs step: in `CLAUDE.md`'s "Session-loading 
 
 ## Self-review notes
 
-- **Loading sheet (user request, 2026-10-28):** one presentation for switch / name-label refresh / reconnect (T7 shared model + iOS, T8 macOS); "always" is honoured by setting the phase at the start of every switch and reload and by the 600 ms minimum hold; the sheet dismisses and the black lifts on the first visible frame; every failure path clears the inputs (Review Focus 0).
+- **Loading sheet (user request, 2026-10-28):** one presentation for switch / name-label refresh / reconnect (T7 shared model + iOS, T8 macOS); the byte counter is the largest text on the sheet, reserved from the first phase ("0 KB") and rolling with `.numericText()`; "always" is honoured by setting the phase at the start of every switch and reload and by the 600 ms minimum hold; the sheet dismisses and the black lifts on the first visible frame; every failure path clears the inputs (Review Focus 0).
 - **Spec coverage (§8.1, §8.2, §9, §10, §11, §15.3):** root is the workspace (T3), sections + header + cached rows (T4), `hub.select` on tap (T4), New in the section header (T4), management screen with Enabled/duplicate/instance id and no Connect (T3), Reconnecting sheet names the server and shows for the focus coordinator only (T3), auth failure → Re-pair opens management (T4), Auto Connect setting removed and `lastConnectedServerId` retired by the migration (T2/T3), deep links routed by the hub and queued before start (T3), scenePhase fan-out (T3), QR share carries `?server=` (T4/T5), debug seed + `simctl openurl` (T6).
 - **Placeholders:** none; where a signature must be confirmed the step names the exact `grep`.
 - **Type consistency:** `IOSServerHub`, `IOSServerHubFactory.make/makeCoordinator/lastServerIdKey` (T2) used by T3–T6; `SessionSidebarView.rows/retryAction` (T4); `SessionTabStripModel.tabs` and `ActiveTerminalView.hostKey` (T5); `DeepLinkRouter`, `WorkspaceRoot.shouldPresentManagement`, `RecoveryOverlay(phase:serverName:onCancel:)` (T3); `QRCodeSheet(sessionId:sessionName:serverInstanceId:)` (T4, used by T5's overlay through `QRCodeComponents`).
