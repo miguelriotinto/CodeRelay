@@ -71,7 +71,7 @@ public final class PairingController {
         defer { connection.disconnect() }
 
         let reply = try await redeem(url.code, on: connection)
-        guard case .pairSuccess(let token, _, let label) = reply else {
+        guard case .pairSuccess(let token, _, let label, _) = reply else {
             throw mapError(reply)
         }
 

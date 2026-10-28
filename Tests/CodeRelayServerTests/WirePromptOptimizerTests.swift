@@ -12,7 +12,7 @@ final class WirePromptOptimizerTests: XCTestCase {
     private func authSuccess(_ client: TestWebSocketClient, token: String) async throws -> [String]? {
         try await client.send(.authRequest(token: token, protocolVersion: CodeRelayKit.protocolVersion))
         let reply = try await client.waitFor(["auth_success"])
-        guard case .authSuccess(_, _, let capabilities) = reply else {
+        guard case .authSuccess(_, _, let capabilities, _) = reply else {
             XCTFail("expected auth_success, got \(reply)"); return nil
         }
         return capabilities
@@ -131,7 +131,7 @@ final class WirePromptOptimizerTests: XCTestCase {
 
         try await client.send(.authRequest(token: token, protocolVersion: 1))
         let reply = try await client.waitFor(["auth_success"])
-        guard case .authSuccess(let version, let tokenId, let capabilities) = reply else {
+        guard case .authSuccess(let version, let tokenId, let capabilities, _) = reply else {
             return XCTFail("expected auth_success, got \(reply)")
         }
         XCTAssertEqual(version, CodeRelayKit.protocolVersion,
