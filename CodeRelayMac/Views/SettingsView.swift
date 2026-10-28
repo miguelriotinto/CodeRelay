@@ -234,13 +234,6 @@ private struct GeneralSettingsTab: View {
                 SettingsSectionHeader(title: "Launch")
                 SettingsGroup {
                     SettingsGroupRow {
-                        Text("Auto connect on launch")
-                        Spacer()
-                        Toggle("", isOn: $settings.autoConnectEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                    SettingsGroupRow {
                         Text("Show window on launch")
                         Spacer()
                         Toggle("", isOn: $settings.showWindowOnLaunch)

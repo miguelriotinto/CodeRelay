@@ -2,31 +2,32 @@ import Foundation
 import SwiftUI
 import CodeRelayClient
 
+/// The server management list (spec §8.1, §11). Enabled bookmarks are live in
+/// the hub — their status comes from there. Only disabled bookmarks are probed
+/// by the status poller (D11), so no bookmark is ever probed twice.
 @MainActor
 final class ServerListViewModel: ObservableObject {
-
     @Published private(set) var connections: [ConnectionConfig] = []
     @Published private(set) var statuses: [UUID: ServerStatus] = [:]
     @Published var selectedConnectionId: UUID?
 
-    private let statusChecker = ServerStatusChecker(interval: 5)
+    private let statusChecker = ServerStatusChecker(interval: 15)
 
     init() {
         statusChecker.$statuses.assign(to: &$statuses)
         loadConnections()
     }
 
-    // MARK: - CRUD
+    static func pollTargets(_ connections: [ConnectionConfig]) -> [ConnectionConfig] {
+        connections.filter { !$0.enabled }
+    }
 
     func loadConnections() {
         connections = CodeRelayMacApp.savedConnections.loadAll()
-        let lastId = AppSettings.shared.lastServerId
-        if let uuid = UUID(uuidString: lastId), connections.contains(where: { $0.id == uuid }) {
-            selectedConnectionId = uuid
-        } else {
+        if selectedConnectionId == nil || !connections.contains(where: { $0.id == selectedConnectionId }) {
             selectedConnectionId = connections.first?.id
         }
-        statusChecker.refresh(connections: connections)
+        statusChecker.refresh(connections: Self.pollTargets(connections))
     }
 
     func addOrUpdate(_ connection: ConnectionConfig) {
@@ -34,25 +35,5 @@ final class ServerListViewModel: ObservableObject {
         loadConnections()
     }
 
-    func delete(id: UUID) {
-        _ = CodeRelayMacApp.savedConnections.delete(id: id)
-        loadConnections()
-    }
-
-    // MARK: - Selection
-
-    func selectedConnection() -> ConnectionConfig? {
-        guard let id = selectedConnectionId else { return nil }
-        return connections.first { $0.id == id }
-    }
-
-    func markAsLastUsed(_ id: UUID) {
-        AppSettings.shared.lastServerId = id.uuidString
-    }
-
-    // MARK: - Lifecycle
-
-    func stopAllPolling() {
-        statusChecker.stopPolling()
-    }
+    func stopAllPolling() { statusChecker.stopPolling() }
 }

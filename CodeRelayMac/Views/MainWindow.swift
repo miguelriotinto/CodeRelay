@@ -123,11 +123,7 @@ private struct WorkspaceView: View {
         }
         .sheet(isPresented: $hub.isShowingServerList) {
             NavigationStack {
-                ServerListWindow { config in
-                    hub.reloadBookmarks()
-                    hub.isShowingServerList = false
-                    _ = config
-                }
+                ServerListWindow(hub: hub)
             }
             .background(.black)
             .presentationBackground(.black)

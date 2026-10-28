@@ -1,15 +1,16 @@
 import SwiftUI
 import CodeRelayClient
 
+/// Server management (multi-server spec §8.1, §11): every bookmark with an
+/// **Enabled** toggle. There is no Connect — enabled servers are live in the
+/// workspace, disabled ones are only probed by the status poller.
 struct ServerListWindow: View {
+    @ObservedObject var hub: MacServerHub
     @StateObject private var viewModel = ServerListViewModel()
     @State private var addEditTarget: AddEditTarget?
     @State private var showDeleteAlert = false
     @State private var deleteTarget: ConnectionConfig?
     @State private var showPairSheet = false
-
-    /// Callback when the user connects to a server.
-    var onConnect: ((ConnectionConfig) -> Void)?
 
     enum AddEditTarget: Identifiable {
         case add
@@ -25,26 +26,37 @@ struct ServerListWindow: View {
     var body: some View {
         VStack(spacing: 0) {
             List(selection: $viewModel.selectedConnectionId) {
-                ForEach(viewModel.connections, id: \.id) { connection in
+                ForEach(hub.sections) { section in
                     ServerRow(
-                        connection: connection,
-                        isReachable: viewModel.statuses[connection.id]?.isLive ?? false,
-                        isTokenInvalid: viewModel.statuses[connection.id]?.reachability == .invalidToken
+                        section: section,
+                        probe: viewModel.statuses[section.id],
+                        onToggle: { on in
+                            // A refusal (cap of 8) leaves `hub.notice` for the footer.
+                            _ = hub.setEnabled(section.id, on)
+                            viewModel.loadConnections()
+                        }
                     )
                     .contextMenu {
-                        Button("Connect") { connectTo(connection) }
-                        Button("Edit...") { addEditTarget = .edit(connection) }
+                        Button("Edit...") { addEditTarget = .edit(section.config) }
                         Divider()
                         Button("Delete", role: .destructive) {
-                            deleteTarget = connection
+                            deleteTarget = section.config
                             showDeleteAlert = true
                         }
                     }
-                    .tag(connection.id)
+                    .tag(section.id)
                 }
             }
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
+
+            if let notice = hub.notice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 6)
+            }
 
             Divider()
             HStack {
@@ -59,22 +71,15 @@ struct ServerListWindow: View {
                     Label("Pair", systemImage: "qrcode")
                 }
                 Spacer()
-                Button("Connect") {
-                    if let c = viewModel.selectedConnection() {
-                        connectTo(c)
-                    }
-                }
-                .disabled(viewModel.selectedConnection() == nil)
-                .keyboardShortcut(.return, modifiers: [])
+                Text("\(hub.aggregate.enabledServers) of \(hub.aggregate.totalServers) enabled")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .padding(12)
         }
         .background(.black)
-        .frame(minWidth: 500, minHeight: 360)
-        // Stop the 5s status poll as soon as the sheet closes. The @StateObject
-        // is released when the sheet dismisses, and `ServerStatusChecker.deinit`
-        // now cancels the loop — but calling it here stops the churn on the same
-        // runloop turn instead of waiting for ARC to release the view model.
+        .frame(minWidth: 520, minHeight: 360)
+        // Stop the status poll as soon as the sheet closes (see ServerStatusChecker.deinit).
         .onDisappear { viewModel.stopAllPolling() }
         .navigationTitle("Servers")
         .toolbarBackground(.black, for: .windowToolbar)
@@ -82,43 +87,45 @@ struct ServerListWindow: View {
         .sheet(item: $addEditTarget) { target in
             AddEditServerView(target: target) { newConnection in
                 viewModel.addOrUpdate(newConnection)
+                hub.reloadBookmarks()
                 addEditTarget = nil
             }
         }
         .sheet(isPresented: $showPairSheet) {
             PairWithHostSheet(
                 onPaired: { config in
-                    viewModel.addOrUpdate(config)
-                    onConnect?(config)
+                    viewModel.addOrUpdate(config)      // paired bookmarks are saved enabled
+                    hub.reloadBookmarks()
                 },
                 prefill: nil
             )
         }
         .alert("Delete Server?", isPresented: $showDeleteAlert, presenting: deleteTarget) { target in
             Button("Delete", role: .destructive) {
-                viewModel.delete(id: target.id)
-                try? AuthManager.shared.deleteToken(for: target.id)
+                Task {
+                    await hub.removeServer(target.id)
+                    viewModel.loadConnections()
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: { target in
             Text("Are you sure you want to delete '\(target.name)'?")
         }
     }
-
-    private func connectTo(_ connection: ConnectionConfig) {
-        viewModel.markAsLastUsed(connection.id)
-        onConnect?(connection)
-    }
 }
 
 private struct ServerRow: View {
-    let connection: ConnectionConfig
-    let isReachable: Bool
-    var isTokenInvalid: Bool = false
+    let section: ServerSection
+    let probe: ServerStatus?
+    let onToggle: (Bool) -> Void
+
+    private var model: ServerSectionHeaderModel { ServerSectionHeaderModel(section: section) }
 
     private var dotColor: Color {
-        if isTokenInvalid { return .orange }
-        return isReachable ? .green : .red
+        if section.config.enabled { return model.dotColor }
+        guard let probe else { return .gray }
+        if probe.reachability == .invalidToken { return .orange }
+        return probe.isLive ? .green : .red
     }
 
     var body: some View {
@@ -127,17 +134,33 @@ private struct ServerRow: View {
                 .fill(dotColor)
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
-                Text(connection.name).font(.headline)
-                Text("\(connection.useTLS ? "wss" : "ws")://\(connection.host):\(connection.port)")
+                HStack(spacing: 6) {
+                    Text(section.title).font(.headline)
+                    if section.isDuplicateInstance {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                            .help("Another bookmark points at this same relay")
+                    }
+                }
+                Text("\(section.config.useTLS ? "wss" : "ws")://\(section.config.host):\(section.config.port)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if isTokenInvalid {
-                    Text("Invalid token")
+                if let subtitle = model.subtitle, section.config.enabled {
+                    Text(subtitle)
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.secondary)
+                }
+                if let instance = section.config.instanceId {
+                    Text("instance \(instance.uuidString.prefix(8))…")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
             Spacer()
+            Toggle("Enabled", isOn: Binding(get: { section.config.enabled }, set: onToggle))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .help(section.config.enabled ? "Shown in the workspace" : "Enable to show this server's sessions")
         }
         .padding(.vertical, 4)
     }
