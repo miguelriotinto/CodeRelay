@@ -1217,17 +1217,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         terminalViewModels[currentId]?.prepareForSwitch()
         terminalViewModels[currentId] = nil
         activeSessionId = nil
-        let budget = detachBudget
         let controller = sessionController
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { @MainActor in
-                do { try await controller?.detach() } catch {
-                    recoveryLog.debug("detachActive: \(error.localizedDescription, privacy: .public)")
-                }
+        await BoundedWait.run(budget: detachBudget) {
+            do { try await controller?.detach() } catch {
+                recoveryLog.debug("detachActive: \(error.localizedDescription, privacy: .public)")
             }
-            group.addTask { try? await Task.sleep(for: budget) }
-            await group.next()
-            group.cancelAll()
         }
     }
 

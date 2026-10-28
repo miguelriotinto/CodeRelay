@@ -47,6 +47,11 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     private var missingToken: Set<UUID> = []
     private var collapsedServers: Set<UUID> = []
     private var started = false
+    /// serverId → sessionId chosen while that server was not live; applied by
+    /// `slotDidChange` once a live list proves the session still exists (D4).
+    private(set) var pendingSelection: [UUID: UUID] = [:]
+    /// Forwarded to the previous coordinator's `detachActive` bound (§7.5).
+    public var detachBudget: Duration = .seconds(3)
 
     // Test hooks
     public var onTestEvent: ((String) -> Void)?
@@ -79,6 +84,16 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         guard !started else { return }
         started = true
         bookmarks = bookmarkStore.loadAll()
+        // F3 across servers (§9): restore the last active ref as a cached
+        // selection; `applyPendingSelection` attaches it once that server's
+        // live list proves the session still exists.
+        if let saved = stateStore.loadActiveRef(),
+           bookmarks.contains(where: { $0.id == saved.serverId && $0.enabled }) {
+            activeRef = saved
+            pendingSelection[saved.serverId] = saved.sessionId
+        } else {
+            stateStore.saveActiveRef(nil)
+        }
         var index = 0
         for config in bookmarks where config.enabled {
             let delay = stagger * index
@@ -193,6 +208,7 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
             bookmarks = bookmarkStore.loadAll()
         }
         publish()
+        applyPendingSelection(for: serverId)
     }
 
     // MARK: - Publishing (spec §7.2, §7.6)
@@ -236,6 +252,110 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         }
         sections = built
         aggregate = agg
+    }
+
+    // MARK: - Selection (spec §7.5)
+
+    /// Every row the sidebar shows, in sidebar order (live and cached sections),
+    /// for keyboard next/previous across section boundaries.
+    public var orderedRefs: [SessionRef] {
+        sections.flatMap { section in
+            section.sessions.map { SessionRef(serverId: section.id, sessionId: $0.id) }
+        }
+    }
+
+    /// Makes `ref` the one attached session. Same server → the coordinator's own
+    /// `switchToSession` (which detaches the previous session itself). Different
+    /// server → `detachActive()` on the previous coordinator, bounded, THEN the
+    /// attach. Offline server → remember the choice and trigger its recovery.
+    public func select(_ ref: SessionRef) async {
+        guard let section = sections.first(where: { $0.id == ref.serverId }) else { return }
+        if activeRef == ref { return }
+        let previous = activeRef
+        activeRef = ref
+        stateStore.saveActiveRef(ref)
+        onTestEvent?("select:\(ref.serverId.uuidString.prefix(4))")
+
+        if let previous, previous.serverId != ref.serverId, let from = slots[previous.serverId] {
+            await detachBounded(from)
+        }
+        guard let to = slots[ref.serverId] else { return }
+        if section.status.isLive {
+            pendingSelection[ref.serverId] = nil
+            await to.switchToSession(id: ref.sessionId)
+        } else {
+            pendingSelection[ref.serverId] = ref.sessionId
+            to.triggerUserRecovery()
+        }
+        publish()
+    }
+
+    /// New session on `serverId`; detaches on any other server first (§7.5).
+    public func createSession(on serverId: UUID) async {
+        guard let to = slots[serverId] else { return }
+        if let previous = activeRef, previous.serverId != serverId, let from = slots[previous.serverId] {
+            await detachBounded(from)
+        }
+        await to.createNewSession()
+        if let id = to.activeSessionId {
+            activeRef = SessionRef(serverId: serverId, sessionId: id)
+            stateStore.saveActiveRef(activeRef)
+        }
+        publish()
+    }
+
+    public func selectNext() async { await step(by: 1) }
+    public func selectPrevious() async { await step(by: -1) }
+
+    private func step(by delta: Int) async {
+        let refs = orderedRefs
+        guard refs.count > 1, let current = activeRef, let index = refs.firstIndex(of: current) else { return }
+        let next = (index + delta + refs.count) % refs.count
+        await select(refs[next])
+    }
+
+    /// Deletes a bookmark: detach if it is active, tear down, forget its token
+    /// and its ownership namespace (§7.3, §11).
+    public func removeServer(_ serverId: UUID) async {
+        if activeRef?.serverId == serverId, let slot = slots[serverId] {
+            activeRef = nil
+            stateStore.saveActiveRef(nil)
+            await detachBounded(slot)
+        }
+        tearDownSlot(serverId)
+        bookmarkStore.delete(id: serverId)
+        (tokens as? TokenDeleting)?.deleteTokenIgnoringErrors(for: serverId)
+        bookmarks = bookmarkStore.loadAll()
+        cachedSessions[serverId] = nil
+        pendingSelection[serverId] = nil
+        publish()
+    }
+
+    /// Awaits `slot.detachActive()` for at most `detachBudget`. A task group
+    /// cannot express this: it waits for every child at scope exit, so a stuck
+    /// detach would hold the switch hostage. The straggler is left to finish
+    /// on its own; the coordinator's own budget bounds it.
+    private func detachBounded(_ slot: Slot) async {
+        await BoundedWait.run(budget: detachBudget) { await slot.detachActive() }
+    }
+
+    /// Called from `slotDidChange` after `publish()`: apply or drop a pending
+    /// selection once the server is live again.
+    private func applyPendingSelection(for serverId: UUID) {
+        guard let wanted = pendingSelection[serverId],
+              let slot = slots[serverId],
+              let section = sections.first(where: { $0.id == serverId }), section.status.isLive else { return }
+        pendingSelection[serverId] = nil
+        if slot.activeSessions.contains(where: { $0.id == wanted }) {
+            Task { await slot.switchToSession(id: wanted); self.publish() }
+        } else {
+            if activeRef == SessionRef(serverId: serverId, sessionId: wanted) {
+                activeRef = nil
+                stateStore.saveActiveRef(nil)
+            }
+            notice = "That session has ended"
+            publish()
+        }
     }
 
     // MARK: - Collapse (per device)
