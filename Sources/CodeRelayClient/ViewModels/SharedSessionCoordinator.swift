@@ -48,6 +48,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     @Published public var sessionNames: [UUID: String] = [:]
     @Published public var terminalTitles: [UUID: String] = [:]
     @Published public var isLoading = false
+    /// Relay identity learned on auth (v3); nil before auth or against v2
+    /// relays. The hub mirrors it onto the bookmark (spec §5.2).
+    @Published public private(set) var serverIdentity: ServerIdentity?
+    /// Bound on how long `detachActive()` waits for the detach RPC before
+    /// proceeding anyway (spec §7.4, §12). Settable for tests.
+    public var detachBudget: Duration = .seconds(3)
 
     /// Live agent / awaiting-input / stolen-session state. Extracted into its
     /// own object so the server-event fan-in (activity, stolen, rename) is
@@ -189,6 +195,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     /// persisted — the server's token-scoped list is authoritative. Diff-checks
     /// before writing; the coordinator keeps @Published mirrors for SwiftUI.
     private let ownershipStore: SessionOwnershipStore
+    /// The namespace the ownership store was built with; test hook only.
+    public let ownershipKeyPrefixForTest: String
     private var lastFetchTime: Date = .distantPast
     /// Single-flight guard for `fetchSessions` — concurrent callers await the
     /// one in-flight fetch instead of issuing parallel `listSessions` RPCs
@@ -255,13 +263,25 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
 
     // MARK: - Init
 
-    public init(connection: RelayConnection, token: String) {
+    /// - Parameters:
+    ///   - ownershipKeyPrefix: UserDefaults namespace for this coordinator's
+    ///     names/agents/F3 state. nil → the platform `keyPrefix` (today's single
+    ///     server behaviour). The multi-server hub passes
+    ///     `"<keyPrefix>.<bookmarkId>"` so two relays never share a session map
+    ///     (spec §7.4, D8).
+    ///   - defaults: injected for tests; production uses `.standard`.
+    public init(connection: RelayConnection, token: String,
+                ownershipKeyPrefix: String? = nil,
+                defaults: UserDefaults = .standard) {
         self.connection = connection
         self.token = token
         self.authCoordinator = AuthCoordinator(connection: connection, token: token)
+        let prefix = ownershipKeyPrefix ?? Self.keyPrefix
+        self.ownershipKeyPrefixForTest = prefix
         let store = SessionOwnershipStore(
-            keyPrefix: Self.keyPrefix,
-            deviceId: DeviceIdentifier().currentID
+            keyPrefix: prefix,
+            deviceId: DeviceIdentifier().currentID,
+            defaults: defaults
         )
         self.ownershipStore = store
         sessionNames = store.loadNames()
@@ -274,8 +294,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
         // override so the Mac app's `isAuthenticated` @Published flag still
         // flips.
         authCoordinator.onAuthenticated = { [weak self] in
-            self?.refreshOptimizerAvailability()
-            self?.didAuthenticate()
+            guard let self else { return }
+            self.serverIdentity = self.sessionController?.serverIdentity
+            self.refreshOptimizerAvailability()
+            self.didAuthenticate()
         }
 
         // Install the recovery controller now that all required fields are
@@ -1168,6 +1190,49 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating {
     public func cancelRecovery() {
         recoveryController.cancel()
     }
+
+    // MARK: - Multi-server hub hooks (spec §7.4)
+
+    /// True after the relay rejected this coordinator's token; the hub shows
+    /// the section as `authFailed` and never retries on its own.
+    public var isAuthRejected: Bool { recoveryController.isAuthRejected }
+
+    /// The socket state, for the hub's section status (spec §7.2).
+    public var connectionState: RelayConnection.ConnectionState { connection.state }
+
+    /// Opens the socket and runs the launch handshake. The shared base has no
+    /// bookmark to dial, so this is a no-op here; platform subclasses override
+    /// (the macOS `SessionCoordinator.start()` already did exactly this).
+    open func start() async {}
+
+    /// Detaches whatever this coordinator has attached and clears the selection,
+    /// so the hub can attach on another server (D9: one attachment across all
+    /// servers). Idempotent. Bounded by `detachBudget`: a stuck server must not
+    /// block a cross-server switch — the hub proceeds, the generation guard on
+    /// the old socket discards a late reply, and recovery reconciles. A failure
+    /// is logged at debug and never surfaced: the user asked for the *other*
+    /// session.
+    public func detachActive() async {
+        guard let currentId = activeSessionId else { return }
+        terminalViewModels[currentId]?.prepareForSwitch()
+        terminalViewModels[currentId] = nil
+        activeSessionId = nil
+        let budget = detachBudget
+        let controller = sessionController
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                do { try await controller?.detach() } catch {
+                    recoveryLog.debug("detachActive: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            group.addTask { try? await Task.sleep(for: budget) }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    /// Test hook: persist the in-memory names through the ownership store.
+    public func persistNamesForTest() { ownershipStore.saveNames(sessionNames) }
 
     // MARK: - Cleanup
 

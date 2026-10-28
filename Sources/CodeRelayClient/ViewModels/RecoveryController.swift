@@ -380,6 +380,7 @@ final class RecoveryController {
     var _testOnly_autoRecoverySuspended: Bool { autoRecoverySuspended }
     var _testOnly_consecutiveAutoRecoveryFailures: Int { consecutiveAutoRecoveryFailures }
     var _testOnly_authRejected: Bool { authRejected }
+    var isAuthRejected: Bool { authRejected }
     func _testOnly_setAuthRejected(_ value: Bool) { authRejected = value }
 
     func _testOnly_setAutoRecoverySuspended(_ suspended: Bool, failures: Int) {

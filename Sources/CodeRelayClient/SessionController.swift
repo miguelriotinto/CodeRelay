@@ -97,6 +97,10 @@ public final class SessionController: ObservableObject {
     /// `capabilities` the server reported in `auth_success` (empty when none).
     /// `CodeRelayKit.promptOptimizerCapability` here means the wand may be used.
     @Published public private(set) var serverCapabilities: Set<String> = []
+    /// The relay's self-identification from a v3 `auth_success` (multi-server
+    /// spec §5.2). nil against v2 servers. Mirrored onto the bookmark by the hub
+    /// and used only to route deep links and flag duplicate bookmarks.
+    @Published public private(set) var serverIdentity: ServerIdentity?
 
     /// The connection generation when auth was established. Used to detect stale auth
     /// after the WebSocket reconnects (server sees a fresh unauthenticated handler).
@@ -218,7 +222,7 @@ public final class SessionController: ObservableObject {
         )
 
         switch response {
-        case .authSuccess(let serverProtocolVersion, let serverTokenId, let capabilities, _):
+        case .authSuccess(let serverProtocolVersion, let serverTokenId, let capabilities, let server):
             let serverVersion = serverProtocolVersion ?? 0
             if serverVersion < CodeRelayKit.minProtocolVersion {
                 isAuthenticated = false
@@ -229,6 +233,7 @@ public final class SessionController: ObservableObject {
             }
             self.serverProtocolVersion = serverProtocolVersion ?? 0
             self.serverCapabilities = Set(capabilities ?? [])
+            self.serverIdentity = server
             isAuthenticated = true
             authenticatedGeneration = connection.generation
             // nil against older servers; the coordinator's reconcile falls back

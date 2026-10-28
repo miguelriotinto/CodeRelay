@@ -432,4 +432,23 @@ final class SessionControllerTests: SessionControllerTestCase {
             XCTAssertFalse(controller.isAuthValid)
         }
     }
+
+    // MARK: - Server identity (multi-server spec §5.2)
+
+    func testAuthenticateRecordsTheServerIdentity() async throws {
+        let identity = ServerIdentity(id: UUID(), name: "studio")
+        let conn = FakeConnection()
+        conn.autoRespond = { _ in .authSuccess(protocolVersion: 3, tokenId: "tok", capabilities: nil, server: identity) }
+        let controller = SessionController(connection: conn)
+        try await controller.authenticate(token: "t")
+        XCTAssertEqual(controller.serverIdentity, identity)
+    }
+
+    func testAuthenticateAgainstV2LeavesIdentityNil() async throws {
+        let conn = FakeConnection()
+        conn.autoRespond = { _ in .authSuccess(protocolVersion: 2, tokenId: "tok") }
+        let controller = SessionController(connection: conn)
+        try await controller.authenticate(token: "t")
+        XCTAssertNil(controller.serverIdentity)
+    }
 }
