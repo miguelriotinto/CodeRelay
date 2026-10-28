@@ -1,7 +1,7 @@
 # Multi-Server Sessions: One Workspace Across Several Relays
 
 **Date:** 2026-10-28
-**Status:** Draft for review
+**Status:** Approved 2026-10-28 (implementation plan to follow)
 **Scope:** All four clients (iOS, macOS, Android, Linux), the shared Swift and
 Kotlin client libraries, and a small protocol v3 change on the server.
 **Related:** `2026-07-31-host-pairing-and-provisioning-design.md` (pairing adds
