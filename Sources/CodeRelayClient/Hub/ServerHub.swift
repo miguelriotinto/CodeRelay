@@ -39,6 +39,9 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     private let maxEnabled: Int
     private let stagger: Duration
     private let sleep: @MainActor (Duration) async -> Void
+    /// When set, `start()` runs `HubMigration` once against this legacy key.
+    private let lastServerIdKey: String?
+    private let defaults: UserDefaults
 
     private(set) var bookmarks: [ConnectionConfig] = []
     private var slots: [UUID: Slot] = [:]
@@ -64,6 +67,8 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
                 tokens: TokenProviding,
                 stateStore: HubStateStore,
                 keyPrefix: String,
+                lastServerIdKey: String? = nil,
+                defaults: UserDefaults = .standard,
                 factory: @escaping Factory,
                 maxEnabled: Int = 8,
                 stagger: Duration = .milliseconds(150),
@@ -76,6 +81,8 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         self.maxEnabled = maxEnabled
         self.stagger = stagger
         self.sleep = sleep
+        self.lastServerIdKey = lastServerIdKey
+        self.defaults = defaults
         self.collapsedServers = stateStore.loadCollapsedServers()
     }
 
@@ -85,6 +92,10 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     public func start() async {
         guard !started else { return }
         started = true
+        if let lastServerIdKey {
+            HubMigration.run(defaults: defaults, keyPrefix: keyPrefix, deviceId: DeviceIdentifier().currentID,
+                             bookmarks: bookmarkStore, lastServerIdKey: lastServerIdKey, stateStore: stateStore)
+        }
         bookmarks = bookmarkStore.loadAll()
         // F3 across servers (§9): restore the last active ref as a cached
         // selection; `applyPendingSelection` attaches it once that server's
