@@ -14,12 +14,16 @@ import CodeRelayKit
 /// next handshake), an error is logged, and a fresh id is written in its place.
 enum ServerIdentityStore {
 
+    /// Only `id` is load-bearing. `createdAt` is written for operators and
+    /// decoded leniently, so a hand-written `{"id":"…"}` or a differently
+    /// formatted timestamp never reads as corruption and discards a good id.
     private struct Persisted: Codable {
         let id: UUID
-        let createdAt: Date
+        let createdAt: Date?
     }
 
-    static let fileName = "instance.json"
+    /// One source of truth for the location: `RelayConfig.instanceFile`.
+    static let fileName = RelayConfig.instanceFile.lastPathComponent
     static let fallbackName = "CodeRelay"
 
     private static let encoder: JSONEncoder = {
@@ -30,7 +34,12 @@ enum ServerIdentityStore {
     }()
     private static let decoder: JSONDecoder = {
         let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
+        d.dateDecodingStrategy = .custom { decoder in
+            // Lenient: any string (or nothing parseable) is fine; the date is
+            // never used for a decision.
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            return ISO8601DateFormatter().date(from: raw) ?? Date.distantPast
+        }
         return d
     }()
 

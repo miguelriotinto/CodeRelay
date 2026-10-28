@@ -231,9 +231,19 @@ final class ConfigValidationTests: XCTestCase {
         XCTAssertNil(config.serverName, "control-only input is empty after sanitising")
     }
 
-    func testServerNameMustBeAString() {
+    func testServerNameAcceptsScalarsAsText() throws {
+        // `config set serverName 42` arrives as an Int (ConfigValue.infer): a
+        // numeric display name is legitimate, so scalars are stringified.
         var config = RelayConfig.default
-        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(42, forKey: "serverName", to: &config))
-        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(true, forKey: "serverName", to: &config))
+        try AdminRoutes.applyConfigValue(42, forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "42")
+        try AdminRoutes.applyConfigValue(true, forKey: "serverName", to: &config)
+        XCTAssertEqual(config.serverName, "true")
+    }
+
+    func testServerNameRejectsNonScalars() {
+        var config = RelayConfig.default
+        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(["a"], forKey: "serverName", to: &config))
+        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(["k": "v"], forKey: "serverName", to: &config))
     }
 }

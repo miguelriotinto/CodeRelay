@@ -455,8 +455,16 @@ enum AdminRoutes {
             guard let val = value as? Bool else { throw ConfigError(message: "bindAll must be a boolean") }
             config.bindAll = val
         case "serverName":
-            guard let val = value as? String else { throw ConfigError(message: "serverName must be a string") }
-            let clean = LabelSanitizer.sanitize(val)
+            // `config set serverName 42` arrives as an Int (ConfigValue.infer);
+            // a numeric or boolean-looking display name is legitimate text.
+            let text: String
+            switch value {
+            case let s as String: text = s
+            case let i as Int: text = String(i)
+            case let b as Bool: text = String(b)
+            default: throw ConfigError(message: "serverName must be a string")
+            }
+            let clean = LabelSanitizer.sanitize(text)
             config.serverName = clean.isEmpty ? nil : clean
         case "pushEnabled":
             guard let val = value as? Bool else { throw ConfigError(message: "pushEnabled must be a boolean") }

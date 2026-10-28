@@ -135,12 +135,6 @@ struct ConfigSetCommand: AsyncParsableCommand {
         }
     }
 
-    /// The optimizer is built once, at startup: `PromptOptimizerFactory.make` reads
-    /// the key file and decides the capability there and never revisits it. So
-    /// `config set promptOptimizerEnabled true` on a running relay changes nothing
-    /// a client can see — the wand stays dimmed — and the operator has no reason to
-    /// suspect it. One line closes that gap (review C-2). Returns nil for every
-    /// other key, whose writes *are* live.
     /// Must match server-side `AdminRoutes.applyConfigValue` accepted keys.
     static let validKeys: Set<String> = [
         "wsPort", "adminPort", "detachTimeout", "scrollbackSize",
@@ -153,6 +147,13 @@ struct ConfigSetCommand: AsyncParsableCommand {
         "promptOptimizerRegion", "promptOptimizerKeyPath", "promptOptimizerShareScreen"
     ]
 
+    /// The optimizer is built once, at startup: `PromptOptimizerFactory.make` reads
+    /// the key file and decides the capability there and never revisits it. So
+    /// `config set promptOptimizerEnabled true` on a running relay changes nothing
+    /// a client can see — the wand stays dimmed — and the operator has no reason to
+    /// suspect it. One line closes that gap (review C-2). `serverName` is read once at
+    /// startup too (`ServerIdentityStore`). Returns nil for every other key,
+    /// whose writes *are* live.
     static func restartHint(forKey key: String) -> String? {
         if key == "serverName" {
             return "Note: serverName is read at startup — run 'claude-relay restart' to apply."

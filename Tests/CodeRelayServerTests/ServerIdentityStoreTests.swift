@@ -49,6 +49,17 @@ final class ServerIdentityStoreTests: XCTestCase {
         XCTAssertEqual(ServerIdentityStore.load(directory: dir, configuredName: nil, hostName: "studio").id, identity.id)
     }
 
+    func testHandWrittenFileWithOnlyAnIdIsHonoured() throws {
+        // The file exists to keep the id stable; a missing or oddly formatted
+        // createdAt must never cause a valid id to be thrown away.
+        let keep = UUID()
+        try Data(#"{"id":"\#(keep.uuidString)"}"#.utf8).write(to: file)
+        XCTAssertEqual(ServerIdentityStore.load(directory: dir, configuredName: nil, hostName: "h").id, keep)
+        try Data(#"{"id":"\#(keep.uuidString)","createdAt":"2026-10-28T11:40:06.143Z"}"#.utf8).write(to: file)
+        XCTAssertEqual(ServerIdentityStore.load(directory: dir, configuredName: nil, hostName: "h").id, keep,
+                       "fractional-second timestamps must not read as corruption")
+    }
+
     func testMissingDirectoryIsCreated() {
         let nested = dir.appendingPathComponent("nested/deeper", isDirectory: true)
         let identity = ServerIdentityStore.load(directory: nested, configuredName: nil, hostName: "studio")
