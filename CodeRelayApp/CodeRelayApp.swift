@@ -119,12 +119,9 @@ struct CodeRelayApp: App {
         }
 
         // Handle session deep links
-        guard url.scheme == "clauderelay",
-              url.host == "session",
-              let uuidString = url.pathComponents.dropFirst().first,
-              let sessionId = UUID(uuidString: uuidString) else {
-            return
-        }
-        pendingSessionId = sessionId
+        // Phase 1 (iOS) will route on `link.serverInstanceId`; until then the
+        // single coordinator attaches by session id as before.
+        guard let link = SessionDeepLink(url: url) else { return }
+        pendingSessionId = link.sessionId
     }
 }

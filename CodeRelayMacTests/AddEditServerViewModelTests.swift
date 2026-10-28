@@ -1,4 +1,5 @@
 import XCTest
+import CodeRelayClient
 // Not the target name: the Mac app's module is c99-sanitized from
 // PRODUCT_NAME "Code[Relay]". Was "ClaudeDock" before the product was renamed.
 @testable import Code_Relay_
@@ -116,5 +117,22 @@ final class AddEditServerViewModelTests: XCTestCase {
     func testIsEditingFalseForNewServer() {
         let vm = AddEditServerViewModel()
         XCTAssertFalse(vm.isEditing)
+    }
+
+    // MARK: - Multi-server fields (fix pass after the Plan 1 review)
+
+    func testEditingPreservesEnabledInstanceAndDisplayName() {
+        var existing = ConnectionConfig(name: "a", host: "a.local", enabled: false)
+        existing.instanceId = UUID()
+        existing.displayName = "Studio"
+        let vm = AddEditServerViewModel(existing: existing)
+        vm.name = "renamed"
+        vm.token = "tok"
+        let built = vm.buildConnection()
+        XCTAssertEqual(built?.id, existing.id)
+        XCTAssertEqual(built?.name, "renamed")
+        XCTAssertEqual(built?.enabled, false, "renaming a disabled bookmark must not enable it")
+        XCTAssertEqual(built?.instanceId, existing.instanceId, "the learned relay identity survives an edit")
+        XCTAssertEqual(built?.displayName, "Studio")
     }
 }

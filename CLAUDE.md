@@ -138,7 +138,43 @@ The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments
 
 ### App Architecture (iOS + macOS)
 
-Both apps share `SharedSessionCoordinator` (in CodeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (e.g., macOS registers `SleepWakeObserver`; iOS uses `scenePhase`).
+Both apps share `SharedSessionCoordinator` (in CodeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (iOS uses `scenePhase`; on macOS the wake/network observers belong to `MainWindow`, which fans them out through the hub below).
+
+**Multi-server (macOS first; spec `docs/superpowers/specs/2026-10-28-multi-server-sessions-design.md`).**
+`ServerHub<Slot>` (CodeRelayClient/Hub) owns one per-server coordinator per
+**enabled** bookmark and the single global `activeRef: SessionRef` (bookmark
+id + session id — never the server instance id). Coordinators are unchanged
+except four additive hooks (`ownershipKeyPrefix`, `detachActive()`,
+`serverIdentity`, `isAuthRejected`); the hub reaches them through
+`ServerSlotCoordinating`, so hub tests run against a scripted fake. A
+cross-server switch awaits a bounded `detachActive()` on the previous
+coordinator before attaching (one attachment across all servers); every
+selection path bumps `selectionGeneration` and re-checks it after each `await`,
+so an overlapping select can never re-attach a superseded choice, and the
+coordinator's own `attachEpoch` stops an attach that began before a
+`detachActive()` from publishing. The hub **mirrors** the coordinator: ⌘W,
+terminate, a stolen session, a failed resume, the Attach sheet and the QR
+scanner move `activeSessionId` without the hub, and `reconcileSelection`
+follows them (otherwise the stale highlight made the row un-reselectable). An
+offline server keeps its cached rows; selecting one stores the single
+`pendingRef` (always equal to `activeRef`, replaced by the next selection) and
+triggers that server's recovery; it is applied when a live list proves the
+session still exists. A row whose server has no coordinator and is not getting
+one is refused with a notice before any state moves; disabled sections keep
+their cached rows but are not selectable. Slot start and foreground/wake/network
+fan-out run **concurrently**, each after its own 150 ms stagger — a dead relay's
+handshake never delays the next — and `stop()`/cancellation make the remaining
+builds no-ops. `focusCoordinator` (active, else the only enabled, else the first
+live) drives the single-server surfaces when nothing is selected. Disabling or
+removing a server unregisters push on it first; slots built later receive the
+last synced push settings; `reloadBookmarks` enforces the cap of 8 on bookmarks
+saved enabled by add/pair. Deep links
+(`SessionDeepLink`, scheme `coderelay`, optional `?server=<instanceId>`) route
+instance id → unique session → single server's remote attach → not found.
+`HubMigration` runs once: only the previously last-used bookmark stays enabled.
+`ServerStatusChecker` polls only **disabled** bookmarks; the live connection is
+the status for enabled ones. `CODERELAY_HUB_SEED=1` (DEBUG, macOS) seeds three
+canned bookmarks in an isolated defaults suite for screenshot verification.
 
 **Session-loading overlay.** Opening a session is black until the replay is
 delivered in one batch (see "Scrollback replay"), which on a slow link is

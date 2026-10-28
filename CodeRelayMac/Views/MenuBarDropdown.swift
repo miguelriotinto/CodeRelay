@@ -23,7 +23,7 @@ struct MenuBarDropdown: View {
             menuSeparator
 
             // Session list
-            if viewModel.sessions.isEmpty {
+            if viewModel.groups.allSatisfy({ $0.sessions.isEmpty }) {
                 Text("No active sessions")
                     .foregroundStyle(.secondary)
                     .font(.caption)
@@ -31,14 +31,23 @@ struct MenuBarDropdown: View {
                     .padding(.vertical, 8)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(viewModel.sessions, id: \.id) { session in
-                        SessionMenuRow(
-                            session: session,
-                            activity: viewModel.activityStates[session.id] ?? .active,
-                            agentId: viewModel.agentIds[session.id],
-                            isActive: session.id == viewModel.activeSessionId,
-                            onSelect: { activate(sessionId: session.id) }
-                        )
+                    ForEach(viewModel.groups) { group in
+                        if let title = group.title {
+                            HStack(spacing: 6) {
+                                Circle().fill(group.statusColor).frame(width: 6, height: 6)
+                                Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 2)
+                        }
+                        ForEach(group.sessions, id: \.id) { session in
+                            SessionMenuRow(
+                                session: session,
+                                activity: viewModel.activityStates[session.id] ?? .active,
+                                agentId: viewModel.agentIds[session.id],
+                                isActive: session.id == viewModel.activeSessionId,
+                                onSelect: { activate(SessionRef(serverId: group.id, sessionId: session.id)) }
+                            )
+                        }
                     }
                 }
             }
@@ -55,8 +64,9 @@ struct MenuBarDropdown: View {
                     }
                 }
                 MenuButton(label: "New Session") {
-                    if let coordinator = ActiveCoordinatorRegistry.shared.coordinator {
-                        Task { await coordinator.createNewSession() }
+                    if let hub = ActiveCoordinatorRegistry.shared.hub,
+                       let serverId = hub.activeRef?.serverId ?? hub.sections.first(where: { $0.status.isLive })?.id {
+                        Task { await hub.createSession(on: serverId) }
                     }
                     NSApp.activate(ignoringOtherApps: true)
                     for window in NSApp.windows where window.canBecomeMain {
@@ -64,7 +74,7 @@ struct MenuBarDropdown: View {
                         return
                     }
                 }
-                .disabled(ActiveCoordinatorRegistry.shared.coordinator == nil)
+                .disabled(ActiveCoordinatorRegistry.shared.hub?.sections.contains(where: { $0.status.isLive }) != true)
                 MenuButton(label: "Attach Session...") {
                     if let coordinator = ActiveCoordinatorRegistry.shared.coordinator {
                         coordinator.showQRScanner = true
@@ -105,9 +115,9 @@ struct MenuBarDropdown: View {
             .padding(.horizontal, 10)
     }
 
-    private func activate(sessionId: UUID) {
-        if let coordinator = ActiveCoordinatorRegistry.shared.coordinator {
-            Task { await coordinator.switchToSession(id: sessionId) }
+    private func activate(_ ref: SessionRef) {
+        if let hub = ActiveCoordinatorRegistry.shared.hub {
+            Task { await hub.select(ref) }
         }
         NSApp.activate(ignoringOtherApps: true)
         for window in NSApp.windows where window.canBecomeMain {

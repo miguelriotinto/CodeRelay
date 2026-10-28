@@ -2,91 +2,44 @@ import SwiftUI
 import CodeRelayClient
 import CodeRelayKit
 
-struct SessionSidebarView: View {
+/// One server's rows inside the hub sidebar (multi-server spec §8.3): the
+/// workspace tiles and session rows exactly as the single-server sidebar drew
+/// them, now emitted into the `List` that `HubSidebarView` owns. Rows are
+/// tagged with a `SessionRef` so the List's selection spans servers, and a
+/// cached (offline) section renders at half opacity.
+struct ServerSessionRows: View {
     @ObservedObject var coordinator: SessionCoordinator
+    let section: ServerSection
     @State private var renameTarget: UUID?
     @State private var renameText: String = ""
     @State private var terminateTarget: UUID?
-    @State private var showAttachSheet = false
     @State private var collapse = SidebarCollapseModel()
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                List(selection: Binding(
-                    get: { coordinator.activeSessionId },
-                    set: { newId in
-                        if let id = newId {
-                            Task { await coordinator.switchToSession(id: id) }
-                        }
-                    }
-                )) {
-                    let sessions = coordinator.activeSessions
-                    let byId = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
-                    ForEach(coordinator.activityCoordinator.rollups(for: sessions)) { group in
-                        // One rounded tile per group. The header is a plain row
-                        // (not a Section header) so it shares the tile
-                        // background; `selectionDisabled` keeps it out of the
-                        // List's selection, which drives session switching.
-                        let members = group.sessionIds.compactMap { byId[$0] }
-                        let collapsed = collapse.isCollapsed(group.id) || members.isEmpty
-                        Section {
-                            rollupHeader(group, isCollapsed: collapsed)
-                                .workspaceTileRow(collapsed ? .only : .top)
-                                .selectionDisabled()
-                            if !collapsed {
-                                ForEach(Array(members.enumerated()), id: \.element.id) { index, session in
-                                    sessionRow(session)
-                                        .tag(session.id)
-                                        .workspaceTileRow(.forSession(index: index, of: members.count))
-                                }
-                            }
-                        }
-                    }
-                }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)
-                // SwiftUI's default List(selection:) auto-scroll on selection
-                // change can place the selected row partially under the window
-                // titlebar on macOS. Re-anchor it to the vertical center after
-                // the built-in scroll settles so the row lands fully visible.
-                .onChange(of: coordinator.activeSessionId) { _, newId in
-                    guard let newId else { return }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(newId, anchor: .center)
-                        }
-                    }
+        let sessions = section.sessions
+        let byId = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        ForEach(coordinator.activityCoordinator.rollups(for: sessions)) { group in
+            // One rounded tile per group. The header is a plain row (not a
+            // Section header) so it shares the tile background;
+            // `selectionDisabled` keeps it out of the List's selection, which
+            // drives session switching.
+            let members = group.sessionIds.compactMap { byId[$0] }
+            let collapsed = collapse.isCollapsed(group.id) || members.isEmpty
+            rollupHeader(group, isCollapsed: collapsed)
+                .workspaceTileRow(collapsed ? .only : .top)
+                .selectionDisabled()
+            if !collapsed {
+                ForEach(Array(members.enumerated()), id: \.element.id) { index, session in
+                    sessionRow(session)
+                        .tag(SessionRef(serverId: section.id, sessionId: session.id))
+                        .workspaceTileRow(.forSession(index: index, of: members.count))
+                        .opacity(section.isCached ? 0.5 : 1)
                 }
             }
-
-            Divider()
-            HStack {
-                Button {
-                    Task { await coordinator.createNewSession() }
-                } label: {
-                    Label("New", systemImage: "plus")
-                }
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                Button {
-                    showAttachSheet = true
-                } label: {
-                    Label("Attach", systemImage: "rectangle.connected.to.line.below")
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(12)
         }
-        .background(.black)
         .onAppear {
             // F3: seed collapse layout from persistence once per appear.
             collapse = SidebarCollapseModel(collapsed: coordinator.loadCollapsedGroups())
-        }
-        .sheet(isPresented: $showAttachSheet) {
-            AttachRemoteSessionSheet(coordinator: coordinator)
         }
         .alert("Rename Session", isPresented: .init(
             get: { renameTarget != nil },

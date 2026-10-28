@@ -2,6 +2,7 @@ import SwiftUI
 import AVFoundation
 import AppKit
 import Vision
+import CodeRelayKit
 
 struct QRScannerSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -46,10 +47,7 @@ struct QRScannerSheet: View {
     private func handleScan(_ value: String) {
         guard scannedValue == nil else { return }
         scannedValue = value
-        if let url = URL(string: value), url.scheme == "clauderelay",
-           url.host == "session",
-           let uuidString = url.pathComponents.dropFirst().first,
-           let uuid = UUID(uuidString: uuidString) {
+        if let uuid = SessionDeepLink(string: value)?.sessionId {
             Task {
                 await coordinator.attachRemoteSession(id: uuid)
                 dismiss()
