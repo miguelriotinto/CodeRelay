@@ -67,6 +67,9 @@ private struct WorkspaceView: View {
     @State private var reloadCover: Double = 0
 
     private var coordinator: SessionCoordinator? { hub.activeCoordinator }
+    /// Drives the surfaces a one-server user expects even with nothing selected
+    /// (Reconnecting sheet, error alerts, QR scanner, status bar) — G8.
+    private var focus: SessionCoordinator? { hub.focusCoordinator }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -76,8 +79,8 @@ private struct WorkspaceView: View {
             VStack(spacing: 0) {
                 detail
                 Divider()
-                if let coordinator {
-                    StatusBarView(coordinator: coordinator)
+                if let focus {
+                    StatusBarView(coordinator: focus)
                 } else {
                     HubStatusBar(hub: hub)
                 }
@@ -115,11 +118,11 @@ private struct WorkspaceView: View {
         .toolbarBackground(.visible, for: .windowToolbar)
         .focusedValue(\.sidebarVisibility, $columnVisibility)
         // SwiftUI cannot bind a sheet through an optional, so the sheets and
-        // alerts that belong to the ACTIVE coordinator live on a child view
-        // that only exists while there is one (spec §8.1: the Reconnecting
-        // sheet shows for the active server only).
+        // alerts that belong to the focus coordinator (the active server, else
+        // the only / first live one) live on a child view that only exists
+        // while there is one (spec §8.1: the Reconnecting sheet is per server).
         .background {
-            if let coordinator { ActiveCoordinatorModifiers(coordinator: coordinator) }
+            if let focus { ActiveCoordinatorModifiers(coordinator: focus).id(ObjectIdentifier(focus)) }
         }
         .sheet(isPresented: $hub.isShowingServerList) {
             NavigationStack {

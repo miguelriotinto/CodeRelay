@@ -42,6 +42,19 @@ final class ConnectionConfigOptionalURLTests: XCTestCase {
         XCTAssertFalse(decoded.enabled)
     }
 
+    func testWrongTypedOptionalFieldsFallBackToDefaultsInsteadOfFailing() throws {
+        // A field a future build stored in another shape must not throw: the list
+        // is decoded all-or-nothing, so one bad field would wipe every bookmark.
+        let json = """
+        {"id":"\(UUID().uuidString)","name":"n","host":"h","port":9200,"useTLS":false,
+         "enabled":"yes","instanceId":12,"displayName":false}
+        """.data(using: .utf8)!
+        let c = try JSONDecoder().decode(ConnectionConfig.self, from: json)
+        XCTAssertTrue(c.enabled)
+        XCTAssertNil(c.instanceId)
+        XCTAssertNil(c.displayName)
+    }
+
     func testMemberwiseInitDefaultsToEnabled() {
         XCTAssertTrue(ConnectionConfig(name: "a", host: "b").enabled)
     }

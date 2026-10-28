@@ -65,6 +65,15 @@ final class SharedSessionCoordinatorHubHooksTests: XCTestCase {
         XCTAssertFalse(c.showError, "a failed detach on a dead socket is not surfaced; recovery reconciles")
     }
 
+    func testDetachActiveCancelsAPendingLaunchRestore() async {
+        // F3: the launch restore is scheduled before anything is attached. If the
+        // hub moves to another server first, that restore must not attach here.
+        let c = SharedSessionCoordinator(connection: RelayConnection(), token: "t", defaults: isolatedDefaults())
+        c.pendingRestoreSessionId = UUID()
+        await c.detachActive()
+        XCTAssertNil(c.pendingRestoreSessionId)
+    }
+
     func testIsAuthRejectedStartsFalse() {
         let c = SharedSessionCoordinator(connection: RelayConnection(), token: "t", defaults: isolatedDefaults())
         XCTAssertFalse(c.isAuthRejected)

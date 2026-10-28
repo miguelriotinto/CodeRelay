@@ -16,12 +16,15 @@ final class AddEditServerViewModel: ObservableObject {
 
     // MARK: - Context
 
-    /// Existing connection being edited, or nil for add-mode.
-    private let editingId: UUID?
+    /// Existing connection being edited, or nil for add-mode. Kept whole so an
+    /// edit preserves `enabled`, `instanceId` and `displayName` — rebuilding the
+    /// config from the form silently re-enabled disabled bookmarks.
+    private let existing: ConnectionConfig?
+    private var editingId: UUID? { existing?.id }
 
     init(existing: ConnectionConfig? = nil) {
+        self.existing = existing
         if let existing {
-            self.editingId = existing.id
             self.name = existing.name
             self.host = existing.host
             self.port = String(existing.port)
@@ -30,8 +33,6 @@ final class AddEditServerViewModel: ObservableObject {
             if let stored = try? AuthManager.shared.loadToken(for: existing.id) {
                 self.token = stored
             }
-        } else {
-            self.editingId = nil
         }
     }
 
@@ -75,13 +76,12 @@ final class AddEditServerViewModel: ObservableObject {
     func buildConnection() -> ConnectionConfig? {
         guard validate() else { return nil }
         let portValue = UInt16(port) ?? 9200
-        return ConnectionConfig(
-            id: editingId ?? UUID(),
-            name: name.trimmingCharacters(in: .whitespaces),
-            host: host.trimmingCharacters(in: .whitespaces),
-            port: portValue,
-            useTLS: useTLS
-        )
+        var config = existing ?? ConnectionConfig(name: "", host: "")
+        config.name = name.trimmingCharacters(in: .whitespaces)
+        config.host = host.trimmingCharacters(in: .whitespaces)
+        config.port = portValue
+        config.useTLS = useTLS
+        return config
     }
 
     /// Persists the token to Keychain. Call after successfully adding the connection.

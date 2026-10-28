@@ -45,6 +45,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// at its end; the throttle guard makes the nested call a no-op, but
     /// deferring keeps the two flows cleanly separated).
     private var restoreActiveTask: Task<Void, Never>?
+    /// Bumped by `detachActive()`. An attach that began before the bump must not
+    /// publish when it resumes: the hub has moved to another server (D9).
+    private(set) var attachEpoch: UInt64 = 0
     @Published public var sessionNames: [UUID: String] = [:]
     @Published public var terminalTitles: [UUID: String] = [:]
     @Published public var isLoading = false
@@ -670,6 +673,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         guard !isRecovering else { return }
         let previousId = activeSessionId
         sessionLoadPhase = .attaching
+        let epoch = attachEpoch
         do {
             let (name, sessionId) = try await withAuth { controller in
                 if previousId != nil {
@@ -681,6 +685,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                     name: name, cols: size?.cols, rows: size?.rows
                 )
                 return (name, sessionId)
+            }
+            if attachSuperseded(since: epoch) {
+                await undoSupersededAttach(sessionId)
+                return
             }
 
             if let currentId = previousId {
@@ -755,6 +763,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         // (`repaintAfter`) after a skipped replay, so a full-screen app redraws
         // itself if the grid changed while we were away.
         let hasLiveTerminal = terminalCache.view(for: id) != nil
+        let epoch = attachEpoch
 
         do {
             if let currentId = previousId, currentId != id {
@@ -800,6 +809,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                 )
             }
 
+            if attachSuperseded(since: epoch) {
+                await undoSupersededAttach(id)
+                return
+            }
             // A reused live terminal skipped the replay, so nothing will clear
             // a phase the handshake may have left behind.
             if hasLiveTerminal { sessionLoadPhase = nil }
@@ -882,6 +895,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         guard !isRecovering else { return }
         let previousId = activeSessionId
         sessionLoadPhase = .attaching
+        let epoch = attachEpoch
         do {
             let controller = try await withAuth { controller in
                 if previousId != nil {
@@ -893,6 +907,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                 let grid = gridForRequest
                 try await controller.attachSession(id: id, cols: grid.cols, rows: grid.rows)
                 return controller
+            }
+            if attachSuperseded(since: epoch) {
+                await undoSupersededAttach(id)
+                return
             }
 
             if let currentId = previousId, currentId != id {
@@ -1213,6 +1231,12 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// is logged at debug and never surfaced: the user asked for the *other*
     /// session.
     public func detachActive() async {
+        // Invalidate every attach in progress on this coordinator — including the
+        // F3 launch restore, which is scheduled before anything is attached.
+        attachEpoch &+= 1
+        restoreActiveTask?.cancel()
+        restoreActiveTask = nil
+        pendingRestoreSessionId = nil
         guard let currentId = activeSessionId else { return }
         terminalViewModels[currentId]?.prepareForSwitch()
         terminalViewModels[currentId] = nil
@@ -1223,6 +1247,19 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                 recoveryLog.debug("detachActive: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    /// True when `detachActive()` ran since `epoch` was captured. The caller
+    /// then detaches what it just attached and publishes nothing.
+    private func attachSuperseded(since epoch: UInt64) -> Bool { epoch != attachEpoch }
+
+    private func undoSupersededAttach(_ id: UUID) async {
+        if activeSessionId == id { activeSessionId = nil }
+        terminalViewModels[id]?.prepareForSwitch()
+        terminalViewModels[id] = nil
+        sessionLoadPhase = nil
+        let controller = sessionController
+        await BoundedWait.run(budget: detachBudget) { try? await controller?.detach() }
     }
 
     /// Test hook: persist the in-memory names through the ownership store.

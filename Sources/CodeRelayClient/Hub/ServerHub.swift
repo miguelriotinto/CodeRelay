@@ -27,12 +27,23 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     @Published public var isShowingServerList = false
 
     public var activeCoordinator: Slot? { activeRef.flatMap { slots[$0.serverId] } }
+    /// The coordinator the single-server surfaces (QR scan, Attach, the
+    /// Reconnecting sheet, error alerts) should follow when nothing is selected:
+    /// the active one, else the only enabled one, else the first live one. A
+    /// one-server user keeps every pre-hub surface this way (G8).
+    public var focusCoordinator: Slot? { focusServerId.flatMap { slots[$0] } }
+    public var focusServerId: UUID? {
+        if let active = activeRef, slots[active.serverId] != nil { return active.serverId }
+        let enabled = bookmarks.filter(\.enabled)
+        if enabled.count == 1, slots[enabled[0].id] != nil { return enabled[0].id }
+        return sections.first(where: { $0.status.isLive && slots[$0.id] != nil })?.id
+    }
     public var enabledCount: Int { bookmarks.filter(\.enabled).count }
 
     // MARK: - Dependencies
 
-    private let bookmarkStore: SavedConnectionStore
-    private let tokens: TokenProviding
+    let bookmarkStore: SavedConnectionStore
+    let tokens: TokenProviding
     let stateStore: HubStateStore
     private let keyPrefix: String
     private let factory: Factory
@@ -43,18 +54,29 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     private let lastServerIdKey: String?
     private let defaults: UserDefaults
 
-    private(set) var bookmarks: [ConnectionConfig] = []
+    var bookmarks: [ConnectionConfig] = []
     var slots: [UUID: Slot] = [:]
     private var slotSubscriptions: [UUID: AnyCancellable] = [:]
-    private var cachedSessions: [UUID: [SessionInfo]] = [:]
-    private var missingToken: Set<UUID> = []
+    var cachedSessions: [UUID: [SessionInfo]] = [:]
+    var missingToken: Set<UUID> = []
     private var collapsedServers: Set<UUID> = []
     var started = false
-    /// Deep links that arrived before `start()` finished wait here.
+    /// `start()` has returned (every enabled slot was built or skipped). Deep
+    /// links that arrive in between wait on `startGate`.
+    var startCompleted = false
     var startGate: [CheckedContinuation<Void, Never>] = []
-    /// serverId → sessionId chosen while that server was not live; applied by
-    /// `slotDidChange` once a live list proves the session still exists (D4).
-    var pendingSelection: [UUID: UUID] = [:]
+    /// The one selection waiting for its server to come live (D4, F3 restore,
+    /// deep-link enable). Always equal to `activeRef` while set; every new
+    /// selection replaces it, so an abandoned choice can never attach later.
+    var pendingRef: SessionRef?
+    /// Bumped by every selection path; a path that resumes after an `await`
+    /// and finds another generation stops without touching anything (D9).
+    var selectionGeneration: UInt64 = 0
+    /// Selections between their first and last `await`; `reconcileSelection`
+    /// stays out of the way while one is in flight.
+    var selectionsInFlight = 0
+    /// The last push settings the app synced; slots built later get the same.
+    private var pushSettings: (enabled: Bool, notify: Bool)?
     /// Forwarded to the previous coordinator's `detachActive` bound (§7.5).
     public var detachBudget: Duration = .seconds(3)
 
@@ -88,10 +110,15 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
 
     // MARK: - Lifecycle (spec §7.3)
 
-    /// Builds a coordinator per enabled bookmark, staggered, then publishes.
+    /// Builds a coordinator per enabled bookmark — concurrently, each after its
+    /// own stagger, so one unreachable relay's handshake never delays the next
+    /// (D10) — then publishes. Returns once every build has finished or been
+    /// skipped; `stop()` or cancellation makes the remaining builds no-ops.
     public func start() async {
         guard !started else { return }
         started = true
+        startCompleted = false
+        defer { startCompleted = true; drainStartGate() }
         if let lastServerIdKey {
             HubMigration.run(defaults: defaults, keyPrefix: keyPrefix, deviceId: DeviceIdentifier().currentID,
                              bookmarks: bookmarkStore, lastServerIdKey: lastServerIdKey, stateStore: stateStore)
@@ -103,21 +130,30 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         if let saved = stateStore.loadActiveRef(),
            bookmarks.contains(where: { $0.id == saved.serverId && $0.enabled }) {
             activeRef = saved
-            pendingSelection[saved.serverId] = saved.sessionId
+            pendingRef = saved
         } else {
             stateStore.saveActiveRef(nil)
         }
-        var index = 0
-        for config in bookmarks where config.enabled {
-            let delay = stagger * index
-            recordedSleeps.append(delay)
-            await sleep(delay)
-            await buildSlot(for: config)
-            index += 1
+        let enabled = bookmarks.filter(\.enabled)
+        await withTaskGroup(of: Void.self) { group in
+            for (index, config) in enabled.enumerated() {
+                let delay = stagger * index
+                recordedSleeps.append(delay)
+                group.addTask { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.sleep(delay)
+                    guard self.started, !Task.isCancelled else { return }
+                    await self.buildSlot(for: config)
+                }
+            }
         }
         publish()
-        for c in startGate { c.resume() }
+    }
+
+    private func drainStartGate() {
+        let waiting = startGate
         startGate.removeAll()
+        for c in waiting { c.resume() }
     }
 
     public func stop() {
@@ -125,6 +161,7 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         slots.removeAll()
         slotSubscriptions.removeAll()
         started = false
+        pendingRef = nil
         publish()
     }
 
@@ -132,7 +169,18 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     /// window) and reconciles coordinators: new enabled bookmarks get one,
     /// removed ones are torn down, edited ones (host/port/TLS) are rebuilt.
     public func reloadBookmarks() {
-        let fresh = bookmarkStore.loadAll()
+        var fresh = bookmarkStore.loadAll()
+        // Add and pair save bookmarks enabled; the cap (D12) is enforced here so
+        // a ninth server is stored disabled, with a notice, instead of dialled.
+        var enabledNow = fresh.filter(\.enabled).count
+        if enabledNow > maxEnabled {
+            for i in fresh.indices.reversed() where fresh[i].enabled && slots[fresh[i].id] == nil && enabledNow > maxEnabled {
+                fresh[i].enabled = false
+                enabledNow -= 1
+                notice = "Up to \(maxEnabled) servers can be enabled at once. \(fresh[i].name) was added disabled."
+            }
+            bookmarkStore.saveAll(fresh)
+        }
         let freshById = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
         for id in Array(slots.keys) {
             guard let now = freshById[id], now.enabled else { tearDownSlot(id); continue }
@@ -167,7 +215,8 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         if enabled {
             Task { [weak self] in await self?.buildSlot(for: config); self?.publish() }
         } else {
-            tearDownSlot(serverId)
+            // Spec §10: unregister push on that relay first; the cached list is kept.
+            tearDownSlot(serverId, unregisterPush: true)
         }
         publish()
         return true
@@ -175,10 +224,24 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
 
     public func slot(for serverId: UUID) -> Slot? { slots[serverId] }
 
+    /// Tears the bookmark's coordinator down and builds a fresh one — after an
+    /// edit that may have changed the token (the hub cannot see the keychain).
+    public func rebuildSlot(_ serverId: UUID) {
+        tearDownSlot(serverId)
+        guard let config = bookmarks.first(where: { $0.id == serverId }), config.enabled else { publish(); return }
+        Task { [weak self] in await self?.buildSlot(for: config); self?.publish() }
+    }
+
     // MARK: - Slots
 
+    private func isWanted(_ serverId: UUID) -> Bool {
+        started && bookmarks.first(where: { $0.id == serverId })?.enabled == true
+    }
+
     private func buildSlot(for config: ConnectionConfig) async {
-        guard slots[config.id] == nil else { return }
+        // Re-read the flag: setEnabled(true) then setEnabled(false) can both run
+        // before this task does, and `stop()` may have closed the window.
+        guard slots[config.id] == nil, isWanted(config.id) else { return }
         let token: String?
         do { token = try tokens.loadToken(for: config.id) } catch { token = nil }
         guard let token else {
@@ -196,19 +259,46 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         }
         onTestEvent?("start:\(config.name)")
         await slot.start()
+        // The world may have moved while the handshake ran.
+        guard isWanted(config.id), slots[config.id] === slot else {
+            if slots[config.id] === slot { slots[config.id] = nil; slotSubscriptions[config.id] = nil }
+            slot.tearDown()
+            return
+        }
+        if let push = pushSettings {
+            await slot.syncPushRegistration(pushEnabled: push.enabled, notifyOnFinished: push.notify)
+        }
         publish()
     }
 
-    private func tearDownSlot(_ serverId: UUID) {
-        if activeRef?.serverId == serverId {
-            let slot = slots[serverId]
-            activeRef = nil
-            stateStore.saveActiveRef(nil)
-            Task { await slot?.detachActive() }
-        }
-        slots[serverId]?.tearDown()
+    /// Removes the slot from the hub at once (nothing publishes it any more),
+    /// then detaches / unregisters within the budget and tears it down.
+    private func tearDownSlot(_ serverId: UUID, unregisterPush: Bool = false) {
+        guard let slot = detachFromHub(serverId) else { return }
+        let wasActive = slot.activeSessionId != nil
+        Task { await self.retire(slot, wasActive: wasActive, unregisterPush: unregisterPush) }
+    }
+
+    /// Forgets the slot and clears a selection that pointed at it. Returns the
+    /// slot so the caller can retire it (sync callers in a Task, async inline).
+    func detachFromHub(_ serverId: UUID) -> Slot? {
+        guard let slot = slots[serverId] else { return nil }
         slots[serverId] = nil
         slotSubscriptions[serverId] = nil
+        if activeRef?.serverId == serverId || pendingRef?.serverId == serverId {
+            activeRef = nil
+            pendingRef = nil
+            stateStore.saveActiveRef(nil)
+        }
+        return slot
+    }
+
+    func retire(_ slot: Slot, wasActive: Bool, unregisterPush: Bool) async {
+        await BoundedWait.run(budget: detachBudget) {
+            if wasActive { await slot.detachActive() }
+            if unregisterPush { await slot.syncPushRegistration(pushEnabled: false, notifyOnFinished: false) }
+        }
+        slot.tearDown()
     }
 
     private func slotDidChange(_ serverId: UUID) {
@@ -222,8 +312,26 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
             bookmarkStore.add(config)
             bookmarks = bookmarkStore.loadAll()
         }
+        reconcileSelection(with: slot, serverId: serverId)
         publish()
         applyPendingSelection(for: serverId)
+    }
+
+    /// The coordinator owns the attachment; the hub mirrors it. Detach (⌘W),
+    /// terminate, a stolen session, a failed resume, the Attach sheet and the QR
+    /// scanner all move `activeSessionId` without going through the hub — and
+    /// before this existed the stale highlight made the row un-reselectable.
+    private func reconcileSelection(with slot: Slot, serverId: UUID) {
+        guard selectionsInFlight == 0, pendingRef == nil else { return }
+        let attached = slot.activeSessionId
+        if let active = activeRef, active.serverId == serverId {
+            guard attached != active.sessionId else { return }
+            activeRef = attached.map { SessionRef(serverId: serverId, sessionId: $0) }
+            stateStore.saveActiveRef(activeRef)
+        } else if activeRef == nil, let attached {
+            activeRef = SessionRef(serverId: serverId, sessionId: attached)
+            stateStore.saveActiveRef(activeRef)
+        }
     }
 
     // MARK: - Publishing (spec §7.2, §7.6)
@@ -269,124 +377,23 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         aggregate = agg
     }
 
-    // MARK: - Selection (spec §7.5)
-
-    /// Every row the sidebar shows, in sidebar order (live and cached sections),
-    /// for keyboard next/previous across section boundaries.
-    public var orderedRefs: [SessionRef] {
-        sections.flatMap { section in
-            section.sessions.map { SessionRef(serverId: section.id, sessionId: $0.id) }
-        }
-    }
-
-    /// Makes `ref` the one attached session. Same server → the coordinator's own
-    /// `switchToSession` (which detaches the previous session itself). Different
-    /// server → `detachActive()` on the previous coordinator, bounded, THEN the
-    /// attach. Offline server → remember the choice and trigger its recovery.
-    public func select(_ ref: SessionRef) async {
-        guard let section = sections.first(where: { $0.id == ref.serverId }) else { return }
-        if activeRef == ref { return }
-        let previous = activeRef
-        activeRef = ref
-        stateStore.saveActiveRef(ref)
-        onTestEvent?("select:\(ref.serverId.uuidString.prefix(4))")
-
-        if let previous, previous.serverId != ref.serverId, let from = slots[previous.serverId] {
-            await detachBounded(from)
-        }
-        guard let to = slots[ref.serverId] else { return }
-        if section.status.isLive {
-            pendingSelection[ref.serverId] = nil
-            await to.switchToSession(id: ref.sessionId)
-        } else {
-            pendingSelection[ref.serverId] = ref.sessionId
-            to.triggerUserRecovery()
-        }
-        publish()
-    }
-
-    /// New session on `serverId`; detaches on any other server first (§7.5).
-    public func createSession(on serverId: UUID) async {
-        guard let to = slots[serverId] else { return }
-        if let previous = activeRef, previous.serverId != serverId, let from = slots[previous.serverId] {
-            await detachBounded(from)
-        }
-        await to.createNewSession()
-        if let id = to.activeSessionId {
-            activeRef = SessionRef(serverId: serverId, sessionId: id)
-            stateStore.saveActiveRef(activeRef)
-        }
-        publish()
-    }
-
-    public func selectNext() async { await step(by: 1) }
-    public func selectPrevious() async { await step(by: -1) }
-
-    private func step(by delta: Int) async {
-        let refs = orderedRefs
-        guard refs.count > 1, let current = activeRef, let index = refs.firstIndex(of: current) else { return }
-        let next = (index + delta + refs.count) % refs.count
-        await select(refs[next])
-    }
-
-    /// Deletes a bookmark: detach if it is active, tear down, forget its token
-    /// and its ownership namespace (§7.3, §11).
-    public func removeServer(_ serverId: UUID) async {
-        if activeRef?.serverId == serverId, let slot = slots[serverId] {
-            activeRef = nil
-            stateStore.saveActiveRef(nil)
-            await detachBounded(slot)
-        }
-        tearDownSlot(serverId)
-        bookmarkStore.delete(id: serverId)
-        (tokens as? TokenDeleting)?.deleteTokenIgnoringErrors(for: serverId)
-        bookmarks = bookmarkStore.loadAll()
-        cachedSessions[serverId] = nil
-        pendingSelection[serverId] = nil
-        publish()
-    }
-
-    /// Awaits `slot.detachActive()` for at most `detachBudget`. A task group
-    /// cannot express this: it waits for every child at scope exit, so a stuck
-    /// detach would hold the switch hostage. The straggler is left to finish
-    /// on its own; the coordinator's own budget bounds it.
-    func detachBounded(_ slot: Slot) async {
-        await BoundedWait.run(budget: detachBudget) { await slot.detachActive() }
-    }
-
-    /// Called from `slotDidChange` after `publish()`: apply or drop a pending
-    /// selection once the server is live again.
-    private func applyPendingSelection(for serverId: UUID) {
-        guard let wanted = pendingSelection[serverId],
-              let slot = slots[serverId],
-              let section = sections.first(where: { $0.id == serverId }), section.status.isLive else { return }
-        pendingSelection[serverId] = nil
-        if slot.activeSessions.contains(where: { $0.id == wanted }) {
-            Task { await slot.switchToSession(id: wanted); self.publish() }
-        } else {
-            if activeRef == SessionRef(serverId: serverId, sessionId: wanted) {
-                activeRef = nil
-                stateStore.saveActiveRef(nil)
-            }
-            notice = "That session has ended"
-            publish()
-        }
-    }
-
     // MARK: - Fan-out (spec §7.3, D10)
 
     /// Foreground / wake / network-restored: every coordinator gets the event,
     /// staggered so N servers do not reconnect in lockstep. Offline ones are
     /// included — this is how they come back.
     public func handleForegroundTransition(userInitiated: Bool) async {
-        var index = 0
-        for config in bookmarks where config.enabled {
-            guard let slot = slots[config.id] else { continue }
-            let delay = stagger * index
-            recordedSleeps.append(delay)
-            await sleep(delay)
-            await slot.handleForegroundTransition(userInitiated: userInitiated)
-            index += 1
+        let targets = bookmarks.filter(\.enabled).compactMap { slots[$0.id] }
+        await withTaskGroup(of: Void.self) { group in
+            for (index, slot) in targets.enumerated() {
+                let delay = stagger * index
+                recordedSleeps.append(delay)
+                group.addTask { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.sleep(delay)
+                    await slot.handleForegroundTransition(userInitiated: userInitiated)
+                }
+            }
         }
         publish()
     }
@@ -400,6 +407,7 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     /// Push registration is per relay: each coordinator decides and sends for
     /// its own socket (spec §10).
     public func syncPushRegistration(pushEnabled: Bool, notifyOnFinished: Bool) async {
+        pushSettings = (pushEnabled, notifyOnFinished)
         for (_, slot) in slots {
             await slot.syncPushRegistration(pushEnabled: pushEnabled, notifyOnFinished: notifyOnFinished)
         }

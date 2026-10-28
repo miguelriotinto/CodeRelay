@@ -38,6 +38,14 @@ final class FakeServerSlot: ServerSlotCoordinating {
     /// Makes `detachActive` hang until released (for the budget test).
     var detachGate: CheckedContinuation<Void, Never>?
     var detachHangs = false
+    /// Makes `start()` / `handleForegroundTransition` park until released, so a
+    /// test can prove the hub does not serialise the other servers behind them.
+    var startHangs = false
+    var startGate: CheckedContinuation<Void, Never>?
+    var foregroundHangs = false
+    var foregroundGate: CheckedContinuation<Void, Never>?
+    /// `switchToSession` leaves `activeSessionId` untouched (a failed resume).
+    var switchFails = false
 
     init(config: ConnectionConfig, defaults: UserDefaults) {
         self.config = config
@@ -45,18 +53,29 @@ final class FakeServerSlot: ServerSlotCoordinating {
         self.activityCoordinator = ActivityCoordinator(ownershipStore: store, initialAgents: [:])
     }
 
-    func start() async { startCount += 1; log?("start:\(config.name)") }
-    func switchToSession(id: UUID) async { switchedTo.append(id); activeSessionId = id; log?("switch:\(config.name)") }
+    func start() async {
+        startCount += 1; log?("start:\(config.name)")
+        if startHangs { await withCheckedContinuation { startGate = $0 } }
+    }
+    func switchToSession(id: UUID) async {
+        switchedTo.append(id); log?("switch:\(config.name)")
+        if !switchFails { activeSessionId = id }
+    }
     func createNewSession() async { createCount += 1; let id = UUID(); activeSessionId = id; log?("create:\(config.name)") }
     func detachActive() async {
         detachActiveCount += 1; log?("detach:\(config.name)")
         if detachHangs { await withCheckedContinuation { detachGate = $0 } }
         activeSessionId = nil
     }
-    func handleForegroundTransition(userInitiated: Bool) async { foregroundCount += 1; log?("fg:\(config.name)") }
+    func handleForegroundTransition(userInitiated: Bool) async {
+        foregroundCount += 1; log?("fg:\(config.name)")
+        if foregroundHangs { await withCheckedContinuation { foregroundGate = $0 } }
+    }
     func triggerUserRecovery() { userRecoveryCount += 1; log?("recover:\(config.name)") }
     func tearDown() { tornDown = true; log?("teardown:\(config.name)") }
-    func syncPushRegistration(pushEnabled: Bool, notifyOnFinished: Bool) async { pushSyncs.append((pushEnabled, notifyOnFinished)) }
+    func syncPushRegistration(pushEnabled: Bool, notifyOnFinished: Bool) async {
+        pushSyncs.append((pushEnabled, notifyOnFinished)); log?("push:\(pushEnabled)")
+    }
     func attachRemoteSession(id: UUID, serverName: String?) async { remoteAttaches.append(id); activeSessionId = id }
     func fetchSessions(force: Bool) async { fetchCount += 1 }
 
@@ -77,6 +96,13 @@ final class HubHarness {
     let tokens: FakeTokens
     let state: HubStateStore
     private(set) var hub: ServerHub<FakeServerSlot>!
+    /// Every fake the factory produced, in build order.
+    private(set) var built: [FakeServerSlot] = []
+    /// Bookmarks whose fake should park in `start()` until released.
+    var startHangs: Set<UUID> = []
+    /// When `gatedSleep` is on, every hub sleep parks here until `releaseSleeps()`.
+    private var sleepGates: [CheckedContinuation<Void, Never>] = []
+    private(set) var sleepCalls = 0
 
     final class FakeTokens: TokenProviding, TokenDeleting {
         var tokens: [UUID: String] = [:]
@@ -84,7 +110,8 @@ final class HubHarness {
         func deleteTokenIgnoringErrors(for connectionId: UUID) { tokens[connectionId] = nil }
     }
 
-    init(configs: [ConnectionConfig], tokensFor: [UUID]? = nil, stagger: Duration = .milliseconds(150)) {
+    init(configs: [ConnectionConfig], tokensFor: [UUID]? = nil, stagger: Duration = .milliseconds(150),
+         maxEnabled: Int = 8, gatedSleep: Bool = false) {
         let suite = "HubTests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
@@ -95,10 +122,21 @@ final class HubHarness {
         state = HubStateStore(keyPrefix: "hub.test", deviceId: "d", defaults: defaults)
         let d = defaults
         hub = ServerHub(bookmarks: bookmarks, tokens: tokens, stateStore: state, keyPrefix: "hub.test",
-                        factory: { config, _ in FakeServerSlot(config: config, defaults: d) },
-                        maxEnabled: 8, stagger: stagger,
-                        sleep: { _ in })
+                        factory: { [unowned self] config, _ in
+                            let slot = FakeServerSlot(config: config, defaults: d)
+                            slot.startHangs = self.startHangs.contains(config.id)
+                            self.built.append(slot)
+                            return slot
+                        },
+                        maxEnabled: maxEnabled, stagger: stagger,
+                        sleep: { [unowned self] _ in
+                            self.sleepCalls += 1
+                            if gatedSleep { await withCheckedContinuation { self.sleepGates.append($0) } }
+                        })
     }
+
+    func releaseSleeps() { let gates = sleepGates; sleepGates.removeAll(); for g in gates { g.resume() } }
+    func releaseStart(_ id: UUID) { slot(id)?.startGate?.resume(); slot(id)?.startGate = nil }
 
     func slot(_ id: UUID) -> FakeServerSlot? { hub.slot(for: id) }
 }

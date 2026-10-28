@@ -99,6 +99,14 @@ final class MenuBarViewModel: ObservableObject {
         let sectionsTask = Task { [weak self] in
             for await sections in hub.$sections.values {
                 guard let self else { return }
+                // The launch restore sets `activeRef` before its slot exists; the
+                // coordinator appears on a later sections emission, so follow it
+                // from here too (by identity, so a rebuilt slot is re-followed).
+                if let coordinator = hub.activeCoordinator, ObjectIdentifier(coordinator) != self.followedCoordinator {
+                    self.cancelCoordinatorTasks()
+                    self.activeSessionId = hub.activeRef?.sessionId
+                    self.followCoordinator(coordinator)
+                }
                 self.groups = Self.groups(from: sections)
                 self.connectionColor = Self.connectionColor(for: sections, activeServerId: hub.activeRef?.serverId)
                 self.connectionLabel = Self.connectionLabel(for: sections, aggregate: hub.aggregate)
@@ -109,6 +117,7 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     private var hubTasks: [Task<Void, Never>] = []
+    private var followedCoordinator: ObjectIdentifier?
 
     static func groups(from sections: [ServerSection]) -> [MenuBarGroup] {
         let enabled = sections.filter { $0.config.enabled }
@@ -141,6 +150,7 @@ final class MenuBarViewModel: ObservableObject {
     private func cancelCoordinatorTasks() {
         for task in coordinatorTasks { task.cancel() }
         coordinatorTasks.removeAll()
+        followedCoordinator = nil
     }
 
     /// Spawns three independent tasks observing the coordinator's published
@@ -150,6 +160,7 @@ final class MenuBarViewModel: ObservableObject {
         // Cancel any pre-existing follow tasks before spawning new ones — avoids
         // stacking three tasks per coordinator swap during rapid reconnects.
         cancelCoordinatorTasks()
+        followedCoordinator = ObjectIdentifier(coordinator)
 
         let sessionsTask = Task { [weak self] in
             for await s in coordinator.$sessions.values {

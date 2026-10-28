@@ -98,10 +98,10 @@ struct AppCommands: Commands {
             Divider()
 
             Button("Scan QR Code...") {
-                coordinator?.showQRScanner = true
+                hub?.focusCoordinator?.showQRScanner = true
             }
             .keyboardShortcut("q", modifiers: [.command, .shift])
-            .disabled(coordinator == nil)
+            .disabled(hub?.focusCoordinator == nil)
         }
 
         CommandGroup(after: .sidebar) {

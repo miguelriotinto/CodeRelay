@@ -88,6 +88,9 @@ struct ServerListWindow: View {
             AddEditServerView(target: target) { newConnection in
                 viewModel.addOrUpdate(newConnection)
                 hub.reloadBookmarks()
+                // The hub cannot see the keychain: a pasted token only reaches the
+                // relay through a fresh coordinator.
+                if case .edit = target { hub.rebuildSlot(newConnection.id) }
                 addEditTarget = nil
             }
         }

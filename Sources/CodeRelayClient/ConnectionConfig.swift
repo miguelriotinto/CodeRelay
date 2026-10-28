@@ -56,8 +56,11 @@ public struct ConnectionConfig: Codable, Identifiable, Sendable, Equatable {
         host = try c.decode(String.self, forKey: .host)
         port = try c.decode(UInt16.self, forKey: .port)
         useTLS = try c.decode(Bool.self, forKey: .useTLS)
-        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
-        instanceId = try c.decodeIfPresent(UUID.self, forKey: .instanceId)
-        displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+        // Lenient: the bookmark list is decoded all-or-nothing by the store, so
+        // one wrong-typed optional (a future build's shape, then a downgrade)
+        // must fall back to its default rather than wipe every bookmark.
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
+        instanceId = try? c.decodeIfPresent(UUID.self, forKey: .instanceId)
+        displayName = try? c.decodeIfPresent(String.self, forKey: .displayName)
     }
 }

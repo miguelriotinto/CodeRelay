@@ -63,13 +63,14 @@ final class AddEditServerViewModel: ObservableObject {
         guard isValid else { return nil }
         guard let portNumber = UInt16(port), portNumber >= 1 else { return nil }
 
-        let config = ConnectionConfig(
-            id: existingId ?? UUID(),
-            name: name.isEmpty ? host : name,
-            host: host,
-            port: portNumber,
-            useTLS: useTLS
-        )
+        // Mutate the existing bookmark so `enabled`, `instanceId` and
+        // `displayName` survive an edit (the multi-server fields).
+        var config: ConnectionConfig
+        if case .edit(let existing) = mode { config = existing } else { config = ConnectionConfig(name: "", host: "") }
+        config.name = name.isEmpty ? host : name
+        config.host = host
+        config.port = portNumber
+        config.useTLS = useTLS
 
         CodeRelayApp.savedConnections.add(config)
 

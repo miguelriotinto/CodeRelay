@@ -100,8 +100,9 @@ final class ServerHubTests: XCTestCase {
         XCTAssertTrue(h.bookmarks.loadAll()[0].enabled, "persisted")
         let slot = h.slot(a.id)!
         XCTAssertTrue(h.hub.setEnabled(a.id, false))
+        XCTAssertNil(h.slot(a.id), "gone from the hub at once")
+        await hubSettle()   // teardown follows the bounded push unregister (spec §10)
         XCTAssertTrue(slot.tornDown)
-        XCTAssertNil(h.slot(a.id))
         XCTAssertEqual(h.hub.sections[0].status, .disabled)
     }
 

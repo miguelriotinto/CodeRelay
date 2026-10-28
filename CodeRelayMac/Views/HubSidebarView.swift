@@ -57,7 +57,7 @@ struct HubSidebarView: View {
                             ForEach(section.sessions, id: \.id) { s in
                                 Text(s.name ?? String(s.id.uuidString.prefix(8)))
                                     .foregroundStyle(.secondary)
-                                    .tag(SessionRef(serverId: section.id, sessionId: s.id))
+                                    .selectionDisabled()   // nothing can attach here
                             }
                         }
                     }
@@ -77,9 +77,9 @@ struct HubSidebarView: View {
 
                 Spacer()
 
-                if let active = hub.activeRef, hub.slot(for: active.serverId) != nil {
+                if let focusId = hub.focusServerId {
                     Button {
-                        attachTarget = IdentifiedServer(id: active.serverId)
+                        attachTarget = IdentifiedServer(id: focusId)
                     } label: {
                         Label("Attach", systemImage: "rectangle.connected.to.line.below")
                     }
