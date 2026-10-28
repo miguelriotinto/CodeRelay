@@ -13,6 +13,17 @@ public struct SessionLoadingPresentation: Equatable {
     public let detail: String?
     public let subtitle: String?
     public let allowsCancel: Bool
+    /// The closing step: the load finished with a session on screen. The sheet
+    /// shows "Ready" next to the final byte count for `readyDwell`, then goes —
+    /// so a session already in sync reads "0 KB → Ready" instead of a counter
+    /// that never moves.
+    public let isReady: Bool
+    /// Inputs for the closing step, read by `SessionLoadingSheetModel` when the
+    /// load ends: Ready only with a session attached and nothing failed.
+    public let sessionAttached: Bool
+    public let loadFailed: Bool
+    public let recoveryFailed: Bool
+    let isRecoveryPresentation: Bool
 
     /// - Parameter expectsSession: a session is attached or about to be restored.
     ///   The launch/wake handshake publishes connecting / authenticating /
@@ -25,6 +36,9 @@ public struct SessionLoadingPresentation: Equatable {
                 isRecovering: Bool,
                 recoveryPhase: SharedSessionCoordinator.RecoveryPhase,
                 expectsSession: Bool = true,
+                sessionAttached: Bool = true,
+                loadFailed: Bool = false,
+                recoveryFailed: Bool = false,
                 sessionName: String?,
                 serverName: String?) {
         let sessionBound: Bool
@@ -47,6 +61,37 @@ public struct SessionLoadingPresentation: Equatable {
         let parts = [sessionName, serverName].compactMap { $0 }.filter { !$0.isEmpty }
         subtitle = parts.isEmpty ? nil : parts.joined(separator: " · ")
         allowsCancel = isRecovering
+        isReady = false
+        self.sessionAttached = sessionAttached
+        self.loadFailed = loadFailed
+        self.recoveryFailed = recoveryFailed
+        isRecoveryPresentation = isRecovering
+    }
+
+    private init(readyFrom last: SessionLoadingPresentation) {
+        isActive = false
+        title = last.title
+        status = "Ready"
+        detail = last.detail ?? "0 KB"
+        subtitle = last.subtitle
+        allowsCancel = false
+        isReady = true
+        sessionAttached = true
+        loadFailed = false
+        recoveryFailed = false
+        isRecoveryPresentation = last.isRecoveryPresentation
+    }
+
+    /// The same sheet, closed out: "Ready" and the final byte count.
+    func readied() -> SessionLoadingPresentation { SessionLoadingPresentation(readyFrom: self) }
+
+    /// Whether a load that just ended (this is the first inactive presentation
+    /// after `last`) succeeded: a session is on screen, nothing failed, and — if
+    /// it was a reconnect — the recovery was not cancelled or given up.
+    func endsInReady(after last: SessionLoadingPresentation?) -> Bool {
+        guard !isActive, sessionAttached, !loadFailed else { return false }
+        if last?.isRecoveryPresentation == true, recoveryFailed { return false }
+        return true
     }
 }
 
@@ -64,6 +109,8 @@ public struct SessionLoadingPresentation: Equatable {
 public final class SessionLoadingSheetModel: ObservableObject {
     public static let minimumVisible: Duration = .milliseconds(600)
     public static let stallTimeout: Duration = .seconds(15)
+    /// How long "Ready" stays up after a successful load before the sheet goes.
+    public static let readyDwell: Duration = .milliseconds(600)
 
     @Published public private(set) var isPresented = false
     /// The last active presentation, kept while the sheet animates down.
@@ -75,6 +122,9 @@ public final class SessionLoadingSheetModel: ObservableObject {
     private var stallTask: Task<Void, Never>?
     /// Lowered by the stall timer; the next change re-presents.
     private var stalled = false
+    /// "Ready" is on screen; its own dwell (not the minimum hold) dismisses.
+    private var showingReady = false
+    private var readyTask: Task<Void, Never>?
     private let sleep: @MainActor (Duration) async -> Void
 
     public init(sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }) {
@@ -83,8 +133,18 @@ public final class SessionLoadingSheetModel: ObservableObject {
 
     public func update(_ presentation: SessionLoadingPresentation) {
         let changed = presentation != shown
+        let wasActive = active
         active = presentation.isActive
-        if presentation.isActive { shown = presentation }
+        if presentation.isActive {
+            // A new load (or more bytes) takes over from a Ready in progress.
+            readyTask?.cancel(); readyTask = nil; showingReady = false
+            shown = presentation
+        }
+        if wasActive, !active, isPresented, !stalled, presentation.endsInReady(after: shown) {
+            stallTask?.cancel(); stallTask = nil
+            showReady()
+            return
+        }
         if active, changed { stalled = false; armStall() }
         if active, !isPresented, !stalled {
             isPresented = true
@@ -115,7 +175,21 @@ public final class SessionLoadingSheetModel: ObservableObject {
         }
     }
 
+    /// The closing step: "Ready" next to the final bytes for `readyDwell`.
+    private func showReady() {
+        shown = shown?.readied()
+        showingReady = true
+        readyTask?.cancel()
+        readyTask = Task { [weak self] in
+            guard let self else { return }
+            await self.sleep(Self.readyDwell)
+            guard !Task.isCancelled, self.showingReady, !self.active else { return }
+            self.showingReady = false
+            self.isPresented = false
+        }
+    }
+
     private func settle() {
-        if isPresented, !active, holdElapsed { isPresented = false }
+        if isPresented, !active, holdElapsed, !showingReady { isPresented = false }
     }
 }

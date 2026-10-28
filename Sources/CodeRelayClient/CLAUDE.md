@@ -86,7 +86,14 @@ UI atoms both apps host (`Views/`).
   `minimumVisible` (600 ms) and dismisses when nothing is loading; `shown` keeps the
   last text while the sheet animates down. A presentation unchanged for
   `stallTimeout` (15 s) lowers the sheet until it changes again — the one place
-  "the sheet never stays up" is enforced. The terminal blackout
+  "the sheet never stays up" is enforced. When a load ends with a session
+  attached and nothing failed (`endsInReady`: `lastLoadFailed`/pending error
+  alerts false, and a reconnect not cancelled), `showReady()` swaps in a
+  "Ready" presentation (`readied()`: final bytes, checkmark, no Cancel) for
+  `readyDwell` (0.6 s) before dismissing; a new load during Ready takes over.
+  `SharedSessionCoordinator.lastLoadFailed` is set BEFORE the phase clears on
+  every failure path — `switchToSession`'s rollback awaits a resume before its
+  error, so ordering on the error flags alone would flash Ready. The terminal blackout
   (`View.terminalLoadingCover(_:)`) follows `isPresented` so both lift together.
   Host the sheet on the view that owns the model, never on a child keyed by
   coordinator identity.

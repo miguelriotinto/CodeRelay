@@ -189,6 +189,9 @@ private struct FocusCoordinatorModifiers: View {
                                    // The handshake narrates a server, not a session, unless one is
                                    // attached or about to be restored.
                                    expectsSession: coordinator.expectsSessionToLoad,
+                                   sessionAttached: coordinator.activeSessionId != nil,
+                                   loadFailed: coordinator.loadEndedInFailure,
+                                   recoveryFailed: coordinator.recoveryFailed,
                                    sessionName: coordinator.activeSessionId.map { coordinator.name(for: $0) },
                                    serverName: serverName)
     }

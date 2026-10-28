@@ -282,6 +282,9 @@ private struct ActiveCoordinatorModifiers: View {
                                    isRecovering: coordinator.isRecovering,
                                    recoveryPhase: coordinator.recoveryPhase,
                                    expectsSession: coordinator.expectsSessionToLoad,
+                                   sessionAttached: coordinator.activeSessionId != nil,
+                                   loadFailed: coordinator.loadEndedInFailure,
+                                   recoveryFailed: coordinator.recoveryFailed,
                                    sessionName: coordinator.activeSessionId.map { coordinator.name(for: $0) },
                                    serverName: serverName)
     }

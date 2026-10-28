@@ -198,9 +198,14 @@ their first line; recovery publishes `isRecovering`/`recoveryPhase` instead
 sheet both apps present (`SessionLoadingSheet`: step text, and the **bytes loaded
 as the largest text**, a literal "0 KB" from the first phase), held at least
 600 ms so an instant switch does not flicker, while the terminal fades to black
-behind it (`terminalLoadingCover`); both lift together when the phase clears —
-on the first visible frame of a replay, or right after a replay-skipping resume
-returns. The handshake's connecting/authenticating/loadingSessions phases raise
+behind it (`terminalLoadingCover`). When the phase clears — on the first visible
+frame of a replay, or right after a replay-skipping resume returns — a load that
+ended with a session attached and nothing failed shows **"Ready"** next to the
+final byte count (a checkmark replaces the spinner) for `readyDwell` (0.6 s),
+then sheet and blackout lift together; a session already in sync therefore reads
+"0 KB → Ready" instead of a counter that never moves. A failed load
+(`lastLoadFailed`, set at the top of every failure branch before the phase
+clears, or a pending error alert) and a cancelled reconnect never say Ready. The handshake's connecting/authenticating/loadingSessions phases raise
 the sheet only while a session is attached or pending restore
 (`expectsSession`), never for a bare launch against a slow host. The model is
 also the one enforcer of "never stays up": a presentation unchanged for 15 s
