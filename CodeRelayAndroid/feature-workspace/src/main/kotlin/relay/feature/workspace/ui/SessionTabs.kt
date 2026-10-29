@@ -90,7 +90,14 @@ data class TabStripItem(
     val agentState: AgentDetectedState?,
     val awaitingInput: Boolean,
     val contentDescription: String? = null,
-)
+) {
+    /**
+     * The key the lazy row stores. Android's lazy layouts save item state in a
+     * Bundle, so the key must be a Bundle type: a `SessionRef` key crashed the
+     * app the moment the first cross-server tab appeared.
+     */
+    val lazyKey: String get() = key.toString()
+}
 
 /**
  * The numbered tab chips, independent of what a tab is: [SessionTabs] feeds it
@@ -156,7 +163,7 @@ fun TabStrip(
         verticalAlignment = Alignment.CenterVertically,
         contentPadding = PaddingValues(horizontal = 2.dp),
     ) {
-        items(items, key = { it.key }) { item ->
+        items(items, key = { it.lazyKey }) { item ->
             // A blocked agent flashes for attention (parity with the sidebar's
             // blinking blocked dot); when no fine-grained state is reported, fall
             // back to the legacy awaiting-input pulse.

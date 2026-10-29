@@ -167,4 +167,16 @@ class SessionTabsLogicTest {
         // Translucent white over the black strip looks dark, must keep white.
         assertEquals(Color.White, tabLabelColor(white15))                    // ~0.15
     }
+
+    @org.junit.jupiter.api.Test
+    fun `tab strip keys are bundle-safe strings, distinct per server`() {
+        val sid = java.util.UUID.randomUUID()
+        fun item(server: java.util.UUID) = TabStripItem(
+            key = relay.protocol.SessionRef(server, sid), number = 1, isSelected = false,
+            agentId = null, agentState = null, awaitingInput = false,
+        )
+        val a = item(java.util.UUID.randomUUID()); val b = item(java.util.UUID.randomUUID())
+        org.junit.jupiter.api.Assertions.assertTrue(a.lazyKey is String)
+        org.junit.jupiter.api.Assertions.assertNotEquals(a.lazyKey, b.lazyKey, "same session id on two servers stays two tabs")
+    }
 }

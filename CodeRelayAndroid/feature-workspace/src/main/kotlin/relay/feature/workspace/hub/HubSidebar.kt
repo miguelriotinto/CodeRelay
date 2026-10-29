@@ -20,6 +20,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -46,6 +47,9 @@ import relay.session.hub.ServerHub
 import relay.session.hub.createSession
 import relay.session.hub.select
 import java.util.UUID
+
+/** Tighter than Material's 24 dp so "New" and "Attach" fit beside the Servers button in a 320 dp drawer. */
+private val CompactButtonPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
 
 /** Per-server lookups the rows need, collected from that server's coordinator. */
 private class RowSource(
@@ -107,22 +111,25 @@ fun <S : WorkspaceSlot> HubSidebar(
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         ) {
-            OutlinedButton(onClick = onOpenServers, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Filled.Dns, contentDescription = null)
-                Text("Servers", modifier = Modifier.padding(start = 6.dp), maxLines = 1)
+            // Icon-only: three labelled buttons do not fit the 320 dp drawer
+            // ("Servers" / "New" / "Attach" truncated to "S" / "N" / "At").
+            OutlinedIconButton(onClick = onOpenServers) {
+                Icon(Icons.Filled.Dns, contentDescription = "Servers")
             }
             focusServerId?.let { id ->
                 OutlinedButton(
                     onClick = { scope.launch { hub.createSession(id); onSelected() } },
                     modifier = Modifier.weight(1f),
+                    contentPadding = CompactButtonPadding,
                 ) {
                     Icon(Icons.Filled.Add, contentDescription = null)
                     Text("New", modifier = Modifier.padding(start = 6.dp), maxLines = 1)
                 }
             }
             focus?.let { slot ->
-                OutlinedButton(onClick = { onAttach(slot) }, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = { onAttach(slot) }, modifier = Modifier.weight(1f), contentPadding = CompactButtonPadding) {
                     Icon(Icons.AutoMirrored.Filled.CallSplit, contentDescription = null)
                     Text("Attach", modifier = Modifier.padding(start = 6.dp), maxLines = 1)
                 }
