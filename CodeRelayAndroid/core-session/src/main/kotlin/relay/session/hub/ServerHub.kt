@@ -295,6 +295,7 @@ class ServerHub<S : ServerSlot>(
         }
         reconcileSelection(slot, id)
         publish()
+        applyPendingSelection(id)
     }
 
     /**
