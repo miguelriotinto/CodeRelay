@@ -155,6 +155,10 @@ class AppSettings(
             .stateIn(scope, SharingStarted.Eagerly, SessionNamingTheme.DEFAULT)
     fun setSessionNamingTheme(value: SessionNamingTheme) = put(SESSION_NAMING_THEME, value.rawValue)
 
+    /** The persisted theme, awaited from disk (the StateFlow seeds DEFAULT until the async read lands). */
+    suspend fun sessionNamingThemeNow(): SessionNamingTheme =
+        SessionNamingTheme.fromRaw(dataStore.data.first()[SESSION_NAMING_THEME] ?: SessionNamingTheme.DEFAULT.rawValue)
+
     val terminalFontSize: StateFlow<Double> = doubleFlow(TERMINAL_FONT_SIZE, 12.0)
     fun setTerminalFontSize(value: Double) = put(TERMINAL_FONT_SIZE, value)
 

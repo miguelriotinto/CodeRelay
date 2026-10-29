@@ -17,4 +17,12 @@ class SessionLoadingSheetStyleTest {
     }
 
     @Test fun sheetWidthMatchesTheAppleApps() = assertEquals(340, SessionLoadingSheetStyle.MAX_WIDTH_DP)
+
+    @Test fun phonesSpanTheScreenLikeTheIphoneSheet() {
+        // The iPhone sheet spans the screen; only tablet-class and desktop
+        // windows get the fixed 340 dp card (the iPad / Mac width).
+        assertEquals(null, SessionLoadingSheetStyle.maxWidthDpFor(screenWidthDp = 412f))
+        assertEquals(340, SessionLoadingSheetStyle.maxWidthDpFor(screenWidthDp = 840f))
+        assertEquals(340, SessionLoadingSheetStyle.maxWidthDpFor(screenWidthDp = 600f))
+    }
 }

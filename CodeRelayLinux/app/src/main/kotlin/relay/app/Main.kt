@@ -366,7 +366,12 @@ private fun runApp(
     // merged; with several servers each title is prefixed with the server.
     val liveSlots = sections.filter { it.config.enabled }.mapNotNull { section -> hub.slot(section.id)?.let { section to it } }
     LaunchedEffect(liveSlots.map { it.second }) {
-        if (liveSlots.isEmpty()) return@LaunchedEffect
+        if (liveSlots.isEmpty()) {
+            // Nothing live: forget every remembered state, so a server coming
+            // back does not announce work that finished while it was away.
+            environment.notifier.reset()
+            return@LaunchedEffect
+        }
         val prefixed = liveSlots.size > 1
         combine(liveSlots.map { (_, slot) -> slot.coordinator.agentStates }) { maps ->
             maps.fold(emptyMap<UUID, relay.protocol.AgentDetectedState>()) { acc, m -> acc + m }

@@ -46,4 +46,12 @@ class ServerManagementTest {
         assertEquals("disabled · reachable", statusLine(s(false, ServerSectionStatus.Disabled), ServerStatus.LIVE).first)
         assertEquals("disabled · offline", statusLine(s(false, ServerSectionStatus.Disabled), ServerStatus.OFFLINE).first)
     }
+
+    @Test fun aNewPlaintextBookmarkOnAPublicHostIsAddedDisabled() {
+        // Enabling such a bookmark is refused with a TLS message; adding one
+        // enabled skipped that message and showed a silent "offline" section.
+        assertFalse(ServerPolling.addsEnabled(ConnectionConfig(name = "p", host = "example.com", useTLS = false)))
+        assertTrue(ServerPolling.addsEnabled(ConnectionConfig(name = "p", host = "example.com", useTLS = true)))
+        assertTrue(ServerPolling.addsEnabled(ConnectionConfig(name = "l", host = "192.168.1.5", useTLS = false)))
+    }
 }

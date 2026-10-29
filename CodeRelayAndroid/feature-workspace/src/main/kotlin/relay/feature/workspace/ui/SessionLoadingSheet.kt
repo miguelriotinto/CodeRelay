@@ -1,5 +1,8 @@
 package relay.feature.workspace.ui
 
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +58,12 @@ object SessionLoadingSheetStyle {
     const val COVER_IN_MS = 220
     /** One width on tablets and the desktop (the Apple apps' 340 pt); a phone spans the screen. */
     const val MAX_WIDTH_DP = 340
+
+    /** Windows at least this wide are tablet-class (Material's medium width) and get the fixed card. */
+    private const val TABLET_WIDTH_DP = 600f
+
+    /** The sheet's width cap for a window [screenWidthDp] wide, or null to span it (phones, like the iPhone). */
+    fun maxWidthDpFor(screenWidthDp: Float): Int? = if (screenWidthDp >= TABLET_WIDTH_DP) MAX_WIDTH_DP else null
 }
 
 /** Black over the terminal while the loading sheet is up; both lift together. */
@@ -109,10 +118,11 @@ fun SessionLoadingSheetHost(model: SessionLoadingSheetModel, onCancel: () -> Uni
     }
     val p = shown
     if (!visible || p == null) return
+    val windowWidthDp = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp().value }
     ModalBottomSheet(
         onDismissRequest = {},
         sheetState = sheetState,
-        sheetMaxWidth = SessionLoadingSheetStyle.MAX_WIDTH_DP.dp,
+        sheetMaxWidth = SessionLoadingSheetStyle.maxWidthDpFor(windowWidthDp)?.dp ?: Dp.Unspecified,
         dragHandle = null,
     ) {
         SessionLoadingSheetContent(p, onCancel)

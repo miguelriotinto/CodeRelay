@@ -228,7 +228,16 @@ fun <S : ServerSlot> ServersScreen(
         AddEditServerSheet(
             mode = mode,
             initialToken = initialToken,
-            onSave = { config, token ->
+            onSave = { edited, token ->
+                val refused = mode is ServerSheetMode.Add && !ServerPolling.addsEnabled(edited)
+                val config = if (refused) edited.copy(enabled = false) else edited
+                coroutineScope.launch {
+                    if (refused) {
+                        snackbarHostState.showMessage(
+                            "Added disabled — TLS required: ${config.host} is not a private-network host.",
+                        )
+                    }
+                }
                 coroutineScope.launch {
                     viewModel.addOrUpdateInternal(config, token)
                     hub.reloadBookmarks()
