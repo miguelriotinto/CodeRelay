@@ -121,4 +121,32 @@ class SessionOwnershipStoreTest {
         s.setName(b, "added later")
         assertEquals(1, snapshot.size, "a taken snapshot must not observe later mutation")
     }
+
+    @Test
+    fun `namespaces keep two servers apart`(@TempDir tmp: File) {
+        SessionOwnershipStore(tmp, namespace = "server-a").setName(a, "alpha")
+        SessionOwnershipStore(tmp, namespace = "server-b").setName(a, "bravo")
+        assertEquals("alpha", SessionOwnershipStore(tmp, namespace = "server-a").names[a])
+        assertEquals("bravo", SessionOwnershipStore(tmp, namespace = "server-b").names[a])
+        assertTrue(SessionOwnershipStore(tmp).names.isEmpty(), "the legacy file set is untouched")
+    }
+
+    @Test
+    fun `legacy maps move into the kept server and leave the legacy empty`(@TempDir tmp: File) {
+        SessionOwnershipStore(tmp).setName(a, "legacy")
+        SessionOwnershipStore(tmp).setAgent(a, "claude")
+        SessionOwnershipStore(tmp).moveLegacyInto("kept")
+        val kept = SessionOwnershipStore(tmp, namespace = "kept")
+        assertEquals("legacy", kept.names[a])
+        assertEquals("claude", kept.agents[a])
+        assertTrue(SessionOwnershipStore(tmp).names.isEmpty())
+        assertTrue(SessionOwnershipStore(tmp).agents.isEmpty())
+    }
+
+    @Test
+    fun `moving into no server only drops the legacy maps`(@TempDir tmp: File) {
+        SessionOwnershipStore(tmp).setName(a, "legacy")
+        SessionOwnershipStore(tmp).moveLegacyInto(null)
+        assertTrue(SessionOwnershipStore(tmp).names.isEmpty())
+    }
 }

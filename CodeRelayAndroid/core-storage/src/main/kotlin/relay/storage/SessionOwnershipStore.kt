@@ -33,7 +33,15 @@ import java.util.UUID
 class SessionOwnershipStore(
     context: Context,
     @Suppress("UNUSED_PARAMETER") deviceId: String,
+    /**
+     * Multi-server: each server's coordinator gets its own maps, keyed by its
+     * bookmark id (spec §7.4), so a session UUID on one relay can never pick up
+     * another relay's name. Empty is the legacy, single-server key set.
+     */
+    namespace: String = "",
 ) {
+    private val appContext: Context = context.applicationContext ?: context
+    private val deviceIdForCopy: String = deviceId
     // Ownership is NOT persisted — the server's token-scoped session list is
     // authoritative. This store keeps only the device-independent auxiliary
     // maps (display names, last-seen agent per session) that the UI layers on
@@ -41,9 +49,9 @@ class SessionOwnershipStore(
     // call-site compatibility but no longer namespaces any key.
 
     /** Key for the UUID→name map (device-independent). */
-    val namesKey: String = NAMES_KEY
+    val namesKey: String = if (namespace.isEmpty()) NAMES_KEY else "$namespace.$NAMES_KEY"
     /** Key for the UUID→agentId map (device-independent). */
-    val agentsKey: String = AGENTS_KEY
+    val agentsKey: String = if (namespace.isEmpty()) AGENTS_KEY else "$namespace.$AGENTS_KEY"
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -86,6 +94,21 @@ class SessionOwnershipStore(
         }
         if (changed) persist(agentsKey, agentsCache)
         return changed
+    }
+
+    /**
+     * One-time multi-server migration (spec §9): copies this store's maps into
+     * [namespace] (the server that stays enabled) and clears them here; with a
+     * null [namespace] the maps are only dropped, never guessed onto a server.
+     */
+    fun moveLegacyInto(namespace: String?) {
+        if (namespace != null) {
+            val target = SessionOwnershipStore(appContext, deviceIdForCopy, namespace)
+            names.forEach { (id, n) -> target.setName(id, n) }
+            agents.forEach { (id, a) -> target.setAgent(id, a) }
+        }
+        names.keys.forEach { setName(it, null) }
+        agents.keys.forEach { setAgent(it, null) }
     }
 
     // MARK: - (De)serialization helpers

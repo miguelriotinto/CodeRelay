@@ -3,6 +3,7 @@ package relay.app
 import android.content.Context
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import relay.feature.settings.AppSettings
@@ -52,6 +53,7 @@ private class SessionOwnershipAdapter(
  *  - **Binary input sink** `RelayConnection.sendBinary` for raw terminal keystrokes.
  */
 class ConnectionSession private constructor(
+    val config: ConnectionConfig,
     val coordinator: SessionCoordinator,
     val workspaceViewModel: WorkspaceViewModel,
     val scope: CoroutineScope,
@@ -66,6 +68,8 @@ class ConnectionSession private constructor(
             config: ConnectionConfig,
             token: String,
             settings: AppSettings,
+            /** Each server's names/agents live under its own bookmark id (multi-server spec §7.4). */
+            ownershipNamespace: String = config.id.toString(),
         ): ConnectionSession {
             val appContext = context.applicationContext
             // Serial confined scope — the @MainActor analog.
@@ -73,7 +77,7 @@ class ConnectionSession private constructor(
             val nowMs: () -> Long = { SystemClock.elapsedRealtime() }
 
             val deviceId = DeviceIdentifier.get(appContext)
-            val ownership = SessionOwnershipAdapter(SessionOwnershipStore(appContext, deviceId))
+            val ownership = SessionOwnershipAdapter(SessionOwnershipStore(appContext, deviceId, ownershipNamespace))
 
             val connection = RelayConnection()
             val coordinator = SessionCoordinator(
@@ -93,7 +97,25 @@ class ConnectionSession private constructor(
                 nowMs = nowMs,
             )
 
-            return ConnectionSession(coordinator, workspaceViewModel, scope)
+            return ConnectionSession(config, coordinator, workspaceViewModel, scope)
+        }
+    }
+}
+
+/**
+ * One server in the Android hub: its [ConnectionSession] as a hub slot the
+ * shared workspace can host. Tearing it down also cancels the session's own
+ * scope, so a disabled or removed server leaves nothing running.
+ */
+class AppServerSlot(val session: ConnectionSession) :
+    relay.session.hub.CoordinatorServerSlot(session.config, session.coordinator),
+    relay.feature.workspace.hub.WorkspaceSlot {
+    override val workspaceViewModel: WorkspaceViewModel get() = session.workspaceViewModel
+    override suspend fun tearDown() {
+        try {
+            super.tearDown()
+        } finally {
+            session.scope.cancel()
         }
     }
 }

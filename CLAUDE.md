@@ -140,7 +140,7 @@ The CLI's `ConfigValue.infer(from:)` handles type coercion from string arguments
 
 Both apps share `SharedSessionCoordinator` (in CodeRelayClient) for session lifecycle, recovery, naming, and ownership. Platform subclasses add only platform-specific glue (iOS uses `scenePhase`; on macOS the wake/network observers belong to `MainWindow`, which fans them out through the hub below).
 
-**Multi-server (macOS and iOS; spec `docs/superpowers/specs/2026-10-28-multi-server-sessions-design.md`).**
+**Multi-server (macOS, iOS, Android and Linux; spec `docs/superpowers/specs/2026-10-28-multi-server-sessions-design.md`).**
 `ServerHub<Slot>` (CodeRelayClient/Hub) owns one per-server coordinator per
 **enabled** bookmark and the single global `activeRef: SessionRef` (bookmark
 id + session id — never the server instance id). Coordinators are unchanged
@@ -185,6 +185,20 @@ and `NetworkMonitor.connectivityRestored` fan out through
 `startNetworkRecovery()`. `SharedSessionCoordinator.connectionState` is
 `@Published` (mirrored from `connection.$state`) — computed, it fired no
 `objectWillChange`, so without a subclass mirror the hub never saw a dropped socket.
+The Kotlin clients share one port in `core-session`
+(`relay.session.hub`: `ServerHub`, `ServerSlot`/`CoordinatorServerSlot`,
+selection and deep links in `ServerHubSelection.kt`, `HubMigration`) plus the
+coordinator hooks `connected`/`serverIdentity`/`isAuthRejected`/`detachForHub`
+(attach epoch) and namespaced `SessionOwnershipStore`s. Android owns the hub in
+the activity-retained `HubViewModel` (survives rotation and the fold's display
+switch; `MainActivity` hands every session link — push taps included — to
+`hub.handleDeepLink`, which waits for the first start); Linux builds one per
+process in `createLinuxHub` (`Main.kt`). The shared `WorkspaceScreen(hub)`
+(`feature-workspace`) renders `HubSidebar`/`HubTabs` over the unchanged pane;
+tab keys are `SessionRef` strings (a non-Bundle key crashes Android's lazy
+layouts). `ServersScreen(viewModel, hub)` is management with Enabled switches;
+the Attach sheet goes through `hub.attachRemote` so another server is detached
+first. There is no Auto Connect setting any more.
 
 **Session-loading sheet.** Opening a session is black until the replay is
 delivered in one batch (see "Scrollback replay"), which on a slow link is
@@ -215,8 +229,10 @@ never delivers and an RPC chain parked behind a 20 s optimize; the view model's
 view, NOT on the per-coordinator child (which is re-keyed on a cross-server
 switch), and on iPhone the sidebar sheet steps aside before it or the
 management sheet presents (one sheet per presenter). The inline
-`SessionLoadingOverlay` is gone on Apple platforms; the Kotlin clients still have
-theirs until Plans 3–4 port the sheet. The phase is set by
+`SessionLoadingOverlay` is gone on every platform: the Kotlin clients share
+`SessionLoadingPresentation`/`SessionLoadingSheetModel` in `core-session` and
+`SessionLoadingSheetHost` in `feature-workspace`, hosted by `WorkspaceScreen(hub)`
+above the per-server pane. The phase is set by
 `SessionHandshake` (only while `activeSessionId == nil` — never over a live
 pane), by `switchToSession`/`attachRemoteSession`/`createNewSession`, and is
 driven to `loadingHistory` and then cleared by two `TerminalViewModel` hooks the
@@ -226,9 +242,9 @@ first visible frame). It describes the ACTIVE session only; recovery clears it
 because the Reconnecting sheet has its own phases; `pendingRestoreSessionId`
 stops the handshake from blanking it between "Loading sessions…" and the F3
 restore's "Attaching…". The Kotlin clients mirror it one-to-one:
-`relay.session.SessionLoadPhase`, `SessionCoordinator.sessionLoadPhase`,
-`TerminalSessionVm.onReplayProgress/onReplayDelivered`, and the shared Compose
-`SessionLoadingOverlay` in `feature-workspace`.
+`relay.session.SessionLoadPhase`, `SessionCoordinator.sessionLoadPhase` +
+`lastLoadFailed`, `TerminalSessionVm.onReplayProgress/onReplayDelivered`, and the
+shared Compose sheet above.
 
 **iOS: a one-finger swipe is a wheel report while a program tracks the mouse, and
 the scroll view's own gesture otherwise.** `RelayTerminalView.mouseModeChanged`

@@ -1,19 +1,15 @@
 package relay.app
 
+import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,10 +21,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -41,10 +38,10 @@ import relay.feature.settings.AppSettings
 import relay.feature.workspace.QrShareSheet
 import relay.feature.workspace.WorkspaceScreen
 import relay.feature.workspace.ui.AttachSessionSheet
-import relay.protocol.ConnectionConfig
 import relay.protocol.SessionInfo
+import relay.protocol.SessionRef
 import relay.session.NetworkObserver
-import java.util.UUID
+import relay.session.hub.attachRemote
 
 /** Nav-graph route constants. */
 private object Routes {
@@ -56,99 +53,42 @@ private object Routes {
 }
 
 /**
- * The real M2 nav graph (Splash → Servers → Workspace + Settings), replacing the
- * M1 demo. Ported in spirit from `CodeRelayApp.swift` (the SwiftUI scene with
- * the splash overlay, deep-link consume, auto-connect, and scenePhase recovery).
+ * Splash → Workspace, with Servers (management), Settings and the pairing
+ * scanner on top (multi-server spec §8.4).
  *
- * ## Connection lifecycle
- * Connecting is the nav host's job (the `ServersViewModel` is list-only). On
- * `onConnect` the graph builds a [ConnectionSession] (coordinator + workspace VM)
- * via [ConnectionSession.create], runs `connect()` (connect → authenticate →
- * fetch), records `lastConnectedServerId`, and navigates to Workspace. On
- * Workspace `onDisconnect` it tears the session down and pops back to Servers.
- * Only one connection is live at a time (`activeSession`).
+ * The workspace is the hub's: every enabled server is live in it, so there is
+ * no Connect and no single "active connection". The hub is owned by the
+ * activity-retained [HubViewModel], so a rotation or a fold's display switch
+ * re-binds to the same sockets; it is started by [MainActivity] before the
+ * first frame. With no server enabled the workspace presents Servers itself.
  *
  * ## Recovery wiring
- *  - **ON_RESUME** → `coordinator.handleForegroundTransition()` (the scenePhase
- *    `.active` analog), via [LifecycleEventEffect].
- *  - **Connectivity restored** → `coordinator.triggerUserRecovery()`, by
- *    collecting [NetworkObserver.connectivityRestored] (the offline→online edge).
- *  - **Auto-Connect** on launch: handled in [MainActivity] before the splash
- *    completes — see [autoConnectConfig].
- *
- * @param settings the persisted [AppSettings] (theme, auto-connect, version)
- * @param connectivity the network observer feeding recovery
- * @param pendingSessionId deep-link session id to consume on workspace entry
- * @param clearPendingSession clears [pendingSessionId] once consumed
- * @param pendingPairing deep-link pairing URL to consume on servers entry
- * @param clearPendingPairing clears [pendingPairing] once consumed
- * @param autoConnectConfig the server to auto-connect to on launch, or null
- * @param appVersion / @param buildNumber BuildConfig values for the About section
+ *  - **ON_RESUME** → [HubViewModel.onForeground] (every server, staggered; the
+ *    active one also repaints its terminal).
+ *  - **Connectivity restored** → [HubViewModel.onConnectivityRestored].
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RelayNavGraph(
     settings: AppSettings,
     connectivity: NetworkObserver,
-    pendingSessionId: StateFlow<UUID?>,
-    clearPendingSession: () -> Unit,
+    hubViewModel: HubViewModel<AppServerSlot>,
     pendingPairing: StateFlow<relay.protocol.PairingURL?>,
     clearPendingPairing: () -> Unit,
     onPairScanned: (relay.protocol.PairingURL) -> Unit,
-    autoConnectConfig: ConnectionConfig?,
     appVersion: String,
     buildNumber: String,
 ) {
     val navController = rememberNavController()
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val hub = hubViewModel.hub
 
-    // The live connection lives in an Activity-RETAINED ViewModel, not a composition
-    // `remember`, so it survives Activity recreation — crucially the Huawei Fold's
-    // inner↔outer display switch on fold/unfold, which forces an Activity restart
-    // that `android:configChanges` cannot suppress (a display change isn't a config
-    // it covers). The nav back stack survives via rememberSaveable, so on recreation
-    // the graph restores to WORKSPACE and re-binds to this still-alive session — the
-    // user keeps typing in the same terminal instead of being bounced to Servers.
-    val connectionVm: ConnectionViewModel = viewModel()
-    val activeSession by connectionVm.activeSession.collectAsStateWithLifecycle()
-    val connecting by connectionVm.connecting.collectAsStateWithLifecycle()
-    val snackbarHostState = remember { SnackbarHostState() }
-
-    // Tears down the current session (cancel recovery, disconnect, cancel scope).
-    suspend fun teardownActive() {
-        connectionVm.teardown()
-    }
-
-    // Builds + connects a session for [config]+[token], records last-connected,
-    // and navigates to Workspace. Surfaces failures as a snackbar on Servers.
-    suspend fun connectAndOpen(config: ConnectionConfig, token: String) {
-        val error = connectionVm.connect(context, config, token, settings)
-        if (error != null) {
-            snackbarHostState.currentSnackbarData?.dismiss()
-            snackbarHostState.showSnackbar(error)
-            return
-        }
-        navController.navigate(Routes.WORKSPACE) {
-            // Drop the splash from the back stack so back from Workspace lands
-            // on Servers, never the splash.
-            popUpTo(Routes.SERVERS) { inclusive = false }
-        }
-    }
-
-    // Auto-connect on launch (CodeRelayApp.swift auto-connect). Gated on the nav
-    // graph having advanced past the splash to Servers, so the WORKSPACE navigate's
-    // `popUpTo(SERVERS)` has a valid anchor and the back stack stays Servers ←
-    // Workspace (never Splash ← Workspace). Fires once per resolved config.
+    // A pairing link (deep link or scan) opens the management screen, which
+    // consumes it into its prefilled pairing sheet.
+    val pairing by pendingPairing.collectAsStateWithLifecycle()
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
-    var autoConnectTried by remember { mutableStateOf(false) }
-    LaunchedEffect(autoConnectConfig, currentRoute) {
-        if (autoConnectTried) return@LaunchedEffect
-        if (currentRoute != Routes.SERVERS) return@LaunchedEffect
-        val config = autoConnectConfig ?: return@LaunchedEffect
-        autoConnectTried = true
-        val token = loadTokenFor(context, config.id) ?: return@LaunchedEffect
-        connectAndOpen(config, token)
+    LaunchedEffect(pairing, currentRoute) {
+        if (pairing != null && currentRoute != null && currentRoute != Routes.SPLASH && currentRoute != Routes.SERVERS) {
+            navController.openServers()
+        }
     }
 
     NavHost(navController = navController, startDestination = Routes.SPLASH) {
@@ -156,42 +96,42 @@ fun RelayNavGraph(
             SplashScreen(
                 appVersion = appVersion,
                 onComplete = {
-                    navController.navigate(Routes.SERVERS) {
+                    navController.navigate(Routes.WORKSPACE) {
                         popUpTo(Routes.SPLASH) { inclusive = true }
                     }
                 },
             )
         }
 
+        composable(Routes.WORKSPACE) {
+            WorkspaceRoute(
+                hubViewModel = hubViewModel,
+                settings = settings,
+                connectivity = connectivity,
+                onOpenServers = { navController.openServers() },
+            )
+        }
+
         composable(Routes.SERVERS) {
+            val aggregate by hub.aggregate.collectAsStateWithLifecycle()
+            val activity = LocalContext.current as? Activity
+            // With nothing enabled the workspace would only send the user back
+            // here, so Back leaves the app instead of looping.
+            BackHandler(enabled = aggregate.enabledServers == 0) { activity?.finish() }
             ServersRoute(
-                snackbarHostState = snackbarHostState,
-                connecting = connecting,
+                hubViewModel = hubViewModel,
                 pendingPairing = pendingPairing,
                 clearPendingPairing = clearPendingPairing,
-                onConnect = { config ->
-                    val token = loadTokenFor(context, config.id)
-                    if (token.isNullOrEmpty()) {
-                        scope.launch {
-                            snackbarHostState.currentSnackbarData?.dismiss()
-                            snackbarHostState.showSnackbar("No saved token for ${config.name}. Edit the server to add one.")
-                        }
-                    } else {
-                        scope.launch { connectAndOpen(config, token) }
-                    }
-                },
+                onDone = { if (!navController.popBackStack()) navController.navigate(Routes.WORKSPACE) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onScanPair = { navController.navigate(Routes.PAIR_SCANNER) },
             )
         }
 
         composable(Routes.PAIR_SCANNER) {
-            // Camera QR scanner for pairing. A scanned `coderelay://pair` QR is
-            // parsed to a PairingURL and handed to `onPairScanned` (→ the host's
-            // pending-pairing flow), then we pop back to Servers, which shows the
-            // prefilled sheet — the exact same consumer the deep-link path uses.
-            // Non-pairing QRs are rejected by the scanner (onDecoded returns false),
-            // so an unrelated code never dismisses the camera.
+            // A scanned `coderelay://pair` QR joins the deep-link path: the
+            // pending-pairing flow, consumed by the management screen. Non-pairing
+            // QRs are rejected (onDecoded returns false) so the camera stays up.
             relay.feature.workspace.QrScannerFullScreen(
                 onDecoded = { raw ->
                     val url = relay.protocol.PairingURL.parse(raw) ?: return@QrScannerFullScreen false
@@ -202,53 +142,6 @@ fun RelayNavGraph(
                 onCancel = { navController.popBackStack(Routes.SERVERS, inclusive = false) },
                 modifier = Modifier.fillMaxSize(),
             )
-        }
-
-        composable(Routes.WORKSPACE) {
-            val session = activeSession
-            if (session == null) {
-                // No live session behind a restored WORKSPACE route. This is the
-                // PROCESS-DEATH path: Android killed the app under memory pressure,
-                // then restored the saved NavHost back stack (which lands on
-                // WORKSPACE), but ConnectionViewModel is a plain ViewModel with no
-                // SavedStateHandle — a live WebSocket + coroutine scope cannot be
-                // serialized across process death — so activeSession comes back null.
-                //
-                // (This branch does NOT fire on a fold/rotation/config change: there
-                // the Activity-retained ConnectionViewModel survives, so activeSession
-                // is still non-null and we re-bind to the live terminal below — the
-                // Huawei Fold survival fix, commit 970496c. The null check is exactly
-                // the process-death-vs-config-change discriminator.)
-                //
-                // Route to SERVERS deterministically by popping WORKSPACE ITSELF
-                // (inclusive), NOT popBackStack(SERVERS): the latter silently no-ops
-                // if SERVERS isn't on the restored stack, which would strand the user
-                // on a dead workspace. If SERVERS is somehow absent too, navigate to
-                // it as a fallback so we always land somewhere live. Render nothing
-                // meanwhile so the empty workspace chrome never flashes.
-                LaunchedEffect(Unit) {
-                    val popped = navController.popBackStack(Routes.WORKSPACE, inclusive = true)
-                    if (!popped || navController.currentBackStackEntry?.destination?.route != Routes.SERVERS) {
-                        navController.navigate(Routes.SERVERS) {
-                            popUpTo(navController.graph.id) { inclusive = true }
-                        }
-                    }
-                }
-            } else {
-                WorkspaceRoute(
-                    session = session,
-                    settings = settings,
-                    connectivity = connectivity,
-                    pendingSessionId = pendingSessionId,
-                    clearPendingSession = clearPendingSession,
-                    onDisconnect = {
-                        scope.launch {
-                            teardownActive()
-                            navController.popBackStack(Routes.SERVERS, inclusive = false)
-                        }
-                    },
-                )
-            }
         }
 
         composable(Routes.SETTINGS) {
@@ -262,165 +155,108 @@ fun RelayNavGraph(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Servers over the workspace, never stacked twice. */
+private fun NavHostController.openServers() {
+    navigate(Routes.SERVERS) { launchSingleTop = true }
+}
+
 @Composable
 private fun ServersRoute(
-    snackbarHostState: SnackbarHostState,
-    connecting: Boolean,
+    hubViewModel: HubViewModel<AppServerSlot>,
     pendingPairing: StateFlow<relay.protocol.PairingURL?>,
     clearPendingPairing: () -> Unit,
-    onConnect: (ConnectionConfig) -> Unit,
+    onDone: () -> Unit,
     onOpenSettings: () -> Unit,
     onScanPair: () -> Unit,
 ) {
     val context = LocalContext.current
     val viewModel: ServersViewModel = viewModel(factory = ServersViewModel.factory(context))
-
-    // Consume pending pairing deep link (Task 7→8 seam). The URL flows into
-    // ServersScreen, which triggers the pairing sheet prefilled from the URL and
-    // calls clearPendingPairing after presentation.
     val pendingPairingUrl by pendingPairing.collectAsStateWithLifecycle()
 
-    // ServersScreen owns its own Scaffold/TopAppBar/Add-FAB, gates cleartext on
-    // connect, and owns the add/edit sheet (onEdit → AddEditServerSheet). We host
-    // it directly and forward onConnect to the nav host's connect flow. The
-    // Settings gear (the M2-E review flagged it missing) is overlaid top-end —
-    // ServersScreen's app bar is internal, so an overlay is the lightest-touch
-    // entry point without changing that module's public API; the snackbar host +
-    // connecting overlay sit in the same Box.
     Box(modifier = Modifier.fillMaxSize()) {
         ServersScreen(
             viewModel = viewModel,
-            onConnect = onConnect,
+            hub = hubViewModel.hub,
+            onDone = onDone,
             modifier = Modifier.fillMaxSize(),
             pendingPairingUrl = pendingPairingUrl,
             clearPendingPairing = clearPendingPairing,
             onScanPair = onScanPair,
         )
-
+        // ServersScreen's app bar is internal to its module; the Settings gear is
+        // overlaid top-end, left of the Done action.
         IconButton(
             onClick = onOpenSettings,
-            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 72.dp),
         ) {
-            Icon(
-                Icons.Filled.Settings,
-                contentDescription = "Settings",
-                tint = MaterialTheme.colorScheme.onSurface,
-            )
-        }
-
-        SnackbarHost(
-            snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
-
-        if (connecting) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator()
-                    Text("Connecting…", style = MaterialTheme.typography.bodyMedium)
-                }
-            }
+            Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
 
 @Composable
 private fun WorkspaceRoute(
-    session: ConnectionSession,
+    hubViewModel: HubViewModel<AppServerSlot>,
     settings: AppSettings,
     connectivity: NetworkObserver,
-    pendingSessionId: StateFlow<UUID?>,
-    clearPendingSession: () -> Unit,
-    onDisconnect: () -> Unit,
+    onOpenServers: () -> Unit,
 ) {
-    val coordinator = session.coordinator
+    val hub = hubViewModel.hub
     val hapticsEnabled by settings.hapticFeedbackEnabled.collectAsStateWithLifecycle()
     val shareScreen by settings.shareScreenWithOptimizer.collectAsStateWithLifecycle()
-
-    // ON_RESUME → restore + repaint the active terminal (the scenePhase == .active
-    // analog). restoreActiveOnForeground() is the SINGLE foreground entry point:
-    //  - dead socket → it defers to full recovery (reconnect → reauth → resume),
-    //  - live-but-stalled socket → it resumes in place so the server replays
-    //    scrollback into the live emulator and the terminal repaints.
-    // It deliberately replaces the old bare handleForegroundTransition() call here:
-    // calling BOTH would race two resumes on one connection when the socket is
-    // alive (handleForegroundTransition's recovery short-circuits to fetch WITHOUT
-    // setting isRecovering, so it would not gate the repaint path). The
-    // network-restored edge still drives handleForegroundTransition via the
-    // connectivityRestored collector below.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        coordinator.restoreActiveOnForeground()
-    }
-
-    // Connectivity restored → user-recovery (NetworkMonitor.connectivityRestored).
-    LaunchedEffect(connectivity) {
-        connectivity.connectivityRestored.collect {
-            coordinator.triggerUserRecovery()
-        }
-    }
-
-    // Consume a pending deep-link session id once: attach then clear (Task 9 seam).
-    val pending by pendingSessionId.collectAsStateWithLifecycle()
-    LaunchedEffect(pending) {
-        val id = pending ?: return@LaunchedEffect
-        coordinator.attachRemoteSession(id)
-        clearPendingSession()
-    }
-
-    // QR share sheet state.
-    var shareSessionId by remember { mutableStateOf<UUID?>(null) }
-    // Attach modal: null = closed; non-null = the fetched attachable-session list
-    // to show (iOS `showAttachSheet` + `attachableSessions`). A fetch runs on
-    // tap-Attach before presenting, so the list is populated when the sheet opens.
-    var attachableSessions by remember { mutableStateOf<List<SessionInfo>?>(null) }
-    var loadingAttachable by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { hubViewModel.onForeground() }
+    LaunchedEffect(connectivity) {
+        connectivity.connectivityRestored.collect { hubViewModel.onConnectivityRestored() }
+    }
+
+    var shareRef by remember { mutableStateOf<SessionRef?>(null) }
+    // Attach modal for one server: the slot and its fetched attachable list.
+    var attachable by remember { mutableStateOf<Pair<AppServerSlot, List<SessionInfo>>?>(null) }
+    var loadingAttachable by remember { mutableStateOf(false) }
+
     WorkspaceScreen(
-        vm = session.workspaceViewModel,
-        onDisconnect = onDisconnect,
-        onAttach = {
-            // iOS: fetch attachable sessions, THEN present the sheet. Gate on
-            // loadingAttachable so a double tap doesn't fire two fetches.
+        hub = hub,
+        onOpenServers = onOpenServers,
+        onAttach = { slot ->
             if (!loadingAttachable) {
                 loadingAttachable = true
                 scope.launch {
-                    attachableSessions = coordinator.fetchAttachableSessions()
+                    attachable = slot to slot.coordinator.fetchAttachableSessions()
                     loadingAttachable = false
                 }
             }
         },
-        onShareQr = { id -> shareSessionId = id },
+        onShareQr = { ref -> shareRef = ref },
         shareScreen = shareScreen,
         hapticsEnabled = hapticsEnabled,
         modifier = Modifier.fillMaxSize(),
     )
 
-    shareSessionId?.let { id ->
+    shareRef?.let { ref ->
+        val coordinator = hub.slot(ref.serverId)?.coordinator
         QrShareSheet(
-            sessionId = id,
-            sessionName = coordinator.name(id),
-            onDismiss = { shareSessionId = null },
+            sessionId = ref.sessionId,
+            sessionName = coordinator?.name(ref.sessionId),
+            serverInstanceId = hub.sections.value.firstOrNull { it.id == ref.serverId }?.config?.instanceId,
+            onDismiss = { shareRef = null },
         )
     }
 
-    attachableSessions?.let { list ->
+    attachable?.let { (slot, list) ->
         AttachSessionSheet(
             sessions = list,
-            nameFor = { id -> coordinator.name(id) },
+            nameFor = { id -> slot.coordinator.name(id) },
             onAttachSession = { id, name ->
-                attachableSessions = null
-                scope.launch { coordinator.attachRemoteSession(id, name) }
+                attachable = null
+                scope.launch { hub.attachRemote(slot.config.id, id, name) }
             },
             onScannedSession = { id ->
-                attachableSessions = null
-                scope.launch { coordinator.attachRemoteSession(id) }
+                attachable = null
+                scope.launch { hub.attachRemote(slot.config.id, id, null) }
             },
-            onDismiss = { attachableSessions = null },
+            onDismiss = { attachable = null },
         )
     }
 }
@@ -438,17 +274,9 @@ private fun SettingsRoute(
         buildNumber = buildNumber,
         onDone = onDone,
         modifier = Modifier.fillMaxSize(),
-        // No Android host reads `recordingShortcut*` (the Apple clients do, via
-        // RecordingShortcutMonitor / RelayTerminalView), so rendering the section
-        // would advertise an "Optimizer Shortcut" that does nothing when pressed.
-        // The Linux client omits it for the same reason.
+        // No Android host reads `recordingShortcut*` (the Apple clients do), so
+        // rendering the section would advertise a shortcut that does nothing.
         visibleSections = relay.feature.settings.SettingsSection.entries.toSet() -
             relay.feature.settings.SettingsSection.KEYBOARD_SHORTCUTS,
     )
 }
-
-// MARK: - Helpers
-
-/** Loads the saved token for [connectionId] from the secure store, or null. */
-private fun loadTokenFor(context: android.content.Context, connectionId: UUID): String? =
-    relay.storage.TokenStore(context.applicationContext).loadToken(connectionId)

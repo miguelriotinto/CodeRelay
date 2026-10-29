@@ -63,4 +63,15 @@ class TrayModelTest {
         assertEquals("Code[Relay] — mac · 1 waiting", model.tooltip("mac"))
         assertEquals("Code[Relay]", TrayModel().tooltip(null))
     }
+
+    @Test
+    fun `rows are prefixed with the server when several are enabled`() {
+        val id = UUID.randomUUID(); val server = UUID.randomUUID()
+        val model = TrayModel.rows(
+            listOf(info(id)), mapOf(id to "alpha"), emptyMap(), emptySet(), activeId = null,
+            serverId = server, serverPrefix = "studio",
+        )
+        assertEquals("studio · alpha", model.sessions.single().label)
+        assertEquals(server, model.sessions.single().serverId)
+    }
 }

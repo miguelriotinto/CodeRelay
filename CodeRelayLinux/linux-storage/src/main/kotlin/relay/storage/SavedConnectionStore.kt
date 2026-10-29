@@ -6,6 +6,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import relay.protocol.ConnectionConfig
+import relay.protocol.ConnectionConfigList
 import relay.protocol.WireJson
 import java.io.File
 import java.util.UUID
@@ -89,8 +90,8 @@ class SavedConnectionStore(
         if (!file.isFile) return emptyList()
         val json = runCatching { file.readText() }.getOrNull() ?: return emptyList()
         if (json.isBlank()) return emptyList()
-        return runCatching { WireJson.instance.decodeFromString(listSerializer, json) }
-            .getOrElse { emptyList() }
+        // Element-by-element: one unreadable bookmark no longer drops the whole list.
+        return ConnectionConfigList.decodeLenient(json)
     }
 
     private fun writeUnlocked(connections: List<ConnectionConfig>) {

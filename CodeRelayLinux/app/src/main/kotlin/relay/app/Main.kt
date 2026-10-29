@@ -2,20 +2,16 @@
 
 package relay.app
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -46,6 +42,16 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import relay.session.hub.selectPrevious
+import relay.session.hub.selectNext
+import relay.session.hub.select
+import relay.session.hub.orderedRefs
+import relay.session.hub.handleDeepLink
+import relay.session.hub.createSession
+import relay.session.hub.attachRemote
+import relay.protocol.SessionRef
+import relay.protocol.SessionDeepLink
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.feature.servers.PastePairingLinkDialog
 import relay.feature.servers.ServersScreen
@@ -65,7 +71,6 @@ import relay.platform.DesktopNotifier
 import relay.platform.LinuxConnectivitySource
 import relay.platform.OmarchyTheme
 import relay.platform.OmarchyThemeWatcher
-import relay.protocol.ConnectionConfig
 import relay.protocol.PairingURL
 import relay.protocol.SessionInfo
 import relay.session.NetworkObserver
@@ -146,29 +151,31 @@ private fun runApp(
     )
     val uiScope = rememberCoroutineScope()
 
-    // One live connection at a time, mirroring the Android nav graph's
-    // Servers → Workspace transition. Null means "show the server list".
-    var session by remember { mutableStateOf<ConnectionSession?>(null) }
+    // Every enabled server is live in one workspace (multi-server spec §8.5):
+    // one hub per process, a coordinator per enabled bookmark.
+    val hub = remember(environment) { createLinuxHub(environment) }
+    val activeSlot by hub.activeSlot.collectAsState()
+    val focusSlot by hub.focusSlot.collectAsState()
+    val sections by hub.sections.collectAsState()
+    val aggregate by hub.aggregate.collectAsState()
+    val hasStarted by hub.hasStarted.collectAsState()
+    val current = activeSlot ?: focusSlot
+
     var windowVisible by remember { mutableStateOf(true) }
     var windowFocused by remember { mutableStateOf(true) }
     var composeWindow by remember { mutableStateOf<java.awt.Window?>(null) }
 
-    // In-flight connect (gates double-clicks) and the last failure to report.
-    var connecting by remember { mutableStateOf(false) }
-    var connectError by remember { mutableStateOf<String?>(null) }
-
-    // Overlays: settings, the server list while connected, the pairing-link
-    // paste dialog, the attach sheet, the QR share sheet.
+    // Overlays: settings, server management, the pairing-link paste dialog,
+    // the attach sheet, the QR share sheet.
     var showSettings by remember { mutableStateOf(false) }
-    var showServers by remember { mutableStateOf(false) }
+    var showServers by remember { mutableStateOf(initialLaunch.opensManagement) }
     var showPasteLink by remember { mutableStateOf(false) }
-    var attachableSessions by remember { mutableStateOf<List<SessionInfo>?>(null) }
+    var attachable by remember { mutableStateOf<Pair<LinuxServerSlot, List<SessionInfo>>?>(null) }
     var loadingAttachable by remember { mutableStateOf(false) }
-    var shareSessionId by remember { mutableStateOf<UUID?>(null) }
+    var shareRef by remember { mutableStateOf<SessionRef?>(null) }
 
-    // Deep-link state. A session link is held until a connection exists to
-    // attach it to; a pairing link prefills the sheet on the server list.
-    var pendingSessionId by remember { mutableStateOf((initialLaunch.link as? DeepLink.Session)?.id) }
+    // A pairing link prefills the sheet on the management screen; a
+    // new-session request waits for the hub's first start.
     var pendingPairing by remember { mutableStateOf((initialLaunch.link as? DeepLink.Pair)?.url) }
     var pendingNewSession by remember { mutableStateOf(initialLaunch.newSession) }
 
@@ -179,8 +186,7 @@ private fun runApp(
     var copyRequest by remember { mutableStateOf(0) }
     val sidebarToggles = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 4) }
 
-    // The offline→online edge feeding recovery, from the link-state poll. Only
-    // the edge matters, so one observer is shared by every connection.
+    // The offline→online edge feeding recovery, from the link-state poll.
     val network = remember(environment) { NetworkObserver(environment.connectivity) }
 
     val serversViewModel = remember {
@@ -190,7 +196,6 @@ private fun runApp(
             scope = environment.scope,
         )
     }
-    val servers by serversViewModel.servers.collectAsState()
     val settings = environment.settings
     val fontSizeIsSet by settings.terminalFontSizeIsSet.collectAsState()
     val fontSize by settings.terminalFontSize.collectAsState()
@@ -208,126 +213,43 @@ private fun runApp(
     }
 
     /**
-     * Opens a bookmark: build the session, then run the launch handshake before
-     * showing the workspace. Mirrors the Android `ConnectionViewModel.connect`.
-     *
-     * **The handshake is the point.** `ConnectionSession.create` only assembles
-     * the object graph — it dials nothing. Without the `coordinator.connect()`
-     * below the workspace opened on a socket that was never connected, and the
-     * first thing the user did there (create a session) found a dead connection
-     * and fell straight into the recovery scrim: a permanent "Reconnecting…"
-     * against a server the list had just probed as Live.
-     *
-     * `connect()` throws only when the handshake exhausted its retries AND never
-     * authenticated (bad token / unreachable host). That keeps the user on the
-     * server list with the reason, rather than in a workspace that can never
-     * work. A handshake that authenticated but could not list sessions returns
-     * normally — the workspace opens and pull-to-refresh is the retry.
-     *
-     * Launched on the session's own scope (`Dispatchers.Main.immediate`, the AWT
-     * event thread), which is the coordinator's confined dispatcher — so the
-     * state writes below land on the same thread Compose renders on.
-     */
-    fun connectTo(config: ConnectionConfig) {
-        if (connecting) return
-        // No saved token means the bookmark was never completed. Say so, rather
-        // than opening a workspace that can never authenticate — or, as before,
-        // silently doing nothing when the row is clicked.
-        val token = serversViewModel.tokenFor(config)
-        if (token.isNullOrEmpty()) {
-            connectError = "No auth token is saved for \"${config.name}\". " +
-                "Edit the server to add one, or pair with the host again."
-            return
-        }
-        connecting = true
-        val candidate = ConnectionSession.create(
-            config = config,
-            token = token,
-            settings = settings,
-            environment = environment,
-        )
-        candidate.scope.launch {
-            val failure = runCatching { candidate.coordinator.connect() }.exceptionOrNull()
-            if (failure == null) {
-                // Switching servers from the overlay: the old connection is
-                // dropped only once the new one is up, so a failed switch
-                // leaves the working session untouched.
-                session?.let { old ->
-                    environment.notifier.reset()
-                    old.close()
-                }
-                session = candidate
-                showServers = false
-                terminalTitle = null
-                settings.setLastConnectedServerId(config.id.toString())
-            } else {
-                candidate.close()
-                connectError = "Couldn't connect to ${config.name}: " +
-                    (failure.message ?: failure::class.simpleName ?: "unknown error")
-            }
-            connecting = false
-        }
-    }
-
-    /** The bookmark auto-connect and a session link fall back to. */
-    fun lastConnectedServer(): ConnectionConfig? {
-        val id = settings.lastConnectedServerId.value
-        return servers.firstOrNull { it.id.toString() == id }
-    }
-
-    /**
      * Routes a launch request — the initial argv, a forwarded second launch, or
-     * a notification click — into the running UI.
+     * a notification click — into the running UI. A session link goes to the
+     * hub, which waits for its first start and routes by the `?server=` hint.
      */
     fun handleLaunch(launch: LaunchArgs) {
         when (val link = launch.link) {
-            is DeepLink.Session -> pendingSessionId = link.id
+            is DeepLink.Session -> uiScope.launch { hub.handleDeepLink(link.link) }
             is DeepLink.Pair -> {
                 pendingPairing = link.url
-                if (session != null) showServers = true
+                showServers = true
             }
             DeepLink.Unhandled -> Unit
         }
         if (launch.newSession) pendingNewSession = true
-        // A session link or a new-session request with nothing connected: open
-        // the last server, which is the one the link almost certainly refers to.
-        if (session == null && !connecting && (pendingSessionId != null || pendingNewSession)) {
-            lastConnectedServer()?.let(::connectTo)
-        }
         raiseWindow()
     }
 
     /**
-     * Attach: fetch the token's attachable sessions, THEN present the sheet, so
-     * it opens populated (the order the Android nav graph and iOS both use).
-     * Gated so a double click fires one fetch.
+     * Attach: fetch the server's attachable sessions, THEN present the sheet,
+     * so it opens populated. Gated so a double click fires one fetch.
      */
-    fun fetchAttachable(active: ConnectionSession) {
+    fun fetchAttachable(slot: LinuxServerSlot) {
         if (loadingAttachable) return
         loadingAttachable = true
-        active.scope.launch {
-            attachableSessions = runCatching { active.coordinator.fetchAttachableSessions() }
-                .getOrDefault(emptyList())
+        uiScope.launch {
+            attachable = slot to runCatching { slot.coordinator.fetchAttachableSessions() }.getOrDefault(emptyList())
             loadingAttachable = false
         }
     }
 
-    fun disconnect() {
-        environment.notifier.reset()
-        session?.close()
-        session = null
-        terminalTitle = null
-    }
-
     fun quit() {
         environment.notifier.reset()
-        val closing = session
-        session = null
         // Bounded, and NOT runBlocking: teardown hops to the relay-net dispatcher
         // and resumes on the AWT thread, so blocking that thread here would
         // deadlock until the timeout on every quit. Wait as a coroutine instead.
         uiScope.launch {
-            closing?.let { withTimeoutOrNull(1_500) { it.close().join() } }
+            withTimeoutOrNull(1_500) { hub.shutdown() }
             instance.release()
             environment.close()
             exitApplication()
@@ -337,10 +259,11 @@ private fun runApp(
     /** Window-level accelerators; see [AppShortcut] for the Ctrl+Shift/Ctrl+Alt rule. */
     fun handleShortcut(event: KeyEvent): Boolean {
         if (event.type != KeyEventType.KeyDown) return false
-        val active = session
+        val active = current
         AppShortcut.sessionIndex(event)?.let { index ->
-            val target = active?.coordinator?.activeSessions?.value?.getOrNull(index) ?: return true
-            active.scope.launch { active.coordinator.switchToSession(target.id) }
+            // Ctrl+Alt+N numbers sessions across servers, like the tabs.
+            val target = hub.orderedRefs.getOrNull(index) ?: return true
+            uiScope.launch { hub.select(target) }
             return true
         }
         val shortcut = AppShortcut.resolve(event) ?: return false
@@ -350,38 +273,28 @@ private fun runApp(
             AppShortcut.ZOOM_OUT -> settings.setTerminalFontSize((currentFontPoints(fontSizeIsSet, fontSize) - 1).coerceIn(FONT_MIN, FONT_MAX))
             AppShortcut.ZOOM_RESET -> settings.clearTerminalFontSize()
             AppShortcut.TOGGLE_SIDEBAR -> sidebarToggles.tryEmit(Unit)
-            AppShortcut.NEW_SESSION -> active?.let { s -> s.scope.launch { s.coordinator.createNewSession() } }
-            AppShortcut.DETACH_CURRENT -> active?.let { s -> s.scope.launch { s.coordinator.detachActiveSession() } }
-            AppShortcut.TERMINATE_CURRENT -> active?.let { s ->
+            AppShortcut.NEW_SESSION -> hub.focusServerId.value?.let { id -> uiScope.launch { hub.createSession(id) } }
+            AppShortcut.DETACH_CURRENT -> activeSlot?.let { s -> uiScope.launch { s.coordinator.detachActiveSession() } }
+            AppShortcut.TERMINATE_CURRENT -> activeSlot?.let { s ->
                 val id = s.coordinator.activeSessionId.value ?: return@let
-                s.scope.launch { s.coordinator.terminateSession(id) }
+                uiScope.launch { s.coordinator.terminateSession(id) }
             }
-            AppShortcut.NEXT_SESSION, AppShortcut.PREVIOUS_SESSION -> active?.let { s ->
-                val list = s.coordinator.activeSessions.value
-                if (list.isEmpty()) return@let
-                val current = list.indexOfFirst { it.id == s.coordinator.activeSessionId.value }
-                val step = if (shortcut == AppShortcut.NEXT_SESSION) 1 else -1
-                val next = if (current < 0) 0 else Math.floorMod(current + step, list.size)
-                s.scope.launch { s.coordinator.switchToSession(list[next].id) }
-            }
-            AppShortcut.COPY -> if (active?.coordinator?.activeSessionId?.value != null) copyRequest++ else return false
-            AppShortcut.PASTE -> if (active?.coordinator?.activeSessionId?.value != null) pasteRequest++ else return false
+            AppShortcut.NEXT_SESSION -> uiScope.launch { hub.selectNext() }
+            AppShortcut.PREVIOUS_SESSION -> uiScope.launch { hub.selectPrevious() }
+            AppShortcut.COPY -> if (activeSlot?.coordinator?.activeSessionId?.value != null) copyRequest++ else return false
+            AppShortcut.PASTE -> if (activeSlot?.coordinator?.activeSessionId?.value != null) pasteRequest++ else return false
             // The wand's accelerator (spec §7.4) — the same entry point as a tap
             // on the WandButton, on purpose. PromptOptimizerController owns the
-            // gate (idle, not recovering, an active session, not torn down) and
-            // shows the "update / enable the relay" hint itself when the wand is
-            // unavailable, so the chord and the tap cannot drift apart. Mirrors
-            // the macOS WandButton receiving `.optimizePromptShortcut`.
+            // gate and shows the "update / enable the relay" hint itself, so the
+            // chord and the tap cannot drift apart.
             AppShortcut.OPTIMIZE_PROMPT -> {
-                // Optimize is the only chord that rewrites text the user is
-                // composing, and its feedback (Undo chip, hint) lives on the
-                // workspace, so it must not fire while that is covered. When an
-                // overlay is showing, the chord is swallowed rather than forwarded
-                // — an unhandled Ctrl+Shift+O reaches the terminal as Ctrl+O,
-                // which zsh binds to accept-line-and-down-history.
+                // Optimize rewrites text the user is composing and its feedback
+                // lives on the workspace, so it must not fire while that is
+                // covered. Swallowed rather than forwarded — an unhandled
+                // Ctrl+Shift+O reaches the terminal as Ctrl+O (zsh accept-line).
                 if (showSettings || showServers) return true
                 active?.let { s ->
-                    s.scope.launch { s.coordinator.optimizePrompt(shareScreen) }
+                    uiScope.launch { s.coordinator.optimizePrompt(shareScreen) }
                 } ?: return false
             }
         }
@@ -389,6 +302,21 @@ private fun runApp(
     }
 
     // ---- Effects that outlive any one connection --------------------------
+
+    LaunchedEffect(hub) { hub.start() }
+
+    // A new-session request (the desktop entry's action) once there is a server.
+    LaunchedEffect(pendingNewSession, hasStarted) {
+        if (!pendingNewSession || !hasStarted) return@LaunchedEffect
+        val id = hub.focusServerId.value ?: return@LaunchedEffect
+        pendingNewSession = false
+        hub.createSession(id)
+    }
+
+    // Network restored → every server, staggered (D10).
+    LaunchedEffect(network) {
+        network.connectivityRestored.collect { hub.handleForegroundTransition() }
+    }
 
     // Forwarded launches from a second process (see SingleInstance).
     LaunchedEffect(instanceServer) {
@@ -413,45 +341,68 @@ private fun runApp(
     LaunchedEffect(Unit) {
         environment.forwarded.collect { launch -> handleLaunch(launch) }
     }
+    LaunchedEffect(Unit) {
+        // Initial argv: a session link is routed by the hub once it has started.
+        (initialLaunch.link as? DeepLink.Session)?.let { hub.handleDeepLink(it.link) }
+    }
 
-    // A notification click lands on the notifier's thread; hop to the UI.
+    // A notification click lands on the notifier's thread; hop to the UI. The
+    // session id is looked up across servers to find its server.
     SideEffect {
         environment.onNotificationTap = { id ->
-            uiScope.launch { handleLaunch(LaunchArgs(link = DeepLink.Session(id))) }
+            uiScope.launch {
+                raiseWindow()
+                val serverId = hub.sections.value.firstOrNull { s -> s.sessions.any { it.id == id } }?.id
+                if (serverId != null) hub.select(SessionRef(serverId, id)) else hub.handleDeepLink(SessionDeepLink(id))
+            }
         }
         environment.focusedSession = {
-            if (windowVisible && windowFocused) session?.coordinator?.activeSessionId?.value else null
+            if (windowVisible && windowFocused) activeSlot?.coordinator?.activeSessionId?.value else null
         }
     }
 
-    // Auto-connect on launch (RelayNavGraph's autoConnectConfig), once the
-    // bookmark list has loaded. Fires at most once; a session link in argv also
-    // connects, regardless of the toggle — the user asked for that session.
-    var autoConnectTried by remember { mutableStateOf(false) }
-    LaunchedEffect(servers) {
-        if (autoConnectTried || session != null || servers.isEmpty()) return@LaunchedEffect
-        autoConnectTried = true
-        val wantsConnection = settings.autoConnectEnabled.value || pendingSessionId != null || pendingNewSession
-        if (wantsConnection) lastConnectedServer()?.let(::connectTo)
+    // Desktop notifications from every live server's activity stream (AD-4: no
+    // push provider). The notifier diffs one map, so the servers' maps are
+    // merged; with several servers each title is prefixed with the server.
+    val liveSlots = sections.filter { it.config.enabled }.mapNotNull { section -> hub.slot(section.id)?.let { section to it } }
+    LaunchedEffect(liveSlots.map { it.second }) {
+        if (liveSlots.isEmpty()) return@LaunchedEffect
+        val prefixed = liveSlots.size > 1
+        combine(liveSlots.map { (_, slot) -> slot.coordinator.agentStates }) { maps ->
+            maps.fold(emptyMap<UUID, relay.protocol.AgentDetectedState>()) { acc, m -> acc + m }
+        }.collect { merged ->
+            environment.notifier.onAgentStates(merged) { id ->
+                val (section, slot) = liveSlots.firstOrNull { (_, sl) -> sl.coordinator.sessionNames.value.containsKey(id) }
+                    ?: return@onAgentStates null
+                val name = slot.coordinator.sessionNames.value[id] ?: return@onAgentStates null
+                if (prefixed) "${section.title} · $name" else name
+            }
+        }
+    }
+
+    // The OSC title belongs to one session; a switch or detach must not leave
+    // the previous session's title in the frame.
+    LaunchedEffect(current) {
+        current?.coordinator?.activeSessionId?.collect { terminalTitle = null } ?: run { terminalTitle = null }
     }
 
     // Close-to-tray, mirroring the macOS client's menu-bar persistence: a relay
     // client is a thing you leave running, and quitting on window-close would
     // drop every session's connection.
     val palette by environment.themeWatcher.palette.collectAsState()
-    val trayModel = rememberTrayModel(session)
+    val trayModel = rememberTrayModel(hub)
+    val focusTitle = sections.firstOrNull { it.id == current?.config?.id }?.title
     Tray(
         icon = remember(palette) {
             TrayIconPainter(palette?.let { Color(it.foreground) } ?: Color.White)
         },
-        tooltip = trayModel.tooltip(session?.config?.name),
+        tooltip = trayModel.tooltip(if (aggregate.enabledServers > 1) null else focusTitle),
         onAction = { raiseWindow() },
         menu = {
             Item(if (windowVisible) "Hide window" else "Show window") {
                 if (windowVisible) windowVisible = false else raiseWindow()
             }
-            val active = session
-            if (active != null) {
+            if (aggregate.enabledServers > 0) {
                 Separator()
                 if (trayModel.sessions.isEmpty()) {
                     Item("No active sessions", enabled = false) {}
@@ -459,22 +410,26 @@ private fun runApp(
                     trayModel.sessions.forEach { row ->
                         Item(row.label) {
                             raiseWindow()
-                            active.scope.launch { active.coordinator.switchToSession(row.id) }
+                            val serverId = row.serverId ?: return@Item
+                            uiScope.launch { hub.select(SessionRef(serverId, row.id)) }
                         }
                     }
                 }
                 Separator()
-                Item("New session") {
-                    raiseWindow()
-                    active.scope.launch { active.coordinator.createNewSession() }
+                hub.focusServerId.value?.let { id ->
+                    Item("New session") {
+                        raiseWindow()
+                        uiScope.launch { hub.createSession(id) }
+                    }
                 }
-                Item("Attach session…") {
-                    raiseWindow()
-                    fetchAttachable(active)
+                current?.let { slot ->
+                    Item("Attach session…") {
+                        raiseWindow()
+                        fetchAttachable(slot)
+                    }
                 }
-                Item("Servers…") { raiseWindow(); showServers = true }
-                Item("Disconnect") { disconnect() }
             }
+            Item("Servers…") { raiseWindow(); showServers = true }
             Separator()
             Item("Settings…") { raiseWindow(); showSettings = true }
             Item("Quit $DISPLAY_NAME") { quit() }
@@ -483,7 +438,7 @@ private fun runApp(
 
     val title = buildString {
         append(DISPLAY_NAME)
-        session?.let { append(" — ").append(it.config.name) }
+        focusTitle?.let { append(" — ").append(it) }
         terminalTitle?.takeIf { it.isNotBlank() }?.let { append(" — ").append(it) }
     }
 
@@ -507,6 +462,8 @@ private fun runApp(
         LaunchedEffect(windowState.size) {
             settings.setWindowSize(windowState.size.width.value.toInt(), windowState.size.height.value.toInt())
         }
+        // Returning to a focused window is the desktop's foreground transition.
+        LaunchedEffect(focused) { if (focused && hasStarted) hub.handleForegroundTransition() }
 
         val hooks = remember(scrollbackLines, fontSizeIsSet, fontSize, pasteRequest, copyRequest) {
             TerminalHooks(
@@ -519,7 +476,7 @@ private fun runApp(
                 onTitleChange = { title -> uiScope.launch { terminalTitle = title } },
                 onBell = { runCatching { java.awt.Toolkit.getDefaultToolkit().beep() } },
                 sendPasteImage = { png ->
-                    val s = session ?: return@TerminalHooks
+                    val s = hub.activeSlot.value?.session ?: return@TerminalHooks
                     s.scope.launch {
                         runCatching { s.connection.sendPasteImage(java.util.Base64.getEncoder().encodeToString(png)) }
                     }
@@ -536,109 +493,58 @@ private fun runApp(
         RelayTheme(palette) {
             CompositionLocalProvider(LocalTerminalHooks provides hooks) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    val active = session
-                    if (active == null) {
+                    // The workspace stays composed underneath the servers
+                    // overlay: un-composing it disposed the live emulator (a
+                    // blank pane on return, no replay) and cancelled its effects.
+                    WorkspaceScreen(
+                        hub = hub,
+                        onOpenServers = { showServers = true },
+                        onAttach = { slot -> fetchAttachable(slot) },
+                        onShareQr = { ref -> shareRef = ref },
+                        // The device-side gate on sending the last 40 screen lines
+                        // with optimize_prompt (spec §7.1); the relay has its own.
+                        shareScreen = shareScreen,
+                        // Haptics are a no-op on desktop; passed for API parity.
+                        hapticsEnabled = false,
+                        sidebarToggleRequests = sidebarToggles,
+                    )
+
+                    if (showServers) {
                         ServerList(
                             viewModel = serversViewModel,
-                            connecting = connecting,
+                            hub = hub,
                             pendingPairing = pendingPairing,
                             clearPendingPairing = { pendingPairing = null },
-                            onConnect = ::connectTo,
                             onOpenSettings = { showSettings = true },
                             onScanPair = { showPasteLink = true },
-                            onBack = null,
+                            onBack = { showServers = false },
                         )
-                    } else {
-                        // Network restored → user recovery, the same edge the Android
-                        // nav graph collects and the macOS client drives from wake.
-                        LaunchedEffect(active) {
-                            network.connectivityRestored.collect {
-                                active.coordinator.triggerUserRecovery()
-                            }
-                        }
-                        LaunchedEffect(active, pendingSessionId) {
-                            val id = pendingSessionId ?: return@LaunchedEffect
-                            pendingSessionId = null
-                            runCatching { active.coordinator.switchToSession(id) }
-                        }
-                        LaunchedEffect(active, pendingNewSession) {
-                            if (!pendingNewSession) return@LaunchedEffect
-                            pendingNewSession = false
-                            runCatching { active.coordinator.createNewSession() }
-                        }
-                        // The OSC title belongs to one session; a switch or detach
-                        // must not leave the previous session's title in the frame.
-                        LaunchedEffect(active) {
-                            active.coordinator.activeSessionId.collect { terminalTitle = null }
-                        }
-                        // Desktop notifications from the activity stream the
-                        // coordinator already receives (AD-4: no push provider).
-                        LaunchedEffect(active) {
-                            active.coordinator.agentStates.collect { states ->
-                                environment.notifier.onAgentStates(states) { id ->
-                                    active.coordinator.sessionNames.value[id]
-                                }
-                            }
-                        }
-                        // The workspace stays composed underneath the servers
-                        // overlay: un-composing it disposed the live emulator (a
-                        // blank pane on return, no replay) and cancelled the
-                        // notification and recovery effects while it was open.
-                        WorkspaceScreen(
-                            vm = active.workspaceViewModel,
-                            onDisconnect = ::disconnect,
-                            // Attach: fetch the token's attachable sessions, THEN
-                            // present the sheet, so it opens populated (the order
-                            // the Android nav graph and iOS both use). Gated on
-                            // `loadingAttachable` so a double click fires one fetch.
-                            onAttach = { fetchAttachable(active) },
-                            onShareQr = { id -> shareSessionId = id },
-                            // The device-side gate on sending the last 40 screen lines
-                            // with optimize_prompt (spec §7.1); the relay has its own.
-                            shareScreen = shareScreen,
-                            // Haptics are a no-op on desktop; passed for API parity.
-                            hapticsEnabled = false,
-                            sidebarToggleRequests = sidebarToggles,
-                        )
-
-                        if (showServers) {
-                            ServerList(
-                                viewModel = serversViewModel,
-                                connecting = connecting,
-                                pendingPairing = pendingPairing,
-                                clearPendingPairing = { pendingPairing = null },
-                                onConnect = ::connectTo,
-                                onOpenSettings = { showSettings = true },
-                                onScanPair = { showPasteLink = true },
-                                onBack = { showServers = false },
-                            )
-                        }
-
-                        shareSessionId?.let { id ->
-                            QrShareSheet(
-                                sessionId = id,
-                                sessionName = active.coordinator.name(id),
-                                onDismiss = { shareSessionId = null },
-                            )
-                        }
-
-                        attachableSessions?.let { list ->
-                            AttachSessionSheet(
-                                sessions = list,
-                                nameFor = { id -> active.coordinator.name(id) },
-                                onAttachSession = { id, name ->
-                                    attachableSessions = null
-                                    active.scope.launch {
-                                        active.coordinator.attachRemoteSession(id, name)
-                                    }
-                                },
-                                // The QR scanner is CameraX + ML Kit, excluded from
-                                // this build; the sheet's list is the only path in.
-                                onScannedSession = {},
-                                onDismiss = { attachableSessions = null },
-                            )
-                        }
                     }
+
+                    shareRef?.let { ref ->
+                        QrShareSheet(
+                            sessionId = ref.sessionId,
+                            sessionName = hub.slot(ref.serverId)?.coordinator?.name(ref.sessionId),
+                            serverInstanceId = sections.firstOrNull { it.id == ref.serverId }?.config?.instanceId,
+                            onDismiss = { shareRef = null },
+                        )
+                    }
+
+                    attachable?.let { (slot, list) ->
+                        AttachSessionSheet(
+                            sessions = list,
+                            nameFor = { id -> slot.coordinator.name(id) },
+                            onAttachSession = { id, name ->
+                                attachable = null
+                                uiScope.launch { hub.attachRemote(slot.config.id, id, name) }
+                            },
+                            // The QR scanner is CameraX + ML Kit, excluded from
+                            // this build; the sheet's list is the only path in.
+                            onScannedSession = {},
+                            onDismiss = { attachable = null },
+                        )
+                    }
+
                     if (showSettings) {
                         SettingsScreen(
                             settings = settings,
@@ -652,7 +558,6 @@ private fun runApp(
                             // renders the same magic-wand button.
                             visibleSections = setOf(
                                 SettingsSection.PROMPT_OPTIMIZER,
-                                SettingsSection.CONNECTION,
                                 SettingsSection.GENERAL,
                                 SettingsSection.ABOUT,
                             ),
@@ -665,19 +570,9 @@ private fun runApp(
                             onParsed = { url ->
                                 showPasteLink = false
                                 pendingPairing = url
+                                showServers = true
                             },
                             onDismiss = { showPasteLink = false },
-                        )
-                    }
-
-                    connectError?.let { message ->
-                        AlertDialog(
-                            onDismissRequest = { connectError = null },
-                            title = { Text("Couldn't connect") },
-                            text = { Text(message) },
-                            confirmButton = {
-                                TextButton(onClick = { connectError = null }) { Text("OK") }
-                            },
                         )
                     }
                 }
@@ -691,55 +586,39 @@ private fun currentFontPoints(isSet: Boolean, setting: Double): Double =
     if (isSet) setting else relay.terminal.linux.DesktopTerminalFont.load().points.toDouble()
 
 /**
- * The server list plus the desktop chrome around it: the Settings gear the
- * Android nav graph overlays, the connecting scrim, and — when opened from a
- * live workspace — a way back.
+ * Server management plus the desktop chrome around it: the Settings gear the
+ * Android nav graph overlays, and a way back to the workspace once a server is
+ * enabled (with none enabled, management IS the workspace).
  */
 @Composable
 private fun ServerList(
     viewModel: ServersViewModel,
-    connecting: Boolean,
+    hub: relay.session.hub.ServerHub<LinuxServerSlot>,
     pendingPairing: PairingURL?,
     clearPendingPairing: () -> Unit,
-    onConnect: (ConnectionConfig) -> Unit,
     onOpenSettings: () -> Unit,
     onScanPair: () -> Unit,
-    onBack: (() -> Unit)?,
+    onBack: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         ServersScreen(
             viewModel = viewModel,
-            onConnect = onConnect,
+            hub = hub,
+            onDone = onBack,
             modifier = Modifier.fillMaxSize(),
             pendingPairingUrl = pendingPairing,
             clearPendingPairing = clearPendingPairing,
             onScanPair = onScanPair,
         )
-        androidx.compose.foundation.layout.Row(
-            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+        IconButton(
+            onClick = onOpenSettings,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 72.dp),
         ) {
-            if (onBack != null) {
-                TextButton(onClick = onBack) { Text("Back to workspace") }
-            }
-            IconButton(onClick = onOpenSettings) {
-                Icon(
-                    Icons.Filled.Settings,
-                    contentDescription = "Settings",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-        if (connecting) {
-            // The handshake owns the window until it settles, so a second click
-            // cannot start a competing connection.
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
+            Icon(
+                Icons.Filled.Settings,
+                contentDescription = "Settings",
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

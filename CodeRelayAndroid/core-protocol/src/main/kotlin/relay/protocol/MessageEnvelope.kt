@@ -123,6 +123,7 @@ object MessageEnvelope {
             "auth_success" -> ServerMessage.AuthSuccess(
                 payload.intOrNull("protocolVersion"), payload.stringOrNull("tokenId"),
                 payload.stringListOrNull("capabilities"),
+                payload.stringOrNull("serverId"), payload.stringOrNull("serverName"),
             )
             "auth_failure" -> ServerMessage.AuthFailure(payload.string("reason"))
             "session_created" -> ServerMessage.SessionCreated(
@@ -160,6 +161,7 @@ object MessageEnvelope {
             "error" -> ServerMessage.Error(payload.int("code"), payload.string("message"))
             "pair_success" -> ServerMessage.PairSuccess(
                 payload.string("token"), payload.string("tokenId"), payload.string("label"),
+                payload.stringOrNull("serverId"), payload.stringOrNull("serverName"),
             )
             "optimize_prompt_result" -> ServerMessage.OptimizePromptResult(
                 status = payload.string("status"),

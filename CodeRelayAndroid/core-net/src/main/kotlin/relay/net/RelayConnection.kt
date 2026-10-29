@@ -81,7 +81,20 @@ class RelayConnection(
 
     @Volatile
     var state: ConnectionState = ConnectionState.DISCONNECTED
-        private set
+        private set(value) {
+            val changed = field != value
+            field = value
+            if (changed) onStateChanged?.invoke(value)
+        }
+
+    /**
+     * Fired on every [state] change, on the confinement dispatcher — callers on
+     * another dispatcher must hop (the coordinator does). The multi-server hub
+     * reads a server's section status from it: a polled property fired nothing
+     * when a socket dropped.
+     */
+    @Volatile
+    var onStateChanged: ((ConnectionState) -> Unit)? = null
 
     /** `System.currentTimeMillis()` when the socket last reached CONNECTED, or
      *  null. Lets the recovery path trust a just-opened socket as alive without

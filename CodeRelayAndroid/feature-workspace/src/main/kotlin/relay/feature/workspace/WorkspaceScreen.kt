@@ -67,14 +67,15 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.feature.workspace.ui.ConnectionQualityDot
-import relay.feature.workspace.ui.SessionLoadingOverlay
+import relay.feature.workspace.ui.SessionLoadingSheetHost
+import relay.feature.workspace.ui.terminalLoadingCover
 import relay.feature.workspace.ui.SessionSidebar
 import relay.feature.workspace.ui.SessionTabs
 import relay.feature.workspace.ui.TerminalHost
 import relay.feature.workspace.ui.WorkspaceLogic
-import relay.session.RecoveryPhase
+import relay.session.SessionLoadingPresentation
+import relay.session.SessionLoadingSheetModel
 import relay.session.SessionHandshake
-import relay.session.SessionLoadPhase
 import relay.terminal.KeyboardAccessory
 import java.util.UUID
 
@@ -137,12 +138,13 @@ private val TOOLBAR_CHIP_SHAPE = RoundedCornerShape(6.dp)
  *    behind a [ModalNavigationDrawer] toggled from the status bar. Mirrors the
  *    Swift `sizeClass == .compact` sheet branch.
  *
- * ## Recovery overlay
- * When [SessionCoordinator.isRecovering] is true a full-screen scrim with a
- * [CircularProgressIndicator], the phase label ([phaseLabel]), and a Cancel
- * button is shown over everything (Swift `RecoveryOverlay` sheet with
- * `interactiveDismissDisabled`). A [BackHandler] swallows the system back press
- * while recovering — the Compose analog of `interactiveDismissDisabled()`.
+ * ## Loading sheet
+ * A switch, the session-name refresh and a reconnect all raise ONE bottom
+ * sheet ([SessionLoadingSheetHost], driven by [SessionLoadingSheetModel]): the
+ * step, the bytes loaded as the largest text, "Ready" for 0.6 s at the end,
+ * Cancel only while reconnecting — while the terminal fades to black behind it
+ * (Apple-app parity). A [BackHandler] swallows the system back press while
+ * recovering — the Compose analog of `interactiveDismissDisabled()`.
  * Separately, [SessionCoordinator.connectionTimedOut] surfaces a "Connection
  * Lost" [AlertDialog] with a Retry (re-trigger recovery) and a Disconnect.
  *
@@ -158,7 +160,7 @@ private val TOOLBAR_CHIP_SHAPE = RoundedCornerShape(6.dp)
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun WorkspaceScreen(
+internal fun WorkspacePane(
     vm: WorkspaceViewModel,
     onDisconnect: () -> Unit,
     onAttach: () -> Unit = {},
@@ -183,6 +185,18 @@ fun WorkspaceScreen(
      * previews are unaffected.
      */
     sidebarToggleRequests: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
+    /** The server's display name for the loading sheet's subtitle; null with one server (G8). */
+    serverName: String? = null,
+    /** Replaces the single-server sidebar (the hub's grouped one); gets "close the drawer". */
+    sidebarContent: (@Composable (closeDrawer: () -> Unit) -> Unit)? = null,
+    /** Replaces the single-server tab strip (the hub's cross-server one). */
+    tabsContent: (@Composable () -> Unit)? = null,
+    /**
+     * A loading-sheet model owned ABOVE this pane, which the hub host re-keys
+     * per server: the sheet must survive a cross-server switch, so the host
+     * presents it and this pane only feeds it.
+     */
+    externalLoading: SessionLoadingSheetModel? = null,
     modifier: Modifier = Modifier,
 ) {
     val coordinator = vm.coordinator
@@ -221,6 +235,8 @@ fun WorkspaceScreen(
     val undoVisible = WandButtonLogic.undoChipVisible(optimizerUndo, activeSessionId)
     val recoveryPhase by coordinator.recoveryPhase.collectAsStateWithLifecycle()
     val loadPhase by coordinator.sessionLoadPhase.collectAsStateWithLifecycle()
+    val lastLoadFailed by coordinator.lastLoadFailed.collectAsStateWithLifecycle()
+    val recoveryFailed by coordinator.recoveryFailed.collectAsStateWithLifecycle()
     val connectionTimedOut by coordinator.connectionTimedOut.collectAsStateWithLifecycle()
     // "Cannot Open Session" alert — raised on an app-level restore failure (the
     // connection is fine but the session couldn't be resumed; iOS
@@ -231,6 +247,23 @@ fun WorkspaceScreen(
     // another device (iOS WorkspaceView.swift:168-181). Without surfacing this the
     // session just vanishes to "No Active Session" with no explanation.
     val stolenAlert by coordinator.stolenAlert.collectAsStateWithLifecycle()
+    val errorMessage by coordinator.errorMessage.collectAsStateWithLifecycle()
+
+    // One loading sheet for switch / refresh / reconnect (see the class doc).
+    val loading = externalLoading ?: remember(coordinator) { SessionLoadingSheetModel(scope) }
+    val presentation = SessionLoadingPresentation(
+        loadPhase = loadPhase,
+        isRecovering = isRecovering,
+        recoveryPhase = recoveryPhase,
+        expectsSession = activeSessionId != null,
+        sessionAttached = activeSessionId != null,
+        loadFailed = lastLoadFailed || errorMessage != null || connectionTimedOut || sessionAttachFailed,
+        recoveryFailed = recoveryFailed,
+        sessionName = activeSessionId?.let { sessionNames[it] },
+        serverName = serverName,
+    )
+    LaunchedEffect(presentation) { loading.update(presentation) }
+    val loadingCovered by loading.isPresented.collectAsStateWithLifecycle()
 
     val quality by vm.connectionQuality.collectAsStateWithLifecycle()
     val uptimeSeconds by vm.uptimeSeconds.collectAsStateWithLifecycle()
@@ -267,7 +300,9 @@ fun WorkspaceScreen(
     // opens it. Survives rotation/recreation; starts open.
     var twoPaneSidebarOpen by rememberSaveable { mutableStateOf(true) }
 
-    val sidebar: @Composable () -> Unit = {
+    val sidebar: @Composable () -> Unit = sidebarContent?.let { custom ->
+        { custom { scope.launch { drawerState.close() } } }
+    } ?: {
         SessionSidebar(
             sessions = sessions,
             activeSessionId = activeSessionId,
@@ -347,7 +382,8 @@ fun WorkspaceScreen(
                 onNameLongPress = { renameActive = true },
                 onKeyHaptic = { haptics.lightTap() },
                 nameFor = ::nameFor,
-                loadPhase = loadPhase,
+                loadingCovered = loadingCovered,
+                tabsContent = tabsContent,
                 wandOverlay = {
                     OptimizerOverlay(
                         visual = wandVisual,
@@ -451,14 +487,9 @@ fun WorkspaceScreen(
             }
         }
 
-        // Recovery overlay — modal scrim over everything while recovering.
-        if (isRecovering) {
-            BackHandler(enabled = true) { /* suppress back-dismiss during recovery */ }
-            RecoveryOverlay(
-                phase = recoveryPhase,
-                onCancel = { coordinator.cancelRecovery() },
-            )
-        }
+        // Back cannot dismiss a reconnect; the sheet's Cancel does.
+        if (isRecovering) BackHandler(enabled = true) { /* suppress back-dismiss during recovery */ }
+        if (externalLoading == null) SessionLoadingSheetHost(loading, onCancel = { coordinator.cancelRecovery() })
     }
 
     // Auto-open the drawer on first load when there is no active session, so the
@@ -570,7 +601,8 @@ private fun TerminalColumn(
     onNameLongPress: () -> Unit,
     onKeyHaptic: () -> Unit,
     nameFor: (UUID) -> String,
-    loadPhase: SessionLoadPhase?,
+    loadingCovered: Boolean,
+    tabsContent: (@Composable () -> Unit)?,
     wandOverlay: @Composable () -> Unit,
     redrawToken: Int,
 ) {
@@ -612,7 +644,7 @@ private fun TerminalColumn(
             ToolbarChip(onClick = onDisconnect) {
                 Icon(
                     Icons.Filled.Dns,
-                    contentDescription = "Disconnect from server",
+                    contentDescription = "Servers",
                     tint = Color.White,
                     modifier = Modifier.size(TOOLBAR_ICON),
                 )
@@ -634,7 +666,7 @@ private fun TerminalColumn(
 
             // Tabs take the remaining width.
             Box(modifier = Modifier.weight(1f)) {
-                SessionTabs(
+                if (tabsContent != null) tabsContent() else SessionTabs(
                     sessions = sessions,
                     activeSessionId = activeSessionId,
                     agentForSession = agentFor,
@@ -748,16 +780,8 @@ private fun TerminalColumn(
                 )
             }
 
-            // Session-loading narration (spinner + phase + replay byte counter),
-            // over both the terminal and the reload cover so a slow attach reads
-            // as progress rather than a black pane. Drawn here, under the wand,
-            // and gated by its own 300 ms delay so a LAN-fast load never flashes
-            // it. Like the cover it never intercepts touches.
-            SessionLoadingOverlay(
-                phase = loadPhase,
-                sessionName = activeSessionId?.let(nameFor),
-                modifier = Modifier.fillMaxSize(),
-            )
+            // Black under the loading sheet; lifts with it on the first frame.
+            Box(modifier = Modifier.fillMaxSize().terminalLoadingCover(loadingCovered))
 
             // Floating magic-wand button + its Undo chip / notice, bottom-right over
             // the terminal (iOS ActiveTerminalView floating buttons: 16dp end /
@@ -827,41 +851,6 @@ private fun FnToggleButton(active: Boolean, onClick: () -> Unit) {
             fontWeight = FontWeight.Medium,
         )
     }
-}
-
-/** Recovery scrim, ported from the Swift `RecoveryOverlay` sheet. */
-@Composable
-private fun RecoveryOverlay(
-    phase: RecoveryPhase,
-    onCancel: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.7f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(24.dp),
-        ) {
-            CircularProgressIndicator()
-            Text("Reconnecting", style = MaterialTheme.typography.titleMedium, color = Color.White)
-            Text(
-                text = phaseLabel(phase),
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.7f),
-            )
-            TextButton(onClick = onCancel) { Text("Cancel") }
-        }
-    }
-}
-
-/** Phase → user-facing label, ported from the Swift `RecoveryPhase.label`. */
-private fun phaseLabel(phase: RecoveryPhase): String = when (phase) {
-    RecoveryPhase.RECONNECTING -> "Reconnecting…"
-    RecoveryPhase.AUTHENTICATING -> "Authenticating…"
-    RecoveryPhase.RESUMING -> "Resuming session…"
 }
 
 @Composable

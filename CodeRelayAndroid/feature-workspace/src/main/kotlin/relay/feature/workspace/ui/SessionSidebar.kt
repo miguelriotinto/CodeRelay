@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.draw.alpha
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -156,56 +159,28 @@ fun SessionSidebar(
             if (sessions.isEmpty()) {
                 EmptySessionsState(modifier = Modifier.fillMaxSize())
             } else {
-                val byId = sessions.associateBy { it.id }
                 val groups = rollupsForSessions(sessions)
                 val collapsed = remember { mutableStateListOf<String>() }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 ) {
-                    groups.forEach { group ->
-                        // Each group renders as one rounded tile: the header rounds
-                        // its top corners, the last session row its bottom ones,
-                        // and the rows between draw a square-cornered fill so the
-                        // whole group reads as a single continuous card. Rows stay
-                        // separate LazyColumn items so SwipeToDismissBox
-                        // (swipe-to-kill) keeps working. Parity with the Swift
-                        // `WorkspaceTileEdge`.
-                        val members = group.sessionIds.mapNotNull { byId[it] }
-                        val isCollapsed = collapsed.contains(group.id) || members.isEmpty()
-                        item(key = "hdr-${group.id}") {
-                            RollupHeader(
-                                group = group,
-                                collapsed = isCollapsed,
-                                edge = if (isCollapsed) TileEdge.ONLY else TileEdge.TOP,
-                                onToggle = {
-                                    if (collapsed.contains(group.id)) collapsed.remove(group.id)
-                                    else collapsed.add(group.id)
-                                },
-                            )
-                        }
-                        if (!isCollapsed) {
-                            itemsIndexed(members, key = { _, s -> s.id }) { index, session ->
-                                SwipeableSessionRow(
-                                    session = session,
-                                    name = nameForSession(session.id),
-                                    isActive = session.id == activeSessionId,
-                                    activity = activityForSession(session.id),
-                                    agentId = agentForSession(session.id),
-                                    agentState = agentStateForSession(session.id),
-                                    seen = seenForSession(session.id),
-                                    edge = if (index == members.lastIndex) TileEdge.BOTTOM else TileEdge.MIDDLE,
-                                    onSelect = { onSelect(session.id) },
-                                    onTerminate = { onTerminate(session.id) },
-                                    onRenameRequest = {
-                                        renameTarget = RenameTarget(session.id, nameForSession(session.id))
-                                    },
-                                    onShareQr = { onShareQr(session.id) },
-                                )
-                            }
-                        }
-                        item(key = "gap-${group.id}") { Spacer(Modifier.height(TileGap)) }
-                    }
+                    sessionRows(
+                        keyPrefix = "",
+                        sessions = sessions,
+                        groups = groups,
+                        collapsed = collapsed,
+                        activeSessionId = activeSessionId,
+                        nameForSession = nameForSession,
+                        agentForSession = agentForSession,
+                        activityForSession = activityForSession,
+                        agentStateForSession = agentStateForSession,
+                        seenForSession = seenForSession,
+                        onSelect = onSelect,
+                        onTerminate = onTerminate,
+                        onRenameRequest = { id -> renameTarget = RenameTarget(id, nameForSession(id)) },
+                        onShareQr = onShareQr,
+                    )
                 }
             }
         }
@@ -225,6 +200,86 @@ fun SessionSidebar(
 }
 
 private data class RenameTarget(val id: UUID, val name: String)
+
+/**
+ * The rollup tiles for one server's sessions, as items of an enclosing
+ * [LazyColumn]: the single-server sidebar emits it once, the multi-server
+ * sidebar once per section (under that server's header). [keyPrefix] keeps
+ * item keys unique across sections — two relays can list the same session id.
+ * [dimmed] greys a section whose rows are cached (server offline / disabled);
+ * [selectable] false makes them inert.
+ */
+internal fun LazyListScope.sessionRows(
+    keyPrefix: String,
+    sessions: List<SessionInfo>,
+    groups: List<relay.protocol.WorkspaceRollup>,
+    collapsed: SnapshotStateList<String>,
+    activeSessionId: UUID?,
+    nameForSession: (UUID) -> String,
+    agentForSession: (UUID) -> String?,
+    activityForSession: (UUID) -> ActivityState,
+    agentStateForSession: (UUID) -> relay.protocol.AgentDetectedState?,
+    seenForSession: (UUID) -> Boolean,
+    onSelect: (UUID) -> Unit,
+    onTerminate: (UUID) -> Unit,
+    onRenameRequest: (UUID) -> Unit,
+    onShareQr: (UUID) -> Unit,
+    dimmed: Boolean = false,
+    selectable: Boolean = true,
+) {
+    val byId = sessions.associateBy { it.id }
+    groups.forEach { group ->
+        // Each group renders as one rounded tile: the header rounds its top
+        // corners, the last session row its bottom ones, and the rows between
+        // draw a square-cornered fill so the whole group reads as a single
+        // continuous card. Rows stay separate LazyColumn items so
+        // SwipeToDismissBox (swipe-to-kill) keeps working. Parity with the
+        // Swift `WorkspaceTileEdge`.
+        val members = group.sessionIds.mapNotNull { byId[it] }
+        val isCollapsed = collapsed.contains(group.id) || members.isEmpty()
+        item(key = "${keyPrefix}hdr-${group.id}") {
+            Box(Modifier.alpha(if (dimmed) DIMMED_ALPHA else 1f)) {
+                RollupHeader(
+                    group = group,
+                    collapsed = isCollapsed,
+                    edge = if (isCollapsed) TileEdge.ONLY else TileEdge.TOP,
+                    onToggle = {
+                        if (collapsed.contains(group.id)) collapsed.remove(group.id) else collapsed.add(group.id)
+                    },
+                )
+            }
+        }
+        if (!isCollapsed) {
+            itemsIndexed(members, key = { _, s -> "$keyPrefix${s.id}" }) { index, session ->
+                Box(Modifier.alpha(if (dimmed) DIMMED_ALPHA else 1f)) {
+                    SwipeableSessionRow(
+                        session = session,
+                        name = nameForSession(session.id),
+                        isActive = session.id == activeSessionId,
+                        activity = activityForSession(session.id),
+                        agentId = agentForSession(session.id),
+                        agentState = agentStateForSession(session.id),
+                        seen = seenForSession(session.id),
+                        edge = if (index == members.lastIndex) TileEdge.BOTTOM else TileEdge.MIDDLE,
+                        onSelect = { if (selectable) onSelect(session.id) },
+                        onTerminate = { if (selectable) onTerminate(session.id) },
+                        onRenameRequest = { if (selectable) onRenameRequest(session.id) },
+                        onShareQr = { if (selectable) onShareQr(session.id) },
+                    )
+                }
+            }
+        }
+        item(key = "${keyPrefix}gap-${group.id}") { Spacer(Modifier.height(TileGap)) }
+    }
+}
+
+/** Opacity of a cached section's rows (spec §8.1: shown greyed while the server is away). */
+internal const val DIMMED_ALPHA = 0.5f
+
+/** The sidebar's rename dialog, for hosts that render [sessionRows] themselves. */
+@Composable
+internal fun SessionRenameDialog(initialName: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) =
+    RenameDialog(initialName = initialName, onConfirm = onConfirm, onDismiss = onDismiss)
 
 /**
  * Where a row sits within its group's tile, driving which corners round.

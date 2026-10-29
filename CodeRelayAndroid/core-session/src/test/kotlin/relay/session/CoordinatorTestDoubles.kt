@@ -153,7 +153,12 @@ internal class FakeCoordinatorConnection(private val log: CallLog) : Coordinator
      * model the socket the handshake must reconnect before authenticating.
      */
     var connected: Boolean = true
+        set(value) {
+            field = value
+            onConnectedChanged?.invoke(value) // reported the way the real transport does
+        }
     override val isConnected: Boolean get() = connected
+    override var onConnectedChanged: ((Boolean) -> Unit)? = null
     var lastWiredHandler: ((ByteArray) -> Unit)? = null
     /** When set, forceReconnect awaits it (lets a test park the recovery pass). */
     var forceReconnectGate: CompletableDeferred<Unit>? = null

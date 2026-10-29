@@ -14,4 +14,10 @@ class ConnectionConfigTest {
         val config = ConnectionConfig(name = "prod", host = "relay.example.com", port = 443u, useTLS = true)
         assertEquals("wss://relay.example.com:443", config.wsUrl)
     }
+
+    @org.junit.jupiter.api.Test fun titlePrefersTheRelaysOwnName() {
+        val c = ConnectionConfig(name = "bookmark", host = "h")
+        org.junit.jupiter.api.Assertions.assertEquals("bookmark", c.title)
+        org.junit.jupiter.api.Assertions.assertEquals("studio", c.copy(displayName = "studio").title)
+    }
 }

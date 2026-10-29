@@ -176,7 +176,7 @@ class SessionHandshake internal constructor(
                 //    "the socket died since" — including a receive-loop failure,
                 //    which does NOT bump the connection generation.
                 if (!coordinator.connection.isConnected) {
-                    coordinator.setSessionLoadPhase(SessionLoadPhase.Connecting)
+                    narrate(SessionLoadPhase.Connecting)
                     coordinator.connection.forceReconnect()
                 }
 
@@ -184,14 +184,14 @@ class SessionHandshake internal constructor(
                 //    auth_request → auth_success round-trip exercises the full
                 //    socket end to end. A separate ping would tell us less (the
                 //    server answers pings pre-auth) and later.
-                coordinator.setSessionLoadPhase(SessionLoadPhase.Authenticating)
+                narrate(SessionLoadPhase.Authenticating)
                 coordinator.authCoordinator.ensureAuthenticated()
                 if (coordinator.isTornDown) return false
 
                 // 3. Ask the server which sessions this client owns.
                 //    `listSessions()` is TOKEN-scoped server-side — that IS the
                 //    answer to "what do I own", and the server is authoritative.
-                coordinator.setSessionLoadPhase(SessionLoadPhase.LoadingSessions)
+                narrate(SessionLoadPhase.LoadingSessions)
                 val owned = coordinator.sessionController.listSessions()
                 if (coordinator.isTornDown) return false
 
@@ -215,7 +215,8 @@ class SessionHandshake internal constructor(
                 if (isTokenRejection(error)) {
                     // Retrying a rejected token cannot succeed, and hammering
                     // the server trips its rate limiter. Stop and let the user
-                    // re-pair.
+                    // re-pair (the hub shows the section as authFailed).
+                    coordinator.setAuthRejected(true)
                     fail(error)
                     return false
                 }
@@ -260,6 +261,17 @@ class SessionHandshake internal constructor(
         // progress that is not coming.
         coordinator.setSessionLoadPhase(null)
         coordinator.presentHandshakeFailure(error)
+    }
+
+    /**
+     * The handshake narrates a SERVER, so its phases are written only while no
+     * session is attached (Swift parity). Over a live terminal — ON_RESUME,
+     * re-tapping the active session, pull-to-refresh — they raised the loading
+     * sheet and blacked the terminal out for a handshake the user never asked
+     * to watch.
+     */
+    private fun narrate(phase: SessionLoadPhase) {
+        if (coordinator.activeSessionId.value == null) coordinator.setSessionLoadPhase(phase)
     }
 
     /** A pane row captured before the fetch, so its name survives the prune. */

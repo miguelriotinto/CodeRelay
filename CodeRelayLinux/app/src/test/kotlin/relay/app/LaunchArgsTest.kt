@@ -44,4 +44,11 @@ class LaunchArgsTest {
         val launch = LaunchArgs.parse(arrayOf("coderelay://pair?host=mac.local&port=9200&tls=0&code=K7QP2M4X"))
         assertInstanceOf(DeepLink.Pair::class.java, launch.link)
     }
+
+    @org.junit.jupiter.api.Test
+    fun `a pairing link at launch opens management even with a server enabled`() {
+        val pair = LaunchArgs.parse(arrayOf("coderelay://pair?host=h&port=9200&tls=0&code=ABCDEFGH"))
+        org.junit.jupiter.api.Assertions.assertTrue(pair.opensManagement)
+        org.junit.jupiter.api.Assertions.assertFalse(LaunchArgs.parse(arrayOf(java.util.UUID.randomUUID().toString())).opensManagement)
+    }
 }

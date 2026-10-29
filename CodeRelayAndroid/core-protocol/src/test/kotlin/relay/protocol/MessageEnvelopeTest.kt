@@ -287,4 +287,29 @@ class MessageEnvelopeTest {
         assertTrue(ServerMessage.ALL_TYPE_STRINGS.containsAll(setOf("optimize_prompt_result", "replace_prompt_result")))
         assertTrue(ClientMessage.ALL_TYPE_STRINGS.intersect(ServerMessage.ALL_TYPE_STRINGS).isEmpty())
     }
+
+    // MARK: - Protocol v3 server identity
+
+    @Test fun authSuccessCarriesTheServerIdentity() {
+        val id = UUID.randomUUID()
+        val msg = MessageEnvelope.decodeServer(
+            """{"type":"auth_success","payload":{"protocolVersion":3,"tokenId":"t","serverId":"$id","serverName":"studio"}}""",
+        ) as ServerMessage.AuthSuccess
+        assertEquals(ServerIdentity(id, "studio"), msg.server)
+    }
+
+    @Test fun aV2AuthSuccessHasNoIdentityAndAMalformedIdIsIgnored() {
+        val v2 = MessageEnvelope.decodeServer("""{"type":"auth_success","payload":{"protocolVersion":2}}""") as ServerMessage.AuthSuccess
+        assertNull(v2.server)
+        val bad = MessageEnvelope.decodeServer("""{"type":"auth_success","payload":{"serverId":"zz"}}""") as ServerMessage.AuthSuccess
+        assertNull(bad.server)
+    }
+
+    @Test fun pairSuccessCarriesTheServerIdentity() {
+        val id = UUID.randomUUID()
+        val msg = MessageEnvelope.decodeServer(
+            """{"type":"pair_success","payload":{"token":"k","tokenId":"t","label":"l","serverId":"$id","serverName":"studio"}}""",
+        ) as ServerMessage.PairSuccess
+        assertEquals(ServerIdentity(id, "studio"), msg.server)
+    }
 }

@@ -53,7 +53,7 @@ class ServersViewModel(
         // `onAppear` starts polling; we fold both into construction).
         viewModelScope.launch {
             reloadServers()
-            statusChecker.startPolling(_servers.value)
+            statusChecker.startPolling(ServerPolling.targets(_servers.value))
         }
     }
 
@@ -61,7 +61,7 @@ class ServersViewModel(
     fun refresh() {
         viewModelScope.launch {
             reloadServers()
-            statusChecker.refresh(_servers.value)
+            statusChecker.refresh(ServerPolling.targets(_servers.value))
         }
     }
 
@@ -77,7 +77,7 @@ class ServersViewModel(
                 tokenStore.saveToken(token, config.id)
             }
             reloadServers()
-            statusChecker.refresh(_servers.value)
+            statusChecker.refresh(ServerPolling.targets(_servers.value))
         }
     }
 
@@ -90,7 +90,7 @@ class ServersViewModel(
             tokenStore.deleteToken(config.id)
             store.delete(config.id)
             reloadServers()
-            statusChecker.refresh(_servers.value)
+            statusChecker.refresh(ServerPolling.targets(_servers.value))
         }
     }
 
@@ -108,7 +108,7 @@ class ServersViewModel(
             tokenStore.saveToken(token, config.id)
         }
         reloadServers()
-        statusChecker.refresh(_servers.value)
+        statusChecker.refresh(ServerPolling.targets(_servers.value))
         return _servers.value
     }
 

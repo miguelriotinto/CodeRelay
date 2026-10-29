@@ -14,10 +14,11 @@ import java.util.UUID
  * `minProtocolVersion`. The client sends [CURRENT] in `auth_request`; the server
  * echoes its version in `auth_success` and the controller rejects anything below
  * [MIN]. Version 2 adds `capabilities` to `auth_success` and the `optimize_prompt` /
- * `replace_prompt` RPCs.
+ * `replace_prompt` RPCs. Version 3 adds the relay's `serverId`/`serverName`
+ * (multi-server spec §6.2).
  */
 object ProtocolVersions {
-    const val CURRENT = 2
+    const val CURRENT = 3
     const val MIN = 0
 }
 
@@ -89,6 +90,10 @@ class SessionController(private val connection: ConnectionSurface) {
      * [PromptOptimizerProtocol.CAPABILITY].
      */
     var serverCapabilities: Set<String> = emptySet()
+        private set
+
+    /** The relay's identity from `auth_success` (protocol v3); null for a v2 relay and after [resetAuth]. */
+    var serverIdentity: relay.protocol.ServerIdentity? = null
         private set
 
     /**
@@ -182,6 +187,7 @@ class SessionController(private val connection: ConnectionSurface) {
     /** Resets auth so the next operation re-authenticates. Call after reconnect. */
     fun resetAuth() {
         isAuthenticated = false
+        serverIdentity = null
         sessionId = null
         serverProtocolVersion = 0
         serverCapabilities = emptySet()
@@ -214,6 +220,7 @@ class SessionController(private val connection: ConnectionSurface) {
                 // Null against older servers; the coordinator's reconcile falls
                 // back to a safe "retain if still on the server" rule when unknown.
                 response.tokenId?.let { tokenId = it }
+                serverIdentity = response.server
             }
             is ServerMessage.AuthFailure -> {
                 isAuthenticated = false

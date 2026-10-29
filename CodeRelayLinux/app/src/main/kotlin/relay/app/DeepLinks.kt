@@ -1,6 +1,7 @@
 package relay.app
 
 import relay.protocol.PairingURL
+import relay.protocol.SessionDeepLink
 import java.net.URI
 import java.util.UUID
 
@@ -21,8 +22,11 @@ import java.util.UUID
  * a startup path, and a malformed one must not prevent the app from launching.
  */
 sealed interface DeepLink {
-    /** Attach to an existing session. */
-    data class Session(val id: UUID) : DeepLink
+    /** Open a session, on the relay the optional `?server=` hint names (multi-server spec §10). */
+    data class Session(val link: SessionDeepLink) : DeepLink {
+        constructor(id: UUID) : this(SessionDeepLink(id))
+        val id: UUID get() = link.sessionId
+    }
 
     /** Redeem a pairing code against a host. */
     data class Pair(val url: PairingURL) : DeepLink
@@ -57,9 +61,14 @@ object DeepLinks {
 
         return when (uri.host?.lowercase()) {
             "session" -> {
-                // URI.path is "/<uuid>" for coderelay://session/<uuid>.
+                // URI.path is "/<uuid>" for coderelay://session/<uuid>; the strict
+                // id check stays here, the `?server=` hint comes from the shared parser.
                 val id = parseUuid(uri.path?.removePrefix("/").orEmpty())
-                if (id != null) DeepLink.Session(id) else DeepLink.Unhandled
+                if (id != null) {
+                    DeepLink.Session(SessionDeepLink(id, SessionDeepLink.parse(text)?.serverInstanceId))
+                } else {
+                    DeepLink.Unhandled
+                }
             }
             "pair" -> {
                 val parsed = runCatching { PairingURL.parse(text) }.getOrNull()
@@ -108,6 +117,9 @@ data class LaunchArgs(
     val newSession: Boolean = false,
 ) {
     val isEmpty: Boolean get() = link is DeepLink.Unhandled && !newSession
+
+    /** A pairing link is redeemed on the management screen, so it opens there even with a server enabled. */
+    val opensManagement: Boolean get() = link is DeepLink.Pair
 
     companion object {
         fun parse(args: Array<String>): LaunchArgs = LaunchArgs(

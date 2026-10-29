@@ -52,11 +52,13 @@ fun QrShareSheet(
     sessionName: String?,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The relay's instance id, so a scan on a multi-server device opens the right server (spec §10). */
+    serverInstanceId: UUID? = null,
 ) {
     // skipPartiallyExpanded so the sheet opens FULLY expanded in one motion instead
     // of stopping at the half-height partial detent (the QR was getting clipped).
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val deepLink = remember(sessionId) { DeepLinks.sessionUri(sessionId) }
+    val deepLink = remember(sessionId, serverInstanceId) { DeepLinks.sessionUri(sessionId, serverInstanceId) }
     // Encode once per id; 560 px ≈ the iOS 280 pt @2x render.
     val bitmap = remember(deepLink) { runCatching { qrBitmap(deepLink, 560) }.getOrNull() }
 

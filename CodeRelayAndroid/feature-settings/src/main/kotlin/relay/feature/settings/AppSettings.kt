@@ -140,6 +140,14 @@ class AppSettings(
     val lastConnectedServerId: StateFlow<String> = stringFlow(LAST_CONNECTED_SERVER_ID, "")
     fun setLastConnectedServerId(value: String) = put(LAST_CONNECTED_SERVER_ID, value)
 
+    /**
+     * The persisted value, awaited from disk. At cold start the StateFlow's
+     * `.value` is still the seed default because the DataStore read is async —
+     * the one-time multi-server migration must decide against the real value.
+     */
+    suspend fun lastConnectedServerIdNow(): String =
+        dataStore.data.first()[LAST_CONNECTED_SERVER_ID] ?: ""
+
     /** Stored as the [SessionNamingTheme.rawValue]; resolves via `fromRaw` (falls back to DEFAULT). */
     val sessionNamingTheme: StateFlow<SessionNamingTheme> =
         dataStore.data

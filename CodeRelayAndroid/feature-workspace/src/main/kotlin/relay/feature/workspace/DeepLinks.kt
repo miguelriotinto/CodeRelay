@@ -69,6 +69,19 @@ object DeepLinks {
     fun sessionUri(id: UUID): String = "$PREFIX${id.toString().lowercase()}"
 
     /**
+     * Parse a session link including its optional `?server=<instanceId>` hint
+     * (multi-server spec §10) — what push taps and QR codes route through the
+     * hub with. Thin delegate to [relay.protocol.SessionDeepLink.parse], which
+     * also accepts the pre-rename `clauderelay` scheme like the Apple apps.
+     */
+    fun parseSessionLink(uri: String): relay.protocol.SessionDeepLink? =
+        relay.protocol.SessionDeepLink.parse(uri)
+
+    /** The canonical link for [id] on the relay [serverInstanceId] (omitted when unknown). */
+    fun sessionUri(id: UUID, serverInstanceId: UUID?): String =
+        relay.protocol.SessionDeepLink(id, serverInstanceId).uri
+
+    /**
      * Parse a `coderelay://pair?host=&port=&tls=&code=` pairing link to a
      * [relay.protocol.PairingURL].
      *

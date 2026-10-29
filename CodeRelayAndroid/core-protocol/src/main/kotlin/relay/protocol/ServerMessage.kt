@@ -18,8 +18,12 @@ sealed interface ServerMessage {
         val tokenId: String? = null,
         /** protocolVersion ≥ 2: optional relay features, e.g. `prompt_optimizer`. Null from older relays. */
         val capabilities: List<String>? = null,
+        /** protocolVersion ≥ 3: the relay's persisted instance id and display name (multi-server spec §6.2). */
+        val serverId: String? = null,
+        val serverName: String? = null,
     ) : ServerMessage {
         override val typeString get() = "auth_success"
+        val server: ServerIdentity? get() = ServerIdentity.from(serverId, serverName)
     }
 
     data class AuthFailure(val reason: String) : ServerMessage {
@@ -101,8 +105,15 @@ sealed interface ServerMessage {
     }
 
     /** Pairing succeeded — token minted. Client should authenticate with it. */
-    data class PairSuccess(val token: String, val tokenId: String, val label: String) : ServerMessage {
+    data class PairSuccess(
+        val token: String,
+        val tokenId: String,
+        val label: String,
+        val serverId: String? = null,
+        val serverName: String? = null,
+    ) : ServerMessage {
         override val typeString get() = "pair_success"
+        val server: ServerIdentity? get() = ServerIdentity.from(serverId, serverName)
     }
 
     /** Reply to optimize_prompt: status ok|passthrough|no_draft|failed|unconfigured. */

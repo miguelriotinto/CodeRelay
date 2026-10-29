@@ -14,7 +14,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -61,6 +65,50 @@ fun SessionTabs(
     modifier: Modifier = Modifier,
     agentStateForSession: (UUID) -> AgentDetectedState? = { null },
 ) {
+    TabStrip(
+        items = sessions.mapIndexed { index, session ->
+            TabStripItem(
+                key = session.id,
+                number = index + 1,
+                isSelected = session.id == activeSessionId,
+                agentId = agentForSession(session.id),
+                agentState = agentStateForSession(session.id),
+                awaitingInput = session.id in awaitingInput,
+            )
+        },
+        onSelect = { item -> onSelect(item.key as UUID) },
+        modifier = modifier,
+    )
+}
+
+/** One chip in a [TabStrip]. [key] must be unique in the strip (a session id, or a `SessionRef` across servers). */
+data class TabStripItem(
+    val key: Any,
+    val number: Int,
+    val isSelected: Boolean,
+    val agentId: String?,
+    val agentState: AgentDetectedState?,
+    val awaitingInput: Boolean,
+    val contentDescription: String? = null,
+) {
+    /**
+     * The key the lazy row stores. Android's lazy layouts save item state in a
+     * Bundle, so the key must be a Bundle type: a `SessionRef` key crashed the
+     * app the moment the first cross-server tab appeared.
+     */
+    val lazyKey: String get() = key.toString()
+}
+
+/**
+ * The numbered tab chips, independent of what a tab is: [SessionTabs] feeds it
+ * one server's sessions, the multi-server workspace every enabled server's.
+ */
+@Composable
+fun TabStrip(
+    items: List<TabStripItem>,
+    onSelect: (TabStripItem) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     // Shared flash phase for all "needs attention" tabs. 0..1 triangle wave; we
     // bucket it to a boolean "flashOn" at the 0.5 midpoint so the fill snaps
     // between agentColor and the dim white, like the Swift flashOn boolean.
@@ -78,10 +126,7 @@ fun SessionTabs(
 
     val listState = rememberLazyListState()
 
-    // Map the selected session id to its index in the current ordering.
-    val selectedIndex = remember(sessions, activeSessionId) {
-        activeSessionId?.let { id -> sessions.indexOfFirst { it.id == id } } ?: -1
-    }
+    val selectedIndex = remember(items) { items.indexOfFirst { it.isSelected } }
 
     // Reveal the selected tab whenever the selection changes or the viewport
     // resizes (rotation / window resize changes viewportSize). Minimal-reveal:
@@ -118,26 +163,24 @@ fun SessionTabs(
         verticalAlignment = Alignment.CenterVertically,
         contentPadding = PaddingValues(horizontal = 2.dp),
     ) {
-        itemsIndexed(sessions, key = { _, s -> s.id }) { index, session ->
-            val isSelected = session.id == activeSessionId
-            val agentId = agentForSession(session.id)
-            val agentState = agentStateForSession(session.id)
+        items(items, key = { it.lazyKey }) { item ->
             // A blocked agent flashes for attention (parity with the sidebar's
             // blinking blocked dot); when no fine-grained state is reported, fall
             // back to the legacy awaiting-input pulse.
-            val needsAttention = if (agentState != null) {
-                agentState == AgentDetectedState.BLOCKED || agentState == AgentDetectedState.IDLE
+            val needsAttention = if (item.agentState != null) {
+                item.agentState == AgentDetectedState.BLOCKED || item.agentState == AgentDetectedState.IDLE
             } else {
-                awaitingInput.contains(session.id)
+                item.awaitingInput
             }
             SessionTab(
-                number = index + 1,
-                isSelected = isSelected,
-                agentId = agentId,
+                number = item.number,
+                isSelected = item.isSelected,
+                agentId = item.agentId,
                 needsAttention = needsAttention,
                 flashOn = flashOn,
-                agentState = agentState,
-                onClick = { onSelect(session.id) },
+                agentState = item.agentState,
+                contentDescription = item.contentDescription,
+                onClick = { onSelect(item) },
             )
         }
     }
@@ -244,6 +287,7 @@ private fun SessionTab(
     needsAttention: Boolean,
     flashOn: Boolean,
     agentState: AgentDetectedState?,
+    contentDescription: String? = null,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(6.dp)
@@ -256,6 +300,7 @@ private fun SessionTab(
         box = box.border(width = 2.dp, color = Color.White, shape = shape)
     }
     box = box.clickable(onClick = onClick)
+    if (contentDescription != null) box = box.semantics { this.contentDescription = contentDescription }
     Box(
         modifier = box.padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center,
