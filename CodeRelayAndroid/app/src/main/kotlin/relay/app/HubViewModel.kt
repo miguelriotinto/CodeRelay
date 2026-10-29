@@ -87,6 +87,11 @@ class HubViewModel<S : ServerSlot> internal constructor(private val deps: HubDep
         deps.scope.launch { hub.handleDeepLink(link) }
     }
 
+    /** Runs [block] on the hub's own scope, which outlives the composition (a fold switch mid-attach). */
+    fun launch(block: suspend () -> Unit) {
+        deps.scope.launch { block() }
+    }
+
     /** Tears every server down and awaits it. */
     suspend fun shutdown() = hub.shutdown()
 
@@ -107,13 +112,19 @@ class HubViewModel<S : ServerSlot> internal constructor(private val deps: HubDep
                 val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
                 val settings = AppSettings.create(app, scope)
                 val bookmarks = AndroidBookmarkStore(SavedConnectionStore(app))
+                // Read before any slot is built: at cold start the settings flow
+                // still holds DEFAULT, and every new session would be named from it.
+                var theme: relay.protocol.SessionNamingTheme? = null
                 val deps = HubDeps(
                     scope = scope,
                     bookmarks = bookmarks,
                     tokens = AndroidTokenSource(TokenStore(app)),
                     prefs = SharedPrefsHubPreferences(app),
-                    slotFactory = { config, token -> AppServerSlot(ConnectionSession.create(app, config, token, settings)) },
+                    slotFactory = { config, token ->
+                        AppServerSlot(ConnectionSession.create(app, config, token, settings, theme = theme))
+                    },
                     migration = { state ->
+                        theme = settings.sessionNamingThemeNow()
                         // Spec §9: only the last-connected bookmark stays enabled;
                         // the legacy name/agent maps move under it.
                         HubMigration.run(bookmarks, settings.lastConnectedServerIdNow(), state) { keep ->

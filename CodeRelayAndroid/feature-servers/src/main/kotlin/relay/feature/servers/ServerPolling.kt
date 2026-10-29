@@ -18,4 +18,13 @@ object ServerPolling {
      * detach its session for nothing.
      */
     fun shouldRebuild(section: ServerSection): Boolean = !section.status.isLive
+
+    /**
+     * Whether a newly added bookmark may be saved enabled. A plaintext `ws://`
+     * one on a non-private host is saved disabled (with the TLS message), the
+     * same refusal the Enabled switch gives — saved enabled it only ever showed
+     * a silent "offline" section, because the connect chokepoint refuses it.
+     */
+    fun addsEnabled(config: ConnectionConfig): Boolean =
+        config.useTLS || relay.net.CleartextPolicy.isPrivateNetworkHost(config.host)
 }

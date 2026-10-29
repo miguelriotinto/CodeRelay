@@ -54,6 +54,8 @@ class MainActivity : ComponentActivity() {
 
     private val hubViewModel: HubViewModel<AppServerSlot> by viewModels { HubViewModel.factory(application) }
 
+    private val tokenRefreshed: () -> Unit = { hubViewModel.syncPush() }
+
     /**
      * POST_NOTIFICATIONS runtime request (API 33+). Push needs the grant; the
      * result re-syncs registration on every relay.
@@ -100,7 +102,7 @@ class MainActivity : ComponentActivity() {
 
         hubViewModel.start()
         // A fresh FCM token or a newly granted permission re-registers on every relay.
-        FcmTokenBridge.onTokenRefreshed = { hubViewModel.syncPush() }
+        FcmTokenBridge.onTokenRefreshed = tokenRefreshed
 
         // Cold-start deep link (app launched from the link or a notification) —
         // only on a real launch, never on a recreation that hands it back.
@@ -136,7 +138,11 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (!isChangingConfigurations) FcmTokenBridge.onTokenRefreshed = null
+        // Only our own callback: a late destroy after finish-and-relaunch must not
+        // clear the one the new instance installed.
+        if (!isChangingConfigurations && FcmTokenBridge.onTokenRefreshed === tokenRefreshed) {
+            FcmTokenBridge.onTokenRefreshed = null
+        }
         connectivitySource.stop()
         appScope.cancel()
         super.onDestroy()

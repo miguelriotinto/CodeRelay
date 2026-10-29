@@ -70,6 +70,8 @@ class ConnectionSession private constructor(
             settings: AppSettings,
             /** Each server's names/agents live under its own bookmark id (multi-server spec §7.4). */
             ownershipNamespace: String = config.id.toString(),
+            /** The naming theme read from disk; falls back to the flow (DEFAULT until DataStore's async read lands). */
+            theme: SessionNamingTheme? = null,
         ): ConnectionSession {
             val appContext = context.applicationContext
             // Serial confined scope — the @MainActor analog.
@@ -86,7 +88,7 @@ class ConnectionSession private constructor(
                 token = token,
                 ownershipStore = ownership,
                 config = config,
-                theme = settings.sessionNamingTheme.value,
+                theme = theme ?: settings.sessionNamingTheme.value,
                 nowMs = nowMs,
             )
 

@@ -28,7 +28,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,6 +56,7 @@ private class RowSource(
     val agents: Map<UUID, String>,
     val agentStates: Map<UUID, AgentDetectedState>,
     val unseen: Set<UUID>,
+    val awaiting: Set<UUID>,
     val activity: (UUID) -> ActivityState,
 )
 
@@ -67,7 +67,8 @@ private fun rowSourceFor(slot: WorkspaceSlot): RowSource {
     val agents by c.agentSessions.collectAsState()
     val agentStates by c.agentStates.collectAsState()
     val unseen by c.unseenSessions.collectAsState()
-    return RowSource(names, agents, agentStates, unseen) { id -> c.activityCoordinator.activityState(id) }
+    val awaiting by c.sessionsAwaitingInput.collectAsState()
+    return RowSource(names, agents, agentStates, unseen, awaiting) { id -> c.activityCoordinator.activityState(id) }
 }
 
 /**
@@ -93,7 +94,9 @@ fun <S : WorkspaceSlot> HubSidebar(
     val focus by hub.focusSlot.collectAsState()
     val focusServerId by hub.focusServerId.collectAsState()
     var renameTarget by remember { mutableStateOf<Triple<UUID, UUID, String>?>(null) }
-    val collapsedGroups = remember { mutableStateMapOf<UUID, SnapshotStateList<String>>() }
+    // A plain map: its lists are the state; creating one lazily inside the list
+    // builder must not be a snapshot write.
+    val collapsedGroups = remember { HashMap<UUID, SnapshotStateList<String>>() }
 
     // Collected per server BEFORE the lazy list (its builder is not composable).
     val sources = mutableMapOf<UUID, RowSource>()
@@ -231,7 +234,6 @@ fun <S : WorkspaceSlot> HubTabs(hub: ServerHub<S>, onSelected: () -> Unit = {}, 
         val slot = hub.slot(section.id) ?: return@forEach
         key(section.id) { sources[section.id] = rowSourceFor(slot) }
     }
-    val awaiting = sections.associate { it.id to (hub.slot(it.id)?.sessionsAwaitingInput?.value ?: emptySet()) }
     relay.feature.workspace.ui.TabStrip(
         items = HubWorkspaceLogic.tabs(sections, activeRef).map { tab ->
             val src = sources[tab.ref.serverId]
@@ -241,7 +243,9 @@ fun <S : WorkspaceSlot> HubTabs(hub: ServerHub<S>, onSelected: () -> Unit = {}, 
                 isSelected = tab.isSelected,
                 agentId = src?.agents?.get(tab.ref.sessionId),
                 agentState = src?.agentStates?.get(tab.ref.sessionId),
-                awaitingInput = tab.ref.sessionId in awaiting[tab.ref.serverId].orEmpty(),
+                // Collected (not read), so a waiting session swapping for another
+                // still recomposes the tab's attention flash.
+                awaitingInput = src?.awaiting?.contains(tab.ref.sessionId) == true,
                 contentDescription = tab.serverTitle?.let { "$it, session ${tab.number}" },
             )
         },

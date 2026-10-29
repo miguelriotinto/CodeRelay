@@ -155,9 +155,9 @@ fun RelayNavGraph(
     }
 }
 
-/** Servers over the workspace, never stacked twice. */
+/** Servers over the workspace, never stacked twice — back to the existing one when it is under Settings or the scanner. */
 private fun NavHostController.openServers() {
-    navigate(Routes.SERVERS) { launchSingleTop = true }
+    if (!popBackStack(Routes.SERVERS, inclusive = false)) navigate(Routes.SERVERS) { launchSingleTop = true }
 }
 
 @Composable
@@ -250,11 +250,11 @@ private fun WorkspaceRoute(
             nameFor = { id -> slot.coordinator.name(id) },
             onAttachSession = { id, name ->
                 attachable = null
-                scope.launch { hub.attachRemote(slot.config.id, id, name) }
+                hubViewModel.launch { hub.attachRemote(slot.config.id, id, name) }
             },
             onScannedSession = { id ->
                 attachable = null
-                scope.launch { hub.attachRemote(slot.config.id, id, null) }
+                hubViewModel.launch { hub.attachRemote(slot.config.id, id, null) }
             },
             onDismiss = { attachable = null },
         )
