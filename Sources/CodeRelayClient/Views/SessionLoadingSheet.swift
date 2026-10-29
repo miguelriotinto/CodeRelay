@@ -31,28 +31,34 @@ public struct SessionLoadingSheet: View {
             .frame(height: 34)
             .animation(.spring(duration: 0.3), value: presentation.isReady)
             Text(presentation.title).font(.headline)
-            if let detail = presentation.detail {
-                Text(detail)
-                    .font(Self.bytesFont)
-                    .foregroundStyle(.primary)
-                    .contentTransition(.numericText())
-                    .animation(.easeOut(duration: 0.2), value: detail)
-                    .accessibilityLabel("\(detail) loaded")
-            }
+            // Every row is laid out in every state, hidden when it has nothing
+            // to say, so the sheet keeps ONE size from the first phase to Ready
+            // (it used to grow and shrink by a row as states changed).
+            Text(presentation.detail ?? "0 KB")
+                .font(Self.bytesFont)
+                .foregroundStyle(.primary)
+                .contentTransition(.numericText())
+                .animation(.easeOut(duration: 0.2), value: presentation.detail)
+                .opacity(presentation.detail == nil ? 0 : 1)
+                .accessibilityLabel("\(presentation.detail ?? "") loaded")
+                .accessibilityHidden(presentation.detail == nil)
             Text(presentation.status)
                 .font(Self.statusFont)
+                .lineLimit(1)
                 .foregroundStyle(.secondary)
                 .contentTransition(.interpolate)
                 .animation(.easeInOut(duration: 0.25), value: presentation.status)
-            if let subtitle = presentation.subtitle {
-                Text(subtitle).font(.footnote).foregroundStyle(.tertiary).lineLimit(1)
-            }
-            if presentation.allowsCancel, let onCancel {
-                Button("Cancel", role: .cancel) { onCancel() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .padding(.top, 4)
-            }
+            Text(presentation.subtitle ?? " ")
+                .font(.footnote).foregroundStyle(.tertiary).lineLimit(1)
+                .accessibilityHidden(presentation.subtitle == nil)
+            let showsCancel = presentation.allowsCancel && onCancel != nil
+            Button("Cancel", role: .cancel) { onCancel?() }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .padding(.top, 4)
+                .opacity(showsCancel ? 1 : 0)
+                .disabled(!showsCancel)
+                .accessibilityHidden(!showsCancel)
         }
         .padding(24)
         .frame(maxWidth: .infinity)
@@ -63,20 +69,21 @@ public struct SessionLoadingSheet: View {
 
 /// Shared geometry for the loading sheet.
 public enum SessionLoadingSheetLayout {
-    /// The macOS window sheet's width; its height always follows the content.
-    public static let macWidth: CGFloat = 320
+    /// The sheet's width on macOS and on iPad-class (regular-width) displays.
+    public static let fixedWidth: CGFloat = 340
     /// First guess for the iOS detent before the content has been measured.
     static let initialHeight: CGFloat = 300
 }
 
 public extension View {
-    /// Hosts `SessionLoadingSheet` at exactly its natural height. A fixed
-    /// height (a third of the screen on iOS, 220 pt on macOS) clipped the
-    /// spinner and the reconnect Cancel button — worst on a short, wide display
-    /// such as an iPhone in landscape or the iPhone Duo. On iOS the measured
-    /// height becomes the sheet's only detent (and form-sheet idioms such as
-    /// iPad and the open Duo get `.fitted` sizing); on macOS only the width is
-    /// fixed.
+    /// Hosts `SessionLoadingSheet` at one constant size. The height is the
+    /// content's natural height — never a guessed constant, which clipped the
+    /// spinner and the reconnect Cancel button (a third of the screen on iOS,
+    /// 220 pt on macOS) — and it is the same in every state because the sheet
+    /// reserves all of its rows. The width is `fixedWidth` on macOS and on
+    /// form-sheet idioms (iPad, the open Duo), whose `.fitted` sizing reads the
+    /// ideal width; a compact iPhone sheet spans the screen. On iOS the
+    /// measured height becomes the sheet's only detent.
     func sessionLoadingSheetContainer() -> some View {
         modifier(SessionLoadingSheetContainer())
     }
@@ -88,6 +95,7 @@ struct SessionLoadingSheetContainer: ViewModifier {
     func body(content: Content) -> some View {
         #if os(iOS)
         sized(content
+            .frame(idealWidth: SessionLoadingSheetLayout.fixedWidth, maxWidth: .infinity)
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measured in
                 if measured > 0 { height = measured.rounded(.up) }
@@ -95,7 +103,7 @@ struct SessionLoadingSheetContainer: ViewModifier {
             .presentationDetents([.height(height)]))
         #else
         content
-            .frame(width: SessionLoadingSheetLayout.macWidth)
+            .frame(width: SessionLoadingSheetLayout.fixedWidth)
             .fixedSize(horizontal: false, vertical: true)
         #endif
     }
