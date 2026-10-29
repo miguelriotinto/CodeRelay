@@ -215,7 +215,8 @@ class SessionHandshake internal constructor(
                 if (isTokenRejection(error)) {
                     // Retrying a rejected token cannot succeed, and hammering
                     // the server trips its rate limiter. Stop and let the user
-                    // re-pair.
+                    // re-pair (the hub shows the section as authFailed).
+                    coordinator.setAuthRejected(true)
                     fail(error)
                     return false
                 }

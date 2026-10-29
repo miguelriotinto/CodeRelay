@@ -2,10 +2,12 @@ package relay.session
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import relay.net.RelayConnection
 import relay.net.SessionController
 import relay.net.SessionException
@@ -48,6 +50,11 @@ interface CoordinatorConnection {
      *  true keeps test fakes on the "socket present" path. */
     val isConnected: Boolean get() = true
 
+    /** Reports every change of [isConnected], on whatever thread the transport
+     *  uses (the coordinator hops onto its own scope). The multi-server hub's
+     *  section status reads it — a polled property fired nothing on a drop. */
+    var onConnectedChanged: ((Boolean) -> Unit)?
+
     /** True when the socket is CONNECTED and was (re)connected within
      *  [freshWindowMs] — trusted as alive without a ping so a launch/foreground
      *  transition can't reconnect it out from under the launch fetch. Default
@@ -83,6 +90,11 @@ class RelayConnectionGateway(private val connection: RelayConnection) : Coordina
             connection.lastConnectedAtMs?.let { System.currentTimeMillis() - it < freshWindowMs } == true
     override val isConnected: Boolean
         get() = connection.state == RelayConnection.ConnectionState.CONNECTED
+    override var onConnectedChanged: ((Boolean) -> Unit)? = null
+        set(value) {
+            field = value
+            connection.onStateChanged = value?.let { cb -> { state -> cb(state == RelayConnection.ConnectionState.CONNECTED) } }
+        }
 }
 
 /**
@@ -283,6 +295,43 @@ class SessionCoordinator(
         _sessionLoadPhase.value = phase
     }
 
+    // MARK: - Multi-server hub hooks (multi-server spec §7.4)
+
+    private val _connected = MutableStateFlow(connection.isConnected)
+    /** Whether the transport has a socket, as an observable flow for the hub's section status. */
+    val connected: StateFlow<Boolean> = _connected.asStateFlow()
+
+    private val _serverIdentity = MutableStateFlow<relay.protocol.ServerIdentity?>(null)
+    /** The relay's identity from the last successful `auth_success` (protocol v3); null for a v2 relay. */
+    val serverIdentity: StateFlow<relay.protocol.ServerIdentity?> = _serverIdentity.asStateFlow()
+
+    private val _isAuthRejected = MutableStateFlow(false)
+    /** The relay refused this token; the hub shows the section as authFailed with Re-pair. Cleared by the next successful auth. */
+    val isAuthRejected: StateFlow<Boolean> = _isAuthRejected.asStateFlow()
+
+    internal fun setAuthRejected(rejected: Boolean) { _isAuthRejected.value = rejected }
+
+    private val _lastLoadFailed = MutableStateFlow(false)
+    /**
+     * The most recent switch / create / attach / reload ended in failure. Set at
+     * the TOP of each failure branch, before the phase clears, and reset when the
+     * next load starts: the loading sheet shows "Ready" only when a load ends with
+     * this false (mirrors Swift `lastLoadFailed`).
+     */
+    val lastLoadFailed: StateFlow<Boolean> = _lastLoadFailed.asStateFlow()
+
+    /** A load just ended badly: its own flag, or an error the user is about to see. */
+    val loadEndedInFailure: Boolean
+        get() = _lastLoadFailed.value || _errorMessage.value != null ||
+            connectionTimedOut.value || sessionAttachFailed.value
+
+    /** A session is attached, so the handshake phases narrate a session rather than a bare server. */
+    val expectsSessionToLoad: Boolean get() = _activeSessionId.value != null
+
+    /** Bumped by [detachForHub]; a session op that captured an older value must not publish. */
+    internal var attachEpoch: Long = 0
+        private set
+
     /**
      * Called by [SessionHandshake] once a pass has rendered the server's list.
      * Clears the phase UNLESS something that will clear it itself is still in
@@ -326,6 +375,7 @@ class SessionCoordinator(
     val connectionTimedOut: StateFlow<Boolean> get() = recoveryController.connectionTimedOut
     val sessionAttachFailed: StateFlow<Boolean> get() = recoveryController.sessionAttachFailed
     val autoRecoverySuspended: StateFlow<Boolean> get() = recoveryController.autoRecoverySuspended
+    val recoveryFailed: StateFlow<Boolean> get() = recoveryController.recoveryFailed
 
     // MARK: - Prompt optimizer (delegated to PromptOptimizerController, spec §7.1)
 
@@ -404,6 +454,8 @@ class SessionCoordinator(
         authCoordinator = AuthCoordinator(
             authenticate = {
                 sessionController.authenticate(token)
+                _serverIdentity.value = sessionController.serverIdentity
+                _isAuthRejected.value = false
                 // Every path to an authenticated socket goes through here (handshake,
                 // recovery re-auth, withAuth retry), so the wand's availability is
                 // always derived from the socket it will actually use.
@@ -510,6 +562,8 @@ class SessionCoordinator(
                 recoveryController.resetAutoRecoveryBreaker()
             }
         }
+        // Transport callback thread → coordinator scope, like the two above.
+        connection.onConnectedChanged = { up -> scope.launch { _connected.value = up } }
     }
 
     /**
@@ -829,11 +883,17 @@ class SessionCoordinator(
             // `onReplayDelivered` is coming — the phase is cleared below, once the
             // new session is wired and live, rather than left for a hook.
             _sessionLoadPhase.value = SessionLoadPhase.Attaching
+            _lastLoadFailed.value = false
+            val epoch = attachEpoch
             // withAuth: detach the previous session (best-effort), then create.
             val sessionId = authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
                 val size = lastKnownTerminalSize
                 sessionController.createSession(name, size?.first, size?.second)
+            }
+            if (attachSuperseded(epoch)) {
+                undoSupersededAttach(sessionId)
+                return
             }
 
             previousId?.let {
@@ -859,6 +919,7 @@ class SessionCoordinator(
             // `_sessions` immediately (it may be < 500 ms since connect()'s fetch).
             fetchSessions(force = true)
         } catch (e: Throwable) {
+            _lastLoadFailed.value = true
             _sessionLoadPhase.value = null
             presentError(e.message ?: "Failed to create session")
         } finally {
@@ -904,10 +965,16 @@ class SessionCoordinator(
             // hands off to the vm hooks installed by wireTerminalOutput:
             // Attaching → LoadingHistory(bytes) → cleared on first frame.
             _sessionLoadPhase.value = SessionLoadPhase.Attaching
+            _lastLoadFailed.value = false
+            val epoch = attachEpoch
             authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
                 val g = grid
                 sessionController.resumeSession(id, skipReplay = false, cols = g?.first, rows = g?.second)
+            }
+            if (attachSuperseded(epoch)) {
+                undoSupersededAttach(id)
+                return
             }
 
             _activeSessionId.value = id
@@ -917,6 +984,7 @@ class SessionCoordinator(
 
             fetchSessions()
         } catch (e: Throwable) {
+            _lastLoadFailed.value = true
             _sessionLoadPhase.value = null
             presentError(e.message ?: "Failed to switch session")
         } finally {
@@ -947,6 +1015,10 @@ class SessionCoordinator(
         // overlapping replays paint the screen twice, one below the other.
         if (vm.isReloadingFromServer.value) return
         vm.beginServerReload()
+        // Raise the sheet at once; the replay's first frame clears it through
+        // the `onReplayDelivered` hook, exactly like a switch.
+        _sessionLoadPhase.value = SessionLoadPhase.Attaching
+        _lastLoadFailed.value = false
         try {
             authCoordinator.withAuth {
                 val g = grid
@@ -955,6 +1027,8 @@ class SessionCoordinator(
         } catch (e: Throwable) {
             // No replay is coming: release the buffering WITHOUT the clear, so the
             // pane keeps what it was showing rather than going blank.
+            _lastLoadFailed.value = true
+            _sessionLoadPhase.value = null
             vm.cancelServerReload()
             presentError(e.message ?: "Failed to reload terminal")
         }
@@ -987,10 +1061,16 @@ class SessionCoordinator(
             // The attach's replay is buffered (vm.beginReplay below), so the phase
             // hands off to the vm hooks: Attaching → LoadingHistory → first frame.
             _sessionLoadPhase.value = SessionLoadPhase.Attaching
+            _lastLoadFailed.value = false
+            val epoch = attachEpoch
             authCoordinator.withAuth {
                 if (previousId != null) runCatching { sessionController.detach() }
                 val g = grid
                 sessionController.attachSession(id, cols = g?.first, rows = g?.second)
+            }
+            if (attachSuperseded(epoch)) {
+                undoSupersededAttach(id)
+                return
             }
 
             if (previousId != null && previousId != id) {
@@ -1024,6 +1104,7 @@ class SessionCoordinator(
             // including the just-attached session under our token) lands promptly.
             fetchSessions(force = true)
         } catch (e: Throwable) {
+            _lastLoadFailed.value = true
             _sessionLoadPhase.value = null
             // Rollback to the previous session (SharedSessionCoordinator.swift:510-514).
             if (previousId != null) {
@@ -1091,6 +1172,44 @@ class SessionCoordinator(
         } finally {
             sessionOpsInFlight -= 1
         }
+    }
+
+    // MARK: - Hub detach (multi-server D9)
+
+    /**
+     * Detaches whatever this coordinator has attached and clears the selection,
+     * so the hub can attach on another server (D9: one attachment across all
+     * servers). Clears LOCALLY first, then sends the detach bounded by
+     * [budgetMs]: a stuck server must not block a cross-server switch, and the
+     * straggling RPC is left to finish (or fail) on its own in [scope]. Bumps
+     * [attachEpoch], so a switch / create / attach whose RPC is still in flight
+     * undoes itself instead of publishing. Never surfaces an error — the user
+     * asked for the OTHER session.
+     */
+    suspend fun detachForHub(budgetMs: Long = 3_000) {
+        attachEpoch += 1
+        _sessionLoadPhase.value = null
+        val id = _activeSessionId.value ?: return
+        terminalCache.view(id)?.prepareForSwitch()
+        clearActiveSession()
+        if (recoveryController.isRecovering.value) return
+        boundedDetach(budgetMs)
+    }
+
+    /** True when [detachForHub] ran since [epoch] was captured. */
+    private fun attachSuperseded(epoch: Long): Boolean = epoch != attachEpoch
+
+    /** Detaches what a superseded op just attached, without ever publishing it. */
+    private suspend fun undoSupersededAttach(id: UUID) {
+        if (_activeSessionId.value == id) clearActiveSession()
+        terminalCache.view(id)?.prepareForSwitch()
+        _sessionLoadPhase.value = null
+        boundedDetach(3_000)
+    }
+
+    private suspend fun boundedDetach(budgetMs: Long) {
+        val rpc = scope.async { runCatching { sessionController.detach() } }
+        withTimeoutOrNull(budgetMs) { rpc.await() }
     }
 
     // MARK: - Server-message fan-in

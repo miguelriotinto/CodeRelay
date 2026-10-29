@@ -28,13 +28,19 @@ import java.util.UUID
 class SessionOwnershipStore(
     private val dir: File = XdgPaths.stateDir,
     @Suppress("UNUSED_PARAMETER") deviceId: String = "",
+    /**
+     * Multi-server: each server's coordinator gets its own files, keyed by its
+     * bookmark id (spec §7.4), so a session UUID on one relay can never pick up
+     * another relay's name. Empty is the legacy, single-server file set.
+     */
+    namespace: String = "",
 ) {
 
     /** Key (and filename stem) for the UUID→name map. */
-    val namesKey: String = NAMES_KEY
+    val namesKey: String = if (namespace.isEmpty()) NAMES_KEY else "$namespace.$NAMES_KEY"
 
     /** Key (and filename stem) for the UUID→agentId map. */
-    val agentsKey: String = AGENTS_KEY
+    val agentsKey: String = if (namespace.isEmpty()) AGENTS_KEY else "$namespace.$AGENTS_KEY"
 
     private val namesCache: MutableMap<UUID, String> = load(namesKey)
     private val agentsCache: MutableMap<UUID, String> = load(agentsKey)
@@ -74,6 +80,21 @@ class SessionOwnershipStore(
     }
 
     // ---- (de)serialization ----
+
+    /**
+     * One-time multi-server migration (spec §9): copies this store's maps into
+     * [namespace] (the server that stays enabled) and clears them here; with a
+     * null [namespace] the maps are only dropped, never guessed onto a server.
+     */
+    fun moveLegacyInto(namespace: String?) {
+        if (namespace != null) {
+            val target = SessionOwnershipStore(dir, namespace = namespace)
+            names.forEach { (id, n) -> target.setName(id, n) }
+            agents.forEach { (id, a) -> target.setAgent(id, a) }
+        }
+        names.keys.forEach { setName(it, null) }
+        agents.keys.forEach { setAgent(it, null) }
+    }
 
     private fun fileFor(key: String) = File(dir, "$key.json")
 

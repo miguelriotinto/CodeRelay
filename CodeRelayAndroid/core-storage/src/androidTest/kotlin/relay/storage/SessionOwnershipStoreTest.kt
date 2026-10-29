@@ -91,4 +91,23 @@ class SessionOwnershipStoreTest {
         assertFalse(s.setName(absent, null))
         assertFalse(s.setAgent(absent, null))
     }
+
+    @Test
+    fun namespacesKeepTwoServersApart() {
+        val id = UUID.randomUUID()
+        SessionOwnershipStore(context, deviceA, namespace = "server-a").setName(id, "alpha")
+        SessionOwnershipStore(context, deviceA, namespace = "server-b").setName(id, "bravo")
+        assertEquals("alpha", SessionOwnershipStore(context, deviceA, namespace = "server-a").names[id])
+        assertEquals("bravo", SessionOwnershipStore(context, deviceA, namespace = "server-b").names[id])
+        assertNull(store().names[id])
+    }
+
+    @Test
+    fun legacyMapsMoveIntoTheKeptServer() {
+        val id = UUID.randomUUID()
+        store().setName(id, "legacy")
+        store().moveLegacyInto("kept")
+        assertEquals("legacy", SessionOwnershipStore(context, deviceA, namespace = "kept").names[id])
+        assertTrue(store().names.isEmpty())
+    }
 }

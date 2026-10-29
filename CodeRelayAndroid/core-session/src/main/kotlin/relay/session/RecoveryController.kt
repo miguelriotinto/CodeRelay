@@ -190,9 +190,11 @@ class RecoveryController(
     /** Consecutive auto-triggered recovery failures (RecoveryController.swift:41). */
     private var consecutiveAutoRecoveryFailures = 0
 
-    /** Recovery-failed flag (Swift `coordinator.recoveryFailed`). Internal — the
-     * UI binds to the more specific [connectionTimedOut] / [sessionAttachFailed]. */
-    private var recoveryFailed = false
+    private val _recoveryFailed = MutableStateFlow(false)
+    /** Recovery-failed flag (Swift `coordinator.recoveryFailed`). The loading
+     * sheet reads it so a failed or cancelled reconnect never closes with
+     * "Ready"; the error UI binds to [connectionTimedOut] / [sessionAttachFailed]. */
+    val recoveryFailed: StateFlow<Boolean> = _recoveryFailed.asStateFlow()
 
     /**
      * Synchronous entry lock, distinct from [isRecovering] (which is set after
@@ -331,7 +333,7 @@ class RecoveryController(
             val myGeneration = recoveryGeneration
 
             _phase.value = if (alive) RecoveryPhase.AUTHENTICATING else RecoveryPhase.RECONNECTING
-            recoveryFailed = false
+            _recoveryFailed.value = false
             _isRecovering.value = true
             suppressSends(true)
             try {
@@ -397,7 +399,7 @@ class RecoveryController(
                     // Last attempt failed -> terminal transport failure
                     // (RecoveryController.swift:202-207).
                     if (myGeneration != recoveryGeneration) return
-                    recoveryFailed = true
+                    _recoveryFailed.value = true
                     _connectionTimedOut.value = true
                     recordAutoRecoveryOutcome(success = false, userInitiated = userInitiated)
                     return
@@ -444,7 +446,7 @@ class RecoveryController(
             return // restore cancelled (RecoveryController.swift:250-252)
         } catch (error: Throwable) {
             if (generation != recoveryGeneration) return
-            recoveryFailed = true
+            _recoveryFailed.value = true
             // App-level errors leave the connection intact; transport-level
             // errors time the connection out (RecoveryController.swift:257-271).
             if (isApplicationLevelError(error)) {
@@ -487,7 +489,7 @@ class RecoveryController(
         // `suppressAllViewModelSends(true)`.
         suppressSends(false)
         isRecoveryDispatched = false
-        recoveryFailed = true
+        _recoveryFailed.value = true
         val now = nowMs()
         lastRecoveryEndedAt = now
         lastCancelledAt = now
