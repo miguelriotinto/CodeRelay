@@ -1643,6 +1643,7 @@ class SessionCoordinator(
         connection.onTerminalOutput = null
         connection.onSendFailed = null
         connection.onHealthyPing = null
+        connection.onConnectedChanged = null
         terminalCache.removeAll()
         _sessionLoadPhase.value = null
         connection.disconnect()
