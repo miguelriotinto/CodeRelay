@@ -1,18 +1,19 @@
 package relay.app
 
 import android.content.Context
+import relay.session.hub.PushSettings
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.suspendCancellableCoroutine
-import relay.session.SessionCoordinator
 import relay.storage.DeviceIdentifier
 import kotlin.coroutines.resume
 
 /**
- * App-level glue that registers this device's FCM token with the server, using
- * the coordinator's pure [SessionCoordinator.syncPushRegistration]. Gathers the
+ * App-level glue that gathers this device's push inputs for the hub, which
+ * registers them with every relay through each coordinator's pure
+ * `syncPushRegistration`. Gathers the
  * Android-specific inputs (token from Firebase / [FcmTokenBridge], POST_NOTIFICATIONS
  * grant, deviceId) here so the coordinator stays pure-JVM. Mirrors the iOS
  * WorkspaceView → coordinator.syncPushRegistration call.
@@ -28,18 +29,17 @@ object PushSync {
     }
 
     /**
-     * Ensure we have an FCM token (fetch once if the bridge is empty), then
-     * (re)register with the server. Push is server-gated (`pushEnabled`), so the
-     * client always registers when permission is granted and lets the server
-     * decide whether to actually deliver.
+     * The push inputs for the hub: the FCM token (fetched once if the bridge is
+     * empty), the POST_NOTIFICATIONS grant and the device id. The hub fans them
+     * out to every relay and remembers them for servers enabled later.
      */
-    suspend fun sync(context: Context, coordinator: SessionCoordinator) {
+    suspend fun settings(context: Context): PushSettings {
         if (FcmTokenBridge.deviceToken.value == null) {
             fetchToken()?.let { FcmTokenBridge.setToken(it) }
         }
         val granted = notificationsGranted(context)
         FcmTokenBridge.setPermissionGranted(granted)
-        coordinator.syncPushRegistration(
+        return PushSettings(
             deviceToken = FcmTokenBridge.deviceToken.value,
             permissionGranted = granted,
             deviceId = DeviceIdentifier.get(context),

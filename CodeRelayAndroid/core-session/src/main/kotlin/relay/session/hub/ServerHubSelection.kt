@@ -168,6 +168,32 @@ internal fun <S : ServerSlot> ServerHub<S>.applyPendingSelection(serverId: UUID)
     }
 }
 
+/**
+ * Attaches [sessionId] — a session another device owns — on [serverId]: the
+ * Attach sheet, the QR scanner and the one-server deep-link fallback. Detaches
+ * any other server first, like every selection path (D9: one attachment).
+ */
+suspend fun <S : ServerSlot> ServerHub<S>.attachRemote(serverId: UUID, sessionId: UUID, serverName: String?) {
+    val slot = slots[serverId] ?: run { noticeFlow.value = "That server is not connected."; return }
+    selectionGeneration += 1
+    val generation = selectionGeneration
+    selectionsInFlight += 1
+    try {
+        pendingRef = null
+        val previous = activeRefFlow.value
+        if (previous != null && previous.serverId != serverId) {
+            slots[previous.serverId]?.let { detachBounded(it) }
+            if (generation != selectionGeneration) return
+        }
+        slot.attachRemoteSession(sessionId, serverName)
+        if (generation != selectionGeneration) return
+        mirror(slot, serverId)
+        publish()
+    } finally {
+        selectionsInFlight -= 1
+    }
+}
+
 /** Where a deep link went (spec §10). */
 sealed interface DeepLinkOutcome {
     data class Selected(val ref: SessionRef) : DeepLinkOutcome
@@ -227,23 +253,7 @@ suspend fun <S : ServerSlot> ServerHub<S>.handleDeepLink(link: SessionDeepLink):
     val only = enabled.singleOrNull()
     val onlySlot = only?.let { slots[it.id] }
     if (only != null && onlySlot != null) {
-        selectionGeneration += 1
-        val generation = selectionGeneration
-        selectionsInFlight += 1
-        try {
-            pendingRef = null
-            val previous = activeRefFlow.value
-            if (previous != null && previous.serverId != only.id) {
-                slots[previous.serverId]?.let { detachBounded(it) }
-                if (generation != selectionGeneration) return DeepLinkOutcome.AttachingRemote(only.id)
-            }
-            onlySlot.attachRemoteSession(link.sessionId, null)
-            if (generation != selectionGeneration) return DeepLinkOutcome.AttachingRemote(only.id)
-            mirror(onlySlot, only.id)
-            publish()
-        } finally {
-            selectionsInFlight -= 1
-        }
+        attachRemote(only.id, link.sessionId, null)
         return DeepLinkOutcome.AttachingRemote(only.id)
     }
     // 4. Nothing to route to.

@@ -221,4 +221,10 @@ class ServerHubTest {
         h.hub.start(); advanceUntilIdle()
         assertTrue(h.hub.hasStarted.value)
     }
+
+    @Test fun shutdownAwaitsEveryTeardown() = runTest {
+        val h = HubHarness(hubScope(), listOf(cfg("a"), cfg("b"))); h.hub.start(); advanceUntilIdle()
+        h.hub.shutdown()
+        assertTrue(h.built.all { it.tornDown }, "torn down before shutdown() returns, not merely launched")
+    }
 }

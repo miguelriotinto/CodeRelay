@@ -79,7 +79,6 @@ fun SettingsScreen(
     hapticFeedbackAvailable: Boolean = true,
 ) {
     val shareScreen by settings.shareScreenWithOptimizer.collectAsStateWithLifecycle()
-    val autoConnect by settings.autoConnectEnabled.collectAsStateWithLifecycle()
     val haptics by settings.hapticFeedbackEnabled.collectAsStateWithLifecycle()
     val theme by settings.sessionNamingTheme.collectAsStateWithLifecycle()
     val fontSize by settings.terminalFontSize.collectAsStateWithLifecycle()
@@ -121,13 +120,6 @@ fun SettingsScreen(
                 SectionHeader("Prompt Optimizer")
                 ToggleRow(OptimizerStrings.SHARE_SCREEN_TOGGLE, shareScreen, settings::setShareScreenWithOptimizer)
                 CaptionText(OptimizerStrings.SHARE_SCREEN_FOOTER)
-            }
-
-            // 2) Connection
-            if (SettingsSection.CONNECTION in visibleSections) {
-                SectionHeader("Connection")
-                ToggleRow("Auto Connect", autoConnect, settings::setAutoConnectEnabled)
-                CaptionText("Automatically reconnect to the last server on launch.")
             }
 
             // 3) General
@@ -173,7 +165,12 @@ fun SettingsScreen(
  * The sections of [SettingsScreen], so a host can hide the ones it has no
  * backing capability for.
  */
-enum class SettingsSection { PROMPT_OPTIMIZER, CONNECTION, GENERAL, KEYBOARD_SHORTCUTS, ABOUT }
+/**
+ * The screen's sections. There is no Connection section: every enabled server
+ * is live in the multi-server workspace, so "auto-connect to the last server"
+ * has nothing left to mean (spec §8.4).
+ */
+enum class SettingsSection { PROMPT_OPTIMIZER, GENERAL, KEYBOARD_SHORTCUTS, ABOUT }
 
 // MARK: - Section building blocks
 

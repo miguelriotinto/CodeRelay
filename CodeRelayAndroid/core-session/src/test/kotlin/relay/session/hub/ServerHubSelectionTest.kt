@@ -243,4 +243,18 @@ class ServerHubSelectionTest {
         assertEquals("Enable b in Servers to open its sessions.", h.hub.notice.value)
         assertNull(h.hub.activeRef.value)
     }
+
+    @Test fun attachRemoteOnAnotherServerDetachesTheCurrentOneFirst() = runTest {
+        // The Attach sheet attaches a session another device owns; with two
+        // servers that must still leave exactly one attachment (D9).
+        val (h, c) = liveHub("a", "b")
+        val a = h.slot(c[0].id)!!; val b = h.slot(c[1].id)!!
+        h.hub.select(h.ref(c[0], 0)); advanceUntilIdle()
+        val log = mutableListOf<String>(); a.log = { log += it }
+        val foreign = UUID.randomUUID()
+        h.hub.attachRemote(c[1].id, foreign, "theirs"); advanceUntilIdle()
+        assertEquals(listOf("detach:a"), log)
+        assertEquals(listOf(foreign), b.remoteAttaches)
+        assertEquals(SessionRef(c[1].id, foreign), h.hub.activeRef.value)
+    }
 }

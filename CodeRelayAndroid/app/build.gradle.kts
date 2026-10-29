@@ -50,6 +50,11 @@ android {
         buildConfig = true
     }
 
+    // The app's routing and hub-ownership rules are pure JVM (DeepLinkRouting,
+    // HubViewModel with injected seams) and run as plain unit tests.
+    testOptions {
+        unitTests.all { it.useJUnitPlatform() }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -123,6 +128,10 @@ dependencies {
     implementation(project(":feature-settings"))
 
     implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(libs.junit5.api)
+    testRuntimeOnly(libs.junit5.engine)
+    testImplementation(libs.kotlinx.coroutines.test)
 
     // core-net keeps okhttp `implementation` (not exposed transitively), but
     // RelayConnection's primary constructor has a default-argument of type

@@ -156,6 +156,18 @@ class ServerHub<S : ServerSlot>(
         publish()
     }
 
+    /** Like [stop], but awaits every slot's teardown — for a host whose own scope is about to end. */
+    suspend fun shutdown() {
+        val retiring = slots.values.toList()
+        slots.clear()
+        slotJobs.values.forEach { it.cancel() }
+        slotJobs.clear()
+        started = false
+        pendingRef = null
+        retiring.forEach { runCatching { it.tearDown() } }
+        publish()
+    }
+
     /**
      * Re-reads the bookmark store (after add / edit / delete / pair) and
      * reconciles slots: new enabled bookmarks get one, removed or disabled ones

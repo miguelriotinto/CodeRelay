@@ -12,12 +12,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,44 +24,39 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import relay.feature.settings.AppSettings
-import relay.feature.workspace.DeepLinks
-import relay.protocol.ConnectionConfig
 import relay.session.NetworkObserver
-import relay.storage.SavedConnectionStore
-import java.util.UUID
 
 private const val TAG = "MainActivity"
 
 /**
- * Single-activity host for the real M2 nav graph ([RelayNavGraph]), replacing the
- * M1 demo. Ported in role from `CodeRelayApp.swift`:
- *  - sets the Compose content to [RelayNavGraph] (Splash → Servers → Workspace +
- *    Settings);
- *  - parses `coderelay://session/<uuid>` deep links on cold start (`onCreate`)
- *    and warm start (`onNewIntent`, `launchMode="singleTop"`), storing the id in
- *    [pendingSessionId] which the nav graph consumes on workspace entry;
+ * Single-activity host for [RelayNavGraph] (Splash → Workspace, with Servers,
+ * Settings and the pairing scanner on top). Ported in role from
+ * `CodeRelayApp.swift`:
+ *  - owns the multi-server hub through the activity-retained [HubViewModel] and
+ *    starts it before the first frame (idempotent across recreation);
+ *  - routes `coderelay://` links on cold start (`onCreate`) and warm start
+ *    (`onNewIntent`, `launchMode="singleTop"`): a session link — a push tap
+ *    included — goes to the hub with its `?server=` hint (the hub waits for its
+ *    first start, so a cold launch from a notification still opens the right
+ *    session on the right server); a pairing link opens management;
  *  - owns the long-lived [AppSettings] + [AndroidConnectivitySource] +
- *    [NetworkObserver], and resolves the auto-connect target before the splash
- *    completes.
- *
- * `launchMode` is `singleTop` so warm deep links re-deliver to the existing
- * instance via [onNewIntent] instead of stacking a new activity.
+ *    [NetworkObserver].
  */
 class MainActivity : ComponentActivity() {
 
-    /** App-lifetime scope for settings flows + auto-connect resolution. */
+    /** App-lifetime scope for settings flows. */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private lateinit var settings: AppSettings
     private lateinit var connectivitySource: AndroidConnectivitySource
     private lateinit var networkObserver: NetworkObserver
 
+    private val hubViewModel: HubViewModel<AppServerSlot> by viewModels { HubViewModel.factory(application) }
+
     /**
-     * POST_NOTIFICATIONS runtime request (API 33+). Push (F1) needs the grant; the
-     * result feeds [FcmTokenBridge] so a live session re-syncs its registration.
+     * POST_NOTIFICATIONS runtime request (API 33+). Push needs the grant; the
+     * result re-syncs registration on every relay.
      */
     private val notificationPermissionLauncher: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -71,32 +65,18 @@ class MainActivity : ComponentActivity() {
         }
 
     /**
-     * The most recent session id parsed from a `coderelay://session/<uuid>`
-     * deep link, or null. The nav graph collects this on workspace entry, calls
-     * `SessionCoordinator.attachRemoteSession(id)`, then clears it via
-     * [clearPendingSession].
-     */
-    val pendingSessionId: StateFlow<UUID?> get() = _pendingSessionId.asStateFlow()
-    private val _pendingSessionId = MutableStateFlow<UUID?>(null)
-
-    /**
-     * The most recent pairing URL parsed from a `coderelay://pair?...` deep link,
-     * or null. The nav graph collects this on the Servers route, presents the pairing
+     * The most recent pairing URL parsed from a `coderelay://pair?...` deep link
+     * or the in-app scanner, or null. The management screen presents the pairing
      * sheet prefilled from it, then clears it via [clearPendingPairing].
      */
     val pendingPairing: StateFlow<relay.protocol.PairingURL?> get() = _pendingPairing.asStateFlow()
     private val _pendingPairing = MutableStateFlow<relay.protocol.PairingURL?>(null)
 
-    /** The server to auto-connect to on launch, or null when auto-connect is off. */
-    private val _autoConnectConfig = MutableStateFlow<ConnectionConfig?>(null)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         // Draw edge-to-edge with TRANSPARENT system bars so the app content (a
         // black terminal + dark chrome) fills behind the status bar (top) and
-        // navigation bar (bottom) — those areas read as black, matching the
-        // terminal, instead of the OS default light scrim. `dark(...)` forces
-        // LIGHT bar icons (we're always-dark; see RelayTheme), regardless of the
-        // device's system light/dark setting.
+        // navigation bar (bottom). `dark(...)` forces LIGHT bar icons (we're
+        // always-dark; see RelayTheme).
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
@@ -118,17 +98,15 @@ class MainActivity : ComponentActivity() {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        // Resolve the auto-connect target (CodeRelayApp.swift auto-connect): when
-        // enabled AND lastConnectedServerId resolves to a saved bookmark.
-        appScope.launch { resolveAutoConnect() }
+        hubViewModel.start()
+        // A fresh FCM token or a newly granted permission re-registers on every relay.
+        FcmTokenBridge.onTokenRefreshed = { hubViewModel.syncPush() }
 
-        // Cold-start deep link (app launched from the link).
+        // Cold-start deep link (app launched from the link or a notification).
         handleDeepLink(intent)
 
         setContent {
             RelayTheme {
-                // Black root behind everything so the edge-to-edge status/nav-bar
-                // insets paint black (the terminal color), not a stray light gap.
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -136,12 +114,10 @@ class MainActivity : ComponentActivity() {
                     RelayNavGraph(
                         settings = settings,
                         connectivity = networkObserver,
-                        pendingSessionId = pendingSessionId,
-                        clearPendingSession = ::clearPendingSession,
+                        hubViewModel = hubViewModel,
                         pendingPairing = pendingPairing,
                         clearPendingPairing = ::clearPendingPairing,
                         onPairScanned = ::setPendingPairing,
-                        autoConnectConfig = collectAutoConnect(),
                         appVersion = BuildConfig.VERSION_NAME,
                         buildNumber = BuildConfig.VERSION_CODE.toString(),
                     )
@@ -158,80 +134,37 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (!isChangingConfigurations) FcmTokenBridge.onTokenRefreshed = null
         connectivitySource.stop()
         appScope.cancel()
         super.onDestroy()
     }
 
-    /** Clears the pending session once the nav graph has consumed it. */
-    fun clearPendingSession() {
-        _pendingSessionId.value = null
-    }
-
-    /** Clears the pending pairing once the nav graph has consumed it. */
+    /** Clears the pending pairing once the management screen has consumed it. */
     fun clearPendingPairing() {
         _pendingPairing.value = null
     }
 
-    /**
-     * Feeds a pairing URL from the in-app QR scanner into the SAME pending-pairing
-     * flow a `coderelay://pair` deep link uses, so scan and deep-link converge on
-     * one prefilled-sheet consumer on the Servers screen.
-     */
+    /** Feeds a pairing URL from the in-app QR scanner into the same flow a `coderelay://pair` link uses. */
     fun setPendingPairing(url: relay.protocol.PairingURL) {
         _pendingPairing.value = url
     }
 
-    /**
-     * Resolves [_autoConnectConfig] from the persisted auto-connect setting +
-     * last-connected server id. No-op (stays null) when auto-connect is off or the
-     * id no longer maps to a saved bookmark.
-     *
-     * **AWAITs the persisted values with `.first()`, not `.value`.** At cold start
-     * the StateFlow `.value` is still the seed default (`false` / `""`) because the
-     * Preferences DataStore disk read is async — reading `.value` synchronously
-     * would make auto-connect never fire. `.first()` suspends until the first real
-     * emission (the on-disk value), so the decision is made against persisted data.
-     * Runs in [appScope] (a coroutine), so suspending here is safe.
-     *
-     * After Fix C2, the resolved config flows into the nav-graph auto-connect
-     * LaunchedEffect → `connectAndOpen` → `coordinator.connect` →
-     * `RelayConnection.connect`, which enforces the cleartext gate. So an
-     * auto-connect to a non-private cleartext host now correctly fails the gate
-     * (surfaced as a "Failed to connect" snackbar) instead of connecting in clear.
-     */
-    private suspend fun resolveAutoConnect() {
-        if (!settings.autoConnectEnabled.first()) return
-        val lastId = settings.lastConnectedServerId.first()
-        if (lastId.isBlank()) return
-        val uuid = runCatching { UUID.fromString(lastId) }.getOrNull() ?: return
-        val saved = SavedConnectionStore(applicationContext).loadAll()
-        _autoConnectConfig.value = saved.firstOrNull { it.id == uuid }
-    }
-
-    /** Bridges [_autoConnectConfig] into Compose state for the nav graph. */
-    @Composable
-    private fun collectAutoConnect(): ConnectionConfig? =
-        _autoConnectConfig.collectAsStateWithLifecycle().value
-
     private fun handleDeepLink(intent: Intent?) {
         val data = intent?.data?.toString() ?: return
-
-        // Try pairing link first (coderelay://pair?...).
-        DeepLinks.parsePairingUrl(data)?.let {
-            Log.i(TAG, "Deep link → pending pairing: ${it.host}:${it.port}")
-            _pendingPairing.value = it
-            return
+        when (val route = DeepLinkRouting.route(data)) {
+            is DeepLinkRouting.Route.Pair -> {
+                Log.i(TAG, "Deep link → pending pairing: ${route.url.host}:${route.url.port}")
+                _pendingPairing.value = route.url
+            }
+            is DeepLinkRouting.Route.Session -> {
+                Log.i(TAG, "Deep link → session ${route.link.sessionId} (server hint: ${route.link.serverInstanceId != null})")
+                hubViewModel.open(route.link)
+            }
+            DeepLinkRouting.Route.None -> {
+                val uri = intent.data
+                Log.w(TAG, "Ignoring unparseable deep link: ${uri?.scheme}://${uri?.host}${uri?.path}")
+            }
         }
-
-        // Then try session link (coderelay://session/<uuid>).
-        val sessionId = DeepLinks.parseSessionId(data)
-        if (sessionId == null) {
-            val uri = intent.data
-            Log.w(TAG, "Ignoring unparseable deep link: ${uri?.scheme}://${uri?.host}${uri?.path}")
-            return
-        }
-        Log.i(TAG, "Deep link → pending session $sessionId")
-        _pendingSessionId.value = sessionId
     }
 }
