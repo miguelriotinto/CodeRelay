@@ -214,4 +214,11 @@ class ServerHubTest {
         val h = HubHarness(hubScope(), listOf(cfg("a"))); h.hub.start(); h.hub.start(); advanceUntilIdle()
         assertEquals(1, h.built.size)
     }
+
+    @Test fun hasStartedFlipsOnlyAfterTheFirstStart() = runTest {
+        val h = HubHarness(hubScope(), emptyList())
+        assertFalse(h.hub.hasStarted.value, "an empty hub before start is 'not loaded', not 'no servers'")
+        h.hub.start(); advanceUntilIdle()
+        assertTrue(h.hub.hasStarted.value)
+    }
 }

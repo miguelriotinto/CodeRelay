@@ -90,6 +90,9 @@ class ServerHub<S : ServerSlot>(
     internal var started = false
     /** Completed when the first [start] returns; deep links wait on it. */
     internal val startCompleted = CompletableDeferred<Unit>()
+    private val _hasStarted = MutableStateFlow(false)
+    /** True once the first [start] has loaded the bookmarks and built (or skipped) every slot. Until then an empty hub means "not loaded yet", not "no servers". */
+    val hasStarted: StateFlow<Boolean> = _hasStarted.asStateFlow()
     /** The one selection waiting for its server to come live (always == activeRef while set). */
     internal var pendingRef: SessionRef? = null
     /** Bumped by every selection path; a path resuming after an `await` into a newer generation stops. */
@@ -138,6 +141,7 @@ class ServerHub<S : ServerSlot>(
             publish()
         } finally {
             startCompleted.complete(Unit)
+            _hasStarted.value = true
         }
     }
 

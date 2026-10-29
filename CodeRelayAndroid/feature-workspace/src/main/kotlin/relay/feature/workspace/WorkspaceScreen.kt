@@ -160,7 +160,7 @@ private val TOOLBAR_CHIP_SHAPE = RoundedCornerShape(6.dp)
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun WorkspaceScreen(
+internal fun WorkspacePane(
     vm: WorkspaceViewModel,
     onDisconnect: () -> Unit,
     onAttach: () -> Unit = {},
@@ -187,6 +187,16 @@ fun WorkspaceScreen(
     sidebarToggleRequests: kotlinx.coroutines.flow.Flow<Unit> = kotlinx.coroutines.flow.emptyFlow(),
     /** The server's display name for the loading sheet's subtitle; null with one server (G8). */
     serverName: String? = null,
+    /** Replaces the single-server sidebar (the hub's grouped one); gets "close the drawer". */
+    sidebarContent: (@Composable (closeDrawer: () -> Unit) -> Unit)? = null,
+    /** Replaces the single-server tab strip (the hub's cross-server one). */
+    tabsContent: (@Composable () -> Unit)? = null,
+    /**
+     * A loading-sheet model owned ABOVE this pane, which the hub host re-keys
+     * per server: the sheet must survive a cross-server switch, so the host
+     * presents it and this pane only feeds it.
+     */
+    externalLoading: SessionLoadingSheetModel? = null,
     modifier: Modifier = Modifier,
 ) {
     val coordinator = vm.coordinator
@@ -240,7 +250,7 @@ fun WorkspaceScreen(
     val errorMessage by coordinator.errorMessage.collectAsStateWithLifecycle()
 
     // One loading sheet for switch / refresh / reconnect (see the class doc).
-    val loading = remember(coordinator) { SessionLoadingSheetModel(scope) }
+    val loading = externalLoading ?: remember(coordinator) { SessionLoadingSheetModel(scope) }
     val presentation = SessionLoadingPresentation(
         loadPhase = loadPhase,
         isRecovering = isRecovering,
@@ -290,7 +300,9 @@ fun WorkspaceScreen(
     // opens it. Survives rotation/recreation; starts open.
     var twoPaneSidebarOpen by rememberSaveable { mutableStateOf(true) }
 
-    val sidebar: @Composable () -> Unit = {
+    val sidebar: @Composable () -> Unit = sidebarContent?.let { custom ->
+        { custom { scope.launch { drawerState.close() } } }
+    } ?: {
         SessionSidebar(
             sessions = sessions,
             activeSessionId = activeSessionId,
@@ -371,6 +383,7 @@ fun WorkspaceScreen(
                 onKeyHaptic = { haptics.lightTap() },
                 nameFor = ::nameFor,
                 loadingCovered = loadingCovered,
+                tabsContent = tabsContent,
                 wandOverlay = {
                     OptimizerOverlay(
                         visual = wandVisual,
@@ -476,7 +489,7 @@ fun WorkspaceScreen(
 
         // Back cannot dismiss a reconnect; the sheet's Cancel does.
         if (isRecovering) BackHandler(enabled = true) { /* suppress back-dismiss during recovery */ }
-        SessionLoadingSheetHost(loading, onCancel = { coordinator.cancelRecovery() })
+        if (externalLoading == null) SessionLoadingSheetHost(loading, onCancel = { coordinator.cancelRecovery() })
     }
 
     // Auto-open the drawer on first load when there is no active session, so the
@@ -589,6 +602,7 @@ private fun TerminalColumn(
     onKeyHaptic: () -> Unit,
     nameFor: (UUID) -> String,
     loadingCovered: Boolean,
+    tabsContent: (@Composable () -> Unit)?,
     wandOverlay: @Composable () -> Unit,
     redrawToken: Int,
 ) {
@@ -630,7 +644,7 @@ private fun TerminalColumn(
             ToolbarChip(onClick = onDisconnect) {
                 Icon(
                     Icons.Filled.Dns,
-                    contentDescription = "Disconnect from server",
+                    contentDescription = "Servers",
                     tint = Color.White,
                     modifier = Modifier.size(TOOLBAR_ICON),
                 )
@@ -652,7 +666,7 @@ private fun TerminalColumn(
 
             // Tabs take the remaining width.
             Box(modifier = Modifier.weight(1f)) {
-                SessionTabs(
+                if (tabsContent != null) tabsContent() else SessionTabs(
                     sessions = sessions,
                     activeSessionId = activeSessionId,
                     agentForSession = agentFor,
