@@ -68,14 +68,23 @@ object ServerFormLogic {
         host: String,
         port: String,
         useTLS: Boolean,
+        /**
+         * The bookmark being edited. Its other fields — `enabled`, the learned
+         * `instanceId` / `displayName` — survive the edit; building a fresh
+         * config would silently re-enable a disabled bookmark and forget the
+         * relay it was matched to.
+         */
+        base: ConnectionConfig? = null,
     ): ConnectionConfig? {
         if (!isHostValid(host)) return null
         val portNumber = parsePort(port) ?: return null
         val trimmedHost = host.trim()
         val trimmedName = name.trim()
+        val name = trimmedName.ifEmpty { trimmedHost }
+        if (base != null) return base.copy(name = name, host = trimmedHost, port = portNumber, useTLS = useTLS)
         return ConnectionConfig(
             id = existingId ?: UUID.randomUUID(),
-            name = trimmedName.ifEmpty { trimmedHost },
+            name = name,
             host = trimmedHost,
             port = portNumber,
             useTLS = useTLS,

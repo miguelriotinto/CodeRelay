@@ -1,5 +1,15 @@
 package relay.feature.servers
 
+import relay.session.hub.removeServer
+import relay.session.hub.ServerSlot
+import relay.session.hub.ServerSectionStatus
+import relay.session.hub.ServerSection
+import relay.session.hub.ServerHub
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -56,44 +66,40 @@ import relay.protocol.ConnectionConfig
 import relay.session.ServerStatus
 
 /**
- * Server-list screen, ported from `ServerListView.swift`:
- *  - a [LazyColumn] of bookmarks, each row with name / host:port + a live/offline
- *    /checking status dot;
- *  - pull-to-refresh re-runs the status poll;
- *  - leading swipe → edit (blue), trailing swipe → delete (red);
- *  - an empty-state when no bookmarks exist;
- *  - a "+" FAB opens the add sheet OR the pairing sheet.
+ * Server management (multi-server spec §8.1, §11), ported from the Apple
+ * `ServerListView` / `ServerListWindow`:
+ *  - every bookmark, with an **Enabled** switch — enabled servers are live in
+ *    the workspace; there is no Connect;
+ *  - the status of an enabled server is its live hub section; a disabled one is
+ *    probed by the status poller ("disabled · reachable / offline");
+ *  - tap or swipe right → edit, swipe left → delete (detaches, unregisters push,
+ *    forgets the token);
+ *  - "+" FABs add a server or pair with a host; the footer counts enabled
+ *    servers against the cap of 8 and shows the hub's notice.
  *
- * Tapping a row routes to [onConnect] — but only after a friendly inline
- * cleartext pre-check (`CleartextPolicy.isPrivateNetworkHost`): a non-private host
- * over plain `ws://` is refused with a snackbar here, never connected. This is a
- * nicer early-UX message — it is NOT the only line of defense. The authoritative,
- * unbypassable gate now lives at the connect chokepoint
- * ([RelayConnection.connect] → `CleartextPolicy.requireAllowed`), so auto-connect,
- * deep-link attach, and the status probe are gated too even though they never go
- * through this screen. This replicates the iOS/macOS ATS behaviour explicitly
- * (Android's network-security-config can't express RFC1918 CIDR ranges).
+ * Enabling a plaintext `ws://` bookmark on a non-private host is refused with a
+ * snackbar first — a friendly early message; the authoritative gate is the
+ * connect chokepoint (`RelayConnection.connect` → `CleartextPolicy.requireAllowed`).
  *
- * @param pendingPairingUrl when non-null, triggers the pairing sheet prefilled from
- * the URL (deep link from `claude-relay setup` QR scan, OR a QR scanned via
- * [onScanPair]). Both entry points converge on this one flow. The caller must
- * clear it via [clearPendingPairing] after consumption.
- * @param onScanPair opens the camera QR scanner. A scanned `coderelay://pair`
- * QR is parsed by the host and delivered back through [pendingPairingUrl], so the
- * scan and deep-link paths share the same prefilled-sheet consumption. The camera
- * lives in the app/workspace module, so the Servers screen only asks for it.
+ * @param onDone leave management (shown once a server is enabled).
+ * @param pendingPairingUrl when non-null, opens the pairing sheet prefilled from
+ * the URL (a `coderelay://pair` deep link or a QR scanned via [onScanPair]); the
+ * caller clears it via [clearPendingPairing] after consumption.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServersScreen(
+fun <S : ServerSlot> ServersScreen(
     viewModel: ServersViewModel,
-    onConnect: (ConnectionConfig) -> Unit,
+    hub: ServerHub<S>,
+    onDone: () -> Unit,
     modifier: Modifier = Modifier,
     pendingPairingUrl: relay.protocol.PairingURL? = null,
     clearPendingPairing: () -> Unit = {},
     onScanPair: () -> Unit = {},
 ) {
-    val servers by viewModel.servers.collectAsStateWithLifecycle()
+    val sections by hub.sections.collectAsStateWithLifecycle()
+    val aggregate by hub.aggregate.collectAsStateWithLifecycle()
+    val notice by hub.notice.collectAsStateWithLifecycle()
     val statuses by viewModel.statuses.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -103,26 +109,25 @@ fun ServersScreen(
     var sheetMode by remember { mutableStateOf<ServerSheetMode?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
 
-    fun attemptConnect(config: ConnectionConfig) {
-        // Friendly early-UX pre-check. The authoritative enforcement is the connect
-        // chokepoint (RelayConnection.connect → CleartextPolicy.requireAllowed);
-        // this just surfaces a clearer message before we even try.
-        if (!config.useTLS && !CleartextPolicy.isPrivateNetworkHost(config.host)) {
+    fun setEnabled(config: ConnectionConfig, on: Boolean) {
+        if (on && !config.useTLS && !CleartextPolicy.isPrivateNetworkHost(config.host)) {
             coroutineScope.launch {
                 snackbarHostState.showMessage(
-                    "TLS required: ${config.host} is not a private-network host. " +
-                        "Enable TLS to connect.",
+                    "TLS required: ${config.host} is not a private-network host. Enable TLS to connect.",
                 )
             }
             return
         }
-        onConnect(config)
+        coroutineScope.launch {
+            // A refusal (cap of 8) leaves the hub's notice for the footer.
+            hub.setEnabled(config.id, on)
+            viewModel.refresh()
+        }
     }
 
     // Pairing mode: null = closed, Manual = manual sheet, or prefilled from deep link
     var pairingMode by remember { mutableStateOf<PairingMode?>(null) }
 
-    // Consume pending pairing deep link (Task 7→8 seam replacement)
     LaunchedEffect(pendingPairingUrl) {
         val url = pendingPairingUrl ?: return@LaunchedEffect
         pairingMode = PairingMode.Prefilled(url)
@@ -131,7 +136,14 @@ fun ServersScreen(
 
     Scaffold(
         modifier = modifier,
-        topBar = { TopAppBar(title = { Text("Servers") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Servers") },
+                actions = {
+                    if (aggregate.enabledServers > 0) TextButton(onClick = onDone) { Text("Done") }
+                },
+            )
+        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -147,46 +159,63 @@ fun ServersScreen(
             }
         },
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            if (servers.isEmpty()) {
-                EmptyServersState(
-                    onAdd = { sheetMode = ServerSheetMode.Add },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                PullToRefreshBox(
-                    isRefreshing = isRefreshing,
-                    onRefresh = {
-                        viewModel.refresh()
-                        // The poll is fire-and-forget; clear the indicator promptly.
-                        isRefreshing = false
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        itemsIndexed(servers, key = { _, server -> server.id }) { index, server ->
-                            SwipeableServerRow(
-                                server = server,
-                                status = statuses[server.id],
-                                onConnect = { attemptConnect(server) },
-                                onEdit = { sheetMode = ServerSheetMode.Edit(server) },
-                                onDelete = { viewModel.delete(server) },
-                            )
-                            // A separator between rows, matching the inset
-                            // dividers iOS gets for free from `List`. Each row is
-                            // three unboxed lines of text on the same surface, so
-                            // without this two servers read as one entry. Skipped
-                            // after the last row: a trailing rule under an
-                            // otherwise empty list looks like a cut-off row.
-                            if (index < servers.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = 16.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant,
+        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (sections.isEmpty()) {
+                    EmptyServersState(
+                        onAdd = { sheetMode = ServerSheetMode.Add },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    PullToRefreshBox(
+                        isRefreshing = isRefreshing,
+                        onRefresh = {
+                            viewModel.refresh()
+                            hub.handleForegroundTransition()
+                            isRefreshing = false
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            itemsIndexed(sections, key = { _, s -> s.id }) { index, section ->
+                                SwipeableServerRow(
+                                    section = section,
+                                    probe = statuses[section.id],
+                                    onToggle = { on -> setEnabled(section.config, on) },
+                                    onEdit = { sheetMode = ServerSheetMode.Edit(section.config) },
+                                    onDelete = {
+                                        coroutineScope.launch {
+                                            hub.removeServer(section.id)
+                                            viewModel.refresh()
+                                        }
+                                    },
                                 )
+                                if (index < sections.lastIndex) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(start = 16.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                    )
+                                }
                             }
                         }
                     }
                 }
+            }
+            notice?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFFF9500),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+            if (sections.isNotEmpty()) {
+                Text(
+                    "${aggregate.enabledServers} of ${aggregate.totalServers} enabled · up to ${ServerHub.MAX_ENABLED} at once",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp),
+                )
             }
         }
     }
@@ -199,9 +228,25 @@ fun ServersScreen(
         AddEditServerSheet(
             mode = mode,
             initialToken = initialToken,
-            onSave = { config, token -> viewModel.addOrUpdate(config, token) },
+            onSave = { config, token ->
+                coroutineScope.launch {
+                    viewModel.addOrUpdateInternal(config, token)
+                    hub.reloadBookmarks()
+                    // The hub cannot see the token store: a pasted token reaches
+                    // the relay only through a fresh coordinator.
+                    if (mode is ServerSheetMode.Edit) {
+                        val section = hub.sections.value.firstOrNull { it.id == config.id }
+                        if (section != null && ServerPolling.shouldRebuild(section)) hub.rebuildSlot(config.id)
+                    }
+                }
+            },
             onDelete = {
-                (mode as? ServerSheetMode.Edit)?.let { viewModel.delete(it.config) }
+                (mode as? ServerSheetMode.Edit)?.let { edit ->
+                    coroutineScope.launch {
+                        hub.removeServer(edit.config.id)
+                        viewModel.refresh()
+                    }
+                }
             },
             onDismiss = { sheetMode = null },
         )
@@ -212,7 +257,6 @@ fun ServersScreen(
             PairingViewModel(
                 controllerFactory = { PairingViewModel.createController(viewModel) },
             ).apply {
-                // Prefill if from deep link
                 if (mode is PairingMode.Prefilled) {
                     host = mode.url.host
                     port = mode.url.port.toString()
@@ -223,10 +267,14 @@ fun ServersScreen(
         }
         PairWithHostSheet(
             viewModel = pairingVm,
-            onPaired = { config ->
+            onPaired = { _ ->
                 pairingMode = null
-                // Auto-connect after successful pairing
-                coroutineScope.launch { attemptConnect(config) }
+                // Paired bookmarks are saved enabled; reloading builds the
+                // coordinator (and enforces the cap with a notice).
+                coroutineScope.launch {
+                    hub.reloadBookmarks()
+                    viewModel.refresh()
+                }
             },
             onDismiss = { pairingMode = null },
         )
@@ -247,25 +295,20 @@ private suspend fun SnackbarHostState.showMessage(message: String) {
 /**
  * A row wrapped in a [SwipeToDismissBox] providing edit (start→end, blue) and
  * delete (end→start, red) actions. The swipe is consumed by re-arming the
- * dismiss state so the row settles back after firing — the list mutation (delete)
- * or sheet (edit) is the real effect.
+ * dismiss state so the row settles back after firing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SwipeableServerRow(
-    server: ConnectionConfig,
-    status: ServerStatus?,
-    onConnect: () -> Unit,
+    section: ServerSection,
+    probe: ServerStatus?,
+    onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    // `rememberSwipeToDismissBoxState` stores `confirmValueChange` in a keyless
-    // `rememberSaveable`, so the lambda from this row's FIRST composition is the
-    // one that fires for the row's whole life — and the list keys rows by server
-    // id, so an edit that keeps the id keeps the row. Calling `onEdit` directly
-    // therefore reopened the sheet with the pre-edit `server` captured by that
-    // first lambda. Read the callbacks through `rememberUpdatedState` so the
-    // captured lambda always dispatches to the current ones.
+    // `rememberSwipeToDismissBoxState` keeps the FIRST composition's lambda for the
+    // row's life (rows are keyed by id), so read the callbacks through
+    // `rememberUpdatedState` or an edit would reopen the pre-edit bookmark.
     val currentOnEdit by rememberUpdatedState(onEdit)
     val currentOnDelete by rememberUpdatedState(onDelete)
     val dismissState = rememberSwipeToDismissBoxState(
@@ -282,7 +325,7 @@ private fun SwipeableServerRow(
         state = dismissState,
         backgroundContent = { SwipeBackground(dismissState.dismissDirection) },
     ) {
-        ServerRow(server = server, status = status, onClick = onConnect)
+        ServerRow(section = section, probe = probe, onToggle = onToggle, onClick = onEdit)
     }
 }
 
@@ -317,13 +360,37 @@ private data class SwipeStyle(
     val description: String?,
 )
 
-/** One bookmark row: name + host:port + a live/offline/checking dot. */
+/** The status line under a bookmark: the live section for an enabled one, the poller's probe for a disabled one. */
+internal fun statusLine(section: ServerSection, probe: ServerStatus?): Pair<String, StatusTone> {
+    if (section.config.enabled) {
+        return when (val st = section.status) {
+            ServerSectionStatus.Live -> "Live" to StatusTone.GOOD
+            ServerSectionStatus.Connecting -> "connecting…" to StatusTone.PENDING
+            ServerSectionStatus.Reconnecting -> "reconnecting…" to StatusTone.PENDING
+            ServerSectionStatus.Offline -> "offline" to StatusTone.BAD
+            is ServerSectionStatus.AuthFailed -> st.message to StatusTone.WARN
+            ServerSectionStatus.Disabled -> "disabled" to StatusTone.MUTED
+        }
+    }
+    return when (probe) {
+        ServerStatus.LIVE -> "disabled · reachable" to StatusTone.MUTED
+        ServerStatus.OFFLINE -> "disabled · offline" to StatusTone.MUTED
+        ServerStatus.CHECKING, null -> "disabled" to StatusTone.MUTED
+    }
+}
+
+internal enum class StatusTone { GOOD, PENDING, WARN, BAD, MUTED }
+
+/** One bookmark row: title, URL, status, instance id, duplicate flag and the Enabled switch. */
 @Composable
 private fun ServerRow(
-    server: ConnectionConfig,
-    status: ServerStatus?,
+    section: ServerSection,
+    probe: ServerStatus?,
+    onToggle: (Boolean) -> Unit,
     onClick: () -> Unit,
 ) {
+    val config = section.config
+    val (caption, tone) = statusLine(section, probe)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -336,49 +403,42 @@ private fun ServerRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(text = config.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                if (section.isDuplicateInstance) {
+                    Icon(
+                        Icons.Filled.Warning,
+                        contentDescription = "Another bookmark points at this same relay",
+                        tint = Color(0xFFFF9500),
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
             Text(
-                text = server.name,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = "${server.host}:${server.port}",
+                text = "${if (config.useTLS) "wss" else "ws"}://${config.host}:${config.port}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            StatusIndicator(status = status)
-        }
-    }
-}
-
-/**
- * Live/offline/checking dot. Green = LIVE, red = OFFLINE, and a small spinner for
- * CHECKING / not-yet-probed (null) — the Android UI distinguishes "in flight"
- * from "checked, offline" (see `ServerStatusChecker.kt`).
- */
-@Composable
-private fun StatusIndicator(status: ServerStatus?) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        when (status) {
-            ServerStatus.LIVE -> {
-                Dot(Color(0xFF4CAF50))
-                CaptionText("Live")
-            }
-            ServerStatus.OFFLINE -> {
-                Dot(MaterialTheme.colorScheme.error)
-                CaptionText("Offline")
-            }
-            ServerStatus.CHECKING, null -> {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(8.dp),
-                    strokeWidth = 1.5.dp,
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Dot(
+                    when (tone) {
+                        StatusTone.GOOD -> Color(0xFF4CAF50)
+                        StatusTone.PENDING, StatusTone.WARN -> Color(0xFFFF9500)
+                        StatusTone.BAD -> MaterialTheme.colorScheme.error
+                        StatusTone.MUTED -> Color(0xFF8E8E93)
+                    },
                 )
-                CaptionText("Checking")
+                CaptionText(caption)
             }
+            config.instanceId?.let { CaptionText("instance ${it.toString().take(8)}…") }
         }
+        Switch(
+            checked = config.enabled,
+            onCheckedChange = onToggle,
+            modifier = Modifier.semantics {
+                contentDescription = if (config.enabled) "Disable ${config.title}" else "Enable ${config.title}"
+            },
+        )
     }
 }
 

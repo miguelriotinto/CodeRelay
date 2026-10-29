@@ -174,6 +174,7 @@ fun AddEditServerSheet(
                         host = host,
                         port = port,
                         useTLS = useTLS,
+                        base = existing,
                     )
                     if (config != null) {
                         onSave(config, token)
