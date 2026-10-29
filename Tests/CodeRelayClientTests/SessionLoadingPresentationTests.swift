@@ -237,8 +237,8 @@ final class SessionLoadingSheetSizingTests: XCTestCase {
     func testTheMacSheetContainerIsSizedByItsContent() {
         // The container the Mac app hosts the sheet in must not fix a height.
         let content = SessionLoadingSheet(presentation: reconnecting(), onCancel: {})
-        let natural = fittingHeight(content, width: SessionLoadingSheetLayout.macWidth)
-        let hosted = fittingHeight(content.sessionLoadingSheetContainer(), width: SessionLoadingSheetLayout.macWidth)
+        let natural = fittingHeight(content, width: SessionLoadingSheetLayout.fixedWidth)
+        let hosted = fittingHeight(content.sessionLoadingSheetContainer(), width: SessionLoadingSheetLayout.fixedWidth)
         XCTAssertGreaterThanOrEqual(hosted, natural, "nothing may be cut: the container is at least as tall as its content")
     }
 }
