@@ -59,7 +59,7 @@ class HubViewModelTest {
     }
 
     private class Tokens : TokenSource {
-        override fun loadToken(id: UUID) = "tok"
+        override suspend fun loadToken(id: UUID) = "tok"
         override fun deleteToken(id: UUID) {}
     }
 

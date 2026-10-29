@@ -117,7 +117,7 @@ class ServerHubSelectionTest {
         assertEquals(1, a.detachCount)
         assertTrue(a.tornDown)
         assertTrue(h.bookmarks.loadAll().isEmpty())
-        assertNull(h.tokens.loadToken(c[0].id))
+        assertNull(h.tokens.tokens[c[0].id])
         assertTrue(h.hub.sections.value.isEmpty())
     }
 
@@ -256,5 +256,22 @@ class ServerHubSelectionTest {
         assertEquals(listOf("detach:a"), log)
         assertEquals(listOf(foreign), b.remoteAttaches)
         assertEquals(SessionRef(c[1].id, foreign), h.hub.activeRef.value)
+    }
+
+    @Test fun aRemovalCancelledMidRetireStillDeletesAndTearsDown() = runTest {
+        // The Servers screen launched removeServer on its own scope; leaving the
+        // screen while the bounded retire ran cancelled it, leaking the socket and
+        // leaving the bookmark (and token) to come back on the next reload.
+        val (h, c) = liveHub("a")
+        val a = h.slot(c[0].id)!!
+        h.hub.select(h.ref(c[0], 0)); advanceUntilIdle()
+        a.detachHangs = true
+        val removing = launch { h.hub.removeServer(c[0].id) }
+        runCurrent()
+        removing.cancel()
+        advanceUntilIdle()
+        assertTrue(h.bookmarks.loadAll().isEmpty(), "the bookmark is gone even though the caller went away")
+        assertNull(h.tokens.tokens[c[0].id])
+        assertTrue(a.tornDown, "the coordinator is torn down, not leaked")
     }
 }

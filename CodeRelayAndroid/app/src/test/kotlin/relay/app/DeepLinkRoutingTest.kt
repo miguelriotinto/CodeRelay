@@ -18,4 +18,13 @@ class DeepLinkRoutingTest {
         assertEquals(DeepLinkRouting.Route.None, DeepLinkRouting.route(null))
         assertEquals(DeepLinkRouting.Route.None, DeepLinkRouting.route("https://example.com"))
     }
+
+    @Test fun aRecreatedActivityDoesNotReplayItsLaunchLink() {
+        // Rotation / the fold's display switch hand the original launch intent
+        // back; replaying it pulled the user back to the notified session and
+        // could re-enable a server they had since disabled.
+        assertTrue(DeepLinkRouting.shouldHandleLaunchIntent(restoredFromState = false, launchedFromHistory = false))
+        assertEquals(false, DeepLinkRouting.shouldHandleLaunchIntent(restoredFromState = true, launchedFromHistory = false))
+        assertEquals(false, DeepLinkRouting.shouldHandleLaunchIntent(restoredFromState = false, launchedFromHistory = true))
+    }
 }

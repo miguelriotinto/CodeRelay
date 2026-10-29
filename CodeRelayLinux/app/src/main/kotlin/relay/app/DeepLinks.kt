@@ -118,6 +118,9 @@ data class LaunchArgs(
 ) {
     val isEmpty: Boolean get() = link is DeepLink.Unhandled && !newSession
 
+    /** A pairing link is redeemed on the management screen, so it opens there even with a server enabled. */
+    val opensManagement: Boolean get() = link is DeepLink.Pair
+
     companion object {
         fun parse(args: Array<String>): LaunchArgs = LaunchArgs(
             link = DeepLinks.fromArgs(args),

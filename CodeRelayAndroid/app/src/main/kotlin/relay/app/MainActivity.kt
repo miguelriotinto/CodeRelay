@@ -102,8 +102,10 @@ class MainActivity : ComponentActivity() {
         // A fresh FCM token or a newly granted permission re-registers on every relay.
         FcmTokenBridge.onTokenRefreshed = { hubViewModel.syncPush() }
 
-        // Cold-start deep link (app launched from the link or a notification).
-        handleDeepLink(intent)
+        // Cold-start deep link (app launched from the link or a notification) —
+        // only on a real launch, never on a recreation that hands it back.
+        val fromHistory = intent?.flags?.and(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        if (DeepLinkRouting.shouldHandleLaunchIntent(savedInstanceState != null, fromHistory)) handleDeepLink(intent)
 
         setContent {
             RelayTheme {

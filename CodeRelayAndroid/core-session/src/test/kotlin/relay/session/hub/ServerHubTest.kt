@@ -3,6 +3,7 @@ package relay.session.hub
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -226,5 +227,19 @@ class ServerHubTest {
         val h = HubHarness(hubScope(), listOf(cfg("a"), cfg("b"))); h.hub.start(); advanceUntilIdle()
         h.hub.shutdown()
         assertTrue(h.built.all { it.tornDown }, "torn down before shutdown() returns, not merely launched")
+    }
+
+    @Test fun aSlowTokenLoadNeverBuildsTwoSlotsForOneServer() = runTest {
+        // Linux reads tokens through secret-tool (seconds on a locked keyring), so
+        // the read suspends off the UI thread; a reload during it must not build
+        // a second coordinator for the same bookmark.
+        val a = cfg("a"); val h = HubHarness(hubScope(), listOf(a))
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        h.tokens.gate = gate
+        val starting = launch { h.hub.start() }
+        runCurrent()
+        h.hub.reloadBookmarks(); runCurrent()
+        gate.complete(Unit); starting.join(); advanceUntilIdle()
+        assertEquals(1, h.built.size)
     }
 }

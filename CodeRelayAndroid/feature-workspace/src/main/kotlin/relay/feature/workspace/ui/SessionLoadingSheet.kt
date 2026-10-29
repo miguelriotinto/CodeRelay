@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import relay.session.SessionLoadingPresentation
+import kotlin.coroutines.cancellation.CancellationException
 import relay.session.SessionLoadingSheetModel
 
 /** Geometry and type for the loading sheet, shared by Android and Linux and matched to the Apple apps. */
@@ -91,10 +92,18 @@ fun SessionLoadingSheetHost(model: SessionLoadingSheetModel, onCancel: () -> Uni
     LaunchedEffect(presented) {
         if (presented) {
             allowHide = false
+            // A load that starts while the previous one's sheet is sliding away
+            // cancels that hide part-way; the sheet stays composed, so its
+            // one-time show-on-enter never runs again — show it explicitly.
+            if (visible && sheetState.targetValue == SheetValue.Hidden) {
+                try { sheetState.show() } catch (e: CancellationException) { throw e } catch (_: Throwable) {}
+            }
             visible = true
         } else if (visible) {
             allowHide = true
-            runCatching { sheetState.hide() }
+            // Cancellation must propagate: a swallowed one ran `visible = false`
+            // after the NEXT load had started, hiding its sheet mid-load.
+            try { sheetState.hide() } catch (e: CancellationException) { throw e } catch (_: Throwable) {}
             visible = false
         }
     }

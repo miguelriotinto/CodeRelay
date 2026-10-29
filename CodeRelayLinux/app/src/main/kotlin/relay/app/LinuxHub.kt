@@ -3,6 +3,7 @@ package relay.app
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.withContext
 import relay.feature.settings.PreferenceStore
 import relay.feature.workspace.WorkspaceViewModel
 import relay.feature.workspace.hub.WorkspaceSlot
@@ -34,7 +35,9 @@ class LinuxBookmarkStore(private val store: SavedConnectionStore) : BookmarkStor
  * instead of the app crashing (Review Focus 5).
  */
 class LinuxTokenSource(private val store: TokenStore) : TokenSource {
-    override fun loadToken(id: UUID): String? = runCatching { store.loadToken(id) }.getOrNull()
+    /** `secret-tool` can block for its 30 s bound on a locked keyring: never on the AWT thread. */
+    override suspend fun loadToken(id: UUID): String? =
+        withContext(Dispatchers.IO) { runCatching { store.loadToken(id) }.getOrNull() }
     override fun deleteToken(id: UUID) { runCatching { store.deleteToken(id) } }
 }
 

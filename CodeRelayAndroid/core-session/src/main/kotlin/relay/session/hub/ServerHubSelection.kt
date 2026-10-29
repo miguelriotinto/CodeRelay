@@ -1,7 +1,9 @@
 package relay.session.hub
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.protocol.SessionDeepLink
 import relay.protocol.SessionRef
@@ -106,15 +108,23 @@ private suspend fun ServerHub<*>.step(delta: Int) {
     (this as ServerHub<ServerSlot>).select(refs[(index + delta + refs.size) % refs.size])
 }
 
-/** Deletes a bookmark: detach if active, unregister push, tear down, forget its token (§7.3, §11). */
+/**
+ * Deletes a bookmark: detach if active, unregister push, tear down, forget its
+ * token (§7.3, §11). The deletion lands BEFORE the bounded retire, and the
+ * retire cannot be cancelled: a caller that goes away mid-way (leaving the
+ * Servers screen) must not leak the socket or bring the bookmark back.
+ */
 suspend fun <S : ServerSlot> ServerHub<S>.removeServer(serverId: UUID) {
-    detachFromHub(serverId)?.let { slot -> retire(slot, wasActive = slot.activeSessionId.value != null, unregisterPush = true) }
-    bookmarkStore.delete(serverId)
-    runCatching { tokens.deleteToken(serverId) }
-    bookmarks = bookmarkStore.loadAll()
-    cachedSessions.remove(serverId)
-    missingToken.remove(serverId)
-    publish()
+    val slot = detachFromHub(serverId)
+    withContext(NonCancellable) {
+        bookmarkStore.delete(serverId)
+        runCatching { tokens.deleteToken(serverId) }
+        bookmarks = bookmarkStore.loadAll()
+        cachedSessions.remove(serverId)
+        missingToken.remove(serverId)
+        publish()
+        slot?.let { retire(it, wasActive = it.activeSessionId.value != null, unregisterPush = true) }
+    }
 }
 
 /** After an attach the coordinator's `activeSessionId` is the truth (it rolls back a failed resume). */
@@ -143,6 +153,9 @@ internal suspend fun <S : ServerSlot> ServerHub<S>.detachBounded(slot: S) {
 internal fun <S : ServerSlot> ServerHub<S>.applyPendingSelection(serverId: UUID) {
     val wanted = pendingRef ?: return
     if (wanted.serverId != serverId || activeRefFlow.value != wanted) return
+    // A link queued behind start() decides what opens; the restore must not
+    // switch concurrently with it on the same coordinator.
+    if (deepLinksWaiting > 0) { pendingRef = null; return }
     val slot = slots[serverId] ?: return
     if (sections.value.firstOrNull { it.id == serverId }?.status?.isLive != true) return
     pendingRef = null
@@ -209,7 +222,12 @@ sealed interface DeepLinkOutcome {
  * push tap) waits for it; afterwards it routes at once, even with no slot built.
  */
 suspend fun <S : ServerSlot> ServerHub<S>.handleDeepLink(link: SessionDeepLink): DeepLinkOutcome {
-    startCompleted.await()
+    deepLinksWaiting += 1
+    try {
+        startCompleted.await()
+    } finally {
+        deepLinksWaiting -= 1
+    }
     // 1. The relay named itself. An enabled bookmark wins over a disabled twin
     //    of the same relay (§12) — never a second socket to one relay.
     val iid = link.serverInstanceId

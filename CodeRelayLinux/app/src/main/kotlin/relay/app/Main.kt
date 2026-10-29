@@ -168,7 +168,7 @@ private fun runApp(
     // Overlays: settings, server management, the pairing-link paste dialog,
     // the attach sheet, the QR share sheet.
     var showSettings by remember { mutableStateOf(false) }
-    var showServers by remember { mutableStateOf(false) }
+    var showServers by remember { mutableStateOf(initialLaunch.opensManagement) }
     var showPasteLink by remember { mutableStateOf(false) }
     var attachable by remember { mutableStateOf<Pair<LinuxServerSlot, List<SessionInfo>>?>(null) }
     var loadingAttachable by remember { mutableStateOf(false) }

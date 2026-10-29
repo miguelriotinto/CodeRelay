@@ -173,4 +173,22 @@ class SessionCoordinatorHubHooksTest {
         h.coord.createNewSession(); advanceUntilIdle()
         assertTrue(h.coord.expectsSessionToLoad)
     }
+
+    @Test fun aWakeHandshakeOverALiveSessionNeverRaisesTheSheet() = runTest {
+        // ON_RESUME, re-tapping the active session and pull-to-refresh run a WAKE
+        // handshake with a session attached. Its phases narrate a server, not a
+        // session, and must not black out a live terminal (Swift writes them only
+        // while nothing is attached).
+        val h = Harness(this)
+        h.coord.connect(); advanceUntilIdle()
+        h.coord.switchToSession(UUID.randomUUID()); advanceUntilIdle()
+        val seen = mutableListOf<SessionLoadPhase?>()
+        val watcher = launch(UnconfinedTestDispatcher(testScheduler)) { h.coord.sessionLoadPhase.collect { seen += it } }
+        h.coord.performHandshake(SessionHandshake.Reason.WAKE); advanceUntilIdle()
+        // (The fake never delivers a replay, so the switch's own Attaching may
+        // still be showing; what must not appear is a HANDSHAKE phase.)
+        val handshakePhases = setOf(SessionLoadPhase.Connecting, SessionLoadPhase.Authenticating, SessionLoadPhase.LoadingSessions)
+        assertTrue(seen.none { it in handshakePhases }, "handshake phases written over a live session: $seen")
+        watcher.cancel()
+    }
 }

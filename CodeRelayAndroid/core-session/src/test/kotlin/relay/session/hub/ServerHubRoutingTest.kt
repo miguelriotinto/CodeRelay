@@ -105,4 +105,17 @@ class ServerHubRoutingTest {
             withTimeout(2_000) { h.hub.handleDeepLink(SessionDeepLink(UUID.randomUUID())) },
         )
     }
+
+    @Test fun aColdStartLinkWinsOverTheRestoredSelectionWithoutASecondSwitch() = runTest { // Review Focus 1
+        // The saved active ref (F3) and a push-tap link both want server A. The
+        // restore used to launch switchToSession(X) during start, and the link's
+        // select then ran switchToSession(Y) concurrently on the same coordinator.
+        val a = cfg("a"); val x = session(); val y = session()
+        val h = HubHarness(hubScope(), listOf(a), liveAtStart = listOf(x, y))
+        h.state.saveActiveRef(SessionRef(a.id, x.id))
+        val routed = async { h.hub.handleDeepLink(SessionDeepLink(y.id)) }
+        h.hub.start(); advanceUntilIdle()
+        assertEquals(DeepLinkOutcome.Selected(SessionRef(a.id, y.id)), routed.await())
+        assertEquals(listOf(y.id), h.slot(a.id)!!.switchedTo, "only the link's session is switched to")
+    }
 }

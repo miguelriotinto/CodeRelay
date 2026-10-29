@@ -99,6 +99,14 @@ class ServerHub<S : ServerSlot>(
     internal var selectionGeneration = 0L
     /** Selections between their first and last `await`; [reconcileSelection] stays out of the way. */
     internal var selectionsInFlight = 0
+    /**
+     * Deep links waiting on [startCompleted]. While one is, the restored F3
+     * selection is not applied: the link is what the user asked for, and
+     * applying both ran two switches concurrently on one coordinator.
+     */
+    internal var deepLinksWaiting = 0
+    /** Bookmarks whose slot is being built (the token read suspends), so a reload cannot build a second one. */
+    private val building = mutableSetOf<UUID>()
     /** The last push settings synced; slots built later get the same. */
     private var pushSettings: PushSettings? = null
 
@@ -236,8 +244,18 @@ class ServerHub<S : ServerSlot>(
     private suspend fun buildSlot(config: ConnectionConfig) {
         // Re-read the flag: enable then disable can both run before this does,
         // and stop() may have closed the workspace.
-        if (slots.containsKey(config.id) || !isWanted(config.id)) return
-        val token = runCatching { tokens.loadToken(config.id) }.getOrNull()
+        if (slots.containsKey(config.id) || config.id in building || !isWanted(config.id)) return
+        building += config.id
+        val token = try {
+            tokens.loadToken(config.id)
+        } catch (e: CancellationException) {
+            building -= config.id
+            throw e
+        } catch (_: Throwable) {
+            null // a locked keyring reads as "no token": authFailed, never a crash
+        }
+        building -= config.id
+        if (!isWanted(config.id) || slots.containsKey(config.id)) return
         if (token.isNullOrEmpty()) {
             missingToken += config.id
             publish()

@@ -31,6 +31,8 @@ class HubHarness(
     tokensFor: Set<UUID>? = null,
     maxEnabled: Int = 8,
     hangs: Set<UUID> = emptySet(),
+    /** Sessions every slot lists, live, before its start() returns — what a real launch handshake does. */
+    liveAtStart: List<relay.protocol.SessionInfo>? = null,
 ) {
     val sleeps = mutableListOf<Long>()
     val bookmarks = InMemoryBookmarks(configs)
@@ -44,7 +46,13 @@ class HubHarness(
         bookmarkStore = bookmarks,
         tokens = tokens,
         state = state,
-        factory = { c, _ -> FakeServerSlot(c).also { it.startHangs = c.id in hangs; built += it } },
+        factory = { c, _ ->
+            FakeServerSlot(c).also {
+                it.startHangs = c.id in hangs
+                if (liveAtStart != null) { it.connected.value = true; it.sessions.value = liveAtStart }
+                built += it
+            }
+        },
         maxEnabled = maxEnabled,
         sleepMs = { sleeps += it },
     )

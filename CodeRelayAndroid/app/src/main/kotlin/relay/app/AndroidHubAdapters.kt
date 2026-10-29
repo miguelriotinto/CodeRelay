@@ -1,6 +1,8 @@
 package relay.app
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import relay.protocol.ConnectionConfig
 import relay.session.hub.BookmarkStore
 import relay.session.hub.HubPreferences
@@ -17,9 +19,9 @@ class AndroidBookmarkStore(private val store: SavedConnectionStore) : BookmarkSt
     override suspend fun delete(id: UUID) { store.delete(id) }
 }
 
-/** Per-bookmark relay tokens from the encrypted [TokenStore]. */
+/** Per-bookmark relay tokens from the encrypted [TokenStore], read off the main thread. */
 class AndroidTokenSource(private val store: TokenStore) : TokenSource {
-    override fun loadToken(id: UUID): String? = store.loadToken(id)
+    override suspend fun loadToken(id: UUID): String? = withContext(Dispatchers.IO) { store.loadToken(id) }
     override fun deleteToken(id: UUID) { store.deleteToken(id) }
 }
 

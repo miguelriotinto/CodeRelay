@@ -62,6 +62,6 @@ interface BookmarkStore {
 
 /** Per-bookmark relay tokens. [loadToken] may throw (a locked keyring); the hub treats that as "no token". */
 interface TokenSource {
-    fun loadToken(id: UUID): String?
+    suspend fun loadToken(id: UUID): String?
     fun deleteToken(id: UUID)
 }

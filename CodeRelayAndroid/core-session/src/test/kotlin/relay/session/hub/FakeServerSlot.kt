@@ -88,7 +88,10 @@ class FakeTokens(
     val tokens: MutableMap<UUID, String> = mutableMapOf(),
     var throwsFor: Set<UUID> = emptySet(),
 ) : TokenSource {
-    override fun loadToken(id: UUID): String? {
+    /** When set, every load parks on it first (a slow keyring). */
+    var gate: CompletableDeferred<Unit>? = null
+    override suspend fun loadToken(id: UUID): String? {
+        gate?.await()
         if (id in throwsFor) error("keyring locked")
         return tokens[id]
     }
