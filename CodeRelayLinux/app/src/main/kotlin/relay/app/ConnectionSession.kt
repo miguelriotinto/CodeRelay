@@ -83,7 +83,10 @@ class ConnectionSession private constructor(
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
             val nowMs: () -> Long = { System.nanoTime() / 1_000_000 }
 
-            val ownership = SessionOwnershipAdapter(environment.ownership)
+            // Each server's names/agents live under its own bookmark id (spec §7.4).
+            val ownership = SessionOwnershipAdapter(
+                SessionOwnershipStore(deviceId = environment.deviceId, namespace = config.id.toString()),
+            )
             val connection = RelayConnection()
 
             val coordinator = SessionCoordinator(

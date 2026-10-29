@@ -59,8 +59,10 @@ fun QrShareSheet(
     sessionName: String?,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The relay's instance id, so a scan on a multi-server device opens the right server (spec §10). */
+    serverInstanceId: UUID? = null,
 ) {
-    val deepLink = remember(sessionId) { DeepLinks.sessionUri(sessionId) }
+    val deepLink = remember(sessionId, serverInstanceId) { DeepLinks.sessionUri(sessionId, serverInstanceId) }
     val modules = remember(deepLink) { runCatching { QrModules.encode(deepLink) }.getOrNull() }
     val clipboard = LocalClipboardManager.current
 

@@ -22,7 +22,8 @@ import java.util.UUID
 data class TrayModel(
     val sessions: List<Row> = emptyList(),
 ) {
-    data class Row(val id: UUID, val label: String, val needsAttention: Boolean)
+    /** [serverId] is the bookmark the session lives on (null in single-server callers and tests). */
+    data class Row(val id: UUID, val label: String, val needsAttention: Boolean, val serverId: UUID? = null)
 
     val attentionCount: Int get() = sessions.count { it.needsAttention }
 
@@ -47,6 +48,9 @@ data class TrayModel(
             agentStates: Map<UUID, AgentDetectedState>,
             awaitingInput: Set<UUID>,
             activeId: UUID?,
+            serverId: UUID? = null,
+            /** The server's title, when several servers are enabled (G8: one server shows no prefix). */
+            serverPrefix: String? = null,
         ): TrayModel = TrayModel(
             sessions = sessions.map { info ->
                 val name = names[info.id] ?: info.name ?: info.id.toString().take(8)
@@ -59,22 +63,35 @@ data class TrayModel(
                     else -> ""
                 }
                 val check = if (info.id == activeId) " ✓" else ""
-                Row(id = info.id, label = "$glyph$name$check", needsAttention = blocked)
+                val prefix = serverPrefix?.let { "$it · " }.orEmpty()
+                Row(id = info.id, label = "$glyph$prefix$name$check", needsAttention = blocked, serverId = serverId)
             },
         )
     }
 }
 
-/** Collects the live connection's flows into a [TrayModel]; empty with no connection. */
+/**
+ * Collects every live server's sessions into one [TrayModel], in sidebar order,
+ * prefixed with the server's title when more than one server is enabled.
+ */
 @Composable
-fun rememberTrayModel(session: ConnectionSession?): TrayModel {
-    val coordinator = session?.coordinator ?: return remember { TrayModel() }
-    val sessions by coordinator.activeSessions.collectAsState()
-    val names by coordinator.sessionNames.collectAsState()
-    val agentStates by coordinator.agentStates.collectAsState()
-    val awaiting by coordinator.sessionsAwaitingInput.collectAsState()
-    val activeId by coordinator.activeSessionId.collectAsState()
-    return remember(sessions, names, agentStates, awaiting, activeId) {
-        TrayModel.rows(sessions, names, agentStates, awaiting, activeId)
+fun rememberTrayModel(hub: relay.session.hub.ServerHub<LinuxServerSlot>): TrayModel {
+    val sections by hub.sections.collectAsState()
+    val activeRef by hub.activeRef.collectAsState()
+    val prefixed = sections.count { it.config.enabled } > 1
+    val parts = sections.filter { it.config.enabled && it.status.isLive }.mapNotNull { section ->
+        val coordinator = hub.slot(section.id)?.coordinator ?: return@mapNotNull null
+        androidx.compose.runtime.key(section.id) {
+            val names by coordinator.sessionNames.collectAsState()
+            val agentStates by coordinator.agentStates.collectAsState()
+            val awaiting by coordinator.sessionsAwaitingInput.collectAsState()
+            TrayModel.rows(
+                section.sessions, names, agentStates, awaiting,
+                activeId = activeRef?.takeIf { it.serverId == section.id }?.sessionId,
+                serverId = section.id,
+                serverPrefix = if (prefixed) section.title else null,
+            )
+        }
     }
+    return TrayModel(parts.flatMap { it.sessions })
 }
