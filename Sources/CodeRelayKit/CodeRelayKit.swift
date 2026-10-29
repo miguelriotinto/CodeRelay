@@ -1,6 +1,6 @@
 /// CodeRelayKit provides shared types and utilities for the CodeRelay system.
 public enum CodeRelayKit {
-    public static let version = "0.3.36"
+    public static let version = "0.3.37"
 
     /// Current wire-protocol version. Bump when messages change in breaking ways.
     /// v3 (2026-10): `auth_success`/`pair_success` may carry `serverId`/`serverName`
