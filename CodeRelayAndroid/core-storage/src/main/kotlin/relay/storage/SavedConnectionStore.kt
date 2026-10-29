@@ -9,6 +9,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.builtins.ListSerializer
 import relay.protocol.ConnectionConfig
+import relay.protocol.ConnectionConfigList
 import relay.protocol.WireJson
 import java.util.UUID
 
@@ -79,8 +80,8 @@ class SavedConnectionStore(private val context: Context) {
         return all
     }
 
-    private fun decode(json: String): List<ConnectionConfig>? =
-        runCatching { WireJson.instance.decodeFromString(listSerializer, json) }.getOrNull()
+    /** Element-by-element: one unreadable bookmark no longer drops the whole list. */
+    private fun decode(json: String): List<ConnectionConfig>? = ConnectionConfigList.decodeLenientOrNull(json)
 
     companion object {
         /** Current DataStore key for the JSON-encoded bookmark list. */

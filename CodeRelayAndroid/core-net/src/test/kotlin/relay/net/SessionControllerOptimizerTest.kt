@@ -28,8 +28,8 @@ class SessionControllerOptimizerTest {
     // MARK: - Protocol version + capabilities
 
     @Test
-    fun `client advertises protocol version 2`() {
-        assertEquals(2, ProtocolVersions.CURRENT)
+    fun `client advertises protocol version 3`() {
+        assertEquals(3, ProtocolVersions.CURRENT)
         assertEquals(0, ProtocolVersions.MIN)
     }
 
