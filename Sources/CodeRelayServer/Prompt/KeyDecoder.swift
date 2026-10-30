@@ -27,6 +27,12 @@ enum KeyEvent: Equatable, Sendable {
     /// live probe found claude 2.1.270 and codex 0.154.0 insert a newline for LF
     /// and do nothing for `CSI 13;5u`; it maps to `InputKey.ctrlJ`.
     case lineFeed
+    /// The Esc key on its own, stamped with when it arrived: a lone `ESC` that
+    /// ended a client frame and was not continued by the next one, or kitty
+    /// `CSI 27 u`. Whether it touches the draft is agent-specific — Claude Code
+    /// clears the box only on a quick double press — so the tracker decides
+    /// from the agent's `InputProfile`, and needs the arrival time to do it.
+    case escape(atMs: UInt64)
     /// A sequence that is provably inert at an input line: mouse reports,
     /// focus-in/out reports, DA/DSR/CPR replies, F-keys and other functional kitty codes, kitty
     /// release events, `ESC ESC`, a well-formed OSC/DCS string. The tracker
@@ -80,12 +86,28 @@ struct KeyDecoder: Sendable {
 
     init() {}
 
-    mutating func decode(_ data: Data) -> [KeyEvent] {
+    mutating func decode(_ data: Data, nowMs: UInt64 = DraftTracker.monotonicMs()) -> [KeyEvent] {
         var events: [KeyEvent] = []
+        frameNowMs = nowMs
         for byte in data {
             switch state {
             case .ground: decodeGround(byte, into: &events)
-            case .escape: decodeEscape(byte, into: &events)
+            case .escape:
+                if let at = pendingEscapeAtMs {
+                    pendingEscapeAtMs = nil
+                    // The previous frame ended on ESC. Only a sequence introducer
+                    // continues it (a sequence split across frames decodes as if
+                    // whole); anything else means that ESC was the Esc key —
+                    // the iPhone key bar's ESC and then dictated text, which
+                    // starts with a space, used to merge into Alt+Space.
+                    if byte != 0x5B, byte != 0x4F, byte != 0x5D, byte != 0x50 {
+                        events.append(.escape(atMs: at))
+                        state = .ground
+                        decodeGround(byte, into: &events)
+                        continue
+                    }
+                }
+                decodeEscape(byte, into: &events)
             case .csi(let params): decodeCSI(byte, params: params, into: &events)
             case .ss3: decodeSS3(byte, into: &events)
             case .osc(let sawEscape): decodeStringSequence(byte, sawEscape: sawEscape, isOSC: true, into: &events)
@@ -94,7 +116,24 @@ struct KeyDecoder: Sendable {
             }
         }
         flushText(into: &events)
+        if case .escape = state, pendingEscapeAtMs == nil { pendingEscapeAtMs = nowMs }
         return events
+    }
+
+    /// When the ESC that ended the last frame arrived, while undecided.
+    private var pendingEscapeAtMs: UInt64?
+    /// `nowMs` of the frame being decoded, for kitty `CSI 27 u`.
+    private var frameNowMs: UInt64 = 0
+
+    /// A frame-final ESC no frame has continued yet *is* the Esc key once the
+    /// draft is about to be read: report it now. Called by `PTYSession` before
+    /// it snapshots or replaces the draft, so a double Esc that just cleared the
+    /// box is applied even when nothing was typed after it.
+    mutating func takePendingEscape() -> [KeyEvent] {
+        guard let at = pendingEscapeAtMs, case .escape = state else { return [] }
+        pendingEscapeAtMs = nil
+        state = .ground
+        return [.escape(atMs: at)]
     }
 
     // MARK: - Ground
@@ -234,7 +273,8 @@ struct KeyDecoder: Sendable {
                 state = .paste
                 return
             }
-            events.append(Self.csiEvent(final: byte, params: String(decoding: params, as: UTF8.self)))
+            let event = Self.csiEvent(final: byte, params: String(decoding: params, as: UTF8.self))
+            if case .escape = event { events.append(.escape(atMs: frameNowMs)) } else { events.append(event) }
         default:
             state = .ground
             events.append(.unknown)
@@ -332,7 +372,7 @@ struct KeyDecoder: Sendable {
         case 13: return .enter(mods.intersection([.shift, .alt, .control]))
         case 127: return .backspace
         case 9: return .control(0x09)            // Tab: completion rewrites the line
-        case 27: return .unknown                 // Escape: agents bind it to clearing the box
+        case 27: return mods.isEmpty ? .escape(atMs: 0) : .unknown   // stamped by decodeCSI; a modified Esc is an unmodelled chord
         default: break
         }
         // The associated-text field is evaluated *before* the functional-key

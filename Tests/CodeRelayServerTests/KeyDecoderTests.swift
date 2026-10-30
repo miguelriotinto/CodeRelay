@@ -97,6 +97,39 @@ final class KeyDecoderTests: XCTestCase {
         XCTAssertEqual(decode([0x1B], [0x5B], [0x44]), [.left])
     }
 
+    /// Frames decoded at the given arrival times.
+    private func decode(at times: [UInt64], _ chunks: [UInt8]...) -> [KeyEvent] {
+        var decoder = KeyDecoder()
+        var events: [KeyEvent] = []
+        for (chunk, t) in zip(chunks, times) { events += decoder.decode(Data(chunk), nowMs: t) }
+        return events
+    }
+
+    func testALoneEscapeFrameIsAnEscapeKeyNotAnAltPrefix() {
+        // The iPhone key bar's ESC, then dictation: SwiftTerm sends ESC on its
+        // own and the dictated text (which starts with a space) later. Merging
+        // them into Alt+Space cost the draft mirror on every dictated prompt.
+        XCTAssertEqual(decode(at: [100, 900], [0x1B], bytes(" hello")), [.escape(atMs: 100), .text(" hello")])
+        XCTAssertEqual(decode(at: [100, 300, 900], [0x1B], [0x1B], bytes("x")),
+                       [.escape(atMs: 100), .escape(atMs: 300), .text("x")], "each Esc keeps its own arrival time")
+        XCTAssertEqual(decode(bytes("\u{1B}b")), [.alt("b")], "ESC + key in one frame is still Alt")
+    }
+
+    func testAPendingEscapeIsReportedWhenTheDraftIsRead() {
+        var decoder = KeyDecoder()
+        XCTAssertEqual(decoder.decode(Data([0x1B]), nowMs: 100), [])
+        XCTAssertEqual(decoder.takePendingEscape(), [.escape(atMs: 100)])
+        XCTAssertEqual(decoder.takePendingEscape(), [])
+        XCTAssertEqual(decoder.decode(Data(bytes("a")), nowMs: 200), [.text("a")])
+    }
+
+    func testKittyEscapeIsAnEscapeKey() {
+        XCTAssertEqual(decode(at: [42], bytes("\u{1B}[27u")), [.escape(atMs: 42)])
+        XCTAssertEqual(decode(at: [42], bytes("\u{1B}[27;1u")), [.escape(atMs: 42)])
+        XCTAssertEqual(decode(bytes("\u{1B}[27;5u")), [.unknown], "Ctrl+Esc is an unmodelled chord")
+        XCTAssertEqual(decode(bytes("\u{1B}[27;1:3u")), [.ignored], "release")
+    }
+
     func testKittyEnterWithModifiers() {
         XCTAssertEqual(decode(bytes("\u{1B}[13u")), [.enter([])])
         XCTAssertEqual(decode(bytes("\u{1B}[13;2u")), [.enter([.shift])])
@@ -135,7 +168,7 @@ final class KeyDecoderTests: XCTestCase {
     func testKittySpecialKeyCodes() {
         XCTAssertEqual(decode(bytes("\u{1B}[127u")), [.backspace])
         XCTAssertEqual(decode(bytes("\u{1B}[127;5u")), [.backspace])
-        XCTAssertEqual(decode(bytes("\u{1B}[9u\u{1B}[27u")), [.control(0x09), .unknown])
+        XCTAssertEqual(decode(at: [7], bytes("\u{1B}[9u\u{1B}[27u")), [.control(0x09), .escape(atMs: 7)])
         XCTAssertEqual(decode(bytes("\u{1B}[57441;1:3u")), [.ignored])   // modifier-only key
     }
 

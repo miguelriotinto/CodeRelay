@@ -43,6 +43,14 @@ struct InputProfile: Codable, Equatable, Sendable {
     var inset: Int
     /// Free-form note of the agent build these values were probed against.
     var probedWith: String?
+    /// Measured Esc behaviour. When both are set, a single Esc leaves the draft
+    /// alone; a second Esc within `doubleEscapeClearsWithinMs` clears the box
+    /// (or, on an empty box, opens a menu); one at least
+    /// `doubleEscapeInertAfterMs` later is a fresh single press; anything
+    /// between is too close to the agent's own threshold to guess. Unset (an
+    /// unprobed agent): every Esc loses the mirror.
+    var doubleEscapeClearsWithinMs: Int?
+    var doubleEscapeInertAfterMs: Int?
 
     static let `default` = InputProfile()
 
@@ -57,6 +65,7 @@ struct InputProfile: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case newline, submit, killLineAcrossLines, inset, probedWith
+        case doubleEscapeClearsWithinMs, doubleEscapeInertAfterMs
     }
 
     init(from decoder: Decoder) throws {
@@ -66,6 +75,13 @@ struct InputProfile: Codable, Equatable, Sendable {
         killLineAcrossLines = try c.decodeIfPresent(Bool.self, forKey: .killLineAcrossLines) ?? false
         inset = try c.decodeIfPresent(Int.self, forKey: .inset) ?? 0
         probedWith = try c.decodeIfPresent(String.self, forKey: .probedWith)
+        doubleEscapeClearsWithinMs = try c.decodeIfPresent(Int.self, forKey: .doubleEscapeClearsWithinMs)
+        doubleEscapeInertAfterMs = try c.decodeIfPresent(Int.self, forKey: .doubleEscapeInertAfterMs)
+        if let clears = doubleEscapeClearsWithinMs, let inert = doubleEscapeInertAfterMs, clears < 0 || inert < clears {
+            throw DecodingError.dataCorruptedError(
+                forKey: .doubleEscapeInertAfterMs, in: c,
+                debugDescription: "need 0 <= doubleEscapeClearsWithinMs <= doubleEscapeInertAfterMs")
+        }
         guard inset >= 0 else {
             throw DecodingError.dataCorruptedError(forKey: .inset, in: c, debugDescription: "inset must be >= 0")
         }

@@ -973,6 +973,21 @@ final class PromptRequestHandlerTests: XCTestCase {
         XCTAssertTrue(writes.isEmpty)
     }
 
+    /// A lost mirror is not an empty line: the user can see their prompt, so
+    /// "Type or dictate a prompt first" reads as a lie. `failed` + `message` is
+    /// rendered verbatim by every shipped client, so no client change is needed.
+    func testALostMirrorSaysTheDraftCouldNotBeReadNotThatItIsEmpty() async throws {
+        let optimizer = FakeOptimizer()
+        let fixture = try await makeFixture(optimizer: optimizer)
+        addTeardownBlock { await self.cleanup(fixture) }
+        await fixture.mock.setMockPromptContext(context(draft: "", draftKnown: false))
+        try await send(.optimizePrompt(sessionId: fixture.sessionId, shareScreen: true), on: fixture)
+        let reply = try await nextServerMessage(fixture)
+        XCTAssertEqual(reply, .optimizePromptResult(status: "failed", message: "Couldn't read this prompt. Clear the line and type or dictate it again"))
+        let received = await optimizer.received
+        XCTAssertTrue(received.isEmpty)
+    }
+
     func testWhitespaceOnlyDraftIsNoDraft() async throws {
         let fixture = try await makeFixture(optimizer: FakeOptimizer())
         addTeardownBlock { await self.cleanup(fixture) }
