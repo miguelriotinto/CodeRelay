@@ -701,6 +701,9 @@ public actor PTYSession: PTYSessionProtocol {
 
     public func promptContext(includeScreen: Bool) -> PromptContext {
         syncTrackedAgent()
+        // An Esc that ended the last frame is the Esc key once nothing followed
+        // it — apply it before reading the draft (a double Esc may have cleared it).
+        draftTracker.apply(contentsOf: keyDecoder.takePendingEscape())
         let agent = activityMonitor.activeAgent
         let screenLines = includeScreen
             ? PromptContext.trailingScreenLines(screenModel.snapshot().text)
@@ -805,6 +808,9 @@ public actor PTYSession: PTYSessionProtocol {
     @discardableResult
     public func replaceDraft(with text: String, forAgent expectation: AgentExpectation) -> DraftReplacementOutcome {
         syncTrackedAgent()
+        // An Esc that ended the last frame is the Esc key once nothing followed
+        // it — apply it before reading the draft (a double Esc may have cleared it).
+        draftTracker.apply(contentsOf: keyDecoder.takePendingEscape())
         guard !terminated, !draftTracker.mirrorLost,
               expectation == .any || expectation == .exactly(activityMonitor.activeAgent?.id) else {
             return .refused

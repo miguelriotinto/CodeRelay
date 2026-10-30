@@ -646,4 +646,66 @@ final class DraftTrackerTests: XCTestCase {
         t.apply(.text("z"))
         XCTAssertEqual(t.draft, "")
     }
+
+    // MARK: Escape (Claude Code 2.1.314, measured: a second Esc within 0.65 s clears, 0.7 s does not)
+
+    private var escClaude: InputProfile {
+        var p = bundledClaude
+        p.doubleEscapeClearsWithinMs = 500
+        p.doubleEscapeInertAfterMs = 1000
+        return p
+    }
+
+    func testASingleEscapeLeavesTheDraftUnderAMeasuredProfile() {
+        var t = tracker(escClaude, typing: "abc")
+        t.apply(.escape(atMs: 10_000))
+        t.apply(.text("def"))
+        XCTAssertFalse(t.mirrorLost)
+        XCTAssertEqual(t.draft, "abcdef")
+    }
+
+    func testAQuickDoubleEscapeClearsTheDraft() {
+        var t = tracker(escClaude, typing: "abc")
+        t.apply(.escape(atMs: 10_000))
+        t.apply(.escape(atMs: 10_300))
+        XCTAssertFalse(t.mirrorLost, "the box is provably empty")
+        XCTAssertEqual(t.draft, "")
+        t.apply(.text(" dictated prompt"))
+        XCTAssertEqual(t.draft, " dictated prompt")
+    }
+
+    func testADoubleEscapeOnAnEmptyDraftOpensAMenuAndLosesTheMirror() {
+        var t = tracker(escClaude)
+        t.apply(.escape(atMs: 10_000))
+        t.apply(.escape(atMs: 10_200))
+        XCTAssertTrue(t.mirrorLost, "Rewind opens; what keys do next is unknown")
+    }
+
+    func testADoubleEscapeNearTheAgentsThresholdLosesTheMirror() {
+        var t = tracker(escClaude, typing: "abc")
+        t.apply(.escape(atMs: 10_000))
+        t.apply(.escape(atMs: 10_700))
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    func testEscapesFarApartAreBothInert() {
+        var t = tracker(escClaude, typing: "abc")
+        t.apply(.escape(atMs: 10_000))
+        t.apply(.escape(atMs: 11_500))
+        t.apply(.escape(atMs: 13_000))
+        XCTAssertFalse(t.mirrorLost)
+        XCTAssertEqual(t.draft, "abc")
+    }
+
+    func testAnUnprobedAgentStillLosesTheMirrorOnEscape() {
+        var t = tracker(.default, typing: "abc")
+        t.apply(.escape(atMs: 10_000))
+        XCTAssertTrue(t.mirrorLost)
+    }
+
+    func testTheBundledClaudeManifestCarriesTheMeasuredEscapeRule() throws {
+        let profile = AgentStateDetector(manifests: AgentStateDetector.loadBundled()).inputProfile(for: "claude")
+        XCTAssertEqual(profile.doubleEscapeClearsWithinMs, 500)
+        XCTAssertEqual(profile.doubleEscapeInertAfterMs, 1000)
+    }
 }

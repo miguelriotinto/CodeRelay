@@ -5,7 +5,9 @@
     "submit": ["enter"],
     "killLineAcrossLines": true,
     "inset": 4,
-    "probedWith": "claude 2.1.270 (Claude Code) on 2026-09-13"
+    "probedWith": "claude 2.1.270 (Claude Code) on 2026-09-13",
+    "doubleEscapeClearsWithinMs": 500,
+    "doubleEscapeInertAfterMs": 1000
   },
   "rules": [
     { "id": "osc_title_working", "state": "working", "priority": 1100, "region": "osc_title", "visible_working": true, "regex": ["^[\\u2800-\\u28FF] "] },

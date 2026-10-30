@@ -91,6 +91,7 @@ struct DraftTracker: Sendable {
         knownEmpty()
         killBuffer.removeAll()
         killBufferTrusted = true
+        lastEscapeAtMs = nil
         self.profile = profile
     }
 
@@ -124,6 +125,12 @@ struct DraftTracker: Sendable {
     mutating func apply(contentsOf events: [KeyEvent]) {
         for event in events { apply(event) }
     }
+
+    /// Monotonic milliseconds, for the Esc double-press rule.
+    static func monotonicMs() -> UInt64 { DispatchTime.now().uptimeNanoseconds / 1_000_000 }
+
+    /// When the last unpaired Esc arrived (a double press consumes it).
+    private var lastEscapeAtMs: UInt64?
 
     mutating func apply(_ event: KeyEvent) {
         // While the mirror is lost only the Enter family and Ctrl-C can restore
@@ -173,12 +180,31 @@ struct DraftTracker: Sendable {
         // Provably inert at an input line (mouse reports, terminal replies,
         // F-keys, key releases) — the draft is untouched.
         case .ignored: break
+        case .escape(let at): handleEscape(atMs: at)
         // Unclassifiable: the mirror can no longer be trusted. Under-counting
         // the draft is the one destructive direction (the replacer would erase
         // too little and paste into the residue), so drop it and stay lost.
         case .unknown: invalidate()
         case .lineFeed: applyEnterKey(.ctrlJ)
         }
+    }
+
+    // MARK: - Escape
+
+    /// See `InputProfile.doubleEscapeClearsWithinMs`. Claude Code 2.1.314,
+    /// measured: a second Esc 0.65 s after the first clears a non-empty box and
+    /// opens Rewind on an empty one; at 0.7 s it does nothing. The profile's
+    /// margins (0.5 s / 1 s) leave the ambiguous band to `invalidate()`.
+    private mutating func handleEscape(atMs nowMs: UInt64) {
+        guard let clears = profile.doubleEscapeClearsWithinMs,
+              let inert = profile.doubleEscapeInertAfterMs else { invalidate(); return }
+        guard let last = lastEscapeAtMs else { lastEscapeAtMs = nowMs; return }
+        let gap = nowMs >= last ? nowMs - last : 0
+        if gap >= UInt64(inert) { lastEscapeAtMs = nowMs; return }   // a fresh single press
+        lastEscapeAtMs = nil                                          // the pair is consumed
+        guard gap <= UInt64(clears) else { invalidate(); return }    // too close to call
+        // A double press: a non-empty box is now empty; an empty one opened a menu.
+        if scalars.isEmpty { invalidate() } else { knownEmpty() }
     }
 
     // MARK: - Classification

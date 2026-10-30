@@ -17,6 +17,10 @@ extension RelayMessageHandler {
     /// `replace_prompt.text` cap (spec §6 "Replacement too long").
     static let maxReplaceTextBytes = 16_384
 
+    /// The `failed` message for a lost draft mirror. Not `no_draft`, whose
+    /// "Type or dictate a prompt first" is false while the prompt is on screen.
+    static let draftUnreadableMessage = "Couldn't read this prompt. Clear the line and type or dictate it again"
+
     func handleOptimizePrompt(sessionId: UUID, shareScreen: Bool, context: ChannelHandlerContext) {
         guard let pty = attachedPTY, attachedSessionId == sessionId else {
             sendServerMessage(.optimizePromptResult(status: "failed", message: "Session not attached"), context: context)
@@ -99,7 +103,13 @@ extension RelayMessageHandler {
                         // `draftKnown == false` means the mirror was lost, not that
                         // the line is empty — the one outcome that used to log nothing.
                         RelayLogger.log(.debug, category: "optimizer", "optimize_prompt no_draft (draftKnown=\(promptContext.draftKnown))")
-                        handler.sendServerMessage(.optimizePromptResult(status: "no_draft"), context: ctx.value)
+                        // A lost mirror is not an empty line — the user can see their
+                        // prompt — so say it could not be read. Clients render a
+                        // `failed` message verbatim.
+                        let reply: ServerMessage = promptContext.draftKnown
+                            ? .optimizePromptResult(status: "no_draft")
+                            : .optimizePromptResult(status: "failed", message: Self.draftUnreadableMessage)
+                        handler.sendServerMessage(reply, context: ctx.value)
                     }
                     return
                 }

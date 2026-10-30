@@ -296,7 +296,21 @@ Pipeline per session, all inside the `PTYSession` actor:
   backslash that Enter inserts a newline and the box stays full. For the same
   reason a lost episode leaves the kill buffer *kept but untrusted*: the next
   Ctrl-Y loses the mirror instead of yanking a copy the agent's ring may have
-  outgrown. Capped at 16 384 scalars
+  outgrown. **The Esc key is modelled, not unknown**, because the iPhone key
+  bar sends it as a lone `0x1B` frame: the decoder used to hold it as a pending
+  prefix and read the next frame's leading space (dictated text) as Alt+Space,
+  losing the mirror — so the wand answered "type or dictate a prompt first" over
+  a visible prompt. A pending Esc is now decided by the next frame (`[ O ] P`
+  still continue a sequence; anything else makes it `.escape(atMs:)`, stamped
+  with the arrival time of the frame that carried it) or flushed by
+  `takePendingEscape()` when the draft is read; kitty `CSI 27 u` is the same
+  key. The tracker applies the manifest's measured double-Esc rule
+  (`doubleEscapeClearsWithinMs` / `doubleEscapeInertAfterMs`, Claude Code: a
+  second Esc within 0.65 s clears a non-empty box or opens Rewind on an empty
+  one, after 0.7 s is inert — stored as 500/1000 so the gray zone fails closed);
+  an agent without the two keys still loses the mirror on Esc. A lost mirror
+  answers `failed` / `draftUnreadableMessage` instead of `no_draft`, which every
+  shipped client renders verbatim. Capped at 16 384 scalars
   (`DraftTracker.maxScalars`), checked *before* an insert, and the decoder drops a
   printable run past the same bound as one `.unknown`.
 - **A lost mirror refuses a replacement, and the actor is what refuses.** The
