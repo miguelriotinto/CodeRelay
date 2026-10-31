@@ -1,6 +1,6 @@
 package relay.feature.workspace
 
-import androidx.compose.foundation.layout.systemGestureExclusion
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.ui.Modifier
 
 /**
