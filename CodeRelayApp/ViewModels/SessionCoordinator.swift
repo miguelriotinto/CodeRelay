@@ -32,12 +32,12 @@ final class SessionCoordinator: SharedSessionCoordinator {
     /// sessions this client owns). A failed first dial falls through: the
     /// handshake reconnects on its own, so it becomes a retry rather than a
     /// dead section. Mirrors the macOS subclass exactly.
-    override func start() async {
+    override func start(reason: SessionHandshake.Reason) async {
         do {
             try await connection.connect(config: config, token: token)
         } catch {
             presentError(error.localizedDescription)
         }
-        await performHandshake(reason: .launch)
+        await performHandshake(reason: reason)
     }
 }

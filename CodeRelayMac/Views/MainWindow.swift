@@ -161,6 +161,18 @@ private struct WorkspaceView: View {
                     }
             }
         }
+        // Session loss belongs to the hub, never to the focus coordinator: the
+        // alert must survive focus moving away from the server that lost it.
+        .alert(
+            hub.takenAlert?.title ?? "",
+            isPresented: Binding(get: { hub.takenAlert != nil },
+                                 set: { if !$0 { hub.takenAlert = nil } }),
+            presenting: hub.takenAlert
+        ) { _ in
+            Button("OK", role: .cancel) { hub.takenAlert = nil }
+        } message: { alert in
+            Text(alert.message)
+        }
         .alert("Rename Session", isPresented: $showRenameAlert) {
             TextField("Name", text: $renameText)
             Button("Rename") {
@@ -306,20 +318,6 @@ private struct ActiveCoordinatorModifiers: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("Unable to reconnect to the server. Check your network and try reconnecting.")
-            }
-            .alert(
-                "Session Moved",
-                isPresented: Binding(
-                    get: { coordinator.activityCoordinator.showSessionStolen },
-                    set: { coordinator.activityCoordinator.showSessionStolen = $0 }
-                )
-            ) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                if let name = coordinator.activityCoordinator.stolenSessionName,
-                   let shortId = coordinator.activityCoordinator.stolenSessionShortId {
-                    Text("\(name) (\(shortId)) was attached from another device.")
-                }
             }
     }
 }

@@ -48,7 +48,7 @@ final class SessionCoordinator: SharedSessionCoordinator {
     /// Wake and network-restored events are fanned out by the hub with a
     /// stagger (multi-server D10); this coordinator installs no observers of
     /// its own, or every wake would reconnect it twice.
-    override func start() async {
+    override func start(reason: SessionHandshake.Reason) async {
         do {
             try await connection.connect(config: config, token: token)
         } catch {
@@ -60,7 +60,7 @@ final class SessionCoordinator: SharedSessionCoordinator {
         // single-flight retrying unit. Also the only auth call on this path —
         // the handshake owns it, so a wake trigger firing mid-launch joins this
         // pass instead of reconnecting underneath it.
-        await performHandshake(reason: .launch)
+        await performHandshake(reason: reason)
     }
 
     override func didAuthenticate() {
