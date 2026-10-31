@@ -12,6 +12,26 @@ enum WorkspaceRoot {
     }
 }
 
+/// Whether a one-finger drag is the left-edge swipe that opens the session list
+/// (docs/superpowers/specs/2026-10-31-edge-swipe-sessions.md). Points, in the
+/// strip's own space (x from the left edge). The Kotlin twin is
+/// `relay.feature.workspace.EdgeSwipeLogic`; keep the numbers in step.
+enum EdgeSwipeRule {
+    /// Width of the start strip along the left edge.
+    static let stripWidth: CGFloat = 20
+    /// Minimum rightward travel.
+    static let minTravel: CGFloat = 40
+    /// Horizontal travel must exceed this multiple of the vertical travel.
+    static let horizontalDominance: CGFloat = 2
+
+    static func shouldOpen(startX: CGFloat, dx: CGFloat, dy: CGFloat, listOpen: Bool) -> Bool {
+        !listOpen
+            && startX >= 0 && startX <= stripWidth
+            && dx >= minTravel
+            && abs(dx) > horizontalDominance * abs(dy)
+    }
+}
+
 /// Main workspace over the hub: NavigationSplitView with a grouped session
 /// sidebar and the active coordinator's terminal (spec §8.2).
 struct WorkspaceView: View {

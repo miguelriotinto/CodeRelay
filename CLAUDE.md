@@ -301,6 +301,14 @@ emulator: with tracking on a swipe reaches the PTY as `CSI < 64|65 ; col ; row M
 at the initial-touch cell; with it off the same swipe scrolls termlib's local
 scrollback and types nothing.
 
+**Left-edge swipe opens the session list.** A strip along the left edge (20 pt
+iOS, 20 dp Android; on Android a centred 200 dp band registered with
+`systemGestureExclusion`) owns touches that start in it, so terminal swipes
+elsewhere are untouched. On Android `edgeSwipeOpen` observes from the parent in
+the Initial pass (touch only) and consumes only after a >=40 rightward,
+horizontal-dominant drag fires; the decision is `EdgeSwipeLogic` /
+`EdgeSwipeRule`.
+
 ### Connection Health & Quality Monitoring
 
 `RelayConnection` maintains connection health via application-level ping/pong (`ClientMessage.ping` → `ServerMessage.pong`) on a 10-second interval. This exercises the full JSON message path rather than relying on WebSocket-level pings (opcode 0x9), which are silently dropped by some network configurations.
@@ -554,6 +562,11 @@ Load-bearing details, each documented at its site:
 - **Accelerators are Ctrl+Shift / Ctrl+Alt only** — a bare Ctrl chord is
   terminal input. Dispatched at the `Window` (`onPreviewKeyEvent`) so they work
   with the sidebar focused.
+- **Android-only APIs in shared `feature-workspace` sources** go in their own
+  file, with a same-name no-op under `CodeRelayLinux/feature-workspace/src/main/kotlin`
+  and an entry in the exclusion set in that module's `build.gradle.kts`
+  (`BackGestureExclusion.kt`, `Haptics.kt`, `QrShareSheet.kt`). Only Android CI
+  compiles the excluded files.
 - **Everything the shared `WorkspaceScreen` cannot pass to the terminal host
   arrives ambiently**: `LocalTerminalTheme` (palette) and `LocalTerminalHooks`
   (clipboard, title, paste, zoom, scrollback size), provided once by `Main.kt`.

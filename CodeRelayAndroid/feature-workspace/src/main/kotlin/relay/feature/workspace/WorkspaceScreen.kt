@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -67,6 +68,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.feature.workspace.ui.ConnectionQualityDot
+import relay.feature.workspace.ui.edgeSwipeOpen
 import relay.feature.workspace.ui.SessionLoadingSheetHost
 import relay.feature.workspace.ui.terminalLoadingCover
 import relay.feature.workspace.ui.SessionSidebar
@@ -89,16 +91,6 @@ private const val SWIPE_CLOSE_THRESHOLD_PX = 8f
 private val TWO_PANE_SIDEBAR_WIDTH = 320.dp
 /** Slide duration for the two-pane sidebar; Material's drawer used ~256 ms. */
 private const val TWO_PANE_SIDEBAR_ANIM_MS = 260
-/**
- * Start-edge strip that reopens the hidden two-pane sidebar on a rightward drag.
- * Wider than the usual 24 dp because with gesture navigation the system owns
- * roughly the first 24 dp for its back gesture and the app never sees a drag
- * that starts there (confirmed on the emulator: the same swipe opens the
- * sidebar under three-button navigation and triggers Back under gestures).
- * The extra band gives a drag that starts just past the system zone somewhere
- * to land. The toggle button remains the primary way to show the sidebar.
- */
-private val TWO_PANE_EDGE_SWIPE_WIDTH = 40.dp
 
 // Session-name reload, fade through black. Matches Swift `TerminalReloadFade`:
 // quick out (the user just tapped, so the black needs no easing-in to read as a
@@ -295,9 +287,9 @@ internal fun WorkspacePane(
     // 320 dp — its rightmost columns and the key bar's last keys — sat off the
     // right edge of the screen (seen on the iPhone-Duo-sized emulator in
     // landscape). A Row gives the pane the width that is actually left. The two
-    // gestures the drawer used to provide are re-added by hand below: a leftward
-    // drag on the sidebar closes it, a rightward drag from the pane's left edge
-    // opens it. Survives rotation/recreation; starts open.
+    // gestures the drawer used to provide are re-added by hand: a leftward drag
+    // on the sidebar closes it (below), a rightward drag from the left edge opens
+    // it (`edgeSwipeOpen`). Survives rotation/recreation; starts open.
     var twoPaneSidebarOpen by rememberSaveable { mutableStateOf(true) }
 
     val sidebar: @Composable () -> Unit = sidebarContent?.let { custom ->
@@ -422,68 +414,79 @@ internal fun WorkspacePane(
                 }
             }
 
-            if (expanded) {
-                // Fold-open / tablet: sidebar and terminal share the width in a Row.
-                // See `twoPaneSidebarOpen` for why this is not a navigation drawer.
-                val sidebarWidth by animateDpAsState(
-                    targetValue = if (twoPaneSidebarOpen) TWO_PANE_SIDEBAR_WIDTH else 0.dp,
-                    animationSpec = tween(TWO_PANE_SIDEBAR_ANIM_MS),
-                    label = "twoPaneSidebarWidth",
-                )
-                Row(modifier = Modifier.fillMaxSize()) {
-                    if (sidebarWidth > 0.dp) {
-                        // Clip so the pane slides in/out instead of squeezing its
-                        // rows; the inner Box keeps the sidebar at its full width
-                        // while the outer one animates.
-                        Box(
-                            modifier = Modifier
-                                .width(sidebarWidth)
-                                .fillMaxHeight()
-                                .clipToBounds()
-                                .background(MaterialTheme.colorScheme.surface),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .width(TWO_PANE_SIDEBAR_WIDTH)
-                                    .fillMaxHeight()
-                                    // A leftward drag on the sidebar hides it — the swipe
-                                    // the compact ModalNavigationDrawer users expect.
-                                    .pointerInput(Unit) {
-                                        detectHorizontalDragGestures { _, dragAmount ->
-                                            if (dragAmount < -SWIPE_CLOSE_THRESHOLD_PX) twoPaneSidebarOpen = false
-                                        }
-                                    },
-                            ) { sidebar() }
-                        }
-                    }
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                        terminalColumn({ twoPaneSidebarOpen = !twoPaneSidebarOpen }, false)
-                        // Edge swipe to reopen: a thin strip along the pane's start
-                        // edge that only exists while the sidebar is hidden, so it
-                        // never steals a drag from the terminal otherwise.
-                        if (!twoPaneSidebarOpen) {
-                            Box(
-                                modifier = Modifier
-                                    .width(TWO_PANE_EDGE_SWIPE_WIDTH)
-                                    .fillMaxHeight()
-                                    .pointerInput(Unit) {
-                                        detectHorizontalDragGestures { _, dragAmount ->
-                                            if (dragAmount > SWIPE_CLOSE_THRESHOLD_PX) twoPaneSidebarOpen = true
-                                        }
-                                    },
-                            )
-                        }
-                    }
-                }
-            } else {
-                ModalNavigationDrawer(
-                    drawerState = drawerState,
-                    drawerContent = {
-                        Box(modifier = Modifier.width(320.dp).fillMaxHeight()) { sidebar() }
+            val sidebarWidth by animateDpAsState(
+                targetValue = if (twoPaneSidebarOpen) TWO_PANE_SIDEBAR_WIDTH else 0.dp,
+                animationSpec = tween(TWO_PANE_SIDEBAR_ANIM_MS),
+                label = "twoPaneSidebarWidth",
+            )
+
+            // Left-edge swipe opens the list through the same action as the top-left
+            // button (terminalColumn's onSidebarToggle). Detection sits on this parent
+            // (Initial pass, touch only, nothing consumed until it fires), so terminal
+            // taps/scrolls and Linux mouse clicks in the strip reach their targets.
+            Box(
+                modifier = Modifier.fillMaxSize().edgeSwipeOpen(
+                    isListOpen = { if (expanded) twoPaneSidebarOpen || sidebarWidth > 0.dp else drawerState.isOpen },
+                    onOpen = {
+                        if (expanded) twoPaneSidebarOpen = true
+                        else scope.launch { drawerState.open() }
                     },
-                ) {
-                    terminalColumn({ scope.launch { drawerState.open() } }, false)
+                ),
+            ) {
+                if (expanded) {
+                    // Fold-open / tablet: sidebar and terminal share the width in a Row.
+                    // See `twoPaneSidebarOpen` for why this is not a navigation drawer.
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        if (sidebarWidth > 0.dp) {
+                            // Clip so the pane slides in/out instead of squeezing its
+                            // rows; the inner Box keeps the sidebar at its full width
+                            // while the outer one animates.
+                            Box(
+                                modifier = Modifier
+                                    .width(sidebarWidth)
+                                    .fillMaxHeight()
+                                    .clipToBounds()
+                                    .background(MaterialTheme.colorScheme.surface),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(TWO_PANE_SIDEBAR_WIDTH)
+                                        .fillMaxHeight()
+                                        // A leftward drag on the sidebar hides it — the swipe
+                                        // the compact ModalNavigationDrawer users expect.
+                                        .pointerInput(Unit) {
+                                            detectHorizontalDragGestures { _, dragAmount ->
+                                                if (dragAmount < -SWIPE_CLOSE_THRESHOLD_PX) twoPaneSidebarOpen = false
+                                            }
+                                        },
+                                ) { sidebar() }
+                            }
+                        }
+                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                            terminalColumn({ twoPaneSidebarOpen = !twoPaneSidebarOpen }, false)
+                        }
+                    }
+                } else {
+                    ModalNavigationDrawer(
+                        drawerState = drawerState,
+                        // Only drag-to-close; opening by drag is `edgeSwipeOpen`'s, so the
+                        // drawer's own detector cannot race it and snap the drawer shut.
+                        gesturesEnabled = drawerState.isOpen,
+                        drawerContent = {
+                            Box(modifier = Modifier.width(320.dp).fillMaxHeight()) { sidebar() }
+                        },
+                    ) {
+                        terminalColumn({ scope.launch { drawerState.open() } }, false)
+                    }
                 }
+                // Only carries the system-Back exclusion for the band; no pointer input.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .width(EdgeSwipeLogic.STRIP_WIDTH_DP.dp)
+                        .height(EdgeSwipeLogic.BAND_HEIGHT_DP.dp)
+                        .backGestureExclusion(),
+                )
             }
         }
 
