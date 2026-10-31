@@ -162,6 +162,34 @@ final class SessionHandshakeTests: XCTestCase {
         XCTAssertEqual(h.persistedBaseline?.sessions.map(\.id), [b])
     }
 
+    /// `.enable` silence is per slot, not per handshake: the stale baseline is
+    /// cleared the moment the enable pass starts, so a fetch that applies a
+    /// list before the handshake does has nothing to diff against.
+    func testFetchRacingAheadOfEnableHandshakeReportsNothing() async throws {
+        let a = UUID(), b = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: SessionBaseline(
+            tokenId: "me", sessions: [LostSession(id: a, name: "Arya"), LostSession(id: b, name: "Bran")]))
+        // Drop auth but keep the token id: the handshake re-authenticates and
+        // parks on an auth_request the test answers later.
+        h.controller.resetAuth()
+        h.script(owned: [lossInfo(b)], all: [lossInfo(a, token: "other"), lossInfo(b)])
+        let previous = h.conn.autoRespond
+        h.conn.autoRespond = { $0.typeString == "auth_request" ? nil : previous?($0) }
+
+        let handshake = Task { await h.coordinator.performHandshake(reason: .enable) }
+        await pollUntil("the enable handshake to park on auth") { h.conn.sentTypes.contains("auth_request") }
+        XCTAssertNil(h.persistedBaseline, "the enable pass clears the baseline before its first await")
+
+        // A refresh's list lands first.
+        await h.coordinator.reportLosses(h.coordinator.reconcile(tokenScoped: [lossInfo(b)]))
+
+        h.conn.deliver(.authSuccess(protocolVersion: 4, tokenId: "me"))
+        let ok = await handshake.value
+        XCTAssertTrue(ok)
+        XCTAssertTrue(h.reports.items.isEmpty, "nothing is reported for a just-enabled server")
+        XCTAssertEqual(h.listAllCount, 0)
+    }
+
     // MARK: - Auth validity requires a live socket
 
     /// `handleReceiveFailure()` flips `state` to `.disconnected` WITHOUT bumping

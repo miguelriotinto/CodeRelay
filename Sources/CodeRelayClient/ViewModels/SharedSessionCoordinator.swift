@@ -667,18 +667,29 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         let split = SessionLossClassifier.classify(lost: lost, all: all, myTokenId: currentTokenId)
         let speaksEnded = (sessionController?.serverProtocolVersion ?? 0) >= Self.endedReportingProtocolVersion
         let report = SessionLossReport(taken: split.taken, ended: speaksEnded ? split.ended : [])
-        guard !report.taken.isEmpty || !report.ended.isEmpty else { return }
+        guard !report.taken.isEmpty || !report.ended.isEmpty, !isTornDown else { return }
         onSessionsLost?(report)
     }
 
     /// Drops one session from the persisted baseline. Every LOCAL removal
     /// (terminate, steal clean-up, live end) calls this before any refetch, so
     /// the next diff never reports what this device already knows is gone.
-    private func removeFromBaseline(_ id: UUID) {
+    /// Returns whether the id was in the baseline.
+    @discardableResult
+    private func removeFromBaseline(_ id: UUID) -> Bool {
         guard let stored = ownershipStore.loadBaseline(),
-              stored.sessions.contains(where: { $0.id == id }) else { return }
+              stored.sessions.contains(where: { $0.id == id }) else { return false }
         ownershipStore.saveBaseline(SessionBaseline(
             tokenId: stored.tokenId, sessions: stored.sessions.filter { $0.id != id }))
+        return true
+    }
+
+    /// Forgets the baseline outright. An `.enable` pass calls this before its
+    /// first await, so no list applied while the server was just enabled —
+    /// the handshake's own or a refresh racing ahead of it — diffs against
+    /// losses from before it was turned off.
+    func clearLossBaseline() {
+        ownershipStore.saveBaseline(nil)
     }
 
     // MARK: - Access
@@ -1148,9 +1159,16 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         // a refresh already dropped — and so already reported) is a no-op.
         guard sessions.contains(where: { $0.id == sessionId }) || activeSessionId == sessionId else { return }
         let lost = LostSession(id: sessionId, name: name(for: sessionId))
+        // A diff that already dropped (and reported) this session removed it
+        // from the baseline but left `activeSessionId` alone, so a queued push
+        // still passes the guard: clean up regardless, report only if the
+        // baseline still had it.
+        let unreported = removeFromBaseline(sessionId)
         cleanUpStolenSession(sessionId)
         // No classification: the server sends `session_stolen` only for a takeover.
-        onSessionsLost?(SessionLossReport(taken: [lost], ended: []))
+        if unreported {
+            onSessionsLost?(SessionLossReport(taken: [lost], ended: []))
+        }
     }
 
     /// Removes a session another client attached from the pane: clears

@@ -99,6 +99,11 @@ public final class SessionHandshake {
     /// "you own zero sessions" answer, which is a SUCCESS, not a retry case.
     @discardableResult
     func perform(reason: Reason) async -> Bool {
+        // `.enable` is silent per SLOT, not per pass: drop the stale baseline
+        // before any await, so a refresh that applies a list ahead of this
+        // handshake has nothing to diff against either.
+        if case .enable = reason { coordinator.clearLossBaseline() }
+
         // Single-flight. A second caller does not get its own pass: the
         // in-flight one is already doing precisely what it wants, and a
         // parallel `session_list` could cross-deliver (replies are matched by

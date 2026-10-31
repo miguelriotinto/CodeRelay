@@ -336,13 +336,25 @@ final class SharedSessionCoordinatorTests: XCTestCase {
 
     // MARK: - Session Stolen Handling
 
+    /// Stolen tests list their sessions through `reconcile` (as a real fetch
+    /// would), so the steal finds them in the baseline and reports them. An
+    /// isolated defaults suite keeps that baseline out of `.standard`.
+    private func makeStolenCoordinator(_ connection: RelayConnection) -> SharedSessionCoordinator {
+        SharedSessionCoordinator(connection: connection, token: "test-token",
+                                 ownershipKeyPrefix: "test.stolen",
+                                 defaults: UserDefaults(suiteName: "test.stolen.\(UUID().uuidString)")!)
+    }
+
     func testSessionStolenNotificationClearsActiveSession() {
         let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+        let coordinator = makeStolenCoordinator(connection)
 
         let sessionId = UUID()
+        coordinator.reconcile(tokenScoped: [
+            SessionInfo(id: sessionId, name: "TestSession", state: .activeAttached, tokenId: "t1",
+                        createdAt: Date(), cols: 80, rows: 24)
+        ])
         coordinator.activeSessionId = sessionId
-        coordinator.sessionNames[sessionId] = "TestSession"
         coordinator.agentSessions[sessionId] = "claude"
         coordinator.sessionsAwaitingInput.insert(sessionId)
         var reports: [SessionLossReport] = []
@@ -371,16 +383,16 @@ final class SharedSessionCoordinatorTests: XCTestCase {
     /// leaving other sessions untouched.
     func testSessionStolenRemovesFromPane() {
         let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+        let coordinator = makeStolenCoordinator(connection)
 
         let stolenId = UUID()
         let keepId = UUID()
 
         coordinator.activeSessionId = stolenId
-        coordinator.sessions = [
+        coordinator.reconcile(tokenScoped: [
             SessionInfo(id: stolenId, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
             SessionInfo(id: keepId, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
-        ]
+        ])
         coordinator.agentSessions[stolenId] = "claude"
         coordinator.sessionsAwaitingInput.insert(stolenId)
         let stolenVM = TerminalViewModel(sessionId: stolenId, connection: connection)
@@ -414,16 +426,16 @@ final class SharedSessionCoordinatorTests: XCTestCase {
     /// not the focused tab) must also disappear immediately AND be reported.
     func testSessionStolenNonActiveStillRemovesAndAlerts() {
         let connection = RelayConnection()
-        let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
+        let coordinator = makeStolenCoordinator(connection)
 
         let stolenId = UUID()      // shown in sidebar, NOT active
         let activeId = UUID()      // the session the user is actually looking at
 
         coordinator.activeSessionId = activeId
-        coordinator.sessions = [
+        coordinator.reconcile(tokenScoped: [
             SessionInfo(id: stolenId, name: nil, state: .activeDetached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
             SessionInfo(id: activeId, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
-        ]
+        ])
         var reports: [SessionLossReport] = []
         coordinator.onSessionsLost = { reports.append($0) }
 
@@ -770,6 +782,30 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.reports.items.count, 1, "reported exactly once")
         XCTAssertEqual(h.reports.items.first?.taken.map(\.id), [a])
         XCTAssertEqual(h.listAllCount, 0, "nothing was lost to the diff")
+    }
+
+    /// Review focus #2, the other order: the ACTIVE session drops out of a wake
+    /// diff (reported), and the queued `session_stolen` arrives after it. The
+    /// diff does not clear `activeSessionId`, so the steal still passes its
+    /// guard — it must clean up (clear the active slot) without reporting again.
+    func testDiffThenQueuedStealOfActiveSessionReportsOnce() async throws {
+        let a = UUID(), b = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline(a, b))
+        h.script(owned: [lossInfo(a), lossInfo(b)])
+        await h.coordinator.fetchSessions(force: true)
+        h.coordinator.activeSessionId = a
+
+        h.script(owned: [lossInfo(b)], all: [lossInfo(a, token: "other"), lossInfo(b)])
+        await h.coordinator.fetchSessions(force: true)
+        XCTAssertEqual(h.reports.items.map { $0.taken.map(\.id) }, [[a]], "the diff reports A")
+        XCTAssertEqual(h.coordinator.activeSessionId, a, "precondition: the diff leaves the active slot")
+
+        h.coordinator.connection.onSessionStolen?(a)
+        await pollUntil("the steal to clear the active slot") { h.coordinator.activeSessionId == nil }
+        await pollUntil("the steal's refetch") { h.listCount >= 3 }
+        await h.coordinator.awaitPassFinished()
+
+        XCTAssertEqual(h.reports.items.count, 1, "the queued steal must not report A a second time")
     }
 
     /// Review focus #1: the hub's fan-out hold must see a pass that was already
