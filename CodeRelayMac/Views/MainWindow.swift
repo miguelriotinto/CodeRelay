@@ -69,6 +69,14 @@ private struct WorkspaceView: View {
     /// (Reconnecting sheet, error alerts, QR scanner, status bar) — G8.
     private var focus: SessionCoordinator? { hub.focusCoordinator }
 
+    private enum PresentedSheet { case management, loading }
+
+    private var topmostSheet: PresentedSheet? {
+        if hub.isShowingServerList { return .management }
+        if loading.isPresented { return .loading }
+        return nil
+    }
+
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             HubSidebarView(hub: hub)
@@ -138,6 +146,7 @@ private struct WorkspaceView: View {
                     // clipped the reconnect Cancel button.
                     .sessionLoadingSheetContainer()
                     .interactiveDismissDisabled()
+                    .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == .loading)
             }
         }
         .sheet(isPresented: $hub.isShowingServerList) {
@@ -146,6 +155,7 @@ private struct WorkspaceView: View {
             }
             .background(.black)
             .presentationBackground(.black)
+            .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == .management)
         }
         .overlay(alignment: .top) {
             if let notice = hub.notice {
@@ -155,24 +165,15 @@ private struct WorkspaceView: View {
                     .background(.ultraThinMaterial, in: Capsule())
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
-                    .task {
+                    .task(id: notice) {
                         try? await Task.sleep(for: .seconds(4))
                         if hub.notice == notice { hub.notice = nil }
                     }
             }
         }
-        // Session loss belongs to the hub, never to the focus coordinator: the
-        // alert must survive focus moving away from the server that lost it.
-        .alert(
-            hub.takenAlert?.title ?? "",
-            isPresented: Binding(get: { hub.takenAlert != nil },
-                                 set: { if !$0 { hub.takenAlert = nil } }),
-            presenting: hub.takenAlert
-        ) { _ in
-            Button("OK", role: .cancel) { hub.takenAlert = nil }
-        } message: { alert in
-            Text(alert.message)
-        }
+        // Session loss belongs to the hub, never to the focus coordinator. The
+        // root copy is live only with no sheet up; each sheet carries its own.
+        .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == nil)
         .alert("Rename Session", isPresented: $showRenameAlert) {
             TextField("Name", text: $renameText)
             Button("Rename") {
