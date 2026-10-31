@@ -1,5 +1,18 @@
 import Foundation
 
+/// The sessions a server's pane last showed, scoped to the token that listed
+/// them. A DIFF baseline only: coordinators compare the next token-scoped list
+/// against it to find sessions taken elsewhere or ended while away.
+public struct SessionBaseline: Codable, Equatable, Sendable {
+    public let tokenId: String
+    public let sessions: [LostSession]
+
+    public init(tokenId: String, sessions: [LostSession]) {
+        self.tokenId = tokenId
+        self.sessions = sessions
+    }
+}
+
 /// UserDefaults-backed persistence for the device-independent auxiliary maps
 /// the coordinator layers on top of the server's session list: `names`
 /// (user/server-renamed session names) and `agents` (last-seen agent per
@@ -9,7 +22,8 @@ import Foundation
 /// token-scoped `listSessions()` is authoritative, so the pane is driven by the
 /// server list, not a local cache. (A device-scoped owned set used to live here;
 /// it kept drifting from the server and blanking the pane on relaunch, so it was
-/// removed.)
+/// removed.) The persisted session baseline below is the same: it is only ever
+/// diffed against the server list, and never populates the pane.
 ///
 /// - Diff-checks before writing — `defaults.set` is called only when the value
 ///   actually changed since the last persisted snapshot (C-21).
@@ -33,6 +47,9 @@ public final class SessionOwnershipStore {
     /// layout). F3.
     public let collapsedGroupsKey: String
 
+    /// Key for the per-server session baseline (diff-only; never renders).
+    public let baselineKey: String
+
     // MARK: - Dependencies
 
     private let defaults: UserDefaults
@@ -48,6 +65,7 @@ public final class SessionOwnershipStore {
     private var persistedAgents: [UUID: String] = [:]
     private var persistedActiveSession: UUID?
     private var persistedCollapsedGroups: Set<String> = []
+    private var persistedBaseline: SessionBaseline?
     private var loaded = false
 
     // MARK: - Init
@@ -61,6 +79,7 @@ public final class SessionOwnershipStore {
         // focus/collapse never overwrites another's.
         self.activeSessionKey = "\(keyPrefix).activeSession.\(deviceId)"
         self.collapsedGroupsKey = "\(keyPrefix).collapsedGroups.\(deviceId)"
+        self.baselineKey = "\(keyPrefix).sessionBaseline"
         self.defaults = defaults
         loadSnapshots()
     }
@@ -75,6 +94,7 @@ public final class SessionOwnershipStore {
         persistedAgents = loadAgents()
         persistedActiveSession = loadActiveSession()
         persistedCollapsedGroups = loadCollapsedGroups()
+        persistedBaseline = loadBaseline()
         loaded = true
     }
 
@@ -113,6 +133,12 @@ public final class SessionOwnershipStore {
         Set(defaults.stringArray(forKey: collapsedGroupsKey) ?? [])
     }
 
+    /// Load the persisted session baseline for this server, if any.
+    public func loadBaseline() -> SessionBaseline? {
+        guard let data = defaults.data(forKey: baselineKey) else { return nil }
+        return try? decoder.decode(SessionBaseline.self, from: data)
+    }
+
     // MARK: - Saving (diff-checked)
 
     /// Persist the names dictionary. No-op when the value matches what was
@@ -140,6 +166,21 @@ public final class SessionOwnershipStore {
             return true
         }
         return false
+    }
+
+    /// Persist the session baseline (nil removes it). Diff-checked like the
+    /// others; returns whether anything was written.
+    @discardableResult
+    public func saveBaseline(_ baseline: SessionBaseline?) -> Bool {
+        guard baseline != persistedBaseline else { return false }
+        if let baseline {
+            guard let data = try? encoder.encode(baseline) else { return false }
+            defaults.set(data, forKey: baselineKey)
+        } else {
+            defaults.removeObject(forKey: baselineKey)
+        }
+        persistedBaseline = baseline
+        return true
     }
 
     /// Persist the active/focused session id for this device (F3). Passing nil

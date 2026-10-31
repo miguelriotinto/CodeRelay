@@ -191,4 +191,36 @@ final class SessionOwnershipStoreTests: XCTestCase {
         XCTAssertFalse(store.saveCollapsedGroups(["x"]), "re-saving the same set must no-op")
         XCTAssertEqual(defaults.writeCount, writes)
     }
+
+    // MARK: - Session baseline (diff-only, never renders)
+
+    func testBaselineRoundTripsPerPrefix() {
+        let a = SessionOwnershipStore(keyPrefix: "srvA", deviceId: "D", defaults: defaults)
+        let b = SessionOwnershipStore(keyPrefix: "srvB", deviceId: "D", defaults: defaults)
+        let baseline = SessionBaseline(tokenId: "tok",
+                                       sessions: [LostSession(id: UUID(), name: "One")])
+        XCTAssertTrue(a.saveBaseline(baseline))
+        XCTAssertEqual(a.loadBaseline(), baseline)
+        XCTAssertNil(b.loadBaseline())
+        let reopened = SessionOwnershipStore(keyPrefix: "srvA", deviceId: "D", defaults: defaults)
+        XCTAssertEqual(reopened.loadBaseline(), baseline)
+    }
+
+    func testSaveNilRemoves() {
+        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        _ = store.saveBaseline(SessionBaseline(tokenId: "t", sessions: []))
+        XCTAssertTrue(store.saveBaseline(nil))
+        XCTAssertNil(store.loadBaseline())
+        XCTAssertNil(defaults.data(forKey: "p.sessionBaseline"))
+        XCTAssertFalse(store.saveBaseline(nil), "removing nothing is a no-op")
+    }
+
+    func testSaveIsDiffChecked() {
+        let store = SessionOwnershipStore(keyPrefix: "p", deviceId: "D", defaults: defaults)
+        let baseline = SessionBaseline(tokenId: "t", sessions: [LostSession(id: UUID(), name: "x")])
+        XCTAssertTrue(store.saveBaseline(baseline))
+        let writes = defaults.writeCount
+        XCTAssertFalse(store.saveBaseline(baseline))
+        XCTAssertEqual(defaults.writeCount, writes)
+    }
 }

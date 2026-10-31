@@ -2,7 +2,7 @@ import Foundation
 import CodeRelayKit
 
 /// A session the user had in the pane that is no longer there.
-public struct LostSession: Equatable, Sendable {
+public struct LostSession: Equatable, Sendable, Codable {
     public let id: UUID
     public let name: String
 
