@@ -36,6 +36,15 @@ final class SessionLossTests: XCTestCase {
         XCTAssertEqual(r.ended, [b])
     }
 
+    func testClassifyFirstDuplicateWins() {
+        let r = SessionLossClassifier.classify(
+            lost: [b],
+            all: [info(b, .activeAttached, token: "other"), info(b, .exited, token: "other")],
+            myTokenId: "mine")
+        XCTAssertEqual(r.taken, [b])
+        XCTAssertEqual(r.ended, [])
+    }
+
     func testClassifyNilAllMeansTaken() {
         let r = SessionLossClassifier.classify(lost: [a, b], all: nil, myTokenId: "mine")
         XCTAssertEqual(r.taken, [a, b])

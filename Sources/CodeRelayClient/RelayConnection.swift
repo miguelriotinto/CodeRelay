@@ -223,6 +223,7 @@ public final class RelayConnection: ObservableObject {
 
     /// Checks whether the WebSocket is still alive by sending a ping.
     public func isAlive() async -> Bool {
+        if let gate = _testOnly_isAliveGate { return await gate() }
         return await measurePingRTT() != nil
     }
 
@@ -257,6 +258,7 @@ public final class RelayConnection: ObservableObject {
     /// on transport error so the coordinator can start recovery.
     public func send(_ message: ClientMessage) async throws {
         if _testOnly_sendSink != nil {
+            _testOnly_onSend?(message)
             _testOnly_sendSink?.append(message)
             return
         }
@@ -575,4 +577,9 @@ public final class RelayConnection: ObservableObject {
     /// so coordinator paths that fire-and-forget on the connection (terminate)
     /// can run against a scripted `SessionController`.
     public var _testOnly_sendSink: [ClientMessage]?
+    /// Called for each message the sink captures, at the moment of the send.
+    public var _testOnly_onSend: ((ClientMessage) -> Void)?
+    /// Replaces the ping probe in `isAlive()`, so a test can park a
+    /// foreground pass before it commits to recovery.
+    public var _testOnly_isAliveGate: (() async -> Bool)?
 }

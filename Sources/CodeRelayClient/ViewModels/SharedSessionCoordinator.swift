@@ -1099,6 +1099,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
 
     open func terminateSession(id: UUID) async {
         guard !isRecovering else { return }
+        // Out of the baseline before the send suspends: a list applied while it
+        // is in flight must not report this device's own terminate as a loss.
+        // A failed send costs nothing — the next list re-baselines it.
+        removeFromBaseline(id)
         do {
             try await connection.send(.sessionTerminate(sessionId: id))
             if activeSessionId == id {
@@ -1109,7 +1113,6 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             // Drop from the pane immediately; the fetch below reconciles against
             // the server's list (which no longer includes the terminated session).
             sessions.removeAll { $0.id == id }
-            removeFromBaseline(id)
             sessionNames.removeValue(forKey: id)
             terminalTitles.removeValue(forKey: id)
             ownershipStore.saveNames(sessionNames)
@@ -1327,6 +1330,23 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// bookmark to dial, so this is a no-op here; platform subclasses override
     /// (the macOS `SessionCoordinator.start()` already did exactly this).
     open func start(reason: SessionHandshake.Reason) async {}
+
+    /// The body every platform `start(reason:)` runs: dial, then the
+    /// single-flight handshake. `.enable` is silent per slot, so the stale
+    /// baseline goes BEFORE the dial suspends — a fetch applied while the dial
+    /// is in flight must not diff against losses from before the server was
+    /// turned on (the handshake's own clear comes too late for that). A failed
+    /// dial is not fatal: the handshake reconnects on its own, so it becomes a
+    /// retry rather than a dead section. Mirrors Kotlin `SessionCoordinator.connect`.
+    public func dialAndHandshake(reason: SessionHandshake.Reason, dial: () async throws -> Void) async {
+        if case .enable = reason { clearLossBaseline() }
+        do {
+            try await dial()
+        } catch {
+            presentError(error.localizedDescription)
+        }
+        await performHandshake(reason: reason)
+    }
 
     /// Detaches whatever this coordinator has attached and clears the selection,
     /// so the hub can attach on another server (D9: one attachment across all

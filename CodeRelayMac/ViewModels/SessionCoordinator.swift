@@ -49,18 +49,14 @@ final class SessionCoordinator: SharedSessionCoordinator {
     /// stagger (multi-server D10); this coordinator installs no observers of
     /// its own, or every wake would reconnect it twice.
     override func start(reason: SessionHandshake.Reason) async {
-        do {
+        // `.enable` clears the loss baseline before the dial; a failed dial
+        // falls through to the handshake, which reconnects on its own. The
+        // handshake (authenticate + fetch the sessions this client owns) is
+        // also the only auth call on this path, so a wake trigger firing
+        // mid-launch joins this pass instead of reconnecting underneath it.
+        await dialAndHandshake(reason: reason) {
             try await connection.connect(config: config, token: token)
-        } catch {
-            presentError(error.localizedDescription)
-            // Fall through to the handshake anyway: it reconnects on its own, so
-            // a failed first dial becomes a retry rather than a dead workspace.
         }
-        // Authenticate + fetch the sessions this client owns, in one
-        // single-flight retrying unit. Also the only auth call on this path —
-        // the handshake owns it, so a wake trigger firing mid-launch joins this
-        // pass instead of reconnecting underneath it.
-        await performHandshake(reason: reason)
     }
 
     override func didAuthenticate() {

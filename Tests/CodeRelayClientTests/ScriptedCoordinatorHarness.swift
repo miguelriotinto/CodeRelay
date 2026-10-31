@@ -106,3 +106,23 @@ func pollUntil(
     }
     XCTFail("timed out waiting for \(description)", file: file, line: line)
 }
+
+/// A one-shot gate: `wait()` parks until `open()`; `isWaiting` says a caller is parked.
+@MainActor
+final class TestGate {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var isOpen = false
+    var isWaiting: Bool { !waiters.isEmpty }
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        let parked = waiters
+        waiters.removeAll()
+        for waiter in parked { waiter.resume() }
+    }
+}

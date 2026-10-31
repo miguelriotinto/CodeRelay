@@ -708,11 +708,65 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         await h.coordinator.fetchSessions(force: true)
 
         h.script(owned: [lossInfo(a)], all: [lossInfo(a)])
+        var baselineDuringSend: [UUID]?
+        h.coordinator.connection._testOnly_onSend = { message in
+            if case .sessionTerminate = message { baselineDuringSend = h.persistedBaseline?.sessions.map(\.id) }
+        }
         await h.coordinator.terminateSession(id: b)
+        // The server answers a client-initiated terminate with BOTH
+        // session_terminated and session_ended("terminated"): idempotent.
+        h.coordinator.handleSessionEnded(sessionId: b, reason: "terminated")
         await h.coordinator.fetchSessions(force: true)
 
         XCTAssertTrue(h.reports.items.isEmpty, "a local terminate is not a loss")
         XCTAssertEqual(h.persistedBaseline?.sessions.map(\.id), [a])
+        XCTAssertEqual(baselineDuringSend, [a], "out of the baseline before the send suspends")
+    }
+
+    /// `.enable` clears the baseline before the dial suspends, not only in the
+    /// handshake: a fetch applied while the dial is in flight reports nothing.
+    func testFetchDuringEnableDialReportsNothing() async throws {
+        let a = UUID(), b = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline(a, b))
+        h.script(owned: [lossInfo(b)], all: [lossInfo(a, token: "other"), lossInfo(b)])
+        let dial = TestGate()
+
+        let starting = Task { await h.coordinator.dialAndHandshake(reason: .enable) { await dial.wait() } }
+        await pollUntil("the dial to park") { dial.isWaiting }
+        XCTAssertNil(h.persistedBaseline, "cleared before the dial suspends")
+        await h.coordinator.fetchSessions(force: true)
+        dial.open()
+        await starting.value
+
+        XCTAssertTrue(h.reports.items.isEmpty, "nothing from before the server was enabled is announced")
+        XCTAssertEqual(h.listAllCount, 0)
+    }
+
+    /// The baseline-before-dial clear is `.enable` only: a launch still diffs.
+    func testLaunchDialKeepsTheBaseline() async throws {
+        let a = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline(a))
+        h.script(owned: [], all: [lossInfo(a, token: "other")])
+
+        await h.coordinator.dialAndHandshake(reason: .launch) {}
+
+        XCTAssertEqual(h.reports.items.map { $0.taken.map(\.id) }, [[a]])
+    }
+
+    /// No report reaches the hub from a coordinator torn down mid-classification.
+    func testNoReportAfterTeardown() async throws {
+        let a = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline(a))
+        // `session_list` answers; `session_list_all` parks until delivered.
+        h.conn.autoRespond = { $0.typeString == "session_list" ? .sessionList(sessions: []) : nil }
+
+        let fetching = Task { await h.coordinator.fetchSessions(force: true) }
+        await pollUntil("parked in session_list_all") { h.listAllCount == 1 }
+        h.coordinator.tearDown()
+        h.conn.deliver(.sessionListAll(sessions: [lossInfo(a, token: "other")]))
+        await fetching.value
+
+        XCTAssertTrue(h.reports.items.isEmpty, "a torn-down coordinator reports nothing")
     }
 
     /// Review focus #4: a baseline recorded under another token (bookmark edited,
@@ -861,6 +915,46 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertFalse(h.coordinator.isPerformingHandshake, "returned only after the handshake completed")
         let ok = await handshake.value
         XCTAssertTrue(ok)
+    }
+
+    func testAwaitPassFinishedWaitsForInFlightFetch() async throws {
+        let h = try await ScriptedCoordinator.make()
+        let fetching = Task { await h.coordinator.fetchSessions(force: true) }
+        await pollUntil("the fetch to send session_list") { h.listCount == 1 }
+
+        var finished = false
+        let waiter = Task { await h.coordinator.awaitPassFinished(); finished = true }
+        try? await Task.sleep(for: .milliseconds(30))
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(finished, "a fetch may still apply a list and report")
+
+        h.conn.deliver(.sessionList(sessions: []))
+        await waiter.value
+        await fetching.value
+        XCTAssertTrue(finished)
+    }
+
+    /// A foreground pass still probing the socket (before `isRecovering`) counts.
+    func testAwaitPassFinishedWaitsForForegroundPassStillProbing() async throws {
+        let h = try await ScriptedCoordinator.make()
+        h.script(owned: [])
+        let probe = TestGate()
+        h.coordinator.connection._testOnly_isAliveGate = { await probe.wait(); return true }
+
+        let pass = Task { await h.coordinator.handleForegroundTransition(userInitiated: true) }
+        await pollUntil("the probe to park") { probe.isWaiting }
+        XCTAssertFalse(h.coordinator.isRecovering, "precondition: parked before committing")
+
+        var finished = false
+        let waiter = Task { await h.coordinator.awaitPassFinished(); finished = true }
+        try? await Task.sleep(for: .milliseconds(30))
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(finished, "the foreground pass may still fetch")
+
+        probe.open()
+        await waiter.value
+        await pass.value
+        XCTAssertTrue(finished)
     }
 
     func testAwaitPassFinishedReturnsImmediatelyWhenIdle() async throws {
