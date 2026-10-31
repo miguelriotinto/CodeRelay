@@ -18,6 +18,24 @@ final class WorkspaceRootTests: XCTestCase {
         XCTAssertFalse(WorkspaceRoot.shouldPresentManagement(aggregate: agg), "an enabled server: the workspace shows it")
     }
 
+    func testEdgeSwipeRule() {
+        func open(x: CGFloat = 5, dx: CGFloat = 60, dy: CGFloat = 0, listOpen: Bool = false) -> Bool {
+            EdgeSwipeRule.shouldOpen(startX: x, dx: dx, dy: dy, listOpen: listOpen)
+        }
+        XCTAssertTrue(open(), "clear rightward swipe from the strip")
+        XCTAssertTrue(open(x: 20), "strip edge is inside")
+        XCTAssertFalse(open(x: 21), "starts outside the strip: the terminal's")
+        XCTAssertFalse(open(x: -1))
+        XCTAssertFalse(open(dx: 39.9), "below the threshold")
+        XCTAssertTrue(open(dx: 40), "at the threshold")
+        XCTAssertFalse(open(dx: 60, dy: 30), "exactly 2x vertical is not horizontal-dominant")
+        XCTAssertTrue(open(dx: 60, dy: 29))
+        XCTAssertTrue(open(dx: 60, dy: -29))
+        XCTAssertFalse(open(dx: 60, dy: 80), "too vertical")
+        XCTAssertFalse(open(dx: -60), "leftward")
+        XCTAssertFalse(open(listOpen: true), "list already open: nothing")
+    }
+
     /// A hub over an isolated bookmark store and stub tokens: the tests never
     /// touch the app's real bookmarks or keychain, and never dial.
     private func isolatedHub(bookmarks configs: [ConnectionConfig] = []) -> IOSServerHub {

@@ -97,6 +97,34 @@ struct ActiveTerminalView: View {
         }
     }
 
+    /// The top-left button's action; the left-edge swipe calls it too.
+    private func toggleSidebar() {
+        withAnimation {
+            columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+        }
+    }
+
+    /// A 20 pt strip on the left edge. Only touches that start in it are claimed,
+    /// so the terminal's one-finger swipes (scrollback, agent keys) are untouched.
+    private var edgeSwipeStrip: some View {
+        Color.clear
+            .frame(width: EdgeSwipeRule.stripWidth)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 10)
+                    .onEnded { value in
+                        if EdgeSwipeRule.shouldOpen(
+                            startX: value.startLocation.x,
+                            dx: value.translation.width,
+                            dy: value.translation.height,
+                            listOpen: columnVisibility != .detailOnly
+                        ) { toggleSidebar() }
+                    }
+            )
+            .ignoresSafeArea(.container, edges: .horizontal)
+            .accessibilityHidden(true)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if let coordinator, let id = coordinator.activeSessionId,
@@ -157,11 +185,7 @@ struct ActiveTerminalView: View {
         }
         .safeAreaInset(edge: .top) {
             HStack(spacing: 6) {
-                ToolbarIconButton(icon: "sidebar.left") {
-                    withAnimation {
-                        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-                    }
-                }
+                ToolbarIconButton(icon: "sidebar.left") { toggleSidebar() }
                 .accessibilityLabel("Toggle Sidebar")
                 ToolbarIconButton(icon: "server.rack") { hub.isShowingServerList = true }
                     .accessibilityLabel("Servers")
@@ -230,6 +254,7 @@ struct ActiveTerminalView: View {
             .background(.black)
         }
         .background(.black)
+        .overlay(alignment: .leading) { edgeSwipeStrip }
         // Deliberately NO horizontal `ignoresSafeArea` at this level: it would
         // also widen the `safeAreaInset` top bar above, putting the session
         // name and QR button under the Duo's status pill — or under the outer

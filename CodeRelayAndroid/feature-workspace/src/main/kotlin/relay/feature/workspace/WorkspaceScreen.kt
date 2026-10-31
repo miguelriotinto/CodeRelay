@@ -67,6 +67,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.feature.workspace.ui.ConnectionQualityDot
+import relay.feature.workspace.ui.EdgeSwipeStrip
 import relay.feature.workspace.ui.SessionLoadingSheetHost
 import relay.feature.workspace.ui.terminalLoadingCover
 import relay.feature.workspace.ui.SessionSidebar
@@ -89,16 +90,6 @@ private const val SWIPE_CLOSE_THRESHOLD_PX = 8f
 private val TWO_PANE_SIDEBAR_WIDTH = 320.dp
 /** Slide duration for the two-pane sidebar; Material's drawer used ~256 ms. */
 private const val TWO_PANE_SIDEBAR_ANIM_MS = 260
-/**
- * Start-edge strip that reopens the hidden two-pane sidebar on a rightward drag.
- * Wider than the usual 24 dp because with gesture navigation the system owns
- * roughly the first 24 dp for its back gesture and the app never sees a drag
- * that starts there (confirmed on the emulator: the same swipe opens the
- * sidebar under three-button navigation and triggers Back under gestures).
- * The extra band gives a drag that starts just past the system zone somewhere
- * to land. The toggle button remains the primary way to show the sidebar.
- */
-private val TWO_PANE_EDGE_SWIPE_WIDTH = 40.dp
 
 // Session-name reload, fade through black. Matches Swift `TerminalReloadFade`:
 // quick out (the user just tapped, so the black needs no easing-in to read as a
@@ -458,21 +449,6 @@ internal fun WorkspacePane(
                     }
                     Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                         terminalColumn({ twoPaneSidebarOpen = !twoPaneSidebarOpen }, false)
-                        // Edge swipe to reopen: a thin strip along the pane's start
-                        // edge that only exists while the sidebar is hidden, so it
-                        // never steals a drag from the terminal otherwise.
-                        if (!twoPaneSidebarOpen) {
-                            Box(
-                                modifier = Modifier
-                                    .width(TWO_PANE_EDGE_SWIPE_WIDTH)
-                                    .fillMaxHeight()
-                                    .pointerInput(Unit) {
-                                        detectHorizontalDragGestures { _, dragAmount ->
-                                            if (dragAmount > SWIPE_CLOSE_THRESHOLD_PX) twoPaneSidebarOpen = true
-                                        }
-                                    },
-                            )
-                        }
                     }
                 }
             } else {
@@ -485,6 +461,19 @@ internal fun WorkspacePane(
                     terminalColumn({ scope.launch { drawerState.open() } }, false)
                 }
             }
+
+            // Left-edge swipe opens the list through the same action as the top-left
+            // button (terminalColumn's onSidebarToggle); a no-op while it is open.
+            EdgeSwipeStrip(
+                viewportHeight = maxHeight,
+                listOpen = if (expanded) twoPaneSidebarOpen else drawerState.isOpen,
+                onOpen = if (expanded) {
+                    { twoPaneSidebarOpen = !twoPaneSidebarOpen }
+                } else {
+                    { scope.launch { drawerState.open() } }
+                },
+                modifier = Modifier.align(Alignment.CenterStart),
+            )
         }
 
         // Back cannot dismiss a reconnect; the sheet's Cancel does.

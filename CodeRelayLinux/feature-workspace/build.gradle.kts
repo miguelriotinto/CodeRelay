@@ -63,7 +63,7 @@ sourceSets {
                 it.name in setOf(
                     "TerminalHost.kt",
                     "TermlibTerminalEngine.kt", "Haptics.kt", "QrScannerScreen.kt",
-                    "QrShareSheet.kt",
+                    "QrShareSheet.kt", "BackGestureExclusion.kt",
                 )
         }
     }
