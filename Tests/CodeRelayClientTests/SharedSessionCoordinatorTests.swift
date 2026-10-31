@@ -14,7 +14,7 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertFalse(coordinator.isRecovering)
         XCTAssertFalse(coordinator.recoveryFailed)
         XCTAssertFalse(coordinator.connectionTimedOut)
-        XCTAssertFalse(coordinator.showSessionStolen)
+        XCTAssertNil(coordinator.onSessionsLost)
         XCTAssertFalse(coordinator.sessionAttachFailed)
         XCTAssertNil(coordinator.activeSessionId)
         XCTAssertNil(coordinator.sessionController)
@@ -345,6 +345,8 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         coordinator.sessionNames[sessionId] = "TestSession"
         coordinator.agentSessions[sessionId] = "claude"
         coordinator.sessionsAwaitingInput.insert(sessionId)
+        var reports: [SessionLossReport] = []
+        coordinator.onSessionsLost = { reports.append($0) }
 
         connection.onSessionStolen?(sessionId)
 
@@ -357,15 +359,15 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         wait(for: [exp], timeout: 1.0)
 
         XCTAssertNil(coordinator.activeSessionId)
-        XCTAssertTrue(coordinator.showSessionStolen)
-        XCTAssertEqual(coordinator.stolenSessionName, "TestSession")
+        XCTAssertEqual(reports, [SessionLossReport(taken: [LostSession(id: sessionId, name: "TestSession")], ended: [])],
+                       "the steal is reported to the hub, not raised as a coordinator alert")
         XCTAssertNil(coordinator.agentSessions[sessionId])
         XCTAssertFalse(coordinator.sessionsAwaitingInput.contains(sessionId))
     }
 
     /// A session attached by another client (server `session_stolen` push) must
     /// drop out of the pane (`sessions`), suppress its terminal VM, forget its
-    /// activity, and raise the "attached by another client" alert — while
+    /// activity, and report the session as taken — while
     /// leaving other sessions untouched.
     func testSessionStolenRemovesFromPane() {
         let connection = RelayConnection()
@@ -383,6 +385,8 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         coordinator.sessionsAwaitingInput.insert(stolenId)
         let stolenVM = TerminalViewModel(sessionId: stolenId, connection: connection)
         coordinator.terminalViewModels[stolenId] = stolenVM
+        var reports: [SessionLossReport] = []
+        coordinator.onSessionsLost = { reports.append($0) }
 
         XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
 
@@ -400,14 +404,14 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.agentSessions[stolenId])
         XCTAssertFalse(coordinator.sessionsAwaitingInput.contains(stolenId))
         XCTAssertTrue(stolenVM.isSendingSuppressed, "VM for stolen session must suppress sends")
-        XCTAssertTrue(coordinator.showSessionStolen, "popup must fire")
+        XCTAssertEqual(reports.map { $0.taken.map(\.id) }, [[stolenId]], "the steal must be reported once")
 
         // The other session is untouched.
         XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == keepId }))
     }
 
     /// A non-active session attached by another client (sitting in the sidebar,
-    /// not the focused tab) must also disappear immediately AND raise the alert.
+    /// not the focused tab) must also disappear immediately AND be reported.
     func testSessionStolenNonActiveStillRemovesAndAlerts() {
         let connection = RelayConnection()
         let coordinator = SharedSessionCoordinator(connection: connection, token: "test-token")
@@ -420,6 +424,8 @@ final class SharedSessionCoordinatorTests: XCTestCase {
             SessionInfo(id: stolenId, name: nil, state: .activeDetached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24),
             SessionInfo(id: activeId, name: nil, state: .activeAttached, tokenId: "t1", createdAt: Date(), cols: 80, rows: 24)
         ]
+        var reports: [SessionLossReport] = []
+        coordinator.onSessionsLost = { reports.append($0) }
 
         XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
 
@@ -432,7 +438,7 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         wait(for: [exp], timeout: 1.0)
 
         XCTAssertFalse(coordinator.activeSessions.contains(where: { $0.id == stolenId }))
-        XCTAssertTrue(coordinator.showSessionStolen)
+        XCTAssertEqual(reports.map { $0.taken.map(\.id) }, [[stolenId]])
         // The active session the user is looking at is untouched.
         XCTAssertEqual(coordinator.activeSessionId, activeId)
         XCTAssertTrue(coordinator.activeSessions.contains(where: { $0.id == activeId }))
@@ -592,7 +598,6 @@ final class SharedSessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.sessions.map { $0.id }, [present])
         XCTAssertFalse(coordinator.activeSessions.contains { $0.id == gone })
-        XCTAssertFalse(coordinator.showSessionStolen, "a plain list refresh must not raise the takeover popup")
     }
 
     /// reconcile evicts stale terminal VMs / cached views for sessions the server
@@ -648,4 +653,153 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.activeSessionId, "must not restore a terminal session as the active tab")
     }
 
+    // MARK: - Session loss diff (spec §3–§4b)
+
+    private func baseline(_ ids: UUID..., token: String = "me") -> SessionBaseline {
+        SessionBaseline(tokenId: token, sessions: ids.map { LostSession(id: $0, name: "n-\($0.uuidString.prefix(4))") })
+    }
+
+    /// A plain fetch (not a handshake) that drops sessions is a diff point too:
+    /// once it has dropped them, no later pass would ever see them again.
+    func testPlainFetchThatDropsSessionsReportsAll() async throws {
+        let a = UUID(), b = UUID(), c = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline(a, b, c))
+        h.script(owned: [lossInfo(c)],
+                 all: [lossInfo(a, token: "other"), lossInfo(b, token: "other"), lossInfo(c)])
+
+        await h.coordinator.fetchSessions(force: true)
+
+        XCTAssertEqual(h.reports.items.count, 1, "one aggregated report per pass")
+        XCTAssertEqual(h.reports.items.first?.taken.map(\.id), [a, b])
+        XCTAssertEqual(h.reports.items.first?.ended, [])
+        XCTAssertEqual(h.reports.items.first?.taken.first?.name, baseline(a).sessions[0].name,
+                       "names come from the baseline — the list no longer carries the lost rows")
+    }
+
+    func testListAllOnlyCalledWhenSomethingIsLost() async throws {
+        let a = UUID(), b = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline(a, b))
+        h.script(owned: [lossInfo(a), lossInfo(b)])
+
+        await h.coordinator.fetchSessions(force: true)
+
+        XCTAssertEqual(h.listAllCount, 0, "nothing lost → no session_list_all round trip")
+        XCTAssertTrue(h.reports.items.isEmpty)
+    }
+
+    /// Review focus #3: the user terminates a session here — it must never be
+    /// announced as ended or taken.
+    func testLocallyTerminatedSessionIsNeverReported() async throws {
+        let a = UUID(), b = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline(a, b))
+        h.script(owned: [lossInfo(a), lossInfo(b)])
+        await h.coordinator.fetchSessions(force: true)
+
+        h.script(owned: [lossInfo(a)], all: [lossInfo(a)])
+        await h.coordinator.terminateSession(id: b)
+        await h.coordinator.fetchSessions(force: true)
+
+        XCTAssertTrue(h.reports.items.isEmpty, "a local terminate is not a loss")
+        XCTAssertEqual(h.persistedBaseline?.sessions.map(\.id), [a])
+    }
+
+    /// Review focus #4: a baseline recorded under another token (bookmark edited,
+    /// re-paired) is discarded silently and replaced.
+    func testTokenChangeDiscardsBaselineSilently() async throws {
+        let a = UUID()
+        let h = try await ScriptedCoordinator.make(tokenId: "t2", baseline: baseline(a, token: "t1"))
+        h.script(owned: [])
+
+        await h.coordinator.fetchSessions(force: true)
+
+        XCTAssertTrue(h.reports.items.isEmpty)
+        XCTAssertEqual(h.listAllCount, 0)
+        XCTAssertEqual(h.persistedBaseline, SessionBaseline(tokenId: "t2", sessions: []))
+    }
+
+    /// A v3 relay cannot tell a connected client about a live exit, so "ended
+    /// while you were away" could be false — ended is dropped there.
+    func testEndedSuppressedOnV3Server() async throws {
+        let c = UUID()
+        let v3 = try await ScriptedCoordinator.make(protocolVersion: 3, baseline: baseline(c))
+        v3.script(owned: [], all: [])
+        await v3.coordinator.fetchSessions(force: true)
+        XCTAssertTrue(v3.reports.items.isEmpty, "v3: ended is never reported")
+
+        let v4 = try await ScriptedCoordinator.make(protocolVersion: 4, baseline: baseline(c))
+        v4.script(owned: [], all: [])
+        await v4.coordinator.fetchSessions(force: true)
+        XCTAssertEqual(v4.reports.items, [SessionLossReport(taken: [], ended: baseline(c).sessions)])
+    }
+
+    /// §4b: a session that ends while the app is connected leaves the pane at
+    /// once and silently, and no later diff calls it "ended while you were away".
+    func testLiveSessionEndedRemovesSilently() async throws {
+        let a = UUID(), b = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline(a, b))
+        h.script(owned: [lossInfo(a), lossInfo(b)])
+        await h.coordinator.fetchSessions(force: true)
+
+        h.coordinator.connection.onSessionEnded?(b, "exited")
+        await pollUntil("b to leave the pane") { !h.coordinator.sessions.contains { $0.id == b } }
+
+        XCTAssertEqual(h.persistedBaseline?.sessions.map(\.id), [a])
+        XCTAssertTrue(h.reports.items.isEmpty, "a live end is silent")
+
+        h.script(owned: [lossInfo(a)], all: [lossInfo(a)])
+        await h.coordinator.fetchSessions(force: true)
+        XCTAssertTrue(h.reports.items.isEmpty, "a later fetch must not report it as ended")
+    }
+
+    /// Review focus #2: a live steal is reported once, and the diff that follows
+    /// does not report it again.
+    func testLiveStealThenDiffReportsOnce() async throws {
+        let a = UUID(), b = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline(a, b))
+        h.script(owned: [lossInfo(a), lossInfo(b)])
+        await h.coordinator.fetchSessions(force: true)
+        XCTAssertTrue(h.reports.items.isEmpty)
+
+        h.script(owned: [lossInfo(b)], all: [lossInfo(a, token: "other"), lossInfo(b)])
+        h.coordinator.connection.onSessionStolen?(a)
+        await pollUntil("the steal to be reported") { !h.reports.items.isEmpty }
+        // The steal's own forced refetch, then a later one.
+        await pollUntil("the steal's refetch") { h.listCount >= 2 }
+        await h.coordinator.fetchSessions(force: true)
+
+        XCTAssertEqual(h.reports.items.count, 1, "reported exactly once")
+        XCTAssertEqual(h.reports.items.first?.taken.map(\.id), [a])
+        XCTAssertEqual(h.listAllCount, 0, "nothing was lost to the diff")
+    }
+
+    /// Review focus #1: the hub's fan-out hold must see a pass that was already
+    /// in flight when it asked.
+    func testAwaitPassFinishedWaitsForInFlightHandshake() async throws {
+        let h = try await ScriptedCoordinator.make(authenticated: false)
+        h.script(owned: [])
+        let previous = h.conn.autoRespond
+        h.conn.autoRespond = { $0.typeString == "auth_request" ? nil : previous?($0) }
+
+        let handshake = Task { await h.coordinator.performHandshake(reason: .wake) }
+        await pollUntil("the handshake to send its auth_request") { h.conn.sentTypes.contains("auth_request") }
+
+        var finished = false
+        let waiter = Task { await h.coordinator.awaitPassFinished(); finished = true }
+        try? await Task.sleep(for: .milliseconds(30))
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(finished, "must not return while the handshake waits on auth")
+
+        h.conn.deliver(.authSuccess(protocolVersion: 4, tokenId: "me"))
+        await waiter.value
+
+        XCTAssertTrue(finished)
+        XCTAssertFalse(h.coordinator.isPerformingHandshake, "returned only after the handshake completed")
+        let ok = await handshake.value
+        XCTAssertTrue(ok)
+    }
+
+    func testAwaitPassFinishedReturnsImmediatelyWhenIdle() async throws {
+        let h = try await ScriptedCoordinator.make()
+        await h.coordinator.awaitPassFinished()
+    }
 }

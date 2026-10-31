@@ -21,6 +21,8 @@ public protocol ServerSlotCoordinating: AnyObject, ObservableObject {
     var serverIdentity: ServerIdentity? { get }
     var sessionLoadPhase: SessionLoadPhase? { get }
     var activityCoordinator: ActivityCoordinator { get }
+    /// Sessions this server lost while away (or live, for a steal), classified.
+    var onSessionsLost: ((SessionLossReport) -> Void)? { get set }
 
     func start() async
     func switchToSession(id: UUID) async
@@ -32,6 +34,9 @@ public protocol ServerSlotCoordinating: AnyObject, ObservableObject {
     func syncPushRegistration(pushEnabled: Bool, notifyOnFinished: Bool) async
     func attachRemoteSession(id: UUID, serverName: String?) async
     func fetchSessions(force: Bool) async
+    /// Returns once no handshake, recovery or session fetch is in flight —
+    /// including one already running when called; immediately when idle.
+    func awaitPassFinished() async
 }
 
 /// Keychain lookup the hub uses to build a coordinator. `AuthManager` conforms.

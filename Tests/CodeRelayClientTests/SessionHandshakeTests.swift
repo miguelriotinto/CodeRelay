@@ -127,55 +127,39 @@ final class SessionHandshakeTests: XCTestCase {
                        "the first attempt must not be delayed — launch latency is user-visible")
     }
 
-    // MARK: - Launch is silent, wake announces
+    // MARK: - Every pass diffs against the baseline; only `.enable` is silent
 
-    /// `.wake` announces a session that another device took while we were away
-    /// (we missed its live `session_stolen` push because the socket was down).
-    func testFirstLostSessionIsTheOneMissingFromTheServerList() {
-        let kept = UUID()
-        let taken = UUID()
-        let before = [(id: kept, name: "Arya"), (id: taken, name: "Bran")]
-
-        let lost = SessionHandshake.firstLostSession(before: before, stillOwned: [kept])
-
-        XCTAssertEqual(lost?.id, taken)
-        XCTAssertEqual(lost?.name, "Bran", "the name must come from the pre-fetch snapshot")
-    }
-
-    /// Nothing to announce when the server still lists everything we had.
-    func testNoLostSessionWhenServerListMatches() {
+    /// Cold launch announces too (spec §3b): sessions taken while the app was
+    /// closed are diffed against the persisted baseline of the last run.
+    func testLaunchReportsFromBaseline() async throws {
         let a = UUID(), b = UUID()
-        let before = [(id: a, name: "Arya"), (id: b, name: "Bran")]
+        let h = try await ScriptedCoordinator.make(baseline: SessionBaseline(
+            tokenId: "me", sessions: [LostSession(id: a, name: "Arya"), LostSession(id: b, name: "Bran")]))
+        h.script(owned: [lossInfo(b)], all: [lossInfo(a, token: "other"), lossInfo(b)])
 
-        XCTAssertNil(SessionHandshake.firstLostSession(before: before, stillOwned: [a, b]))
+        let ok = await h.coordinator.performHandshake(reason: .launch)
+
+        XCTAssertTrue(ok)
+        XCTAssertEqual(h.reports.items, [SessionLossReport(taken: [LostSession(id: a, name: "Arya")], ended: [])])
+        XCTAssertEqual(h.persistedBaseline?.sessions.map(\.id), [b])
     }
 
-    /// The launch case, by construction: an empty pane before the fetch means
-    /// there is no "before" to diff, so nothing is ever announced on launch —
-    /// which is the product requirement (don't report sessions taken while the
-    /// app was closed).
-    func testNothingIsAnnouncedWhenThereWasNoPriorPane() {
-        XCTAssertNil(SessionHandshake.firstLostSession(before: [], stillOwned: []))
-        XCTAssertNil(SessionHandshake.firstLostSession(before: [], stillOwned: [UUID()]))
-    }
+    /// A slot built because the user just enabled the server (or a bookmark
+    /// edit rebuilt it) must not open with a list of old losses: it resets the
+    /// baseline from the fresh list and reports nothing.
+    func testEnableReasonIsSilentAndResetsBaseline() async throws {
+        let a = UUID(), b = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: SessionBaseline(
+            tokenId: "me", sessions: [LostSession(id: a, name: "Arya"), LostSession(id: b, name: "Bran")]))
+        h.script(owned: [lossInfo(b)], all: [lossInfo(a, token: "other"), lossInfo(b)])
 
-    /// A `.launch` handshake must never raise the "attached from another device"
-    /// alert, even if the pane somehow already had rows (e.g. a deep-link attach
-    /// ran first). The reason flag — not just the empty-pane coincidence — is
-    /// what guarantees it.
-    func testLaunchNeverRaisesTheStolenAlert() async {
-        let coordinator = makeCoordinator()
-        coordinator.sessions = [
-            SessionInfo(id: UUID(), name: "Ghost", state: .activeAttached,
-                        tokenId: "t", createdAt: Date(), cols: 80, rows: 24)
-        ]
+        let ok = await h.coordinator.performHandshake(reason: .enable)
 
-        await coordinator.performHandshake(reason: .launch)
-
-        XCTAssertFalse(
-            coordinator.activityCoordinator.showSessionStolen,
-            "launch must stay silent about sessions lost while the app was closed"
-        )
+        XCTAssertTrue(ok)
+        XCTAssertTrue(h.reports.items.isEmpty, ".enable reports nothing")
+        XCTAssertEqual(h.listAllCount, 0, ".enable never classifies")
+        XCTAssertEqual(h.persistedBaseline?.tokenId, "me")
+        XCTAssertEqual(h.persistedBaseline?.sessions.map(\.id), [b])
     }
 
     // MARK: - Auth validity requires a live socket

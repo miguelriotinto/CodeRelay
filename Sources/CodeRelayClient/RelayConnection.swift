@@ -105,6 +105,10 @@ public final class RelayConnection: ObservableObject {
     /// Called when the server notifies that another device attached to one of our sessions.
     public var onSessionStolen: ((UUID) -> Void)?
 
+    /// v4: one of this token's sessions ended server-side (sessionId, reason:
+    /// `exited` | `terminated` | `expired`).
+    public var onSessionEnded: ((UUID, String) -> Void)?
+
     /// Push callback: server renamed a session (another device renamed it).
     public var onSessionRenamed: ((UUID, String) -> Void)?
 
@@ -252,6 +256,10 @@ public final class RelayConnection: ObservableObject {
     /// Sends a user-initiated control message (JSON text frame). Fires `onSendFailed`
     /// on transport error so the coordinator can start recovery.
     public func send(_ message: ClientMessage) async throws {
+        if _testOnly_sendSink != nil {
+            _testOnly_sendSink?.append(message)
+            return
+        }
         try await sendClientMessage(message, notifyOnFailure: true)
     }
 
@@ -506,6 +514,8 @@ public final class RelayConnection: ObservableObject {
                         onSessionActivity?(sessionId, activity, agent, agentState, title, workingDir)
                     case .sessionStolen(let sessionId):
                         onSessionStolen?(sessionId)
+                    case .sessionEnded(let sessionId, let reason):
+                        onSessionEnded?(sessionId, reason)
                     case .sessionRenamed(let sessionId, let name):
                         onSessionRenamed?(sessionId, name)
                     case .clipboardUpdate(let sessionId, let text):
@@ -561,4 +571,8 @@ public final class RelayConnection: ObservableObject {
     /// Force `lastConnectedAt` for tests: a recent value mimics a just-opened
     /// socket (launch); an old/nil value mimics a stale post-sleep socket.
     public func _testOnly_setLastConnectedAt(_ date: Date?) { lastConnectedAt = date }
+    /// Non-nil: `send` records the message here and succeeds without a socket,
+    /// so coordinator paths that fire-and-forget on the connection (terminate)
+    /// can run against a scripted `SessionController`.
+    public var _testOnly_sendSink: [ClientMessage]?
 }

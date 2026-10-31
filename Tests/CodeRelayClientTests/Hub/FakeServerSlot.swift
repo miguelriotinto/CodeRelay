@@ -78,6 +78,8 @@ final class FakeServerSlot: ServerSlotCoordinating {
     }
     func attachRemoteSession(id: UUID, serverName: String?) async { remoteAttaches.append(id); activeSessionId = id }
     func fetchSessions(force: Bool) async { fetchCount += 1 }
+    var onSessionsLost: ((SessionLossReport) -> Void)?
+    func awaitPassFinished() async {}
 
     // Helpers
     func goLive(with sessions: [SessionInfo]) {

@@ -4,11 +4,11 @@ import CodeRelayKit
 
 /// Activity-state facet extracted from `SharedSessionCoordinator`.
 ///
-/// Holds the live agent/awaiting-input state plus the "session stolen" UI
-/// flags. The parent coordinator keeps `@Published` read-through forwarders
-/// and republishes this object's `objectWillChange` so existing SwiftUI
-/// bindings (`$coordinator.showSessionStolen`, `coordinator.agentSessions`)
-/// keep working without view changes.
+/// Holds the live agent/awaiting-input state. The parent coordinator keeps
+/// `@Published` read-through forwarders and republishes this object's
+/// `objectWillChange` so existing SwiftUI bindings (`coordinator.agentSessions`)
+/// keep working without view changes. Lost-session notices are not here: the
+/// coordinator reports them to the hub (`onSessionsLost`).
 ///
 /// Why separated: this cluster has a tight, well-defined surface
 /// (server activity events → published UI state) and is the most
@@ -44,13 +44,6 @@ public final class ActivityCoordinator: ObservableObject {
     /// "needs attention" affordance. Cleared by `markSeen` when the user
     /// activates the session. Mirrors herdr's client-side `seen` bit.
     @Published public var unseenSessions: Set<UUID> = []
-
-    /// UI-facing flags for the "Session Moved" alert. Presented by
-    /// `WorkspaceView` / macOS equivalent when another device attaches to a
-    /// session currently attached here.
-    @Published public var stolenSessionName: String?
-    @Published public var stolenSessionShortId: String?
-    @Published public var showSessionStolen = false
 
     // MARK: - Dependencies
 
@@ -190,19 +183,6 @@ public final class ActivityCoordinator: ObservableObject {
         } else {
             sessionsAwaitingInput.remove(sessionId)
         }
-    }
-
-    /// Cleanup summary returned from `handleSessionStolen`. The parent
-    /// coordinator owns the active-session slot and the terminal cache, so
-    /// Raise the "Session Moved" alert for a session lost to another device.
-    /// The coordinator handles the sidebar/tab/terminal cleanup separately (and
-    /// before this call); this only flips the @Published alert flags so the UI
-    /// presents the OK-only popup. Used for BOTH active and sidebar-only lost
-    /// sessions so the user always gets the notice.
-    public func presentStolenAlert(sessionId: UUID, name: String) {
-        stolenSessionName = name
-        stolenSessionShortId = String(sessionId.uuidString.prefix(8))
-        showSessionStolen = true
     }
 
     /// Clear activity state for a locally terminated session.

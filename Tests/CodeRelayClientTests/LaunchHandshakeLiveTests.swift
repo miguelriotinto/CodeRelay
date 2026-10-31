@@ -72,6 +72,8 @@ final class LaunchHandshakeLiveTests: XCTestCase {
         // Exactly what WorkspaceView.task does, including the recovery machinery
         // that races it: `startNetworkRecovery` + the `scenePhase → .active`
         // trigger fire around the handshake, and must not disturb it.
+        var lossReports: [SessionLossReport] = []
+        relaunched.onSessionsLost = { lossReports.append($0) }
         relaunched.startNetworkRecovery()
         relaunched.triggerUserRecovery()
         let ok = await relaunched.performHandshake(reason: .launch)
@@ -80,9 +82,9 @@ final class LaunchHandshakeLiveTests: XCTestCase {
         defer { relaunched.tearDown() }
 
         XCTAssertTrue(ok, "the launch handshake must report success")
-        XCTAssertFalse(
-            relaunched.activityCoordinator.showSessionStolen,
-            "a cold launch must never report that a session was attached elsewhere"
+        XCTAssertTrue(
+            lossReports.isEmpty,
+            "a relaunch that still owns everything it showed must report no loss"
         )
 
         XCTAssertEqual(

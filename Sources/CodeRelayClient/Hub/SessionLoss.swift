@@ -14,6 +14,18 @@ public struct LostSession: Equatable, Sendable, Codable {
 
 public enum SessionLossKind: Sendable { case taken, ended }
 
+/// What one coordinator pass lost, already classified. Delivered through
+/// `onSessionsLost` to the hub, which aggregates and presents (spec §2).
+public struct SessionLossReport: Equatable, Sendable {
+    public let taken: [LostSession]
+    public let ended: [LostSession]
+
+    public init(taken: [LostSession], ended: [LostSession]) {
+        self.taken = taken
+        self.ended = ended
+    }
+}
+
 /// Pure classification of sessions that disappeared from this token's list.
 public enum SessionLossClassifier {
     /// Entries of `before` not present as non-terminal in `owned`, order preserved.
