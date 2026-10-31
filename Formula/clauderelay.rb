@@ -15,10 +15,11 @@ class Clauderelay < Formula
            "--disable-sandbox",
            "-Xswiftc", "-cross-module-optimization",
            "--product", "claude-relay-server"
+    # No cross-module optimization for the CLI: with the Xcode 27 toolchain it
+    # drops ArgumentParser conformance descriptors and the link fails.
     system "swift", "build",
            "-c", "release",
            "--disable-sandbox",
-           "-Xswiftc", "-cross-module-optimization",
            "--product", "claude-relay"
     bin.install ".build/release/claude-relay"
     bin.install ".build/release/claude-relay-server"
