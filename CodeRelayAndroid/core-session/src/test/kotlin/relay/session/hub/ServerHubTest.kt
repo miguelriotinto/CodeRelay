@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
@@ -371,6 +372,47 @@ class ServerHubTest {
         pass.complete(Unit)
         hold.join(); runCurrent()
         assertEquals("api (on Studio) and web (on b) were attached from another device.", h.hub.takenAlert.value?.message)
+    }
+
+    /** A batch landing while the dialog is unread joins it, under the same id; OK forgets it. */
+    @Test fun aBatchWhileTheAlertIsUpMergesIntoIt() = runTest {
+        val a = cfg("a"); val h = liveLossHub(a)
+        val slot = h.slot(a.id)!!
+        slot.reportLost(taken = listOf(lost("api")))
+        advanceUntilIdle()
+        val first = h.hub.takenAlert.value
+        assertEquals("api was attached from another device.", first?.message)
+
+        slot.reportLost(taken = listOf(lost("web")))
+        advanceUntilIdle()
+        assertEquals(first?.id, h.hub.takenAlert.value?.id, "same dialog, still up")
+        assertEquals("Sessions Moved", h.hub.takenAlert.value?.title)
+        assertEquals("api and web were attached from another device.", h.hub.takenAlert.value?.message)
+
+        h.hub.dismissTakenAlert()
+        assertNull(h.hub.takenAlert.value)
+        slot.reportLost(taken = listOf(lost("db")))
+        advanceUntilIdle()
+        assertEquals("db was attached from another device.", h.hub.takenAlert.value?.message, "OK forgets what was shown")
+        assertNotEquals(first?.id, h.hub.takenAlert.value?.id)
+    }
+
+    /** Names follow the sidebar (bookmark) order across servers, not arrival order. */
+    @Test fun crossServerBatchFollowsSidebarOrder() = runTest {
+        val a = cfg("a"); val b = cfg("b")
+        val h = HubHarness(hubScope(), listOf(a, b), nowMs = { testScheduler.currentTime })
+        h.hub.start(); advanceUntilIdle()
+        val pass = kotlinx.coroutines.CompletableDeferred<Unit>()
+        h.slot(a.id)!!.passGate = pass
+        h.hub.handleForegroundTransition(); runCurrent()
+        val hold = h.hub.lastLossHold!!
+        h.slot(b.id)!!.reportLost(taken = listOf(lost("web")), ended = listOf(lost("old")))
+        h.slot(a.id)!!.reportLost(taken = listOf(lost("zed"), lost("api")), ended = listOf(lost("gone")))
+        pass.complete(Unit)
+        hold.join(); runCurrent()
+        assertEquals("zed (on a), api (on a) and 1 other were attached from another device.",
+            h.hub.takenAlert.value?.message, "server a first, its own order kept, b's web last")
+        assertEquals("gone (on a) and old (on b) ended while you were away.", h.hub.notice.value)
     }
 
     @Test fun enableBuildsWithEnableReason() = runTest {

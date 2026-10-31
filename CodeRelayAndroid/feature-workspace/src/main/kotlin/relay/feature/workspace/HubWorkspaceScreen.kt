@@ -132,8 +132,12 @@ fun <S : WorkspaceSlot> WorkspaceScreen(
         }
     }
 
-    LaunchedEffect(notice) {
+    // The timer starts (or restarts) only once the session-loss dialog is gone,
+    // or the pill would expire unseen behind it.
+    val alertUp = takenAlert != null
+    LaunchedEffect(notice, alertUp) {
         val shown = notice ?: return@LaunchedEffect
+        if (alertUp) return@LaunchedEffect
         delay(NOTICE_MS)
         if (hub.notice.value == shown) hub.setNotice(null)
     }

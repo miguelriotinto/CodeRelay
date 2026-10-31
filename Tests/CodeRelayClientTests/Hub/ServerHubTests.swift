@@ -250,6 +250,64 @@ final class ServerHubTests: XCTestCase {
         XCTAssertNil(h.hub.takenAlert)
     }
 
+    func testARetiredSlotsReportIsDropped() async {
+        let (h, cfg) = await liveLossHub(["a"])
+        let old = h.slot(cfg[0].id)!
+        h.hub.rebuildSlot(cfg[0].id)
+        await hubSettle()
+        XCTAssertTrue(old.tornDown)
+        XCTAssertFalse(h.slot(cfg[0].id) === old, "precondition: a fresh slot replaced it")
+        old.reportLost(taken: [LostSession(id: UUID(), name: "api")])
+        await hubSettle()
+        XCTAssertNil(h.hub.takenAlert, "a torn-down coordinator speaks for no server")
+    }
+
+    /// A batch landing while the alert is unread joins it — the earlier
+    /// sessions are still announced — and keeps its id so it stays up.
+    func testABatchWhileTheAlertIsUpMergesIntoIt() async {
+        let (h, cfg) = await liveLossHub(["a"])
+        let a = h.slot(cfg[0].id)!
+        let api = LostSession(id: UUID(), name: "api")
+        a.reportLost(taken: [api])
+        await hubSettle()
+        let first = h.hub.takenAlert
+        XCTAssertEqual(first?.message, "api was attached from another device.")
+
+        a.reportLost(taken: [LostSession(id: UUID(), name: "web")])
+        await hubSettle()
+        XCTAssertEqual(h.hub.takenAlert?.id, first?.id, "same alert, still up")
+        XCTAssertEqual(h.hub.takenAlert?.title, "Sessions Moved")
+        XCTAssertEqual(h.hub.takenAlert?.message, "api and web were attached from another device.")
+
+        h.hub.dismissTakenAlert()
+        XCTAssertNil(h.hub.takenAlert)
+        a.reportLost(taken: [LostSession(id: UUID(), name: "db")])
+        await hubSettle()
+        XCTAssertEqual(h.hub.takenAlert?.message, "db was attached from another device.",
+                       "OK forgets what was shown")
+        XCTAssertNotEqual(h.hub.takenAlert?.id, first?.id)
+    }
+
+    /// Names follow the sidebar (bookmark) order across servers, not arrival.
+    func testCrossServerBatchFollowsSidebarOrder() async {
+        let a = makeConfig("a"), b = makeConfig("b")
+        let h = HubHarness(configs: [a, b])
+        await h.hub.start()
+        h.slot(a.id)!.passHangs = true
+        await h.hub.handleForegroundTransition(userInitiated: false)
+        let hold = h.hub.lastLossHold
+        await hubSettle()
+        h.slot(b.id)!.reportLost(taken: [LostSession(id: UUID(), name: "web")], ended: [LostSession(id: UUID(), name: "old")])
+        h.slot(a.id)!.reportLost(taken: [LostSession(id: UUID(), name: "zed"), LostSession(id: UUID(), name: "api")],
+                                 ended: [LostSession(id: UUID(), name: "gone")])
+        h.slot(a.id)!.releasePass()
+        await hold?.value
+        XCTAssertEqual(h.hub.takenAlert?.message,
+                       "zed (on a), api (on a) and 1 other were attached from another device.",
+                       "server a first (sidebar order), its own order kept, b's web last")
+        XCTAssertEqual(h.hub.notice, "gone (on a) and old (on b) ended while you were away.")
+    }
+
     func testMultiServerBatchUsesDisplayNames() async {
         let a = ConnectionConfig(name: "a", host: "a.local", displayName: "Studio")
         let b = makeConfig("b")

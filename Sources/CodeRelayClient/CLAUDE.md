@@ -79,9 +79,9 @@ UI atoms both apps host (`Views/`).
   `awaitPassFinished()` returns or 10 s pass, so N servers yield one aggregated
   alert; the fan-out never blocks its caller, and `stop()` resets the collector.
   The coordinator's `SessionOwnershipStore` baseline is diff-only (token-stamped,
-  `.enable` is silent). The alert is `sessionLossAlert(_:isTopmost:)` on the root
+  `.enable` is silent). The alert is `sessionLossAlert(_:isTopmost:onOK:)` on the root
   and every sheet, enabled on the topmost presenter only; its binding setter
-  ignores `false`, so only OK clears an unread alert.
+  ignores `false`, so only OK (`dismissTakenAlert()`) clears an unread alert; a batch arriving while it is up merges into it (deduped by server + session, names in sidebar order).
 
 ## Session loading sheet (`Views/SessionLoadingPresentation.swift`, `SessionLoadingSheet.swift`)
 

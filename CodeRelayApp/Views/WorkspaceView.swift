@@ -75,7 +75,7 @@ struct WorkspaceView: View {
                                 }
                         }
                         .presentationDetents([.medium, .large])
-                        .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == .sidebar)
+                        .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .sidebar, onOK: { hub.dismissTakenAlert() })
                     }
             } else {
                 // iPad: full split view
@@ -152,7 +152,7 @@ struct WorkspaceView: View {
         }
         .sheet(isPresented: $hub.isShowingServerList) {
             ServerListView(hub: hub, externalPairing: $managementPairing)
-                .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == .management)
+                .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .management, onOK: { hub.dismissTakenAlert() })
         }
         .sheet(item: Binding(get: { hub.isShowingServerList ? nil : pendingPairing },
                              set: { pendingPairing = $0 })) { pairing in
@@ -161,7 +161,7 @@ struct WorkspaceView: View {
                 // coordinator (the cap is enforced by the hub).
                 hub.reloadBookmarks()
             }, prefill: pairing)
-            .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == .pairing)
+            .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .pairing, onOK: { hub.dismissTakenAlert() })
         }
         // The one loading sheet: switch, session-name refresh and reconnect all
         // rise from the bottom with the step and the bytes loaded, while the
@@ -184,7 +184,7 @@ struct WorkspaceView: View {
                     // bar column is carved out of a sheet's safe area, which
                     // put a safe-area-centred stack ~85 pt off centre.
                     .ignoresSafeArea(.container, edges: .horizontal)
-                    .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == .loading)
+                    .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .loading, onOK: { hub.dismissTakenAlert() })
             }
         }
         .overlay(alignment: .top) {
@@ -195,15 +195,19 @@ struct WorkspaceView: View {
                     .background(.ultraThinMaterial, in: Capsule())
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
-                    .task(id: notice) {
+                    // The 4 s start only once the session-loss alert is gone,
+                    // or the pill would expire unseen behind it.
+                    .task(id: hub.takenAlert == nil ? notice : nil) {
+                        guard hub.takenAlert == nil else { return }
                         try? await Task.sleep(for: .seconds(4))
+                        guard !Task.isCancelled else { return }
                         if hub.notice == notice { hub.notice = nil }
                     }
             }
         }
         // Session loss belongs to the hub, never to the focus coordinator. The
         // root copy is live only with no sheet up; each sheet carries its own.
-        .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == nil)
+        .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == nil, onOK: { hub.dismissTakenAlert() })
     }
 }
 

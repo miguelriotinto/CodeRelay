@@ -28,6 +28,9 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     /// takeover spec §2, §5). Bound by the workspace root — never by a
     /// per-coordinator view, which is re-keyed when focus moves.
     @Published public var takenAlert: SessionLossAlert?
+    /// The sessions `takenAlert` announces, so a batch that lands while it is
+    /// still unread joins it instead of replacing it.
+    private var shownTaken: [SessionLossItem] = []
     /// UI-only: the server management sheet/window is being shown.
     @Published public var isShowingServerList = false
 
@@ -466,12 +469,41 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         if !report.ended.isEmpty { lossCollector.report(items(report.ended), kind: .ended) }
     }
 
+    /// OK on the session-loss alert: the only way it is cleared.
+    public func dismissTakenAlert() {
+        takenAlert = nil
+        shownTaken = []
+    }
+
     private func presentLosses(taken: [SessionLossItem], ended: [SessionLossItem]) {
         if !taken.isEmpty {
-            takenAlert = SessionLossAlert(title: SessionLossCopy.takenTitle(count: taken.count),
-                                          message: SessionLossCopy.takenBody(taken))
+            // An unread alert absorbs the new batch: replacing it would mean
+            // the earlier sessions were never announced. Same id, so the alert
+            // stays up and only its text changes.
+            var merged = takenAlert == nil ? [] : shownTaken
+            for item in taken where !merged.contains(where: {
+                $0.serverId == item.serverId && $0.session.id == item.session.id
+            }) {
+                merged.append(item)
+            }
+            merged = inSidebarOrder(merged)
+            shownTaken = merged
+            takenAlert = SessionLossAlert(id: takenAlert?.id ?? UUID(),
+                                          title: SessionLossCopy.takenTitle(count: merged.count),
+                                          message: SessionLossCopy.takenBody(merged))
         }
-        if !ended.isEmpty { notice = SessionLossCopy.endedBody(ended) }
+        if !ended.isEmpty { notice = SessionLossCopy.endedBody(inSidebarOrder(ended)) }
+    }
+
+    /// Sorts by server in sidebar (bookmark) order, keeping each server's own
+    /// order. A server no longer bookmarked goes last.
+    private func inSidebarOrder(_ items: [SessionLossItem]) -> [SessionLossItem] {
+        var rank: [UUID: Int] = [:]
+        for (index, config) in bookmarks.enumerated() where rank[config.id] == nil { rank[config.id] = index }
+        return items.enumerated().sorted { lhs, rhs in
+            let l = rank[lhs.element.serverId] ?? Int.max, r = rank[rhs.element.serverId] ?? Int.max
+            return l != r ? l < r : lhs.offset < rhs.offset
+        }.map(\.element)
     }
 
     /// One server (the section's Retry) or all of them (menu bar / shortcut).

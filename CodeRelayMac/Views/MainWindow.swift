@@ -131,7 +131,8 @@ private struct WorkspaceView: View {
         .background {
             if let focus {
                 ActiveCoordinatorModifiers(coordinator: focus, loading: loading,
-                                           takenAlert: $hub.takenAlert, alertOnQRScanner: topmostSheet == .qrScanner,
+                                           takenAlert: hub.takenAlert, dismissTakenAlert: { hub.dismissTakenAlert() },
+                                           alertOnQRScanner: topmostSheet == .qrScanner,
                                            serverName: hub.sections.first { $0.id == hub.focusServerId }?.title)
                     .id(ObjectIdentifier(focus))
             }
@@ -148,7 +149,7 @@ private struct WorkspaceView: View {
                     // clipped the reconnect Cancel button.
                     .sessionLoadingSheetContainer()
                     .interactiveDismissDisabled()
-                    .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == .loading)
+                    .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .loading, onOK: { hub.dismissTakenAlert() })
             }
         }
         .sheet(isPresented: $hub.isShowingServerList) {
@@ -157,7 +158,7 @@ private struct WorkspaceView: View {
             }
             .background(.black)
             .presentationBackground(.black)
-            .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == .management)
+            .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .management, onOK: { hub.dismissTakenAlert() })
         }
         .overlay(alignment: .top) {
             if let notice = hub.notice {
@@ -167,15 +168,19 @@ private struct WorkspaceView: View {
                     .background(.ultraThinMaterial, in: Capsule())
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
-                    .task(id: notice) {
+                    // The 4 s start only once the session-loss alert is gone,
+                    // or the pill would expire unseen behind it.
+                    .task(id: hub.takenAlert == nil ? notice : nil) {
+                        guard hub.takenAlert == nil else { return }
                         try? await Task.sleep(for: .seconds(4))
+                        guard !Task.isCancelled else { return }
                         if hub.notice == notice { hub.notice = nil }
                     }
             }
         }
         // Session loss belongs to the hub, never to the focus coordinator. The
         // root copy is live only with no sheet up; each sheet carries its own.
-        .sessionLossAlert($hub.takenAlert, isTopmost: topmostSheet == nil)
+        .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == nil, onOK: { hub.dismissTakenAlert() })
         .alert("Rename Session", isPresented: $showRenameAlert) {
             TextField("Name", text: $renameText)
             Button("Rename") {
@@ -292,7 +297,8 @@ private struct WorkspaceView: View {
 private struct ActiveCoordinatorModifiers: View {
     @ObservedObject var coordinator: SessionCoordinator
     @ObservedObject var loading: SessionLoadingSheetModel
-    @Binding var takenAlert: SessionLossAlert?
+    let takenAlert: SessionLossAlert?
+    let dismissTakenAlert: @MainActor () -> Void
     let alertOnQRScanner: Bool
     let serverName: String?
 
@@ -312,7 +318,7 @@ private struct ActiveCoordinatorModifiers: View {
         Color.clear
             .sheet(isPresented: $coordinator.showQRScanner) {
                 QRScannerSheet(coordinator: coordinator)
-                    .sessionLossAlert($takenAlert, isTopmost: alertOnQRScanner)
+                    .sessionLossAlert(takenAlert, isTopmost: alertOnQRScanner, onOK: dismissTakenAlert)
             }
             .onChange(of: presentation, initial: true) { _, current in loading.update(current) }
             .alert("Cannot Open Session", isPresented: $coordinator.sessionAttachFailed) {

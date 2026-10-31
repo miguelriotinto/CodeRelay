@@ -81,7 +81,13 @@ class ServerHub<S : ServerSlot>(
      * per-server pane, which is re-keyed when focus moves.
      */
     val takenAlert: StateFlow<SessionLossAlert?> = _takenAlert.asStateFlow()
-    fun dismissTakenAlert() { _takenAlert.value = null }
+    /** The sessions [takenAlert] announces, so a batch that lands while it is unread joins it. */
+    private var shownTaken: List<SessionLossItem> = emptyList()
+    /** OK on the session-loss dialog: the only way it is cleared. */
+    fun dismissTakenAlert() {
+        _takenAlert.value = null
+        shownTaken = emptyList()
+    }
 
     private val _isShowingServerList = MutableStateFlow(false)
     /** UI-only: the server management screen is being shown. */
@@ -517,9 +523,27 @@ class ServerHub<S : ServerSlot>(
 
     private fun presentLosses(taken: List<SessionLossItem>, ended: List<SessionLossItem>) {
         if (taken.isNotEmpty()) {
-            _takenAlert.value = SessionLossAlert(SessionLossCopy.takenTitle(taken.size), SessionLossCopy.takenBody(taken))
+            // An unread dialog absorbs the new batch: replacing it would mean the
+            // earlier sessions were never announced. Same id: it stays up.
+            val pending = _takenAlert.value
+            val merged = (if (pending == null) emptyList() else shownTaken).toMutableList()
+            for (item in taken) {
+                if (merged.none { it.serverId == item.serverId && it.session.id == item.session.id }) merged += item
+            }
+            val ordered = inSidebarOrder(merged)
+            shownTaken = ordered
+            _takenAlert.value = SessionLossAlert(
+                SessionLossCopy.takenTitle(ordered.size), SessionLossCopy.takenBody(ordered),
+                pending?.id ?: UUID.randomUUID())
         }
-        if (ended.isNotEmpty()) noticeFlow.value = SessionLossCopy.endedBody(ended)
+        if (ended.isNotEmpty()) noticeFlow.value = SessionLossCopy.endedBody(inSidebarOrder(ended))
+    }
+
+    /** Sorts by server in sidebar (bookmark) order, keeping each server's own order (stable sort). */
+    private fun inSidebarOrder(items: List<SessionLossItem>): List<SessionLossItem> {
+        val rank = HashMap<UUID, Int>()
+        bookmarks.forEachIndexed { index, config -> rank.putIfAbsent(config.id, index) }
+        return items.sortedBy { rank[it.serverId] ?: Int.MAX_VALUE }
     }
 
     /** One server (the section's Retry) or every server. */
