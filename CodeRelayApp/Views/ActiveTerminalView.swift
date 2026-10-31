@@ -104,8 +104,9 @@ struct ActiveTerminalView: View {
         }
     }
 
-    /// A 20 pt strip on the left edge. Only touches that start in it are claimed,
-    /// so the terminal's one-finger swipes (scrollback, agent keys) are untouched.
+    /// A 20 pt strip on the left edge of the empty pane. Over a terminal the
+    /// swipe is recognised by `RelayTerminalView` instead: a SwiftUI drag there
+    /// loses to the terminal's own UIKit pans and never ends.
     private var edgeSwipeStrip: some View {
         Color.clear
             .frame(width: EdgeSwipeRule.stripWidth)
@@ -139,7 +140,8 @@ struct ActiveTerminalView: View {
                     TerminalHostView(
                         coordinator: coordinator,
                         fontSize: CGFloat(settings.terminalFontSize),
-                        isKeyboardVisible: $isKeyboardVisible
+                        isKeyboardVisible: $isKeyboardVisible,
+                        onLeftEdgeSwipe: { if columnVisibility == .detailOnly { toggleSidebar() } }
                     )
                     // Black while the loading sheet is up (switch, name-label
                     // refresh, reconnect); covers only the terminal, not the
@@ -163,8 +165,6 @@ struct ActiveTerminalView: View {
                 // columns over the whole height. The top bar does NOT bleed
                 // (see below), so no control can land under the camera.
                 .ignoresSafeArea(.container, edges: .horizontal)
-                // Terminal area only: below the top bar, above the key bar.
-                .overlay(alignment: .leading) { edgeSwipeStrip }
 
                 if showKeyBar {
                     KeyboardAccessory { data in

@@ -195,6 +195,39 @@ class RelayTerminalView: TerminalView {
         return gesture
     }
 
+    /// The left-edge swipe that opens the session list. Set by the host on every
+    /// update, since one cached view outlives the SwiftUI tree that created it.
+    var onLeftEdgeSwipe: (() -> Void)? {
+        didSet { _ = installedEdgePan() }
+    }
+
+    private var edgePanGesture: UIScreenEdgePanGestureRecognizer?
+
+    /// Recognised here, not by a SwiftUI overlay: a SwiftUI gesture lives on
+    /// the hosting view and loses to this scroll view's own pan (and the wheel
+    /// pan), so a drag over the terminal never reached its `onEnded`. Both pans
+    /// wait for this one, which fails at touch-down anywhere off the edge, so
+    /// scrolling elsewhere pays nothing.
+    private func installedEdgePan() -> UIScreenEdgePanGestureRecognizer {
+        if let existing = edgePanGesture { return existing }
+        let gesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgePan))
+        gesture.edges = .left
+        addGestureRecognizer(gesture)
+        panGestureRecognizer.require(toFail: gesture)
+        installedWheelPan().require(toFail: gesture)
+        edgePanGesture = gesture
+        return gesture
+    }
+
+    @objc private func handleEdgePan(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard gesture.state == .ended, let window else { return }
+        let travel = gesture.translation(in: window)
+        let start = gesture.location(in: window).x - travel.x
+        if EdgeSwipeRule.shouldOpen(startX: start, dx: travel.x, dy: travel.y, listOpen: false) {
+            onLeftEdgeSwipe?()
+        }
+    }
+
     /// Stands the wheel pan down while a selection is live, so long-press → drag
     /// still extends it via SwiftTerm's own `panSelectionHandler`.
     ///
@@ -315,6 +348,7 @@ struct TerminalHostView: UIViewRepresentable {
     @ObservedObject var coordinator: SessionCoordinator
     var fontSize: CGFloat
     @Binding var isKeyboardVisible: Bool
+    var onLeftEdgeSwipe: () -> Void
 
     func makeCoordinator() -> HostCoordinator {
         HostCoordinator(isKeyboardVisible: $isKeyboardVisible)
@@ -362,6 +396,7 @@ struct TerminalHostView: UIViewRepresentable {
         }
 
         cached.delegate.viewModel = viewModel
+        cached.view.onLeftEdgeSwipe = onLeftEdgeSwipe
         viewModel.onTerminalOutput = { [weak view = cached.view] data in
             guard let view else { return }
             view.feedTrackingScrollbackClear(ArraySlice([UInt8](data)))
