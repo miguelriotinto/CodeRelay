@@ -70,9 +70,9 @@ final class WireTestServer {
     }
 
     /// A connected, authenticated client.
-    func authenticatedClient(token: String) async throws -> TestWebSocketClient {
+    func authenticatedClient(token: String, protocolVersion: Int? = nil) async throws -> TestWebSocketClient {
         let client = try await connect()
-        try await client.authenticate(token: token)
+        try await client.authenticate(token: token, protocolVersion: protocolVersion)
         return client
     }
 }

@@ -405,6 +405,9 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// `onSuccess` on the event loop. Observer ids must be captured here
     /// (not on `self`) so we can unregister them if the channel was torn
     /// down mid-registration.
+    /// The first protocol version that understands `session_ended` (v4).
+    static let sessionEndedProtocolVersion = 4
+
     private struct AuthSuccessPayload {
         let tokenId: String
         let clientVersion: Int
@@ -490,6 +493,9 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                             self.attachedSessionId = nil
                             self.attachedPTY = nil
                         }
+                        // A pre-v4 client drops the unknown type but logs a
+                        // decode warning for every event: don't send it one.
+                        guard clientVersion >= Self.sessionEndedProtocolVersion else { return }
                         self.sendServerMessage(.sessionEnded(sessionId: sessionId, reason: reason), context: observerCtx.value)
                     }
                 }

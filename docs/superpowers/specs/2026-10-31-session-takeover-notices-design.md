@@ -2,7 +2,8 @@
 
 Date: 2026-10-31. Applies to every client: iOS, macOS (Swift, `CodeRelayClient`)
 and Android, Linux (Kotlin, `core-session` + `feature-workspace`, shared sources).
-No server or protocol change.
+One server and protocol change, permitted by §4b: protocol v4 adds the server push
+`session_ended {sessionId, reason}`, sent only to clients that authenticate with v4 or later.
 
 ## Intent
 

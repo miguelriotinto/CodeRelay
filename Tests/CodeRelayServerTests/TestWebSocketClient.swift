@@ -171,8 +171,8 @@ final class TestWebSocketClient: @unchecked Sendable {
 
     /// `auth_request` → `auth_success`. Throws `ReplyError` on `auth_failure`
     /// (mapped to code 401) or on a 429 rate-limit error.
-    func authenticate(token: String) async throws {
-        try await send(.authRequest(token: token, protocolVersion: nil))
+    func authenticate(token: String, protocolVersion: Int? = nil) async throws {
+        try await send(.authRequest(token: token, protocolVersion: protocolVersion))
         let reply = try await waitFor(["auth_success", "auth_failure"])
         if case .authFailure(let reason) = reply {
             throw ReplyError(code: 401, message: reason)
