@@ -35,6 +35,8 @@ fun Modifier.edgeSwipeOpen(isListOpen: () -> Boolean, onOpen: () -> Unit): Modif
             while (true) {
                 val change = awaitPointerEvent(PointerEventPass.Initial).changes
                     .firstOrNull { it.id == down.id } ?: break
+                // Once fired, swallow the release too so nothing reads it as a tap.
+                if (opened) change.consume()
                 if (!change.pressed) break
                 if (!opened && EdgeSwipeLogic.shouldOpen(
                         startX = startX,
@@ -47,8 +49,8 @@ fun Modifier.edgeSwipeOpen(isListOpen: () -> Boolean, onOpen: () -> Unit): Modif
                 ) {
                     opened = true
                     open.value()
+                    change.consume()
                 }
-                if (opened) change.consume()
             }
         }
     }

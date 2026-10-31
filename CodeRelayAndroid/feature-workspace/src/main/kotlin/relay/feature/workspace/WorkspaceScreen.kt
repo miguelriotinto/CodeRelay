@@ -287,9 +287,9 @@ internal fun WorkspacePane(
     // 320 dp — its rightmost columns and the key bar's last keys — sat off the
     // right edge of the screen (seen on the iPhone-Duo-sized emulator in
     // landscape). A Row gives the pane the width that is actually left. The two
-    // gestures the drawer used to provide are re-added by hand below: a leftward
-    // drag on the sidebar closes it, a rightward drag from the pane's left edge
-    // opens it. Survives rotation/recreation; starts open.
+    // gestures the drawer used to provide are re-added by hand: a leftward drag
+    // on the sidebar closes it (below), a rightward drag from the left edge opens
+    // it (`edgeSwipeOpen`). Survives rotation/recreation; starts open.
     var twoPaneSidebarOpen by rememberSaveable { mutableStateOf(true) }
 
     val sidebar: @Composable () -> Unit = sidebarContent?.let { custom ->
@@ -428,7 +428,7 @@ internal fun WorkspacePane(
                 modifier = Modifier.fillMaxSize().edgeSwipeOpen(
                     isListOpen = { if (expanded) twoPaneSidebarOpen || sidebarWidth > 0.dp else drawerState.isOpen },
                     onOpen = {
-                        if (expanded) twoPaneSidebarOpen = !twoPaneSidebarOpen
+                        if (expanded) twoPaneSidebarOpen = true
                         else scope.launch { drawerState.open() }
                     },
                 ),
@@ -469,6 +469,9 @@ internal fun WorkspacePane(
                 } else {
                     ModalNavigationDrawer(
                         drawerState = drawerState,
+                        // Only drag-to-close; opening by drag is `edgeSwipeOpen`'s, so the
+                        // drawer's own detector cannot race it and snap the drawer shut.
+                        gesturesEnabled = drawerState.isOpen,
                         drawerContent = {
                             Box(modifier = Modifier.width(320.dp).fillMaxHeight()) { sidebar() }
                         },
