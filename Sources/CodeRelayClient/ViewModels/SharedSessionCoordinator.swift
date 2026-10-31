@@ -1323,10 +1323,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     @Published public private(set) var connectionState: RelayConnection.ConnectionState = .disconnected
     private var connectionStateSubscription: AnyCancellable?
 
-    /// Opens the socket and runs the launch handshake. The shared base has no
+    /// Opens the socket and runs the handshake for `reason`. The shared base has no
     /// bookmark to dial, so this is a no-op here; platform subclasses override
     /// (the macOS `SessionCoordinator.start()` already did exactly this).
-    open func start() async {}
+    open func start(reason: SessionHandshake.Reason) async {}
 
     /// Detaches whatever this coordinator has attached and clears the selection,
     /// so the hub can attach on another server (D9: one attachment across all

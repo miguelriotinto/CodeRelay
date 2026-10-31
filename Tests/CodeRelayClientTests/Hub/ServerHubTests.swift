@@ -138,4 +138,111 @@ final class ServerHubTests: XCTestCase {
         XCTAssertTrue(sa.tornDown && sb.tornDown)
         XCTAssertNil(h.slot(a.id))
     }
+
+    // MARK: - Session-loss notices (session takeover spec §2, §3b, §6)
+
+    private func liveLossHub(_ names: [String]) async -> (HubHarness, [ConnectionConfig]) {
+        let configs = names.map { makeConfig($0) }
+        let h = HubHarness(configs: configs)
+        await h.hub.start()
+        for c in configs { h.slot(c.id)!.goLive(with: [makeSession()]) }
+        await hubSettle()
+        return (h, configs)
+    }
+
+    func testFanOutWaitsForPassAlreadyInFlight() async {
+        let (h, cfg) = await liveLossHub(["a"])
+        let a = h.slot(cfg[0].id)!
+        var alerts: [SessionLossAlert] = []
+        let sub = h.hub.$takenAlert.compactMap { $0 }.sink { alerts.append($0) }
+        defer { sub.cancel() }
+        // Launch, scenePhase and network-restored inside ~100 ms: the trigger
+        // returns at once because a handshake is already running; its result
+        // lands later.
+        a.passHangs = true
+        let waitsBefore = a.passWaits                    // start() awaited the launch pass too
+        let fg = Task { await h.hub.handleForegroundTransition(userInitiated: false) }
+        await hubSettle()
+        XCTAssertEqual(a.foregroundCount, 1)
+        XCTAssertEqual(a.passWaits - waitsBefore, 1, "the hold awaits the pass, not just the trigger")
+        a.reportLost(taken: [LostSession(id: UUID(), name: "api")])
+        await hubSettle()
+        XCTAssertTrue(alerts.isEmpty, "held while the in-flight pass runs")
+        a.reportLost(taken: [LostSession(id: UUID(), name: "web")])
+        a.releasePass()
+        await fg.value
+        await hubSettle()
+        XCTAssertEqual(alerts.count, 1, "one alert for the whole fan-out")
+        XCTAssertEqual(alerts.first?.title, "Sessions Moved")
+        XCTAssertEqual(alerts.first?.message, "api and web were attached from another device.")
+    }
+
+    func testFanOutCapsAt10s() async {
+        let (h, cfg) = await liveLossHub(["dead", "ok"])
+        XCTAssertEqual(h.hub.fanOutBudget, .seconds(10), "the production cap is 10 s")
+        h.hub.fanOutBudget = .milliseconds(300)          // scaled down for the test
+        let dead = h.slot(cfg[0].id)!, ok = h.slot(cfg[1].id)!
+        dead.foregroundHangs = true                       // never finishes
+        ok.onForeground = { ok.reportLost(taken: [LostSession(id: UUID(), name: "api")]) }
+        let fg = Task { await h.hub.handleForegroundTransition(userInitiated: false) }
+        await hubSettle()
+        XCTAssertEqual(ok.foregroundCount, 1)
+        XCTAssertNil(h.hub.takenAlert, "held: the dead server's pass has not finished")
+        try? await Task.sleep(for: .milliseconds(400))
+        await hubSettle()
+        XCTAssertEqual(h.hub.takenAlert?.message, "api was attached from another device.",
+                       "the cap releases the other server's report")
+        XCTAssertEqual(h.hub.takenAlert?.title, "Session Moved")
+        dead.foregroundGate?.resume(); dead.foregroundGate = nil
+        await fg.value
+    }
+
+    func testStealOnNonFocusedServerSurfaces() async {
+        let (h, cfg) = await liveLossHub(["one", "two"])
+        let one = h.slot(cfg[0].id)!, two = h.slot(cfg[1].id)!
+        await h.hub.select(SessionRef(serverId: cfg[0].id, sessionId: one.sessions[0].id))
+        await hubSettle()
+        XCTAssertEqual(h.hub.focusServerId, cfg[0].id)
+        two.reportLost(taken: [LostSession(id: two.sessions[0].id, name: "build")])
+        await hubSettle()
+        XCTAssertEqual(h.hub.takenAlert?.title, "Session Moved")
+        XCTAssertEqual(h.hub.takenAlert?.message, "build was attached from another device.")
+    }
+
+    func testEndedGoesToNotice() async {
+        let (h, cfg) = await liveLossHub(["a"])
+        h.slot(cfg[0].id)!.reportLost(ended: [LostSession(id: UUID(), name: "api")])
+        await hubSettle()
+        XCTAssertEqual(h.hub.notice, "api ended while you were away.")
+        XCTAssertNil(h.hub.takenAlert)
+    }
+
+    func testMultiServerBatchUsesDisplayNames() async {
+        let a = ConnectionConfig(name: "a", host: "a.local", displayName: "Studio")
+        let b = makeConfig("b")
+        let h = HubHarness(configs: [a, b])
+        await h.hub.start()
+        h.hub.fanOutBudget = .seconds(5)
+        h.slot(b.id)!.passHangs = true
+        let fg = Task { await h.hub.handleForegroundTransition(userInitiated: false) }
+        await hubSettle()
+        h.slot(a.id)!.reportLost(taken: [LostSession(id: UUID(), name: "api")])
+        h.slot(b.id)!.reportLost(taken: [LostSession(id: UUID(), name: "web")])
+        h.slot(b.id)!.releasePass()
+        await fg.value
+        XCTAssertEqual(h.hub.takenAlert?.message, "api (on Studio) and web (on b) were attached from another device.")
+    }
+
+    func testEnableBuildsWithEnableReason() async {
+        let a = makeConfig("a"), b = makeConfig("b", enabled: false)
+        let h = HubHarness(configs: [a, b])
+        await h.hub.start()
+        XCTAssertEqual(h.slot(a.id)?.startReasons, [.launch], "launch announces")
+        h.hub.setEnabled(b.id, true)
+        await hubSettle()
+        XCTAssertEqual(h.slot(b.id)?.startReasons, [.enable], "enabling a server is silent")
+        h.hub.rebuildSlot(a.id)
+        await hubSettle()
+        XCTAssertEqual(h.slot(a.id)?.startReasons, [.enable], "a rebuilt slot is silent too")
+    }
 }

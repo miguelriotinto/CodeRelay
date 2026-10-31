@@ -24,6 +24,7 @@ final class FakeServerSlot: ServerSlotCoordinating {
 
     // Spies
     private(set) var startCount = 0
+    private(set) var startReasons: [SessionHandshake.Reason] = []
     private(set) var switchedTo: [UUID] = []
     private(set) var detachActiveCount = 0
     private(set) var createCount = 0
@@ -53,8 +54,8 @@ final class FakeServerSlot: ServerSlotCoordinating {
         self.activityCoordinator = ActivityCoordinator(ownershipStore: store, initialAgents: [:])
     }
 
-    func start() async {
-        startCount += 1; log?("start:\(config.name)")
+    func start(reason: SessionHandshake.Reason) async {
+        startCount += 1; startReasons.append(reason); log?("start:\(config.name)")
         if startHangs { await withCheckedContinuation { startGate = $0 } }
     }
     func switchToSession(id: UUID) async {
@@ -69,6 +70,7 @@ final class FakeServerSlot: ServerSlotCoordinating {
     }
     func handleForegroundTransition(userInitiated: Bool) async {
         foregroundCount += 1; log?("fg:\(config.name)")
+        onForeground?()
         if foregroundHangs { await withCheckedContinuation { foregroundGate = $0 } }
     }
     func triggerUserRecovery() { userRecoveryCount += 1; log?("recover:\(config.name)") }
@@ -79,7 +81,22 @@ final class FakeServerSlot: ServerSlotCoordinating {
     func attachRemoteSession(id: UUID, serverName: String?) async { remoteAttaches.append(id); activeSessionId = id }
     func fetchSessions(force: Bool) async { fetchCount += 1 }
     var onSessionsLost: ((SessionLossReport) -> Void)?
-    func awaitPassFinished() async {}
+    /// Runs inside `handleForegroundTransition`, before any hang (to report mid-pass).
+    var onForeground: (() -> Void)?
+    /// Makes `awaitPassFinished` park until released: a pass already in flight
+    /// when the trigger returned at once.
+    var passHangs = false
+    var passGate: CheckedContinuation<Void, Never>?
+    private(set) var passWaits = 0
+    func awaitPassFinished() async {
+        passWaits += 1
+        if passHangs { await withCheckedContinuation { passGate = $0 } }
+    }
+    func releasePass() { passGate?.resume(); passGate = nil }
+    /// What a coordinator's diff or live steal does: report through the hook.
+    func reportLost(taken: [LostSession] = [], ended: [LostSession] = []) {
+        onSessionsLost?(SessionLossReport(taken: taken, ended: ended))
+    }
 
     // Helpers
     func goLive(with sessions: [SessionInfo]) {
@@ -134,7 +151,8 @@ final class HubHarness {
                         sleep: { [unowned self] _ in
                             self.sleepCalls += 1
                             if gatedSleep { await withCheckedContinuation { self.sleepGates.append($0) } }
-                        })
+                        },
+                        lossSleep: { _ in })
     }
 
     func releaseSleeps() { let gates = sleepGates; sleepGates.removeAll(); for g in gates { g.resume() } }

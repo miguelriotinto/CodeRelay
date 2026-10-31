@@ -24,7 +24,10 @@ public protocol ServerSlotCoordinating: AnyObject, ObservableObject {
     /// Sessions this server lost while away (or live, for a steal), classified.
     var onSessionsLost: ((SessionLossReport) -> Void)? { get set }
 
-    func start() async
+    /// Opens the socket and runs the handshake. `.launch` announces losses since
+    /// the last run; `.enable` (a slot built because the user enabled or edited
+    /// the server) resets the baseline silently (spec §3b).
+    func start(reason: SessionHandshake.Reason) async
     func switchToSession(id: UUID) async
     func createNewSession() async
     func detachActive() async
