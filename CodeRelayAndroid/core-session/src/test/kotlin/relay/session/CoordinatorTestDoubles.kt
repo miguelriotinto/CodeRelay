@@ -73,6 +73,7 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
 
     override suspend fun send(message: ClientMessage) {
         log.add("rpc:${message.typeString}")
+        if (message is ClientMessage.SessionListAll) listAllCount += 1
         if (message is ClientMessage.SessionCreate) {
             lastCreateCols = message.cols
             lastCreateRows = message.rows
@@ -93,7 +94,7 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
     }
 
     internal fun defaultResponseFor(message: ClientMessage): ServerMessage? = when (message) {
-        is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(protocolVersion = 1, tokenId = myTokenId)
+        is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(protocolVersion = protocolVersion, tokenId = myTokenId)
         is ClientMessage.SessionCreate -> ServerMessage.SessionCreated(NEW_SESSION_ID, 80u, 24u)
         is ClientMessage.SessionAttach -> ServerMessage.SessionAttached(message.sessionId, "running")
         is ClientMessage.SessionResume -> ServerMessage.SessionResumed(message.sessionId)
@@ -136,6 +137,12 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
      * Set null to model an older server that doesn't send a token id.
      */
     var myTokenId: String? = "tok"
+
+    /** The protocol version the server reports in auth_success (v4 pushes `session_ended`). */
+    var protocolVersion: Int = 1
+
+    /** How many `session_list_all` requests were sent. */
+    var listAllCount: Int = 0
 
     companion object {
         val NEW_SESSION_ID: UUID = UUID.fromString("00000000-0000-0000-0000-0000000000aa")

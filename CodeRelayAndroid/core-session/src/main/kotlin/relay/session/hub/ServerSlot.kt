@@ -6,6 +6,7 @@ import relay.protocol.ConnectionConfig
 import relay.protocol.ServerIdentity
 import relay.protocol.SessionInfo
 import relay.protocol.WorkspaceRollup
+import relay.session.SessionHandshake
 import java.util.UUID
 
 /**
@@ -27,10 +28,16 @@ interface ServerSlot {
     val sessionsAwaitingInput: StateFlow<Set<UUID>>
     /** Fires after any of the above changed; the hub republishes on it. */
     val changes: Flow<Unit>
+    /** Sessions this server lost while away (or live, for a steal), classified. */
+    var onSessionsLost: ((SessionLossReport) -> Unit)?
 
     fun rollups(sessions: List<SessionInfo>): List<WorkspaceRollup>
-    /** Connects and runs the launch handshake. May throw for a rejected token; the hub catches it. */
-    suspend fun start()
+    /**
+     * Connects and runs the first handshake with [reason]: LAUNCH at app start
+     * (reports losses since the persisted baseline), ENABLE for a just-enabled or
+     * rebuilt server (silent). May throw for a rejected token; the hub catches it.
+     */
+    suspend fun start(reason: SessionHandshake.Reason = SessionHandshake.Reason.LAUNCH)
     suspend fun switchToSession(id: UUID)
     suspend fun createNewSession()
     /** Bounded detach that clears the selection first (D9). */
@@ -39,6 +46,9 @@ interface ServerSlot {
     fun handleForegroundTransition()
     fun triggerUserRecovery()
     suspend fun syncPush(settings: PushSettings)
+    /** Returns once no handshake, recovery or session fetch is in flight —
+     *  including one already running when called; immediately when idle. */
+    suspend fun awaitPassFinished()
     suspend fun tearDown()
 }
 

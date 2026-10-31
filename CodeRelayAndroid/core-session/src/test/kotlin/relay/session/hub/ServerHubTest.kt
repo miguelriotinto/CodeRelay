@@ -75,7 +75,7 @@ class ServerHubTest {
         val h = HubHarness(hubScope(), listOf(a))
         val hub = ServerHub(hubScope(), h.bookmarks, h.tokens, h.state, factory = { c, _ ->
             object : ServerSlot by FakeServerSlot(c) {
-                override suspend fun start() { error("Authentication failed: bad token") }
+                override suspend fun start(reason: relay.session.SessionHandshake.Reason) { error("Authentication failed: bad token") }
             }
         }, sleepMs = {})
         hub.start(); advanceUntilIdle()

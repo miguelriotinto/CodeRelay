@@ -133,6 +133,9 @@ class RecoveryController(
      *  in-flight `session_list` — the cold-launch empty-pane root cause. Defaults
      *  to false so existing constructions/tests behave exactly as before. */
     private val isHandshakeInFlight: () -> Boolean = { false },
+    /** Called whenever a pass releases its dispatch lock (finished or cancelled),
+     *  so `SessionCoordinator.awaitPassFinished` can re-check for idle. */
+    private val onPassSettled: () -> Unit = {},
 ) {
     private companion object {
         /** Backoff delays in seconds (RecoveryController.swift:176). */
@@ -202,6 +205,13 @@ class RecoveryController(
      * suspension at the top of the flow (RecoveryController.swift:55, 144).
      */
     private var isRecoveryDispatched = false
+
+    /**
+     * A foreground/wake/network pass is dispatched and not yet finished — it may
+     * still be probing the socket, before [isRecovering] or the handshake gate is
+     * up. Read by `SessionCoordinator.awaitPassFinished`.
+     */
+    val isPassDispatched: Boolean get() = isRecoveryDispatched
 
     /**
      * Stamp set by [cancel]; gates [triggerUserRecovery]
@@ -364,6 +374,7 @@ class RecoveryController(
         } finally {
             // Outer defer (RecoveryController.swift:144).
             isRecoveryDispatched = false
+            onPassSettled()
         }
     }
 
@@ -489,6 +500,7 @@ class RecoveryController(
         // `suppressAllViewModelSends(true)`.
         suppressSends(false)
         isRecoveryDispatched = false
+        onPassSettled()
         _recoveryFailed.value = true
         val now = nowMs()
         lastRecoveryEndedAt = now

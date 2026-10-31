@@ -125,54 +125,17 @@ class ActivityCoordinatorTest {
         assertEquals(listOf(id1 to true, id1 to false), events)
     }
 
-    // sessionStolen → stolen flag set AND activity cleared (ownership is not
-    // persisted anymore, so there is no unclaim side effect).
-    @Test
-    fun `sessionStolen sets stolen flag and clears activity`() = runTest {
-        val store = FakePersistence(mapOf(id1 to "claude"))
-        val coordinator = ActivityCoordinator(store)
-        coordinator.applyActivity(id1, ActivityState.AGENT_IDLE, "claude")
-        assertTrue(coordinator.sessionsAwaitingInput.value.contains(id1))
-
-        val alert = coordinator.sessionStolen(id1, nameLookup = { "Brave Otter" })
-
-        assertTrue(coordinator.sessionsStolen.value.contains(id1))
-        assertEquals("Brave Otter", alert.sessionName)
-        assertEquals(id1.toString().take(8), alert.shortId)
-        assertEquals(alert, coordinator.stolenAlert.value)
-        // Activity state cleared on steal.
-        assertFalse(coordinator.agentSessions.value.containsKey(id1))
-        assertFalse(coordinator.sessionsAwaitingInput.value.contains(id1))
-    }
-
-    // clearStolen dismisses the flag + alert.
-    @Test
-    fun `clearStolen dismisses flag and alert`() = runTest {
-        val store = FakePersistence()
-        val coordinator = ActivityCoordinator(store)
-        coordinator.sessionStolen(id1)
-        assertTrue(coordinator.sessionsStolen.value.contains(id1))
-
-        coordinator.clearStolen(id1)
-
-        assertFalse(coordinator.sessionsStolen.value.contains(id1))
-        assertNull(coordinator.stolenAlert.value)
-    }
-
     // forgetSession → removed from every map/set.
     @Test
     fun `forgetSession removes from all maps and sets`() = runTest {
         val store = FakePersistence(mapOf(id1 to "claude"))
         val coordinator = ActivityCoordinator(store)
         coordinator.applyActivity(id1, ActivityState.AGENT_IDLE, "claude")
-        coordinator.sessionStolen(id1)
 
         coordinator.forgetSession(id1)
 
         assertFalse(coordinator.agentSessions.value.containsKey(id1))
         assertFalse(coordinator.sessionsAwaitingInput.value.contains(id1))
-        assertFalse(coordinator.sessionsStolen.value.contains(id1))
-        assertNull(coordinator.stolenAlert.value)
     }
 
     // hydrate from store on init populates the agent map.

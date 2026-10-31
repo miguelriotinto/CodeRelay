@@ -8,6 +8,13 @@ typealias SessionBaseline = relay.protocol.SessionBaseline
 
 enum class SessionLossKind { TAKEN, ENDED }
 
+/**
+ * What one coordinator pass lost, already classified. Delivered through
+ * `SessionCoordinator.onSessionsLost` to the hub, which aggregates and presents
+ * (spec §2). Mirrors Swift `SessionLossReport`.
+ */
+data class SessionLossReport(val taken: List<LostSession>, val ended: List<LostSession>)
+
 /** Pure classification of sessions that disappeared from this token's list. */
 object SessionLossClassifier {
     /** Entries of [before] not present as non-terminal in [owned], order preserved. */

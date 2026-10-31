@@ -20,6 +20,9 @@ import relay.protocol.ActivityState
 import relay.protocol.ConnectionConfig
 import relay.protocol.SessionInfo
 import relay.protocol.SessionState
+import relay.session.hub.LostSession
+import relay.session.hub.SessionBaseline
+import relay.session.hub.SessionLossReport
 import java.util.UUID
 
 /**
@@ -31,7 +34,7 @@ import java.util.UUID
  * properties pinned here are the ones that let the "empty pane on relaunch" bug
  * survive five shipped fixes, and none of them are about the happy path: does
  * recovery stay out of the way, does the gate always clear, does a total failure
- * stay visible, is LAUNCH silent about sessions lost while the app was closed.
+ * stay visible, does every pass but ENABLE report what the baseline lost.
  *
  * Uses the shared doubles in CoordinatorTestDoubles.kt, so the handshake is
  * exercised over the SAME fake transport + REAL [SessionController] the
@@ -64,21 +67,23 @@ class SessionHandshakeTest {
         val surface: FakeConnectionSurface,
         val conn: FakeCoordinatorConnection,
         val coord: SessionCoordinator,
+        val store: FakeOwnershipStore,
     )
 
     private fun harness(scope: kotlinx.coroutines.CoroutineScope): Harness {
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
+        val store = FakeOwnershipStore(log)
         val coord = SessionCoordinator(
             scope = scope,
             connection = conn,
             sessionController = SessionController(surface),
             token = "tok",
-            ownershipStore = FakeOwnershipStore(log),
+            ownershipStore = store,
             config = config,
         )
-        return Harness(log, surface, conn, coord)
+        return Harness(log, surface, conn, coord, store)
     }
 
     // MARK: - The flow itself
@@ -365,83 +370,86 @@ class SessionHandshakeTest {
         assertNotNull(h.coord.errorMessage.value)
     }
 
-    // MARK: - Launch is silent, wake announces
+    // MARK: - Every pass diffs against the baseline; only ENABLE is silent
+
+    private fun lossHarness(scope: kotlinx.coroutines.CoroutineScope): Pair<Harness, MutableList<SessionLossReport>> {
+        val h = harness(scope)
+        h.surface.protocolVersion = 4
+        val reports = mutableListOf<SessionLossReport>()
+        h.coord.onSessionsLost = { reports += it }
+        return h to reports
+    }
+
+    private val aryaBran = SessionBaseline("tok", listOf(LostSession(ARYA, "Arya"), LostSession(BRAN, "Bran")))
 
     /**
-     * The product requirement, directly: a cold launch must NOT report sessions
-     * another client took while this app was closed. There is no "before" worth
-     * diffing on launch, and reporting it every time is noise.
+     * Cold launch announces too (spec §3b): sessions taken while the app was
+     * closed are diffed against the persisted baseline of the last run.
      */
     @Test
-    fun `launch never announces a session taken while the app was closed`() = runTest {
-        val h = harness(this)
-        // Seed the pane, then have the server report the session as no longer ours.
-        h.surface.sessionsOnServer = listOf(session(ARYA, "Arya"))
-        h.coord.performHandshake(SessionHandshake.Reason.LAUNCH)
-        advanceUntilIdle()
-        h.surface.sessionsOnServer = emptyList()
+    fun `launch reports from baseline`() = runTest {
+        val (h, reports) = lossHarness(this)
+        h.store.setBaseline(aryaBran)
+        h.surface.sessionsOnServer = listOf(session(BRAN))
+        h.surface.allSessionsOnServer = listOf(session(ARYA, token = "other"), session(BRAN))
 
-        h.coord.performHandshake(SessionHandshake.Reason.LAUNCH)
+        val ok = h.coord.performHandshake(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
 
-        assertTrue(h.coord.activeSessions.value.isEmpty(), "the pane follows the server")
-        assertNull(h.coord.stolenAlert.value, "launch must stay silent about what was lost while closed")
-    }
-
-    /**
-     * The other half of the same requirement: when the app was ALREADY open and
-     * comes back, a session that dropped out of our list WAS taken by another
-     * device — and we missed the live `session_stolen` push because our socket was
-     * down, so this is the only place the user learns about it.
-     */
-    @Test
-    fun `wake announces a session that is no longer ours`() = runTest {
-        val h = harness(this)
-        h.surface.sessionsOnServer = listOf(session(ARYA, "Arya"), session(BRAN, "Bran"))
-        h.coord.performHandshake(SessionHandshake.Reason.LAUNCH)
-        advanceUntilIdle()
-        h.surface.sessionsOnServer = listOf(session(BRAN, "Bran"))
-
-        h.coord.performHandshake(SessionHandshake.Reason.WAKE)
-        advanceUntilIdle()
-
-        val alert = h.coord.stolenAlert.value
-        assertNotNull(alert, "wake must report the session another device attached")
-        assertEquals(ARYA, alert!!.sessionId)
-        assertEquals("Arya", alert.sessionName, "the name must come from the pre-fetch snapshot")
-    }
-
-    @Test
-    fun `firstLostSession is the one missing from the server list`() {
-        val before = listOf(
-            SessionHandshake.LostSession(ARYA, "Arya"),
-            SessionHandshake.LostSession(BRAN, "Bran"),
-        )
-
-        val lost = SessionHandshake.firstLostSession(before, stillOwned = setOf(ARYA))
-
-        assertEquals(BRAN, lost?.id)
-        assertEquals("Bran", lost?.name)
-    }
-
-    @Test
-    fun `no lost session when the server list still matches`() {
-        val before = listOf(
-            SessionHandshake.LostSession(ARYA, "Arya"),
-            SessionHandshake.LostSession(BRAN, "Bran"),
-        )
-
-        assertNull(SessionHandshake.firstLostSession(before, stillOwned = setOf(ARYA, BRAN)))
+        assertTrue(ok)
+        assertEquals(listOf(SessionLossReport(taken = listOf(LostSession(ARYA, "Arya")), ended = emptyList())), reports)
+        assertEquals(listOf(BRAN), h.store.baseline?.sessions?.map { it.id })
     }
 
     /**
-     * The launch case by construction: an empty pane before the fetch means there
-     * is no "before" to diff, so nothing is ever announced.
+     * A slot built because the user just enabled the server (or a bookmark edit
+     * rebuilt it) must not open with old losses: it resets the baseline from the
+     * fresh list and reports nothing.
      */
     @Test
-    fun `nothing is announced when there was no prior pane`() {
-        assertNull(SessionHandshake.firstLostSession(emptyList(), stillOwned = emptySet()))
-        assertNull(SessionHandshake.firstLostSession(emptyList(), stillOwned = setOf(ARYA)))
+    fun `enable reason is silent and resets baseline`() = runTest {
+        val (h, reports) = lossHarness(this)
+        h.store.setBaseline(aryaBran)
+        h.surface.sessionsOnServer = listOf(session(BRAN))
+        h.surface.allSessionsOnServer = listOf(session(ARYA, token = "other"), session(BRAN))
+
+        val ok = h.coord.performHandshake(SessionHandshake.Reason.ENABLE)
+        advanceUntilIdle()
+
+        assertTrue(ok)
+        assertTrue(reports.isEmpty(), "ENABLE reports nothing")
+        assertEquals(0, h.surface.listAllCount, "ENABLE never classifies")
+        assertEquals("tok", h.store.baseline?.tokenId)
+        assertEquals(listOf(BRAN), h.store.baseline?.sessions?.map { it.id })
+    }
+
+    /**
+     * ENABLE's silence is per slot, not per handshake: the stale baseline is
+     * cleared the moment the pass starts, so a fetch that applies a list before
+     * the handshake does has nothing to diff against.
+     */
+    @Test
+    fun `fetch racing ahead of enable handshake reports nothing`() = runTest {
+        val (h, reports) = lossHarness(this)
+        h.store.setBaseline(aryaBran)
+        h.surface.sessionsOnServer = listOf(session(BRAN))
+        h.surface.allSessionsOnServer = listOf(session(ARYA, token = "other"), session(BRAN))
+        val authGate = CompletableDeferred<Unit>()
+        h.surface.sendGate = { if (it is relay.protocol.ClientMessage.AuthRequest) authGate.await() }
+
+        val pass = async { h.coord.performHandshake(SessionHandshake.Reason.ENABLE) }
+        advanceUntilIdle()
+        assertTrue("rpc:auth_request" in h.log, "parked on auth")
+        assertNull(h.store.baseline, "the enable pass clears the baseline before its first suspension")
+
+        // A refresh's list lands first.
+        h.coord.reportLosses(h.coord.applyServerSessions(listOf(session(BRAN))))
+
+        authGate.complete(Unit)
+        assertTrue(pass.await())
+        advanceUntilIdle()
+        assertTrue(reports.isEmpty(), "nothing is reported for a just-enabled server")
+        assertEquals(0, h.surface.listAllCount)
     }
 
     // MARK: - Single-flight
