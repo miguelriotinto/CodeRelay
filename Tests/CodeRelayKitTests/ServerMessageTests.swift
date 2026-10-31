@@ -391,6 +391,29 @@ final class ServerMessageTests: ProtocolTestCase {
         XCTAssertEqual(sessionId.uuidString, id)
     }
 
+    // MARK: - sessionEnded
+
+    func testSessionEndedRoundTrips() throws {
+        let id = UUID(uuidString: "12345678-1234-1234-1234-123456789ABC")!
+        let msg = ServerMessage.sessionEnded(sessionId: id, reason: "exited")
+        let data = try encoder.encode(MessageEnvelope.server(msg))
+        let obj = try jsonObject(data)
+        XCTAssertEqual(obj["type"] as? String, "session_ended")
+        let payload = obj["payload"] as? [String: Any]
+        XCTAssertEqual(payload?["sessionId"] as? String, id.uuidString)
+        XCTAssertEqual(payload?["reason"] as? String, "exited")
+
+        let envelope = try decoder.decode(MessageEnvelope.self, from: data)
+        guard case .server(.sessionEnded(let sid, let reason)) = envelope else {
+            return XCTFail("Expected sessionEnded")
+        }
+        XCTAssertEqual(sid, id)
+        XCTAssertEqual(reason, "exited")
+        XCTAssertTrue(ServerMessage.allTypeStrings.contains("session_ended"))
+        XCTAssertTrue(ServerMessage.allTypeStrings.isDisjoint(with: ClientMessage.allTypeStrings))
+        XCTAssertEqual(CodeRelayKit.protocolVersion, 4)
+    }
+
     // MARK: - sessionRenamed
 
     func testSessionRenamedEncoding() throws {

@@ -10,9 +10,9 @@ final class ServerIdentityMessageTests: ProtocolTestCase {
         id: UUID(uuidString: "0F2C1D9A-5B8E-4C7D-9A1B-2E3F4A5B6C7D")!,
         name: "studio-mac")
 
-    func testProtocolVersionIsThree() {
-        XCTAssertEqual(CodeRelayKit.protocolVersion, 3)
-        XCTAssertEqual(CodeRelayKit.minProtocolVersion, 0, "v3 is additive; old clients stay accepted")
+    func testProtocolVersionIsFour() {
+        XCTAssertEqual(CodeRelayKit.protocolVersion, 4)
+        XCTAssertEqual(CodeRelayKit.minProtocolVersion, 0, "v4 is additive; old clients stay accepted")
     }
 
     func testAuthSuccessEncodesServerIdentityAsFlatKeys() throws {

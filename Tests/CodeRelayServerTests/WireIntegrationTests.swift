@@ -183,6 +183,35 @@ final class WireIntegrationTests: XCTestCase {
         await client.close()
     }
 
+    /// A client that created then detached a session learns of a server-side
+    /// PTY exit via `session_ended`. The exit is simulated through the mock
+    /// PTY's exit handler (the same callback a real shell exit fires).
+    func testOwnerReceivesSessionEndedWhenNotAttached() async throws {
+        let fixture = try WireTestServer()
+        try await fixture.start()
+        defer { Task { await fixture.stop() } }
+        let (token, tokenInfo) = try await fixture.mintToken(label: "ended")
+
+        let client = try await fixture.authenticatedClient(token: token)
+        let id = try await client.createSession(name: "ends")
+        try await client.send(.sessionDetach)
+        try await client.waitFor(["session_detached"])
+
+        let (_, ptyAny) = try await fixture.sessionManager.attachSession(id: id, tokenId: tokenInfo.id)
+        let pty = try XCTUnwrap(ptyAny as? MockPTYSession)
+        await pty.triggerExit()
+
+        let events = await client.drain(idle: .milliseconds(500))
+        let ended = events.compactMap { event -> (UUID, String)? in
+            if case .message(.sessionEnded(let sid, let reason)) = event { return (sid, reason) }
+            return nil
+        }
+        XCTAssertEqual(ended.count, 1)
+        XCTAssertEqual(ended.first?.0, id)
+        XCTAssertEqual(ended.first?.1, "exited")
+        await client.close()
+    }
+
     /// `replay_complete` is emitted after the scrollback binary frames and before
     /// `session_activity` when attaching to a session with history.
     func testAttachEmitsReplayCompleteAfterScrollback() async throws {
