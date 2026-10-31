@@ -2,7 +2,9 @@ package relay.session.hub
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -241,5 +243,146 @@ class ServerHubTest {
         h.hub.reloadBookmarks(); runCurrent()
         gate.complete(Unit); starting.join(); advanceUntilIdle()
         assertEquals(1, h.built.size)
+    }
+
+    // MARK: - Session-loss notices (session takeover spec §2, §3b, §6)
+
+    private suspend fun kotlinx.coroutines.test.TestScope.liveLossHub(vararg configs: relay.protocol.ConnectionConfig): HubHarness {
+        val h = HubHarness(hubScope(), configs.toList(), nowMs = { testScheduler.currentTime })
+        h.hub.start(); advanceUntilIdle()
+        configs.forEach { h.slot(it.id)!!.goLive(listOf(session())) }
+        advanceUntilIdle()
+        return h
+    }
+
+    private fun lost(name: String, id: UUID = UUID.randomUUID()) = LostSession(id, name)
+
+    @Test fun fanOutWaitsForPassAlreadyInFlight() = runTest { // Review Focus 1
+        val a = cfg("a"); val h = liveLossHub(a)
+        val slot = h.slot(a.id)!!
+        val alerts = mutableListOf<SessionLossAlert>()
+        val sub = h.hub.scope.launch { h.hub.takenAlert.collect { it?.let(alerts::add) } }
+        // Launch, foreground and network-restored inside ~100 ms: the trigger
+        // returns at once because a handshake is already running; its result
+        // lands later.
+        val pass = kotlinx.coroutines.CompletableDeferred<Unit>()
+        slot.passGate = pass
+        val finishedBefore = slot.passFinishedCount
+        h.hub.handleForegroundTransition()
+        val hold = h.hub.lastLossHold!!
+        runCurrent()
+        assertEquals(1, slot.foregroundCount)
+        slot.reportLost(taken = listOf(lost("api")))
+        advanceTimeBy(5_000); runCurrent()
+        assertTrue(alerts.isEmpty(), "held while the in-flight pass runs")
+        slot.reportLost(taken = listOf(lost("web")))
+        pass.complete(Unit)
+        hold.join(); runCurrent()
+        assertEquals(finishedBefore + 1, slot.passFinishedCount, "the hold awaited the pass, not just the trigger")
+        assertEquals(1, alerts.size, "one alert for the whole fan-out")
+        assertEquals("Sessions Moved", alerts[0].title)
+        assertEquals("api and web were attached from another device.", alerts[0].message)
+        sub.cancel()
+    }
+
+    @Test fun fanOutCapsAt10s() = runTest {
+        val dead = cfg("dead"); val ok = cfg("ok"); val h = liveLossHub(dead, ok)
+        h.slot(dead.id)!!.passGate = kotlinx.coroutines.CompletableDeferred() // its pass never finishes
+        val okSlot = h.slot(ok.id)!!
+        okSlot.onForeground = { okSlot.reportLost(taken = listOf(lost("api"))) }
+        val t0 = currentTime
+        h.hub.handleForegroundTransition()
+        advanceTimeBy(9_999); runCurrent()
+        assertEquals(1, okSlot.foregroundCount)
+        assertNull(h.hub.takenAlert.value, "held: the dead server's pass has not finished")
+        advanceTimeBy(2); runCurrent()
+        assertEquals(t0 + 10_001, currentTime)
+        assertEquals("api was attached from another device.", h.hub.takenAlert.value?.message,
+            "the 10 s cap releases the other server's report")
+        assertEquals("Session Moved", h.hub.takenAlert.value?.title)
+    }
+
+    @Test fun aNeverFinishingPassDelaysNeitherStartNorFanOut() = runTest {
+        val a = cfg("a"); val b = cfg("b")
+        val h = HubHarness(hubScope(), listOf(a, b), passHangs = setOf(a.id))
+        h.hub.start()
+        assertEquals(0L, currentTime, "start() returns once every slot is built, not when every pass ends")
+        assertTrue(h.hub.hasStarted.value, "deep links waiting on the first start are released")
+        h.hub.handleForegroundTransition(); runCurrent()
+        assertEquals(0L, currentTime)
+        assertTrue(h.built.all { it.foregroundCount == 1 }, "the fan-out's triggers ran without waiting on the pass")
+    }
+
+    @Test fun stopDropsAHeldNotice() = runTest {
+        val a = cfg("a"); val h = liveLossHub(a)
+        val slot = h.slot(a.id)!!
+        val pass = kotlinx.coroutines.CompletableDeferred<Unit>()
+        slot.passGate = pass
+        h.hub.handleForegroundTransition(); runCurrent()
+        val hold = h.hub.lastLossHold!!
+        slot.reportLost(taken = listOf(lost("api")))
+        h.hub.stop()
+        pass.complete(Unit)
+        hold.join(); advanceUntilIdle()
+        assertNull(h.hub.takenAlert.value, "nothing lands behind a closed workspace")
+    }
+
+    @Test fun aRetiredSlotsReportIsDropped() = runTest {
+        val a = cfg("a"); val h = liveLossHub(a)
+        val old = h.slot(a.id)!!
+        h.hub.rebuildSlot(a.id); advanceUntilIdle()
+        old.reportLost(taken = listOf(lost("api")))
+        advanceUntilIdle()
+        assertNull(h.hub.takenAlert.value, "a torn-down coordinator speaks for no server")
+    }
+
+    @Test fun stealOnNonFocusedServerSurfaces() = runTest { // Review Focus 5
+        val one = cfg("one"); val two = cfg("two"); val h = liveLossHub(one, two)
+        h.hub.select(relay.protocol.SessionRef(one.id, h.slot(one.id)!!.sessions.value[0].id)); advanceUntilIdle()
+        assertEquals(one.id, h.hub.focusServerId.value)
+        val stolen = h.slot(two.id)!!.sessions.value[0].id
+        h.slot(two.id)!!.reportLost(taken = listOf(lost("build", stolen)))
+        advanceUntilIdle()
+        assertEquals("Session Moved", h.hub.takenAlert.value?.title)
+        assertEquals("build was attached from another device.", h.hub.takenAlert.value?.message)
+        h.hub.dismissTakenAlert()
+        assertNull(h.hub.takenAlert.value)
+    }
+
+    @Test fun endedGoesToNotice() = runTest {
+        val a = cfg("a"); val h = liveLossHub(a)
+        h.slot(a.id)!!.reportLost(ended = listOf(lost("api")))
+        advanceUntilIdle()
+        assertEquals("api ended while you were away.", h.hub.notice.value)
+        assertNull(h.hub.takenAlert.value)
+    }
+
+    @Test fun multiServerBatchUsesDisplayNames() = runTest {
+        val a = relay.protocol.ConnectionConfig(name = "a", host = "a.local", displayName = "Studio")
+        val b = cfg("b")
+        val h = HubHarness(hubScope(), listOf(a, b), nowMs = { testScheduler.currentTime })
+        h.hub.start(); advanceUntilIdle()
+        val pass = kotlinx.coroutines.CompletableDeferred<Unit>()
+        h.slot(b.id)!!.passGate = pass
+        h.hub.handleForegroundTransition(); runCurrent()
+        val hold = h.hub.lastLossHold!!
+        h.slot(a.id)!!.reportLost(taken = listOf(lost("api")))
+        h.slot(b.id)!!.reportLost(taken = listOf(lost("web")))
+        pass.complete(Unit)
+        hold.join(); runCurrent()
+        assertEquals("api (on Studio) and web (on b) were attached from another device.", h.hub.takenAlert.value?.message)
+    }
+
+    @Test fun enableBuildsWithEnableReason() = runTest {
+        val a = cfg("a"); val b = cfg("b", enabled = false)
+        val h = HubHarness(hubScope(), listOf(a, b)); h.hub.start(); advanceUntilIdle()
+        assertEquals(listOf(relay.session.SessionHandshake.Reason.LAUNCH), h.slot(a.id)!!.startReasons, "launch announces")
+        h.hub.setEnabled(b.id, true); advanceUntilIdle()
+        assertEquals(listOf(relay.session.SessionHandshake.Reason.ENABLE), h.slot(b.id)!!.startReasons, "enabling a server is silent")
+        h.hub.rebuildSlot(a.id); advanceUntilIdle()
+        assertEquals(listOf(relay.session.SessionHandshake.Reason.ENABLE), h.slot(a.id)!!.startReasons, "a rebuilt slot is silent too")
+        val c = cfg("c"); h.tokens.tokens[c.id] = "t"; h.bookmarks.add(c)
+        h.hub.reloadBookmarks(); advanceUntilIdle()
+        assertEquals(listOf(relay.session.SessionHandshake.Reason.ENABLE), h.slot(c.id)!!.startReasons, "an added/paired server is silent")
     }
 }

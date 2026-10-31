@@ -192,7 +192,11 @@ internal class FakeCoordinatorConnection(private val log: CallLog) : Coordinator
     override var onSendFailed: (() -> Unit)? = null
     override var onHealthyPing: (() -> Unit)? = null
 
-    override suspend fun connect(config: ConnectionConfig, token: String) { log.add("connect") }
+    /** When set, connect awaits it (parks the dial before the handshake). */
+    var connectGate: CompletableDeferred<Unit>? = null
+    /** Runs at the top of send (lets a test observe state while a send is in flight). */
+    var onSend: (suspend (ClientMessage) -> Unit)? = null
+    override suspend fun connect(config: ConnectionConfig, token: String) { log.add("connect"); connectGate?.await() }
     override suspend fun forceReconnect() {
         log.add("forceReconnect")
         onForceReconnect?.invoke()
@@ -203,7 +207,7 @@ internal class FakeCoordinatorConnection(private val log: CallLog) : Coordinator
         isAliveGate?.await()
         return alive
     }
-    override suspend fun send(message: ClientMessage) { log.add("send:${message.typeString}") }
+    override suspend fun send(message: ClientMessage) { onSend?.invoke(message); log.add("send:${message.typeString}") }
     override fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID {
         val id = UUID.randomUUID()
         subscribers[id] = handler

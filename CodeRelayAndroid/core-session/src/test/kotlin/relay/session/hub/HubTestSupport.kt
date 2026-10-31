@@ -33,6 +33,10 @@ class HubHarness(
     hangs: Set<UUID> = emptySet(),
     /** Sessions every slot lists, live, before its start() returns — what a real launch handshake does. */
     liveAtStart: List<relay.protocol.SessionInfo>? = null,
+    /** Bookmarks whose fake's [FakeServerSlot.awaitPassFinished] parks until its `passGate` completes. */
+    passHangs: Set<UUID> = emptySet(),
+    /** The collector's clock; pass `{ testScheduler.currentTime }` for suppression-window tests. */
+    nowMs: () -> Long = { 0L },
 ) {
     val sleeps = mutableListOf<Long>()
     val bookmarks = InMemoryBookmarks(configs)
@@ -49,12 +53,14 @@ class HubHarness(
         factory = { c, _ ->
             FakeServerSlot(c).also {
                 it.startHangs = c.id in hangs
+                if (c.id in passHangs) it.passGate = kotlinx.coroutines.CompletableDeferred()
                 if (liveAtStart != null) { it.connected.value = true; it.sessions.value = liveAtStart }
                 built += it
             }
         },
         maxEnabled = maxEnabled,
         sleepMs = { sleeps += it },
+        nowMs = nowMs,
     )
     fun slot(id: UUID): FakeServerSlot? = hub.slot(id)
 }

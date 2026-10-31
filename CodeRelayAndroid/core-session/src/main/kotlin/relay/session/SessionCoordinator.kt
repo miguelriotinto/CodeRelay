@@ -629,6 +629,10 @@ class SessionCoordinator(
      * error surfaced and pull-to-refresh as the retry.
      */
     suspend fun connect(reason: SessionHandshake.Reason = SessionHandshake.Reason.LAUNCH) {
+        // ENABLE is silent per slot: drop the stale baseline before the dial
+        // suspends, or a fetch applied in that window diffs against losses from
+        // before the server was turned on (the handshake's own clear is too late).
+        if (reason == SessionHandshake.Reason.ENABLE) clearLossBaseline()
         runCatching { connection.connect(config, token) }
         lastHealthyAtMs = nowMs()
         val ok = performHandshake(reason)
@@ -1252,6 +1256,10 @@ class SessionCoordinator(
 
     suspend fun terminateSession(id: UUID) {
         if (recoveryController.isRecovering.value) return
+        // Out of the baseline before the send suspends: a list applied while it
+        // is in flight must not report this device's own terminate as a loss.
+        // A failed send costs nothing — the next list re-baselines it.
+        removeFromBaseline(id)
         try {
             connection.send(ClientMessage.SessionTerminate(id))
             if (_activeSessionId.value == id) clearActiveSession()
@@ -1260,7 +1268,6 @@ class SessionCoordinator(
             // Drop from the pane immediately; the fetch below reconciles against
             // the server list (which no longer includes the terminated session).
             removeSessionLocal(id)
-            removeFromBaseline(id)
             setNameLocal(id, null)
             _terminalTitles.value = _terminalTitles.value - id
             fetchSessions()

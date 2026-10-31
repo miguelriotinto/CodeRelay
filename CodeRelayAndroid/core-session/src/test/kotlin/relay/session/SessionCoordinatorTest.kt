@@ -1728,6 +1728,8 @@ class SessionCoordinatorTest {
         advanceUntilIdle()
 
         h.script(owned = listOf(session(A)), all = listOf(session(A)))
+        var baselineDuringSend: List<UUID>? = null
+        h.conn.onSend = { if (it is ClientMessage.SessionTerminate) baselineDuringSend = h.store.baseline?.sessions?.map { s -> s.id } }
         h.coord.terminateSession(B)
         advanceUntilIdle()
         // The server answers a client-initiated terminate with BOTH
@@ -1739,6 +1741,28 @@ class SessionCoordinatorTest {
 
         assertTrue(h.reports.isEmpty(), "a local terminate is not a loss")
         assertEquals(listOf(A), h.store.baseline?.sessions?.map { it.id })
+        assertEquals(listOf(A), baselineDuringSend, "out of the baseline before the send suspends")
+    }
+
+    /** ENABLE clears the baseline before the dial suspends, not only in the handshake. */
+    @Test
+    fun `fetch during enable dial reports nothing`() = runTest {
+        val h = lossHarness(this, baseline(A, B))
+        h.script(owned = listOf(session(B)), all = listOf(session(A, token = "other"), session(B)))
+        val dial = CompletableDeferred<Unit>()
+        h.conn.connectGate = dial
+
+        val connecting = launch { h.coord.connect(SessionHandshake.Reason.ENABLE) }
+        runCurrent()
+        assertNull(h.store.baseline, "cleared before the dial suspends")
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+        dial.complete(Unit)
+        connecting.join()
+        advanceUntilIdle()
+
+        assertTrue(h.reports.isEmpty(), "nothing from before the server was enabled is announced")
+        assertEquals(0, h.listAllCount)
     }
 
     /** Review focus #4: a baseline from another token is discarded silently. */

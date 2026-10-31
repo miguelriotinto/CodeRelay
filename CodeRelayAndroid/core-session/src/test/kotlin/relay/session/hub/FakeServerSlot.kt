@@ -69,7 +69,9 @@ class FakeServerSlot(override val config: ConnectionConfig) : ServerSlot {
     override suspend fun attachRemoteSession(id: UUID, serverName: String?) {
         remoteAttaches += id; activeSessionId.value = id; changed()
     }
-    override fun handleForegroundTransition() { foregroundCount += 1; log?.invoke("fg:${config.name}") }
+    /** Runs inside [handleForegroundTransition] (to report mid-pass). */
+    var onForeground: (() -> Unit)? = null
+    override fun handleForegroundTransition() { foregroundCount += 1; log?.invoke("fg:${config.name}"); onForeground?.invoke() }
     override fun triggerUserRecovery() { recoveryCount += 1; log?.invoke("recover:${config.name}") }
     override suspend fun syncPush(settings: PushSettings) { pushSyncs += settings; log?.invoke("push:${settings.pushEnabled}") }
     override suspend fun awaitPassFinished() {
@@ -82,6 +84,10 @@ class FakeServerSlot(override val config: ConnectionConfig) : ServerSlot {
         connected.value = true; isPerformingHandshake.value = false; sessions.value = list; changed()
     }
     fun goOffline() { connected.value = false; changed() }
+    /** What a coordinator's diff or live steal does: report through the hook. */
+    fun reportLost(taken: List<LostSession> = emptyList(), ended: List<LostSession> = emptyList()) {
+        onSessionsLost?.invoke(SessionLossReport(taken, ended))
+    }
 }
 
 class InMemoryBookmarks(initial: List<ConnectionConfig> = emptyList()) : BookmarkStore {
