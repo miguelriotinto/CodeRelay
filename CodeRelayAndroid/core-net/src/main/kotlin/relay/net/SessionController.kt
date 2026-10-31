@@ -15,10 +15,10 @@ import java.util.UUID
  * echoes its version in `auth_success` and the controller rejects anything below
  * [MIN]. Version 2 adds `capabilities` to `auth_success` and the `optimize_prompt` /
  * `replace_prompt` RPCs. Version 3 adds the relay's `serverId`/`serverName`
- * (multi-server spec §6.2).
+ * (multi-server spec §6.2). Version 4 adds the `session_ended` push.
  */
 object ProtocolVersions {
-    const val CURRENT = 3
+    const val CURRENT = 4
     const val MIN = 0
 }
 

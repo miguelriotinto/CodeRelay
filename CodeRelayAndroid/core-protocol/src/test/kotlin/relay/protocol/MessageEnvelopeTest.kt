@@ -288,6 +288,20 @@ class MessageEnvelopeTest {
         assertTrue(ClientMessage.ALL_TYPE_STRINGS.intersect(ServerMessage.ALL_TYPE_STRINGS).isEmpty())
     }
 
+    @Test fun decodesSessionEnded() {
+        val id = UUID.fromString("12345678-1234-1234-1234-123456789ABC")
+        val msg = MessageEnvelope.decodeServer(
+            """{"type":"session_ended","payload":{"sessionId":"12345678-1234-1234-1234-123456789ABC","reason":"exited"}}""",
+        )
+        assertEquals(ServerMessage.SessionEnded(id, "exited"), msg)
+        assertEquals("session_ended", (msg as ServerMessage.SessionEnded).typeString)
+    }
+
+    @Test fun typeStringsStayUnique() {
+        assertTrue("session_ended" in ServerMessage.ALL_TYPE_STRINGS)
+        assertTrue(ClientMessage.ALL_TYPE_STRINGS.intersect(ServerMessage.ALL_TYPE_STRINGS).isEmpty())
+    }
+
     // MARK: - Protocol v3 server identity
 
     @Test fun authSuccessCarriesTheServerIdentity() {

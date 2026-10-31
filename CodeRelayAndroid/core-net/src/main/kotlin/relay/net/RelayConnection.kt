@@ -131,6 +131,9 @@ class RelayConnection(
      */
     var onSendFailed: (() -> Unit)? = null
 
+    /** Fires when the server pushes `session_ended` (sessionId, reason). */
+    var onSessionEnded: ((UUID, String) -> Unit)? = null
+
     /** Fires each time the keepalive loop records a healthy ping RTT. */
     var onHealthyPing: (() -> Unit)? = null
 
@@ -452,6 +455,9 @@ class RelayConnection(
                 if (message is ServerMessage.Pong) {
                     resolvePendingPong(true)
                     return@launch
+                }
+                if (message is ServerMessage.SessionEnded) {
+                    onSessionEnded?.invoke(message.sessionId, message.reason)
                 }
                 // ConcurrentHashMap iteration is weakly consistent and safe even
                 // if a handler removes itself (or another subscriber is added on a

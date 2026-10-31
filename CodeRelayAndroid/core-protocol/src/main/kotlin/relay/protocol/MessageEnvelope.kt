@@ -138,6 +138,9 @@ object MessageEnvelope {
             "session_terminated" -> ServerMessage.SessionTerminated(
                 payload.uuid("sessionId"), payload.string("reason"),
             )
+            "session_ended" -> ServerMessage.SessionEnded(
+                payload.uuid("sessionId"), payload.string("reason"),
+            )
             "session_expired" -> ServerMessage.SessionExpired(payload.uuid("sessionId"))
             "session_state" -> ServerMessage.SessionStateMsg(
                 payload.uuid("sessionId"), payload.string("state"),

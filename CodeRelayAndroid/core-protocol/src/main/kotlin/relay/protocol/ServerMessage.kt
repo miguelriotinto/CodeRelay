@@ -54,6 +54,11 @@ sealed interface ServerMessage {
         override val typeString get() = "session_terminated"
     }
 
+    /** Live push: the session ended server-side (reason exited|terminated|expired). */
+    data class SessionEnded(val sessionId: UUID, val reason: String) : ServerMessage {
+        override val typeString get() = "session_ended"
+    }
+
     data class SessionExpired(val sessionId: UUID) : ServerMessage {
         override val typeString get() = "session_expired"
     }
@@ -134,7 +139,7 @@ sealed interface ServerMessage {
         val ALL_TYPE_STRINGS: Set<String> = setOf(
             "auth_success", "auth_failure",
             "session_created", "session_attached", "session_resumed", "replay_complete",
-            "session_detached", "session_terminated", "session_expired", "session_state",
+            "session_detached", "session_terminated", "session_expired", "session_ended", "session_state",
             "session_activity", "session_stolen", "session_renamed",
             "session_list_result", "session_list_all_result",
             "resize_ack", "paste_image_result", "pong", "error",

@@ -22,9 +22,9 @@ class SessionControllerIdentityTest {
         assertNull(controller.serverIdentity, "the next relay may be a different one")
     }
 
-    @Test fun authRequestAnnouncesProtocolThree() = runTest {
-        val conn = FakeConnection(autoRespond = { ServerMessage.AuthSuccess(protocolVersion = 3) })
+    @Test fun authRequestAnnouncesProtocolFour() = runTest {
+        val conn = FakeConnection(autoRespond = { ServerMessage.AuthSuccess(protocolVersion = 4) })
         SessionController(conn).authenticate("tok")
-        assertEquals(3, (conn.sentMessages.first() as ClientMessage.AuthRequest).protocolVersion)
+        assertEquals(4, (conn.sentMessages.first() as ClientMessage.AuthRequest).protocolVersion)
     }
 }
