@@ -106,7 +106,7 @@ class LiveConnectFlowTest {
                 withContext(dispatcher) {
                     // Throws if the handshake never authenticated — the exact
                     // failure the server list must keep the user out of.
-                    withTimeout(30_000) { coordinator.connect() }
+                    withTimeout(30_000) { coordinator.connect(relay.session.SessionHandshake.Reason.LAUNCH) }
 
                     assertFalse(
                         coordinator.isRecovering.value,

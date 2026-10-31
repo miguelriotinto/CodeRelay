@@ -100,7 +100,7 @@ class LivePaneTransitionsTest {
         try {
             runBlocking {
                 withContext(d) {
-                    withTimeout(30_000) { co.connect() }
+                    withTimeout(30_000) { co.connect(relay.session.SessionHandshake.Reason.LAUNCH) }
 
                     // --- Session A ---
                     withTimeout(30_000) { co.createNewSession() }

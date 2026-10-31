@@ -97,7 +97,7 @@ class LiveTerminalRenderTest {
         try {
             runBlocking {
                 withContext(dispatcher) {
-                    withTimeout(30_000) { coordinator.connect() }
+                    withTimeout(30_000) { coordinator.connect(relay.session.SessionHandshake.Reason.LAUNCH) }
                     withTimeout(30_000) { coordinator.createNewSession() }
                     sessionId = coordinator.activeSessionId.value
                     assertNotNull(sessionId, "a session must be active")

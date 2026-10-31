@@ -1179,7 +1179,7 @@ class SessionCoordinatorTest {
         )
 
         // connect() stamps lastHealthyAtMs = now, so an immediate keystroke is fresh.
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
         val listsAfterConnect = log.entries.count { it == "rpc:session_list" }
 
@@ -1213,7 +1213,7 @@ class SessionCoordinatorTest {
             this, conn, SessionController(surface), "tok", store, config,
             nowMs = { clock.ms },
         )
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
         // Make health stale so probes are eligible.
         clock.ms += 13_000
@@ -1475,7 +1475,7 @@ class SessionCoordinatorTest {
         )
         assertEquals(OptimizerAvailability.UNKNOWN, coord.optimizerAvailability.value)
 
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
 
         assertEquals(OptimizerAvailability.AVAILABLE, coord.optimizerAvailability.value)
@@ -1502,7 +1502,7 @@ class SessionCoordinatorTest {
             ownershipStore = store,
             config = config,
         )
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
         assertEquals(OptimizerAvailability.SERVER_TOO_OLD, coord.optimizerAvailability.value)
         assertEquals(OptimizerStrings.UPDATE_RELAY_HINT, coord.wandHint)
@@ -1596,7 +1596,7 @@ class SessionCoordinatorTest {
 
         // Launch: no session is active afterwards, so no overlay may linger over
         // the "No Active Session" placeholder.
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
         assertNull(coord.sessionLoadPhase.value)
 

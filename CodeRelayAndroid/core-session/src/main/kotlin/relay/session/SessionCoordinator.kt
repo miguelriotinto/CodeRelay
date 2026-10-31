@@ -628,7 +628,7 @@ class SessionCoordinator(
      * but couldn't load the list returns normally — the workspace opens with the
      * error surfaced and pull-to-refresh as the retry.
      */
-    suspend fun connect(reason: SessionHandshake.Reason = SessionHandshake.Reason.LAUNCH) {
+    suspend fun connect(reason: SessionHandshake.Reason) {
         // ENABLE is silent per slot: drop the stale baseline before the dial
         // suspends, or a fetch applied in that window diffs against losses from
         // before the server was turned on (the handshake's own clear is too late).

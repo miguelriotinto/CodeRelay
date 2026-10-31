@@ -37,7 +37,7 @@ interface ServerSlot {
      * (reports losses since the persisted baseline), ENABLE for a just-enabled or
      * rebuilt server (silent). May throw for a rejected token; the hub catches it.
      */
-    suspend fun start(reason: SessionHandshake.Reason = SessionHandshake.Reason.LAUNCH)
+    suspend fun start(reason: SessionHandshake.Reason)
     suspend fun switchToSession(id: UUID)
     suspend fun createNewSession()
     /** Bounded detach that clears the selection first (D9). */
