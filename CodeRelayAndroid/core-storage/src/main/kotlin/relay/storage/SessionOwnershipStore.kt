@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import relay.protocol.SessionBaseline
 import relay.protocol.WireJson
 import java.util.UUID
 
@@ -53,8 +54,35 @@ class SessionOwnershipStore(
     /** Key for the UUID→agentId map (device-independent). */
     val agentsKey: String = if (namespace.isEmpty()) AGENTS_KEY else "$namespace.$AGENTS_KEY"
 
+    /** Key for the diff baseline JSON. */
+    val baselineKey: String = if (namespace.isEmpty()) BASELINE_KEY else "$namespace.$BASELINE_KEY"
+
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private var baselineCache: SessionBaseline? = loadBaseline()
+
+    /** The sessions this server's pane last showed. A diff baseline only. */
+    val baseline: SessionBaseline? get() = baselineCache
+
+    /** Persists [b]; null removes the key. Writes only when the value changed. */
+    fun setBaseline(b: SessionBaseline?) {
+        if (b == baselineCache) return
+        baselineCache = b
+        if (b == null) {
+            prefs.edit().remove(baselineKey).commit()
+        } else {
+            val json = WireJson.instance.encodeToString(SessionBaseline.serializer(), b)
+            prefs.edit().putString(baselineKey, json).commit()
+        }
+    }
+
+    private fun loadBaseline(): SessionBaseline? {
+        val json = prefs.getString(baselineKey, null) ?: return null
+        return runCatching {
+            WireJson.instance.decodeFromString(SessionBaseline.serializer(), json)
+        }.getOrNull()
+    }
 
     // MARK: - In-memory caches (authoritative for the auxiliary maps; loaded once)
 
@@ -139,6 +167,7 @@ class SessionOwnershipStore(
         private const val PREFS = "relay.ownership"
         private const val NAMES_KEY = "sessionNames"
         private const val AGENTS_KEY = "agentSessions"
+        private const val BASELINE_KEY = "sessionBaseline"
 
         private val MAP_SERIALIZER =
             MapSerializer(String.serializer(), String.serializer())

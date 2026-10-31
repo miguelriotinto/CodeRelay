@@ -235,10 +235,6 @@ internal fun WorkspacePane(
     // WorkspaceView.swift:161-167). Without surfacing this, a failed recovery
     // restore leaves a blank terminal with zero explanation.
     val sessionAttachFailed by coordinator.sessionAttachFailed.collectAsStateWithLifecycle()
-    // "Session Moved" alert — raised when the active session is attached away by
-    // another device (iOS WorkspaceView.swift:168-181). Without surfacing this the
-    // session just vanishes to "No Active Session" with no explanation.
-    val stolenAlert by coordinator.stolenAlert.collectAsStateWithLifecycle()
     val errorMessage by coordinator.errorMessage.collectAsStateWithLifecycle()
 
     // One loading sheet for switch / refresh / reconnect (see the class doc).
@@ -537,22 +533,6 @@ internal fun WorkspacePane(
             text = { Text("Unable to attach to this session.") },
             confirmButton = {
                 TextButton(onClick = { coordinator.clearRecoveryFlags() }) { Text("OK") }
-            },
-        )
-    }
-
-    // "Session Moved" alert (iOS WorkspaceView.swift:168-181). Matches the iOS
-    // copy exactly: title "Session Moved", message "{name} ({shortId}) was attached
-    // from another device.", single OK button.
-    stolenAlert?.let { alert ->
-        AlertDialog(
-            onDismissRequest = { coordinator.activityCoordinator.clearStolen(alert.sessionId) },
-            title = { Text("Session Moved") },
-            text = { Text("${alert.sessionName} (${alert.shortId}) was attached from another device.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    coordinator.activityCoordinator.clearStolen(alert.sessionId)
-                }) { Text("OK") }
             },
         )
     }

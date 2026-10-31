@@ -41,25 +41,34 @@ private let handshakeLog = Logger(subsystem: "com.coderelay.client", category: "
 public final class SessionHandshake {
 
     /// Why the handshake is running. Controls exactly one thing: whether
-    /// sessions that vanished from the server's list are announced to the user.
+    /// sessions that vanished since the persisted baseline are reported.
     public enum Reason: Sendable {
-        /// Cold app launch. Sessions another client took while this app was
-        /// closed are simply absent from the list — the user is NOT told, per
-        /// product spec: there is no "before" to compare against, and reporting
-        /// it on every launch is noise.
+        /// Cold app launch (or a macOS `MainWindow` hub re-created while the app
+        /// kept running). Reports: the baseline from the last run is the
+        /// "before", so sessions taken or ended while the app was closed are
+        /// announced (spec §3b).
         case launch
         /// The app was already open and is coming back: foreground, wake from
-        /// sleep, network restored, post-reconnect. Here there IS a "before", so
-        /// a session that dropped out of the list while we were away is
-        /// announced as "attached from another device" — the live
-        /// `session_stolen` push that would normally do it was missed because
-        /// our socket was down.
+        /// sleep, network restored, post-reconnect. Reports.
         case wake
+        /// The slot was just built because the user enabled this server, or
+        /// rebuilt after a bookmark edit. Silent: resets the baseline from the
+        /// fresh list and reports nothing — a server that was off for days must
+        /// not open with a list of old losses.
+        case enable
 
         var label: String {
             switch self {
             case .launch: return "launch"
             case .wake:   return "wake"
+            case .enable: return "enable"
+            }
+        }
+
+        var reportsLosses: Bool {
+            switch self {
+            case .launch, .wake: return true
+            case .enable:        return false
             }
         }
     }
@@ -90,6 +99,11 @@ public final class SessionHandshake {
     /// "you own zero sessions" answer, which is a SUCCESS, not a retry case.
     @discardableResult
     func perform(reason: Reason) async -> Bool {
+        // `.enable` is silent per SLOT, not per pass: drop the stale baseline
+        // before any await, so a refresh that applies a list ahead of this
+        // handshake has nothing to diff against either.
+        if case .enable = reason { coordinator.clearLossBaseline() }
+
         // Single-flight. A second caller does not get its own pass: the
         // in-flight one is already doing precisely what it wants, and a
         // parallel `session_list` could cross-deliver (replies are matched by
@@ -133,13 +147,6 @@ public final class SessionHandshake {
     private func run(reason: Reason) async -> Bool {
         guard !coordinator.isTornDown else { return false }
 
-        // Snapshot the pane BEFORE the fetch so a `.wake` pass can tell the
-        // user which sessions another device took while we were away. Captured
-        // with names, because `reconcile` prunes the name map to the server's
-        // list — after it runs, the lost session's name is gone.
-        let before: [(id: UUID, name: String)] = coordinator.activeSessions
-            .map { ($0.id, coordinator.name(for: $0.id)) }
-
         for (attempt, delay) in Self.retryDelays.enumerated() {
             if delay != .zero {
                 do {
@@ -177,11 +184,13 @@ public final class SessionHandshake {
                 let owned = try await controller.listSessions()
                 guard !coordinator.isTornDown else { return false }
 
-                // 4. Render.
-                coordinator.reconcile(tokenScoped: owned)
-                if case .wake = reason {
-                    announceSessionsTakenElsewhere(before: before)
+                // 4. Render. `reconcile` diffs against the persisted
+                //    baseline and returns what this token no longer lists.
+                let lost = coordinator.reconcile(tokenScoped: owned)
+                if reason.reportsLosses {
+                    await coordinator.reportLosses(lost)
                 }
+                guard !coordinator.isTornDown else { return false }
 
                 // A completed handshake means the connection is demonstrably
                 // healthy: clear any stale failure banners from an earlier pass.
@@ -230,28 +239,6 @@ public final class SessionHandshake {
     }
 
     // MARK: - Outcomes
-
-    /// Report a session that dropped out of the server's list while we were
-    /// away. One OK-only notice is enough — this is a notification, not a queue.
-    private func announceSessionsTakenElsewhere(before: [(id: UUID, name: String)]) {
-        let stillOwned = Set(coordinator.sessions.map { $0.id })
-        guard let lost = Self.firstLostSession(before: before, stillOwned: stillOwned) else { return }
-        handshakeLog.info("wake handshake: session \(lost.id, privacy: .public) is no longer ours")
-        coordinator.activityCoordinator.presentStolenAlert(sessionId: lost.id, name: lost.name)
-    }
-
-    /// The first session that was in the pane before the handshake and is not in
-    /// the server's fresh token-scoped list — i.e. another device attached it
-    /// while we were away. Pure, so the rule is testable without a server.
-    ///
-    /// `before` arrives ordered by `createdAt` (it comes from `activeSessions`),
-    /// so the session reported is deterministic rather than set-iteration luck.
-    static func firstLostSession(
-        before: [(id: UUID, name: String)],
-        stillOwned: Set<UUID>
-    ) -> (id: UUID, name: String)? {
-        before.first { !stillOwned.contains($0.id) }
-    }
 
     /// Surface a handshake that could not complete. Deliberately does NOT set
     /// `connectionTimedOut` — that tears the workspace down on iOS, and the

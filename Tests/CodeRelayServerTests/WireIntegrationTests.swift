@@ -183,6 +183,51 @@ final class WireIntegrationTests: XCTestCase {
         await client.close()
     }
 
+    /// A client that created then detached a session learns of a server-side
+    /// PTY exit via `session_ended`. The exit is simulated through the mock
+    /// PTY's exit handler (the same callback a real shell exit fires).
+    func testOwnerReceivesSessionEndedWhenNotAttached() async throws {
+        let ended = try await sessionEndedPushes(clientProtocolVersion: 4)
+        XCTAssertEqual(ended.count, 1)
+        XCTAssertEqual(ended.first?.1, "exited")
+    }
+
+    /// A pre-v4 client cannot decode `session_ended` (it drops the unknown type
+    /// with a warning per event), so it is not sent one.
+    func testPreV4ClientIsNotSentSessionEnded() async throws {
+        let v3 = try await sessionEndedPushes(clientProtocolVersion: 3)
+        XCTAssertTrue(v3.isEmpty, "v3 client: no session_ended")
+        let unversioned = try await sessionEndedPushes(clientProtocolVersion: nil)
+        XCTAssertTrue(unversioned.isEmpty, "a client that sends no version is v0")
+    }
+
+    /// Creates and detaches a session as a client speaking `clientProtocolVersion`,
+    /// exits its PTY, and returns the `session_ended` pushes that client received.
+    private func sessionEndedPushes(clientProtocolVersion: Int?) async throws -> [(UUID, String)] {
+        let fixture = try WireTestServer()
+        try await fixture.start()
+        defer { Task { await fixture.stop() } }
+        let (token, tokenInfo) = try await fixture.mintToken(label: "ended")
+
+        let client = try await fixture.authenticatedClient(token: token, protocolVersion: clientProtocolVersion)
+        let id = try await client.createSession(name: "ends")
+        try await client.send(.sessionDetach)
+        try await client.waitFor(["session_detached"])
+
+        let (_, ptyAny) = try await fixture.sessionManager.attachSession(id: id, tokenId: tokenInfo.id)
+        let pty = try XCTUnwrap(ptyAny as? MockPTYSession)
+        await pty.triggerExit()
+
+        let events = await client.drain(idle: .milliseconds(500))
+        await client.close()
+        let ended = events.compactMap { event -> (UUID, String)? in
+            if case .message(.sessionEnded(let sid, let reason)) = event { return (sid, reason) }
+            return nil
+        }
+        XCTAssertTrue(ended.allSatisfy { $0.0 == id })
+        return ended
+    }
+
     /// `replay_complete` is emitted after the scrollback binary frames and before
     /// `session_activity` when attaching to a session with history.
     func testAttachEmitsReplayCompleteAfterScrollback() async throws {

@@ -21,8 +21,8 @@ class MessageTypeTest {
         assertTrue("replace_prompt" in ClientMessage.ALL_TYPE_STRINGS)
     }
 
-    @Test fun `all 22 server type strings present`() {
-        assertEquals(22, ServerMessage.ALL_TYPE_STRINGS.size)
+    @Test fun `all 23 server type strings present`() {
+        assertEquals(23, ServerMessage.ALL_TYPE_STRINGS.size)
         assertTrue("session_list_result" in ServerMessage.ALL_TYPE_STRINGS)
         assertTrue("pair_success" in ServerMessage.ALL_TYPE_STRINGS)
         assertTrue("optimize_prompt_result" in ServerMessage.ALL_TYPE_STRINGS)

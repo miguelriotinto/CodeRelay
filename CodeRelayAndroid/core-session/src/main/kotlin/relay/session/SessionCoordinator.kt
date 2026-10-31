@@ -6,6 +6,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.net.RelayConnection
@@ -19,9 +20,14 @@ import relay.protocol.ServerMessage
 import relay.protocol.SessionInfo
 import relay.protocol.SessionNamingTheme
 import relay.protocol.SessionState
+import relay.session.hub.LostSession
+import relay.session.hub.SessionBaseline
+import relay.session.hub.SessionLossClassifier
+import relay.session.hub.SessionLossReport
 import relay.storage.SessionNaming
 import relay.terminal.TerminalSessionVm
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * The coordinator-facing surface of the WebSocket connection. [RelayConnection]
@@ -114,6 +120,12 @@ interface OwnershipStore : AgentPersistence {
 
     /** Sets (or, when [name] is null, removes) the display name for [id]. */
     fun setName(id: UUID, name: String?)
+
+    /** The sessions this server's pane last showed (diff baseline only), or null. */
+    val baseline: relay.protocol.SessionBaseline?
+
+    /** Persists [b]; null removes it. */
+    fun setBaseline(b: relay.protocol.SessionBaseline?)
 }
 
 /**
@@ -189,7 +201,7 @@ class SessionCoordinator(
     /** The magic-wand state machine (spec §7.1). Built in `init`, after [authCoordinator]. */
     private val promptOptimizer: PromptOptimizerController
 
-    /** Live agent / awaiting-input / stolen state. */
+    /** Live agent / awaiting-input state. */
     val activityCoordinator: ActivityCoordinator
 
     /** Recovery state machine (breaker, backoff, restore). */
@@ -368,6 +380,24 @@ class SessionCoordinator(
     internal var isTornDown: Boolean = false
         private set
 
+    // MARK: - Session loss (spec §2–§4b)
+
+    /**
+     * Sessions this server lost — taken by another device, or ended while away —
+     * reported once per pass to the hub, which aggregates and presents them. The
+     * coordinator raises no alert of its own.
+     */
+    var onSessionsLost: ((SessionLossReport) -> Unit)? = null
+
+    /**
+     * Bumped on every edge that may leave the coordinator idle (handshake gate
+     * cleared, fetch finished, recovery pass released, teardown);
+     * [awaitPassFinished] re-checks on each tick.
+     */
+    private val passSettled = MutableStateFlow(0L)
+
+    private fun notifyPassSettled() { passSettled.value += 1 }
+
     // MARK: - Recovery state (delegated to RecoveryController)
 
     val isRecovering: StateFlow<Boolean> get() = recoveryController.isRecovering
@@ -402,8 +432,6 @@ class SessionCoordinator(
 
     val agentSessions: StateFlow<Map<UUID, String>> get() = activityCoordinator.agentSessions
     val sessionsAwaitingInput: StateFlow<Set<UUID>> get() = activityCoordinator.sessionsAwaitingInput
-    val sessionsStolen: StateFlow<Set<UUID>> get() = activityCoordinator.sessionsStolen
-    val stolenAlert: StateFlow<ActivityCoordinator.StolenAlert?> get() = activityCoordinator.stolenAlert
     val agentStates: StateFlow<Map<UUID, relay.protocol.AgentDetectedState>> get() = activityCoordinator.agentStates
     val sessionTitles: StateFlow<Map<UUID, String>> get() = activityCoordinator.sessionTitles
     val unseenSessions: StateFlow<Set<UUID>> get() = activityCoordinator.unseenSessions
@@ -537,6 +565,7 @@ class SessionCoordinator(
             // the launch fetch (the "empty pane on relaunch" bug).
             isFreshlyConnected = { connection.isFreshlyConnected(FRESH_CONNECTION_WINDOW_MS) },
             isHandshakeInFlight = { _isPerformingHandshake.value },
+            onPassSettled = { notifyPassSettled() },
         )
 
         handshake = SessionHandshake(coordinator = this, scope = scope)
@@ -599,10 +628,14 @@ class SessionCoordinator(
      * but couldn't load the list returns normally — the workspace opens with the
      * error surfaced and pull-to-refresh as the retry.
      */
-    suspend fun connect() {
+    suspend fun connect(reason: SessionHandshake.Reason) {
+        // ENABLE is silent per slot: drop the stale baseline before the dial
+        // suspends, or a fetch applied in that window diffs against losses from
+        // before the server was turned on (the handshake's own clear is too late).
+        if (reason == SessionHandshake.Reason.ENABLE) clearLossBaseline()
         runCatching { connection.connect(config, token) }
         lastHealthyAtMs = nowMs()
-        val ok = performHandshake(SessionHandshake.Reason.LAUNCH)
+        val ok = performHandshake(reason)
         if (!ok && !sessionController.isAuthenticated) {
             throw IllegalStateException(_errorMessage.value ?: "Couldn't reach the server.")
         }
@@ -619,6 +652,7 @@ class SessionCoordinator(
     /** Arms/clears the recovery gate. Called only by [SessionHandshake]. */
     internal fun setHandshakeInFlight(inFlight: Boolean) {
         _isPerformingHandshake.value = inFlight
+        if (!inFlight) notifyPassSettled()
     }
 
     /**
@@ -768,6 +802,7 @@ class SessionCoordinator(
             } finally {
                 _isLoading.value = false
                 inFlightSessionsFetch = null
+                notifyPassSettled()
             }
         }
         inFlightSessionsFetch = job
@@ -782,7 +817,8 @@ class SessionCoordinator(
         // failure never blanks the pane.
         val list = runCatching { authCoordinator.withAuth { sessionController.listSessions() } }
             .getOrElse { return }
-        applyServerSessions(list)
+        // Inside the fetch job, so [awaitPassFinished] covers the report too.
+        reportLosses(applyServerSessions(list))
     }
 
     /**
@@ -793,8 +829,21 @@ class SessionCoordinator(
      * same rendering step: the handshake owns its own auth + RPC (it must, to
      * order them and to see the failure rather than swallowing it), but the pane
      * must end up in an identical state whichever path fetched the list.
+     *
+     * The single diff point (spec §3): every list application compares the list
+     * against the persisted per-server baseline and returns the baseline entries
+     * this token no longer lists as live. The baseline only counts when it was
+     * recorded under the current token id — a token change (bookmark edited,
+     * re-paired) or a first run yields nothing. Afterwards the baseline is ALWAYS
+     * rewritten from the list, stamped with the current token id. It is a diff
+     * baseline only and never populates the pane. The caller classifies and
+     * reports; see [reportLosses].
      */
-    internal fun applyServerSessions(list: List<SessionInfo>) {
+    internal fun applyServerSessions(list: List<SessionInfo>): List<LostSession> {
+        val tokenId = currentTokenId
+        val stored = ownershipStore.baseline
+        val before = if (stored?.tokenId == tokenId) stored.sessions else emptyList()
+
         _sessions.value = list
         recomputeActiveSessions()
 
@@ -830,6 +879,85 @@ class SessionCoordinator(
         val prunedTerminals = terminalCache.pruneStale(serverIds)
         for (id in prunedTerminals) {
             if (id !in serverIds) activityCoordinator.forgetSession(id)
+        }
+
+        ownershipStore.setBaseline(SessionBaseline(
+            tokenId = tokenId,
+            sessions = _activeSessions.value.map { LostSession(it.id, name(it.id)) },
+        ))
+        return SessionLossClassifier.lost(before = before, owned = list)
+    }
+
+    /** The token id the baseline is stamped with. Empty against a relay that
+     *  does not report one; the stamp then still detects a change to a known id. */
+    private val currentTokenId: String get() = sessionController.tokenId ?: ""
+
+    /**
+     * Classifies [lost] and reports it. `session_list_all` is asked only when
+     * something was lost; if it fails every loss counts as taken (the
+     * classifier's rule). Ended losses are dropped against a pre-v4 relay, which
+     * cannot push a live exit — "ended while you were away" could be false.
+     */
+    internal suspend fun reportLosses(lost: List<LostSession>) {
+        if (lost.isEmpty()) return
+        val all = try {
+            authCoordinator.withAuth { sessionController.listAllSessions() }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (_: Throwable) {
+            null
+        }
+        val (taken, ended) = SessionLossClassifier.classify(lost, all, currentTokenId)
+        val speaksEnded = sessionController.serverProtocolVersion >= ENDED_REPORTING_PROTOCOL_VERSION
+        val report = SessionLossReport(taken = taken, ended = if (speaksEnded) ended else emptyList())
+        if (report.taken.isEmpty() && report.ended.isEmpty()) return
+        if (isTornDown) return
+        onSessionsLost?.invoke(report)
+    }
+
+    /**
+     * Drops one session from the persisted baseline. Every LOCAL removal
+     * (terminate, steal clean-up, live end) calls this before any refetch, so the
+     * next diff never reports what this device already knows is gone. Returns
+     * whether the id was in the baseline.
+     */
+    private fun removeFromBaseline(id: UUID): Boolean {
+        val stored = ownershipStore.baseline ?: return false
+        if (stored.sessions.none { it.id == id }) return false
+        ownershipStore.setBaseline(stored.copy(sessions = stored.sessions.filterNot { it.id == id }))
+        return true
+    }
+
+    /**
+     * Forgets the baseline outright. An ENABLE pass calls this before its first
+     * suspension, so no list applied while the server was just enabled — the
+     * handshake's own or a refresh racing ahead of it — diffs against losses
+     * from before it was turned off.
+     */
+    internal fun clearLossBaseline() {
+        ownershipStore.setBaseline(null)
+    }
+
+    // MARK: - Pass signal
+
+    /** True while a handshake, a recovery pass or a session fetch is running —
+     *  anything that may still apply a list and report a loss. */
+    private val isPassInFlight: Boolean
+        get() = _isPerformingHandshake.value ||
+            recoveryController.isRecovering.value ||
+            recoveryController.isPassDispatched ||
+            inFlightSessionsFetch?.isActive == true
+
+    /**
+     * Returns once no handshake, recovery or session fetch is in flight,
+     * immediately when idle. A pass already running when this is called is
+     * waited for (the hub's fan-out hold relies on it, Review Focus #1); so is one
+     * that chains into another (recovery → handshake) without going idle.
+     */
+    suspend fun awaitPassFinished() {
+        while (isPassInFlight && !isTornDown) {
+            val tick = passSettled.value
+            passSettled.first { it != tick }
         }
     }
 
@@ -1128,6 +1256,10 @@ class SessionCoordinator(
 
     suspend fun terminateSession(id: UUID) {
         if (recoveryController.isRecovering.value) return
+        // Out of the baseline before the send suspends: a list applied while it
+        // is in flight must not report this device's own terminate as a loss.
+        // A failed send costs nothing — the next list re-baselines it.
+        removeFromBaseline(id)
         try {
             connection.send(ClientMessage.SessionTerminate(id))
             if (_activeSessionId.value == id) clearActiveSession()
@@ -1219,6 +1351,7 @@ class SessionCoordinator(
             is ServerMessage.SessionActivity ->
                 onSessionActivity(message.sessionId, message.activity, message.agent, message.agentState, message.title)
             is ServerMessage.SessionStolen -> onSessionStolen(message.sessionId)
+            is ServerMessage.SessionEnded -> onSessionEnded(message.sessionId, message.reason)
             is ServerMessage.SessionRenamed -> onSessionRenamed(message.sessionId, message.name)
             is ServerMessage.ReplayComplete -> onReplayComplete(message.sessionId)
             is ServerMessage.SessionStateMsg -> onSessionState(message.sessionId, message.state)
@@ -1242,37 +1375,56 @@ class SessionCoordinator(
     private fun onSessionStolen(sessionId: UUID) {
         // The server sends `session_stolen` to this (previous-owner) token when
         // ANOTHER client attaches a session we currently hold. Act only if it's
-        // still in our pane / active, so a duplicate or late push doesn't
-        // re-raise the alert for an already-handled session.
+        // still in our pane / active, so a duplicate or late push (or one that a
+        // refresh already dropped — and so already reported) is a no-op.
         if (_sessions.value.none { it.id == sessionId } && _activeSessionId.value != sessionId) return
+        val lost = LostSession(sessionId, name(sessionId))
+        // Report unless a diff already did. A diff that dropped (and reported)
+        // this session removed it from BOTH `_sessions` and the baseline but left
+        // `_activeSessionId` alone, so a queued push still passes the guard. A
+        // session created or attached here and taken before any list carried it
+        // into the baseline is still in `_sessions` (both paths insert it before
+        // setting the active id), so it is reported. Clean up regardless.
+        val listed = _sessions.value.any { it.id == sessionId }
+        val unreported = removeFromBaseline(sessionId) || listed
         cleanUpStolenSession(sessionId)
+        // No classification: the server sends `session_stolen` only for a takeover.
+        if (unreported) onSessionsLost?.invoke(SessionLossReport(taken = listOf(lost), ended = emptyList()))
     }
 
     /**
-     * Handles a session attached by another client: removes it from the pane and
-     * (optionally) raises the "attached by another client" popup. The pane is the
-     * server's token-scoped list, so we drop it from `_sessions` directly (there
-     * is no owned set to unclaim).
+     * Removes a session another client attached from the pane: clears the active
+     * id, drops it from `_sessions` and the baseline, evicts the terminal and
+     * forgets its activity. Raises nothing — the caller reports the loss.
      *
-     * @param alert raise the popup. True for the live `session_stolen` push.
      * @param refetch re-run `fetchSessions` afterward. False when called from
      *   inside a fetch pass to avoid re-entrancy.
      */
-    fun cleanUpStolenSession(sessionId: UUID, alert: Boolean = true, refetch: Boolean = true) {
-        // Remove from the UI FIRST (clear active, drop from the pane, evict the
-        // terminal), THEN raise the popup — so when the user taps OK the UI is
-        // already clean. Matches Swift `cleanUpStolenSession` ordering.
+    fun cleanUpStolenSession(sessionId: UUID, refetch: Boolean = true) {
         if (_activeSessionId.value == sessionId) clearActiveSession()
         removeSessionLocal(sessionId)
+        removeFromBaseline(sessionId)
         evictTerminal(sessionId)
-        if (alert) {
-            activityCoordinator.sessionStolen(sessionId) { name(it) }
-        } else {
-            activityCoordinator.forgetSession(sessionId)
-        }
+        activityCoordinator.forgetSession(sessionId)
         // force: bypass the debounce so a list response snapshotted before the
         // server's token reassignment can't slip in and re-add the stolen row.
         if (refetch) scope.launch { fetchSessions(force = true) }
+    }
+
+    /**
+     * v4 `session_ended`: one of this token's sessions exited, was terminated or
+     * expired while this client was connected. The user was here, so it leaves
+     * the pane and the baseline at once and SILENTLY (spec §4b) — no later diff
+     * may call it "ended while you were away". Idempotent: a client-initiated
+     * terminate gets this (after `session_terminated`) with the row already gone.
+     */
+    private fun onSessionEnded(sessionId: UUID, @Suppress("UNUSED_PARAMETER") reason: String) {
+        removeFromBaseline(sessionId)
+        if (_sessions.value.none { it.id == sessionId } && _activeSessionId.value != sessionId) return
+        if (_activeSessionId.value == sessionId) clearActiveSession()
+        removeSessionLocal(sessionId)
+        evictTerminal(sessionId)
+        activityCoordinator.forgetSession(sessionId)
     }
 
     private fun onSessionRenamed(sessionId: UUID, name: String) {
@@ -1646,12 +1798,16 @@ class SessionCoordinator(
         connection.onConnectedChanged = null
         terminalCache.removeAll()
         _sessionLoadPhase.value = null
+        notifyPassSettled()
         connection.disconnect()
     }
 
     companion object {
         /** fetchSessions debounce window, ms (Swift `0.5` s, :309). */
         private const val FETCH_DEBOUNCE_MS = 500L
+
+        /** `session_ended` (and so "ended") exists from this protocol version on. */
+        internal const val ENDED_REPORTING_PROTOCOL_VERSION = 4
 
         /** A socket connected within this window is trusted as alive without a
          *  ping (Swift `RecoveryController.freshConnectionWindow` = 6 s). */

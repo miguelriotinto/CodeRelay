@@ -35,6 +35,8 @@ private class SessionOwnershipAdapter(
 
     override fun setName(id: UUID, name: String?) { store.setName(id, name) }
     override fun setAgent(id: UUID, agentId: String?) { store.setAgent(id, agentId) }
+    override val baseline: relay.protocol.SessionBaseline? get() = store.baseline
+    override fun setBaseline(b: relay.protocol.SessionBaseline?) { store.setBaseline(b) }
 }
 
 /**

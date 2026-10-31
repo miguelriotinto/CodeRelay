@@ -29,15 +29,12 @@ final class SessionCoordinator: SharedSessionCoordinator {
     }
 
     /// Dial, then the single-flight launch handshake (authenticate + list the
-    /// sessions this client owns). A failed first dial falls through: the
-    /// handshake reconnects on its own, so it becomes a retry rather than a
-    /// dead section. Mirrors the macOS subclass exactly.
-    override func start() async {
-        do {
+    /// sessions this client owns). `dialAndHandshake` clears the baseline
+    /// before the dial on `.enable` and turns a failed first dial into a
+    /// handshake retry. Mirrors the macOS subclass exactly.
+    override func start(reason: SessionHandshake.Reason) async {
+        await dialAndHandshake(reason: reason) {
             try await connection.connect(config: config, token: token)
-        } catch {
-            presentError(error.localizedDescription)
         }
-        await performHandshake(reason: .launch)
     }
 }

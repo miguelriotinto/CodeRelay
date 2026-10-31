@@ -52,7 +52,7 @@ class SessionCoordinatorHubHooksTest {
             if (m is ClientMessage.AuthRequest) ServerMessage.AuthSuccess(protocolVersion = 3, tokenId = "tok", serverId = id.toString(), serverName = "studio")
             else h.surface.defaultResponseFor(m)
         }
-        h.coord.connect(); advanceUntilIdle()
+        h.coord.connect(SessionHandshake.Reason.LAUNCH); advanceUntilIdle()
         assertEquals(ServerIdentity(id, "studio"), h.coord.serverIdentity.value)
     }
 
@@ -61,7 +61,7 @@ class SessionCoordinatorHubHooksTest {
         h.surface.responder = { m ->
             if (m is ClientMessage.AuthRequest) ServerMessage.AuthFailure("bad token") else h.surface.defaultResponseFor(m)
         }
-        runCatching { h.coord.connect() }; advanceUntilIdle()
+        runCatching { h.coord.connect(SessionHandshake.Reason.LAUNCH) }; advanceUntilIdle()
         assertTrue(h.coord.isAuthRejected.value, "the hub shows authFailed with Re-pair")
         h.surface.responder = { m -> h.surface.defaultResponseFor(m) }
         h.coord.performHandshake(SessionHandshake.Reason.WAKE); advanceUntilIdle()
@@ -70,7 +70,7 @@ class SessionCoordinatorHubHooksTest {
 
     @Test fun detachForHubClearsLocallyEvenWhenTheDetachNeverReturns() = runTest {
         val h = Harness(this)
-        h.coord.connect(); advanceUntilIdle()
+        h.coord.connect(SessionHandshake.Reason.LAUNCH); advanceUntilIdle()
         val id = UUID.randomUUID()
         h.coord.switchToSession(id); advanceUntilIdle()
         assertEquals(id, h.coord.activeSessionId.value)
@@ -85,7 +85,7 @@ class SessionCoordinatorHubHooksTest {
         // D9: a switch that began before the hub moved to another server must
         // not become the active session when its RPC returns.
         val h = Harness(this)
-        h.coord.connect(); advanceUntilIdle()
+        h.coord.connect(SessionHandshake.Reason.LAUNCH); advanceUntilIdle()
         val target = UUID.randomUUID()
         val gate = CompletableDeferred<Unit>()
         h.surface.sendGate = { m -> if (m is ClientMessage.SessionResume) gate.await() }
@@ -101,7 +101,7 @@ class SessionCoordinatorHubHooksTest {
 
     @Test fun failedSwitchIsMarkedFailedBeforeItsPhaseClears() = runTest {
         val h = Harness(this)
-        h.coord.connect(); advanceUntilIdle()
+        h.coord.connect(SessionHandshake.Reason.LAUNCH); advanceUntilIdle()
         h.surface.responder = { m ->
             if (m is ClientMessage.SessionResume) ServerMessage.Error(500, "boom") else h.surface.defaultResponseFor(m)
         }
@@ -124,7 +124,7 @@ class SessionCoordinatorHubHooksTest {
 
     @Test fun aSuccessfulLoadResetsTheFailedFlag() = runTest {
         val h = Harness(this)
-        h.coord.connect(); advanceUntilIdle()
+        h.coord.connect(SessionHandshake.Reason.LAUNCH); advanceUntilIdle()
         h.surface.responder = { m ->
             if (m is ClientMessage.SessionResume) ServerMessage.Error(500, "boom") else h.surface.defaultResponseFor(m)
         }
@@ -144,7 +144,7 @@ class SessionCoordinatorHubHooksTest {
                 activity = relay.protocol.ActivityState.ACTIVE, agent = null,
             ),
         )
-        h.coord.connect(); advanceUntilIdle()
+        h.coord.connect(SessionHandshake.Reason.LAUNCH); advanceUntilIdle()
         h.coord.createNewSession(); advanceUntilIdle()
         val id = h.coord.activeSessionId.value!!
         h.surface.responder = { m ->
@@ -169,7 +169,7 @@ class SessionCoordinatorHubHooksTest {
     @Test fun expectsSessionToLoadFollowsTheActiveSession() = runTest {
         val h = Harness(this)
         assertFalse(h.coord.expectsSessionToLoad)
-        h.coord.connect(); advanceUntilIdle()
+        h.coord.connect(SessionHandshake.Reason.LAUNCH); advanceUntilIdle()
         h.coord.createNewSession(); advanceUntilIdle()
         assertTrue(h.coord.expectsSessionToLoad)
     }
@@ -180,7 +180,7 @@ class SessionCoordinatorHubHooksTest {
         // session, and must not black out a live terminal (Swift writes them only
         // while nothing is attached).
         val h = Harness(this)
-        h.coord.connect(); advanceUntilIdle()
+        h.coord.connect(SessionHandshake.Reason.LAUNCH); advanceUntilIdle()
         h.coord.switchToSession(UUID.randomUUID()); advanceUntilIdle()
         val seen = mutableListOf<SessionLoadPhase?>()
         val watcher = launch(UnconfinedTestDispatcher(testScheduler)) { h.coord.sessionLoadPhase.collect { seen += it } }

@@ -64,6 +64,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     private(set) var remoteIP: String = "unknown"
     private var activityObserverId: UUID?
     var stealObserverId: UUID?
+    var endObserverId: UUID?
     private var renameObserverId: UUID?
     /// Set to true once `cleanupSession()` has run. Used to detect the race where
     /// observer registration completes after the channel has already gone inactive,
@@ -404,11 +405,15 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
     /// `onSuccess` on the event loop. Observer ids must be captured here
     /// (not on `self`) so we can unregister them if the channel was torn
     /// down mid-registration.
+    /// The first protocol version that understands `session_ended` (v4).
+    static let sessionEndedProtocolVersion = 4
+
     private struct AuthSuccessPayload {
         let tokenId: String
         let clientVersion: Int
         let activityObserverId: UUID
         let stealObserverId: UUID
+        let endObserverId: UUID
         let renameObserverId: UUID
     }
 
@@ -479,6 +484,21 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                         self.sendServerMessage(.sessionStolen(sessionId: sessionId), context: observerCtx.value)
                     }
                 }
+                let endId = await manager.addEndObserver(tokenId: info.id) { [weak self] sessionId, reason in
+                    observerCtx.value.eventLoop.execute {
+                        guard let self else { return }
+                        // Not excluding our own connection: if this connection was
+                        // attached, the requester just drops an already-removed id.
+                        if self.attachedSessionId == sessionId {
+                            self.attachedSessionId = nil
+                            self.attachedPTY = nil
+                        }
+                        // A pre-v4 client drops the unknown type but logs a
+                        // decode warning for every event: don't send it one.
+                        guard clientVersion >= Self.sessionEndedProtocolVersion else { return }
+                        self.sendServerMessage(.sessionEnded(sessionId: sessionId, reason: reason), context: observerCtx.value)
+                    }
+                }
                 let renameId = await manager.addRenameObserver(tokenId: info.id) { [weak self] sessionId, name in
                     observerCtx.value.eventLoop.execute {
                         self?.sendServerMessage(.sessionRenamed(sessionId: sessionId, name: name), context: observerCtx.value)
@@ -489,6 +509,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                     clientVersion: clientVersion,
                     activityObserverId: activityId,
                     stealObserverId: stealId,
+                    endObserverId: endId,
                     renameObserverId: renameId
                 )
             },
@@ -500,12 +521,14 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                     Task {
                         await manager.removeActivityObserver(id: payload.activityObserverId)
                         await manager.removeStealObserver(id: payload.stealObserverId)
+                        await manager.removeEndObserver(id: payload.endObserverId)
                         await manager.removeRenameObserver(id: payload.renameObserverId)
                     }
                     return
                 }
                 handler.activityObserverId = payload.activityObserverId
                 handler.stealObserverId = payload.stealObserverId
+                handler.endObserverId = payload.endObserverId
                 handler.renameObserverId = payload.renameObserverId
                 handler.isAuthenticated = true
                 handler.authenticatedTokenId = payload.tokenId
@@ -793,6 +816,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         isCleanedUp = true
         let obsActivity = activityObserverId
         let obsSteal = stealObserverId
+        let obsEnd = endObserverId
         let obsRename = renameObserverId
         let sessionId = attachedSessionId
         let pty = attachedPTY
@@ -800,6 +824,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
 
         activityObserverId = nil
         stealObserverId = nil
+        endObserverId = nil
         renameObserverId = nil
         attachedSessionId = nil
         attachedPTY = nil
@@ -808,6 +833,7 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         Task {
             if let id = obsActivity { await manager.removeActivityObserver(id: id) }
             if let id = obsSteal { await manager.removeStealObserver(id: id) }
+            if let id = obsEnd { await manager.removeEndObserver(id: id) }
             if let id = obsRename { await manager.removeRenameObserver(id: id) }
             if let pty { await pty.clearOutputHandler() }
             if let sessionId { try? await manager.detachSession(id: sessionId) }

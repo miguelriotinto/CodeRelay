@@ -40,7 +40,9 @@ class HubViewModelTest {
         var tornDown = false
         val remote = mutableListOf<UUID>()
         override fun rollups(sessions: List<SessionInfo>): List<WorkspaceRollup> = emptyList()
-        override suspend fun start() {}
+        override var onSessionsLost: ((relay.session.hub.SessionLossReport) -> Unit)? = null
+        override suspend fun start(reason: relay.session.SessionHandshake.Reason) {}
+        override suspend fun awaitPassFinished() {}
         override suspend fun switchToSession(id: UUID) { activeSessionId.value = id }
         override suspend fun createNewSession() {}
         override suspend fun detachForHub(budgetMs: Long) { activeSessionId.value = null }

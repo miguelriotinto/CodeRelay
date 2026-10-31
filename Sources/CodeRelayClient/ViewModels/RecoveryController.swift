@@ -64,6 +64,11 @@ final class RecoveryController {
     private var isRecoveryDispatched = false
     /// A `handleForegroundTransition` pass is between its first and last await.
     private var foregroundInFlight = false
+
+    /// A foreground/wake/network pass is running (it may still be probing the
+    /// socket, before `isRecovering` or the handshake flag is up). Read by
+    /// `SharedSessionCoordinator.awaitPassFinished`.
+    var isForegroundPassInFlight: Bool { foregroundInFlight }
     /// Test hook: how many recoveries have been started.
     var recoveryGenerationForTest: UInt64 { recoveryGeneration }
     /// Timestamp set by `cancel`. `triggerUserRecovery` ignores calls within
@@ -205,7 +210,10 @@ final class RecoveryController {
             return
         }
         foregroundInFlight = true
-        defer { foregroundInFlight = false }
+        defer {
+            foregroundInFlight = false
+            coordinator.resumePassWaitersIfIdle()
+        }
         guard canStartForegroundPass else { return }
 
         // A just-established socket (e.g. on cold launch, `scenePhase` flips to

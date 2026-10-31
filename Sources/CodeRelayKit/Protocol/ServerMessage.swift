@@ -21,6 +21,8 @@ public enum ServerMessage: Equatable, Sendable {
         agentState: AgentDetectedState? = nil, title: String? = nil, workingDir: String? = nil
     )
     case sessionStolen(sessionId: UUID)
+    /// v4: the session ended server-side. `reason` is `exited` | `terminated` | `expired`.
+    case sessionEnded(sessionId: UUID, reason: String)
     case sessionRenamed(sessionId: UUID, name: String)
     case sessionList(sessions: [SessionInfo])
     case sessionListAll(sessions: [SessionInfo])
@@ -57,6 +59,7 @@ public enum ServerMessage: Equatable, Sendable {
         case .sessionState:        return "session_state"
         case .sessionActivity:     return "session_activity"
         case .sessionStolen:       return "session_stolen"
+        case .sessionEnded:        return "session_ended"
         case .sessionRenamed:      return "session_renamed"
         case .sessionList:         return "session_list_result"
         case .sessionListAll:      return "session_list_all_result"
@@ -78,7 +81,7 @@ public enum ServerMessage: Equatable, Sendable {
         "auth_success", "auth_failure",
         "session_created", "session_attached", "session_resumed", "replay_complete", "session_detached",
         "session_terminated", "session_expired", "session_state", "session_activity",
-        "session_stolen", "session_renamed",
+        "session_stolen", "session_ended", "session_renamed",
         "session_list_result", "session_list_all_result",
         "resize_ack", "paste_image_result", "pong", "push_token_ack", "clipboard_update", "error",
         "pair_success", "optimize_prompt_result", "replace_prompt_result"
@@ -135,6 +138,9 @@ extension ServerMessage: Codable {
             try container.encodeIfPresent(workingDir, forKey: .workingDir)
         case .sessionStolen(let sessionId):
             try container.encode(sessionId, forKey: .sessionId)
+        case .sessionEnded(let sessionId, let reason):
+            try container.encode(sessionId, forKey: .sessionId)
+            try container.encode(reason, forKey: .reason)
         case .sessionRenamed(let sessionId, let name):
             try container.encode(sessionId, forKey: .sessionId)
             try container.encode(name, forKey: .name)
@@ -229,6 +235,10 @@ extension ServerMessage: Codable {
         case "session_stolen":
             let sessionId = try container.decode(UUID.self, forKey: .sessionId)
             return .sessionStolen(sessionId: sessionId)
+        case "session_ended":
+            let sessionId = try container.decode(UUID.self, forKey: .sessionId)
+            let reason = try container.decode(String.self, forKey: .reason)
+            return .sessionEnded(sessionId: sessionId, reason: reason)
         case "session_renamed":
             let sessionId = try container.decode(UUID.self, forKey: .sessionId)
             let name = try container.decode(String.self, forKey: .name)

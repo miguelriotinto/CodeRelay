@@ -58,7 +58,7 @@ final class ServerIdentityWireTests: SessionManagerTestCase {
               case .authSuccess(let version, _, _, let server) = auth else {
             return XCTFail("expected auth_success, got \(messages)")
         }
-        XCTAssertEqual(version, 3)
+        XCTAssertEqual(version, 4)
         XCTAssertEqual(server, identity)
     }
 

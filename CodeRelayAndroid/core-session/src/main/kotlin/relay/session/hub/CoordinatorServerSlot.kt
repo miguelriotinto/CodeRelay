@@ -10,6 +10,7 @@ import relay.protocol.ServerIdentity
 import relay.protocol.SessionInfo
 import relay.protocol.WorkspaceRollup
 import relay.session.SessionCoordinator
+import relay.session.SessionHandshake
 import java.util.UUID
 
 /**
@@ -46,7 +47,11 @@ open class CoordinatorServerSlot(
 
     override fun rollups(sessions: List<SessionInfo>): List<WorkspaceRollup> =
         coordinator.activityCoordinator.rollups(sessions)
-    override suspend fun start() = coordinator.connect()
+    override var onSessionsLost: ((SessionLossReport) -> Unit)?
+        get() = coordinator.onSessionsLost
+        set(value) { coordinator.onSessionsLost = value }
+    override suspend fun start(reason: SessionHandshake.Reason) = coordinator.connect(reason)
+    override suspend fun awaitPassFinished() = coordinator.awaitPassFinished()
     override suspend fun switchToSession(id: UUID) = coordinator.switchToSession(id)
     override suspend fun createNewSession() = coordinator.createNewSession()
     override suspend fun detachForHub(budgetMs: Long) = coordinator.detachForHub(budgetMs)

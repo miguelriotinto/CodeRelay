@@ -73,6 +73,7 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
 
     override suspend fun send(message: ClientMessage) {
         log.add("rpc:${message.typeString}")
+        if (message is ClientMessage.SessionListAll) listAllCount += 1
         if (message is ClientMessage.SessionCreate) {
             lastCreateCols = message.cols
             lastCreateRows = message.rows
@@ -93,7 +94,7 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
     }
 
     internal fun defaultResponseFor(message: ClientMessage): ServerMessage? = when (message) {
-        is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(protocolVersion = 1, tokenId = myTokenId)
+        is ClientMessage.AuthRequest -> ServerMessage.AuthSuccess(protocolVersion = protocolVersion, tokenId = myTokenId)
         is ClientMessage.SessionCreate -> ServerMessage.SessionCreated(NEW_SESSION_ID, 80u, 24u)
         is ClientMessage.SessionAttach -> ServerMessage.SessionAttached(message.sessionId, "running")
         is ClientMessage.SessionResume -> ServerMessage.SessionResumed(message.sessionId)
@@ -136,6 +137,12 @@ internal class FakeConnectionSurface(private val log: CallLog) : ConnectionSurfa
      * Set null to model an older server that doesn't send a token id.
      */
     var myTokenId: String? = "tok"
+
+    /** The protocol version the server reports in auth_success (v4 pushes `session_ended`). */
+    var protocolVersion: Int = 1
+
+    /** How many `session_list_all` requests were sent. */
+    var listAllCount: Int = 0
 
     companion object {
         val NEW_SESSION_ID: UUID = UUID.fromString("00000000-0000-0000-0000-0000000000aa")
@@ -185,7 +192,11 @@ internal class FakeCoordinatorConnection(private val log: CallLog) : Coordinator
     override var onSendFailed: (() -> Unit)? = null
     override var onHealthyPing: (() -> Unit)? = null
 
-    override suspend fun connect(config: ConnectionConfig, token: String) { log.add("connect") }
+    /** When set, connect awaits it (parks the dial before the handshake). */
+    var connectGate: CompletableDeferred<Unit>? = null
+    /** Runs at the top of send (lets a test observe state while a send is in flight). */
+    var onSend: (suspend (ClientMessage) -> Unit)? = null
+    override suspend fun connect(config: ConnectionConfig, token: String) { log.add("connect"); connectGate?.await() }
     override suspend fun forceReconnect() {
         log.add("forceReconnect")
         onForceReconnect?.invoke()
@@ -196,7 +207,7 @@ internal class FakeCoordinatorConnection(private val log: CallLog) : Coordinator
         isAliveGate?.await()
         return alive
     }
-    override suspend fun send(message: ClientMessage) { log.add("send:${message.typeString}") }
+    override suspend fun send(message: ClientMessage) { onSend?.invoke(message); log.add("send:${message.typeString}") }
     override fun addServerMessageSubscriber(handler: (ServerMessage) -> Unit): UUID {
         val id = UUID.randomUUID()
         subscribers[id] = handler
@@ -221,6 +232,9 @@ internal class FakeOwnershipStore(
     override val names: Map<UUID, String> get() = namesMap.toMap()
     override val agents: Map<UUID, String> get() = agentsMap.toMap()
 
+    override var baseline: relay.protocol.SessionBaseline? = null
+        private set
+    override fun setBaseline(b: relay.protocol.SessionBaseline?) { baseline = b }
     override fun setName(id: UUID, name: String?) {
         if (name == null) namesMap.remove(id) else namesMap[id] = name
     }

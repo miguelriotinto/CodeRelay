@@ -1,7 +1,10 @@
 package relay.session
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -21,6 +24,9 @@ import relay.protocol.ConnectionConfig
 import relay.protocol.ServerMessage
 import relay.protocol.SessionInfo
 import relay.protocol.SessionState
+import relay.session.hub.LostSession
+import relay.session.hub.SessionBaseline
+import relay.session.hub.SessionLossReport
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -473,13 +479,15 @@ class SessionCoordinatorTest {
         val store = FakeOwnershipStore(log)   // empty — nothing persisted about ownership
         surface.sessionsOnServer = listOf(session(mine, "Mine"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+        val reports = mutableListOf<relay.session.hub.SessionLossReport>()
+        coord.onSessionsLost = { reports += it }
 
         coord.fetchSessions()
         advanceUntilIdle()
 
         assertTrue(coord.activeSessions.value.any { it.id == mine },
             "a session the server lists appears on relaunch with no local ownership cache")
-        assertNull(coord.stolenAlert.value, "a plain list refresh must not raise the takeover popup")
+        assertTrue(reports.isEmpty(), "a first list (no baseline) reports nothing")
     }
 
     // -------------------------------------------------------------------------
@@ -560,13 +568,12 @@ class SessionCoordinatorTest {
     }
 
     // -------------------------------------------------------------------------
-    // FIX 1 — onSessionStolen branches on wasActive (SharedSessionCoordinator.swift:601-625).
-    //   Active steal   → raise the alert + clear active + unclaim + evict + fetch.
-    //   Inactive steal → SILENT (no alert) + unclaim + evict + fetch.
+    // onSessionStolen: clear active (if it was) + drop from pane + evict + fetch,
+    // and report the session as taken to the hub (no coordinator alert).
     // -------------------------------------------------------------------------
 
     @Test
-    fun `onSessionStolen of the ACTIVE session raises the alert and clears active`() = runTest {
+    fun `onSessionStolen of the ACTIVE session reports it and clears active`() = runTest {
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
@@ -574,6 +581,8 @@ class SessionCoordinatorTest {
         val store = FakeOwnershipStore(log, seedNames = mapOf(target to "Arya"))
         surface.sessionsOnServer = listOf(session(target, "Arya"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+        val reports = mutableListOf<relay.session.hub.SessionLossReport>()
+        coord.onSessionsLost = { reports += it }
 
         // Make `target` the active session.
         coord.switchToSession(target)
@@ -586,16 +595,16 @@ class SessionCoordinatorTest {
         conn.deliver(ServerMessage.SessionStolen(target))
         advanceUntilIdle()
 
-        // The displaced focused terminal → alert raised, active cleared.
+        // The displaced focused terminal → reported, active cleared.
         assertNull(coord.activeSessionId.value, "active cleared on steal of active session")
-        assertEquals(target, coord.stolenAlert.value?.sessionId, "stolen alert raised for the active session")
-        assertTrue(coord.sessionsStolen.value.contains(target), "session marked stolen")
+        assertEquals(listOf(listOf(target)), reports.map { r -> r.taken.map { it.id } }, "the steal is reported once")
+        assertEquals("Arya", reports.single().taken.single().name)
         assertFalse(coord.activeSessions.value.any { it.id == target }, "dropped from pane")
         assertNull(coord.terminalCache.view(target), "terminal evicted")
     }
 
     @Test
-    fun `onSessionStolen of a NON-active session removes it AND raises the alert`() = runTest {
+    fun `onSessionStolen of a NON-active session removes it AND reports it`() = runTest {
         val log = CallLog()
         val surface = FakeConnectionSurface(log)
         val conn = FakeCoordinatorConnection(log)
@@ -607,6 +616,8 @@ class SessionCoordinatorTest {
         )
         surface.sessionsOnServer = listOf(session(active, "Arya"), session(stolen, "Bran"))
         val coord = SessionCoordinator(this, conn, SessionController(surface), "tok", store, config)
+        val reports = mutableListOf<relay.session.hub.SessionLossReport>()
+        coord.onSessionsLost = { reports += it }
 
         // Make `active` the focused session; `stolen` is owned but only in the sidebar.
         coord.switchToSession(active)
@@ -621,10 +632,8 @@ class SessionCoordinatorTest {
         conn.deliver(ServerMessage.SessionStolen(stolen))
         advanceUntilIdle()
 
-        // The reported bug fix: a stolen sidebar session must ALSO alert, not
-        // just clean up silently.
-        assertEquals(stolen, coord.stolenAlert.value?.sessionId, "stolen alert raised for the sidebar session")
-        assertTrue(coord.sessionsStolen.value.contains(stolen), "non-active steal marks the stolen set")
+        // A stolen sidebar session must ALSO be reported, not just cleaned up silently.
+        assertEquals(listOf(listOf(stolen)), reports.map { r -> r.taken.map { it.id } })
         // The active session the user is looking at is untouched.
         assertEquals(active, coord.activeSessionId.value, "active session unchanged")
         assertFalse(coord.activeSessions.value.any { it.id == stolen }, "stolen session dropped from pane")
@@ -1170,7 +1179,7 @@ class SessionCoordinatorTest {
         )
 
         // connect() stamps lastHealthyAtMs = now, so an immediate keystroke is fresh.
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
         val listsAfterConnect = log.entries.count { it == "rpc:session_list" }
 
@@ -1204,7 +1213,7 @@ class SessionCoordinatorTest {
             this, conn, SessionController(surface), "tok", store, config,
             nowMs = { clock.ms },
         )
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
         // Make health stale so probes are eligible.
         clock.ms += 13_000
@@ -1466,7 +1475,7 @@ class SessionCoordinatorTest {
         )
         assertEquals(OptimizerAvailability.UNKNOWN, coord.optimizerAvailability.value)
 
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
 
         assertEquals(OptimizerAvailability.AVAILABLE, coord.optimizerAvailability.value)
@@ -1493,7 +1502,7 @@ class SessionCoordinatorTest {
             ownershipStore = store,
             config = config,
         )
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
         assertEquals(OptimizerAvailability.SERVER_TOO_OLD, coord.optimizerAvailability.value)
         assertEquals(OptimizerStrings.UPDATE_RELAY_HINT, coord.wandHint)
@@ -1587,7 +1596,7 @@ class SessionCoordinatorTest {
 
         // Launch: no session is active afterwards, so no overlay may linger over
         // the "No Active Session" placeholder.
-        coord.connect()
+        coord.connect(SessionHandshake.Reason.LAUNCH)
         advanceUntilIdle()
         assertNull(coord.sessionLoadPhase.value)
 
@@ -1634,5 +1643,347 @@ class SessionCoordinatorTest {
         advanceUntilIdle()
         assertEquals(FakeConnectionSurface.NEW_SESSION_ID, coord.activeSessionId.value)
         assertNull(coord.sessionLoadPhase.value)
+    }
+
+    // -------------------------------------------------------------------------
+    // Session loss diff (spec §3–§4b). Port of the Swift Task 4 suite.
+    // -------------------------------------------------------------------------
+
+    private class LossHarness(
+        val log: CallLog,
+        val surface: FakeConnectionSurface,
+        val conn: FakeCoordinatorConnection,
+        val store: FakeOwnershipStore,
+        val coord: SessionCoordinator,
+        val reports: MutableList<SessionLossReport>,
+    ) {
+        /** Stages the token-scoped list and (optionally) the all-tokens list. */
+        fun script(owned: List<SessionInfo>, all: List<SessionInfo>? = null) {
+            surface.sessionsOnServer = owned
+            surface.allSessionsOnServer = all
+        }
+        val listAllCount: Int get() = surface.listAllCount
+    }
+
+    private fun lossHarness(
+        scope: kotlinx.coroutines.CoroutineScope,
+        baseline: SessionBaseline?,
+        tokenId: String = "tok",
+        protocolVersion: Int = 4,
+    ): LossHarness {
+        val log = CallLog()
+        val surface = FakeConnectionSurface(log)
+        surface.myTokenId = tokenId
+        surface.protocolVersion = protocolVersion
+        val conn = FakeCoordinatorConnection(log)
+        val store = FakeOwnershipStore(log)
+        store.setBaseline(baseline)
+        val coord = SessionCoordinator(scope, conn, SessionController(surface), "tok", store, config)
+        val reports = mutableListOf<SessionLossReport>()
+        coord.onSessionsLost = { reports += it }
+        return LossHarness(log, surface, conn, store, coord, reports)
+    }
+
+    private fun lost(id: UUID) = LostSession(id, "n-${id.toString().take(4)}")
+    private fun baseline(vararg ids: UUID, token: String = "tok") = SessionBaseline(token, ids.map { lost(it) })
+
+    private val A: UUID = UUID.fromString("00000000-0000-0000-0000-0000000001a1")
+    private val B: UUID = UUID.fromString("00000000-0000-0000-0000-0000000001b2")
+    private val C: UUID = UUID.fromString("00000000-0000-0000-0000-0000000001c3")
+
+    /** A plain fetch (not a handshake) that drops sessions is a diff point too. */
+    @Test
+    fun `plain fetch that drops sessions reports all`() = runTest {
+        val h = lossHarness(this, baseline(A, B, C))
+        h.script(owned = listOf(session(C)), all = listOf(session(A, token = "other"), session(B, token = "other"), session(C)))
+
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+
+        assertEquals(1, h.reports.size, "one aggregated report per pass")
+        assertEquals(listOf(A, B), h.reports[0].taken.map { it.id })
+        assertEquals(emptyList<LostSession>(), h.reports[0].ended)
+        assertEquals(lost(A).name, h.reports[0].taken[0].name,
+            "names come from the baseline — the list no longer carries the lost rows")
+    }
+
+    @Test
+    fun `list all only called when something is lost`() = runTest {
+        val h = lossHarness(this, baseline(A, B))
+        h.script(owned = listOf(session(A), session(B)))
+
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+
+        assertEquals(0, h.listAllCount, "nothing lost → no session_list_all round trip")
+        assertTrue(h.reports.isEmpty())
+    }
+
+    /** Review focus #3: a session terminated here is never announced. */
+    @Test
+    fun `locally terminated session is never reported`() = runTest {
+        val h = lossHarness(this, baseline(A, B))
+        h.script(owned = listOf(session(A), session(B)))
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+
+        h.script(owned = listOf(session(A)), all = listOf(session(A)))
+        var baselineDuringSend: List<UUID>? = null
+        h.conn.onSend = { if (it is ClientMessage.SessionTerminate) baselineDuringSend = h.store.baseline?.sessions?.map { s -> s.id } }
+        h.coord.terminateSession(B)
+        advanceUntilIdle()
+        // The server answers a client-initiated terminate with BOTH
+        // session_terminated and session_ended("terminated"): idempotent.
+        h.conn.deliver(ServerMessage.SessionEnded(B, "terminated"))
+        advanceUntilIdle()
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+
+        assertTrue(h.reports.isEmpty(), "a local terminate is not a loss")
+        assertEquals(listOf(A), h.store.baseline?.sessions?.map { it.id })
+        assertEquals(listOf(A), baselineDuringSend, "out of the baseline before the send suspends")
+    }
+
+    /** ENABLE clears the baseline before the dial suspends, not only in the handshake. */
+    @Test
+    fun `fetch during enable dial reports nothing`() = runTest {
+        val h = lossHarness(this, baseline(A, B))
+        h.script(owned = listOf(session(B)), all = listOf(session(A, token = "other"), session(B)))
+        val dial = CompletableDeferred<Unit>()
+        h.conn.connectGate = dial
+
+        val connecting = launch { h.coord.connect(SessionHandshake.Reason.ENABLE) }
+        runCurrent()
+        assertNull(h.store.baseline, "cleared before the dial suspends")
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+        dial.complete(Unit)
+        connecting.join()
+        advanceUntilIdle()
+
+        assertTrue(h.reports.isEmpty(), "nothing from before the server was enabled is announced")
+        assertEquals(0, h.listAllCount)
+    }
+
+    /** Review focus #4: a baseline from another token is discarded silently. */
+    @Test
+    fun `token change discards baseline silently`() = runTest {
+        val h = lossHarness(this, baseline(A, token = "t1"), tokenId = "t2")
+        h.script(owned = emptyList())
+
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+
+        assertTrue(h.reports.isEmpty())
+        assertEquals(0, h.listAllCount)
+        assertEquals(SessionBaseline("t2", emptyList()), h.store.baseline)
+    }
+
+    /** A v3 relay cannot push a live exit, so "ended while you were away" could be false. */
+    @Test
+    fun `ended suppressed on v3 server`() = runTest {
+        val v3 = lossHarness(this, baseline(C), protocolVersion = 3)
+        v3.script(owned = emptyList(), all = emptyList())
+        v3.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+        assertTrue(v3.reports.isEmpty(), "v3: ended is never reported")
+
+        val v4 = lossHarness(this, baseline(C), protocolVersion = 4)
+        v4.script(owned = emptyList(), all = emptyList())
+        v4.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+        assertEquals(listOf(SessionLossReport(taken = emptyList(), ended = listOf(lost(C)))), v4.reports)
+    }
+
+    /** §4b: a live end leaves the pane at once and silently; no later diff reports it. */
+    @Test
+    fun `live session ended removes silently`() = runTest {
+        val h = lossHarness(this, baseline(A, B))
+        h.script(owned = listOf(session(A), session(B)))
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+
+        h.conn.deliver(ServerMessage.SessionEnded(B, "exited"))
+        advanceUntilIdle()
+
+        assertFalse(h.coord.activeSessions.value.any { it.id == B }, "B left the pane")
+        assertEquals(listOf(A), h.store.baseline?.sessions?.map { it.id })
+        assertTrue(h.reports.isEmpty(), "a live end is silent")
+
+        h.script(owned = listOf(session(A)), all = listOf(session(A)))
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+        assertTrue(h.reports.isEmpty(), "a later fetch must not report it as ended")
+    }
+
+    /** Review focus #2: a live steal is reported once; the diff after it is silent. */
+    @Test
+    fun `live steal then diff reports once`() = runTest {
+        val h = lossHarness(this, baseline(A, B))
+        h.script(owned = listOf(session(A), session(B)))
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+        assertTrue(h.reports.isEmpty())
+
+        h.script(owned = listOf(session(B)), all = listOf(session(A, token = "other"), session(B)))
+        h.conn.deliver(ServerMessage.SessionStolen(A))
+        advanceUntilIdle() // includes the steal's own forced refetch
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+
+        assertEquals(1, h.reports.size, "reported exactly once")
+        assertEquals(listOf(A), h.reports[0].taken.map { it.id })
+        assertEquals(0, h.listAllCount, "nothing was lost to the diff")
+    }
+
+    /**
+     * The other order: the ACTIVE session drops out of a diff (reported), then
+     * the queued `session_stolen` arrives. The diff leaves the active slot, so
+     * the steal passes its guard — it must clean up without reporting again.
+     */
+    @Test
+    fun `diff then queued steal of active session reports once`() = runTest {
+        val h = lossHarness(this, baseline(A, B))
+        h.script(owned = listOf(session(A), session(B)))
+        h.coord.switchToSession(A)
+        advanceUntilIdle()
+        assertEquals(A, h.coord.activeSessionId.value)
+
+        h.script(owned = listOf(session(B)), all = listOf(session(A, token = "other"), session(B)))
+        h.coord.fetchSessions(force = true)
+        advanceUntilIdle()
+        assertEquals(listOf(listOf(A)), h.reports.map { r -> r.taken.map { it.id } }, "the diff reports A")
+        assertEquals(A, h.coord.activeSessionId.value, "precondition: the diff leaves the active slot")
+
+        h.conn.deliver(ServerMessage.SessionStolen(A))
+        advanceUntilIdle()
+        h.coord.awaitPassFinished()
+
+        assertNull(h.coord.activeSessionId.value, "the steal still cleans up")
+        assertEquals(1, h.reports.size, "the queued steal must not report A a second time")
+    }
+
+    /**
+     * A session created here and taken before any list carried it into the
+     * baseline is still in `sessions` (create inserts it optimistically), so
+     * the steal reports it.
+     */
+    @Test
+    fun `steal of just created session before refetch is reported`() = runTest {
+        val created = FakeConnectionSurface.NEW_SESSION_ID
+        val h = lossHarness(this, baseline())
+        val listGate = CompletableDeferred<Unit>()
+        h.surface.sendGate = { if (it is ClientMessage.SessionList) listGate.await() }
+
+        val creating = launch { h.coord.createNewSession() }
+        advanceUntilIdle()
+        assertEquals(created, h.coord.activeSessionId.value)
+        assertTrue(h.coord.activeSessions.value.any { it.id == created })
+        assertFalse(h.store.baseline?.sessions.orEmpty().any { it.id == created },
+            "precondition: no list has written it to the baseline")
+
+        h.conn.deliver(ServerMessage.SessionStolen(created))
+        advanceUntilIdle()
+
+        assertNull(h.coord.activeSessionId.value)
+        assertEquals(listOf(listOf(created)), h.reports.map { r -> r.taken.map { it.id } }, "reported exactly once")
+
+        h.script(owned = emptyList(), all = listOf(session(created, token = "other")))
+        listGate.complete(Unit)
+        creating.join()
+        advanceUntilIdle()
+        assertEquals(1, h.reports.size)
+    }
+
+    /** No report reaches the hub from a coordinator torn down mid-classification. */
+    @Test
+    fun `no report after teardown`() = runTest {
+        val h = lossHarness(this, baseline(A))
+        h.script(owned = emptyList(), all = listOf(session(A, token = "other")))
+        val allGate = CompletableDeferred<Unit>()
+        h.surface.sendGate = { if (it is ClientMessage.SessionListAll) allGate.await() }
+
+        val fetching = launch { h.coord.fetchSessions(force = true) }
+        advanceUntilIdle()
+        assertEquals(1, h.listAllCount, "parked in session_list_all")
+
+        h.coord.tearDown()
+        allGate.complete(Unit)
+        fetching.join()
+        advanceUntilIdle()
+
+        assertTrue(h.reports.isEmpty(), "a torn-down coordinator reports nothing")
+    }
+
+    // ---- awaitPassFinished ---------------------------------------------------
+
+    /** Review focus #1: the hub's fan-out hold sees a pass already in flight. */
+    @Test
+    fun `awaitPassFinished waits for in flight handshake`() = runTest {
+        val h = lossHarness(this, null)
+        val authGate = CompletableDeferred<Unit>()
+        h.surface.sendGate = { if (it is ClientMessage.AuthRequest) authGate.await() }
+
+        val pass = async { h.coord.performHandshake(SessionHandshake.Reason.WAKE) }
+        advanceUntilIdle()
+        assertTrue(h.coord.isPerformingHandshake.value)
+
+        var finished = false
+        val waiter = launch { h.coord.awaitPassFinished(); finished = true }
+        advanceUntilIdle()
+        assertFalse(finished, "must not return while the handshake waits on auth")
+
+        authGate.complete(Unit)
+        waiter.join()
+        assertTrue(finished)
+        assertFalse(h.coord.isPerformingHandshake.value, "returned only after the handshake completed")
+        assertTrue(pass.await())
+    }
+
+    @Test
+    fun `awaitPassFinished waits for in flight fetch`() = runTest {
+        val h = lossHarness(this, null)
+        val listGate = CompletableDeferred<Unit>()
+        h.surface.sendGate = { if (it is ClientMessage.SessionList) listGate.await() }
+
+        val fetching = launch { h.coord.fetchSessions(force = true) }
+        advanceUntilIdle()
+        var finished = false
+        val waiter = launch { h.coord.awaitPassFinished(); finished = true }
+        advanceUntilIdle()
+        assertFalse(finished, "a fetch may still apply a list and report")
+
+        listGate.complete(Unit)
+        waiter.join()
+        fetching.join()
+        assertTrue(finished)
+    }
+
+    /** A foreground pass still probing the socket (before isRecovering) counts. */
+    @Test
+    fun `awaitPassFinished waits for a foreground pass still probing`() = runTest {
+        val h = lossHarness(this, null)
+        val probe = CompletableDeferred<Unit>()
+        h.conn.isAliveGate = probe
+
+        h.coord.triggerUserRecovery()
+        advanceUntilIdle()
+        assertFalse(h.coord.isRecovering.value, "precondition: parked before committing")
+        var finished = false
+        val waiter = launch { h.coord.awaitPassFinished(); finished = true }
+        advanceUntilIdle()
+        assertFalse(finished, "the foreground pass may still fetch")
+
+        probe.complete(Unit)
+        waiter.join()
+        assertTrue(finished)
+    }
+
+    @Test
+    fun `awaitPassFinished returns immediately when idle`() = runTest {
+        val h = lossHarness(this, null)
+        val done = async { h.coord.awaitPassFinished(); true }
+        runCurrent()
+        assertTrue(done.isCompleted)
     }
 }

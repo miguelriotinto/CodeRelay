@@ -34,8 +34,8 @@ interface AgentPersistence {
  * Activity-state facet ported from
  * Sources/CodeRelayClient/ViewModels/ActivityCoordinator.swift.
  *
- * Holds the live agent / awaiting-input state plus the "session stolen" UI
- * flags. The Swift original is `@MainActor`-isolated and republishes through
+ * Holds the live agent / awaiting-input state. Lost-session notices are not
+ * here: the coordinator reports them to the hub (`onSessionsLost`). The Swift original is `@MainActor`-isolated and republishes through
  * the parent `SharedSessionCoordinator`; here the state is exposed as
  * [StateFlow]s the Compose layer collects. Like the Swift type this is **not**
  * thread-safe — callers must confine mutation to a single (main) dispatcher.
@@ -100,29 +100,6 @@ class ActivityCoordinator(
      * session. Mirrors herdr's client-side `seen` bit.
      */
     val unseenSessions: StateFlow<Set<UUID>> = _unseenSessions.asStateFlow()
-
-    private val _sessionsStolen = MutableStateFlow<Set<UUID>>(emptySet())
-
-    /**
-     * Session ids that were taken over by another device since the last
-     * [clearStolen]. The Swift original keeps single `stolenSessionName` /
-     * `stolenSessionShortId` / `showSessionStolen` alert fields; on Android the
-     * set is the source of truth and the richer [stolenAlert] mirrors the most
-     * recent one for the alert UI.
-     */
-    val sessionsStolen: StateFlow<Set<UUID>> = _sessionsStolen.asStateFlow()
-
-    /** UI payload for the "Session Moved" alert (ActivityCoordinator.swift:39-41, :126-130). */
-    data class StolenAlert(
-        val sessionId: UUID,
-        val sessionName: String,
-        val shortId: String,
-    )
-
-    private val _stolenAlert = MutableStateFlow<StolenAlert?>(null)
-
-    /** The most recent stolen-session alert, or null when none is pending. */
-    val stolenAlert: StateFlow<StolenAlert?> = _stolenAlert.asStateFlow()
 
     // MARK: - Reads (ActivityCoordinator.swift:65-83)
 
@@ -261,46 +238,6 @@ class ActivityCoordinator(
     }
 
     /**
-     * Apply "attached by another client" semantics (Swift `handleSessionStolen`).
-     * Clears the per-session activity state and raises the alert. The coordinator
-     * separately drops the session from the pane (ownership is the server's
-     * token-scoped list, not a local set).
-     *
-     * @param nameLookup resolves a display name for the alert; defaults to the
-     *   short id when no name is known.
-     */
-    fun sessionStolen(
-        sessionId: UUID,
-        nameLookup: (UUID) -> String = { it.toString().take(8) },
-    ): StolenAlert {
-        val shortId = sessionId.toString().take(8)
-        val name = nameLookup(sessionId)
-
-        // Clear local activity state (ActivityCoordinator.swift:142-143).
-        if (_agentSessions.value.containsKey(sessionId)) {
-            _agentSessions.value = _agentSessions.value - sessionId
-            persistence.setAgent(sessionId, null)
-        }
-        _sessionsAwaitingInput.value = _sessionsAwaitingInput.value - sessionId
-        _agentStates.value = _agentStates.value - sessionId
-        _sessionTitles.value = _sessionTitles.value - sessionId
-        _unseenSessions.value = _unseenSessions.value - sessionId
-
-        val alert = StolenAlert(sessionId = sessionId, sessionName = name, shortId = shortId)
-        _sessionsStolen.value = _sessionsStolen.value + sessionId
-        _stolenAlert.value = alert
-        return alert
-    }
-
-    /** Dismiss the stolen flag/alert for [sessionId] (clears the alert when it matches). */
-    fun clearStolen(sessionId: UUID) {
-        _sessionsStolen.value = _sessionsStolen.value - sessionId
-        if (_stolenAlert.value?.sessionId == sessionId) {
-            _stolenAlert.value = null
-        }
-    }
-
-    /**
      * Clear activity state for a locally terminated session (Swift
      * `forgetSession`, ActivityCoordinator.swift:157-160). Removes the session
      * from every map/set. Persists the agent removal so a forgotten session
@@ -315,10 +252,6 @@ class ActivityCoordinator(
         _agentStates.value = _agentStates.value - sessionId
         _sessionTitles.value = _sessionTitles.value - sessionId
         _unseenSessions.value = _unseenSessions.value - sessionId
-        _sessionsStolen.value = _sessionsStolen.value - sessionId
-        if (_stolenAlert.value?.sessionId == sessionId) {
-            _stolenAlert.value = null
-        }
     }
 
     /**

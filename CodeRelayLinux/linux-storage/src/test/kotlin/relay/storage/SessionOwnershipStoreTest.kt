@@ -149,4 +149,16 @@ class SessionOwnershipStoreTest {
         SessionOwnershipStore(tmp).moveLegacyInto(null)
         assertTrue(SessionOwnershipStore(tmp).names.isEmpty())
     }
+
+    @Test
+    fun `baselineRoundTripsAndNullRemoves`(@TempDir tmp: File) {
+        val baseline = relay.protocol.SessionBaseline("tok", listOf(relay.protocol.LostSession(a, "alpha")))
+        val s = SessionOwnershipStore(tmp, namespace = "srv")
+        assertEquals(null, s.baseline)
+        s.setBaseline(baseline)
+        assertEquals(baseline, SessionOwnershipStore(tmp, namespace = "srv").baseline)
+        assertEquals(null, SessionOwnershipStore(tmp, namespace = "other").baseline)
+        s.setBaseline(null)
+        assertEquals(null, SessionOwnershipStore(tmp, namespace = "srv").baseline)
+    }
 }

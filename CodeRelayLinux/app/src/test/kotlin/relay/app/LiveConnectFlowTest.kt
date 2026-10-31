@@ -58,6 +58,9 @@ class LiveConnectFlowTest {
         private val agentMap = mutableMapOf<UUID, String>()
         override val names: Map<UUID, String> get() = nameMap
         override val agents: Map<UUID, String> get() = agentMap
+        override var baseline: relay.protocol.SessionBaseline? = null
+            private set
+        override fun setBaseline(b: relay.protocol.SessionBaseline?) { baseline = b }
         override fun setName(id: UUID, name: String?) {
             if (name == null) nameMap.remove(id) else nameMap[id] = name
         }
@@ -103,7 +106,7 @@ class LiveConnectFlowTest {
                 withContext(dispatcher) {
                     // Throws if the handshake never authenticated — the exact
                     // failure the server list must keep the user out of.
-                    withTimeout(30_000) { coordinator.connect() }
+                    withTimeout(30_000) { coordinator.connect(relay.session.SessionHandshake.Reason.LAUNCH) }
 
                     assertFalse(
                         coordinator.isRecovering.value,

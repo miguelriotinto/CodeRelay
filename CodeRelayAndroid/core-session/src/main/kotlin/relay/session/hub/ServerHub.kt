@@ -14,6 +14,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import relay.protocol.ConnectionConfig
 import relay.protocol.SessionInfo
 import relay.protocol.SessionRef
+import relay.session.SessionHandshake
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -43,6 +44,16 @@ class ServerHub<S : ServerSlot>(
     /** Bound on the previous server's detach before a cross-server attach (spec §7.5). */
     internal val detachBudgetMs: Long = 3_000,
     private val sleepMs: suspend (Long) -> Unit = { delay(it) },
+    /** The session-loss collector's clock (120 s repeat suppression). */
+    nowMs: () -> Long = System::currentTimeMillis,
+    /** The collector's 1 s debounce sleep. */
+    lossSleepMs: suspend (Long) -> Unit = { delay(it) },
+    /**
+     * Cap on the session-loss hold around [start] and a foreground fan-out: one
+     * dead server must not hold everyone's notice (spec §2, §6). Raced with
+     * `withTimeoutOrNull` on [scope], so tests run it on virtual time.
+     */
+    private val fanOutBudgetMs: Long = 10_000,
 ) {
     // MARK: - Published state
 
@@ -56,9 +67,27 @@ class ServerHub<S : ServerSlot>(
     val aggregate: StateFlow<HubAggregate> = _aggregate.asStateFlow()
 
     internal val noticeFlow = MutableStateFlow<String?>(null)
-    /** User-facing notices the hub produces (deep-link enable, cap refusal…). */
+    /**
+     * User-facing notices the hub produces (deep-link enable, cap refusal,
+     * sessions that ended while the user was away…).
+     */
     val notice: StateFlow<String?> = noticeFlow.asStateFlow()
     fun setNotice(text: String?) { noticeFlow.value = text }
+
+    private val _takenAlert = MutableStateFlow<SessionLossAlert?>(null)
+    /**
+     * The one aggregated "Session Moved" alert across every server (session
+     * takeover spec §2, §5). Bound by the workspace root — never by a
+     * per-server pane, which is re-keyed when focus moves.
+     */
+    val takenAlert: StateFlow<SessionLossAlert?> = _takenAlert.asStateFlow()
+    /** The sessions [takenAlert] announces, so a batch that lands while it is unread joins it. */
+    private var shownTaken: List<SessionLossItem> = emptyList()
+    /** OK on the session-loss dialog: the only way it is cleared. */
+    fun dismissTakenAlert() {
+        _takenAlert.value = null
+        shownTaken = emptyList()
+    }
 
     private val _isShowingServerList = MutableStateFlow(false)
     /** UI-only: the server management screen is being shown. */
@@ -109,6 +138,14 @@ class ServerHub<S : ServerSlot>(
     private val building = mutableSetOf<UUID>()
     /** The last push settings synced; slots built later get the same. */
     private var pushSettings: PushSettings? = null
+    internal val lossCollector = SessionLossCollector(scope, nowMs, lossSleepMs).also { c ->
+        c.onFlush = { taken, ended -> presentLosses(taken, ended) }
+    }
+    /**
+     * Test hook: the most recent fan-out's hold. Callers never await it — the
+     * notice must not delay the fan-out (spec anti-goal).
+     */
+    internal var lastLossHold: Job? = null
 
     val enabledCount: Int get() = bookmarks.count { it.enabled }
 
@@ -138,11 +175,22 @@ class ServerHub<S : ServerSlot>(
                 state.saveActiveRef(null)
             }
             publish()
+            val enabled = bookmarks.filter { it.enabled }
+            val hold = openLossHold(enabled.size)
             coroutineScope {
-                bookmarks.filter { it.enabled }.forEachIndexed { index, config ->
+                enabled.forEachIndexed { index, config ->
                     launch {
-                        sleepMs(staggerMs * index)
-                        if (started) buildSlot(config)
+                        var handedOff = false
+                        try {
+                            sleepMs(staggerMs * index)
+                            if (started) {
+                                buildSlot(config, SessionHandshake.Reason.LAUNCH)
+                                arriveAfterPass(hold, slots[config.id])
+                                handedOff = true
+                            }
+                        } finally {
+                            if (!handedOff) hold.arrive()
+                        }
                     }
                 }
             }
@@ -154,6 +202,8 @@ class ServerHub<S : ServerSlot>(
     }
 
     fun stop() {
+        // No notice may land behind a closed workspace; suppression memory stays.
+        lossCollector.reset()
         val retiring = slots.values.toList()
         slots.clear()
         slotJobs.values.forEach { it.cancel() }
@@ -206,7 +256,9 @@ class ServerHub<S : ServerSlot>(
         }
         bookmarks = fresh
         publish()
-        fresh.filter { it.enabled && !slots.containsKey(it.id) }.forEach { c -> scope.launch { buildSlot(c) } }
+        fresh.filter { it.enabled && !slots.containsKey(it.id) }.forEach { c ->
+            scope.launch { buildSlot(c, SessionHandshake.Reason.ENABLE) }
+        }
     }
 
     /** Flips a bookmark's `enabled` flag and persists it. False when the cap refuses (D12); see [notice]. */
@@ -220,7 +272,7 @@ class ServerHub<S : ServerSlot>(
         bookmarkStore.add(updated)
         bookmarks = bookmarkStore.loadAll()
         if (enabled) {
-            scope.launch { buildSlot(updated) }
+            scope.launch { buildSlot(updated, SessionHandshake.Reason.ENABLE) }
         } else {
             // Spec §10: unregister push on that relay first; the cached list is kept.
             tearDownSlot(serverId, unregisterPush = true)
@@ -234,14 +286,19 @@ class ServerHub<S : ServerSlot>(
         tearDownSlot(serverId)
         val config = bookmarks.firstOrNull { it.id == serverId && it.enabled }
         if (config == null) { publish(); return }
-        scope.launch { buildSlot(config) }
+        scope.launch { buildSlot(config, SessionHandshake.Reason.ENABLE) }
     }
 
     // MARK: - Slots
 
     private fun isWanted(id: UUID) = started && bookmarks.firstOrNull { it.id == id }?.enabled == true
 
-    private suspend fun buildSlot(config: ConnectionConfig) {
+    /**
+     * [reason] is LAUNCH from [start] (announces losses since the last run) and
+     * ENABLE for every later build — enable, add/pair, edit — which resets the
+     * baseline silently (spec §3b).
+     */
+    private suspend fun buildSlot(config: ConnectionConfig, reason: SessionHandshake.Reason) {
         // Re-read the flag: enable then disable can both run before this does,
         // and stop() may have closed the workspace.
         if (slots.containsKey(config.id) || config.id in building || !isWanted(config.id)) return
@@ -264,9 +321,13 @@ class ServerHub<S : ServerSlot>(
         missingToken -= config.id
         val slot = factory(config, token)
         slots[config.id] = slot
+        slot.onSessionsLost = { report ->
+            // A retired or rebuilt slot speaks for no server any more.
+            if (slots[config.id] === slot) collectLosses(report, config.id)
+        }
         slotJobs[config.id] = scope.launch { slot.changes.collect { slotDidChange(config.id) } }
         try {
-            slot.start()
+            slot.start(reason)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Throwable) {
@@ -402,12 +463,87 @@ class ServerHub<S : ServerSlot>(
      * ones are included — this is how they come back.
      */
     fun handleForegroundTransition() {
-        bookmarks.filter { it.enabled }.mapNotNull { slots[it.id] }.forEachIndexed { index, slot ->
+        val targets = bookmarks.filter { it.enabled }.mapNotNull { slots[it.id] }
+        val hold = openLossHold(targets.size)
+        targets.forEachIndexed { index, slot ->
             scope.launch {
-                sleepMs(staggerMs * index)
-                slot.handleForegroundTransition()
+                var handedOff = false
+                try {
+                    sleepMs(staggerMs * index)
+                    slot.handleForegroundTransition()
+                    // The trigger returns at once when a handshake or recovery is
+                    // already running (the launch case); the hold waits for that
+                    // pass, whose list application is what reports (§6).
+                    arriveAfterPass(hold, slot)
+                    handedOff = true
+                } finally {
+                    if (!handedOff) hold.arrive()
+                }
             }
         }
+    }
+
+    // MARK: - Session-loss notices (session takeover spec §2, §6)
+
+    /**
+     * Opens a collector hold for one fan-out of [count] slots. It closes when
+     * every slot's trigger AND `awaitPassFinished` have returned, or after
+     * [fanOutBudgetMs], whichever is first. The pass waits are side jobs: the
+     * fan-out itself never waits on them. Reports arriving after the cap form
+     * the next (debounced) batch.
+     *
+     * Holds nest in the collector, so a fan-out that starts while another is
+     * held extends the batch to the later hold's end (up to 2 × the cap).
+     */
+    private fun openLossHold(count: Int): FanOutLatch {
+        val latch = FanOutLatch(count)
+        val epoch = lossCollector.beginHold()
+        lastLossHold = scope.launch {
+            withTimeoutOrNull(fanOutBudgetMs) { latch.await() }
+            lossCollector.endHold(epoch)
+        }
+        return latch
+    }
+
+    /** Arrives once [slot]'s in-flight pass finishes, without making the caller wait. A null slot (not built) arrives at once. */
+    private fun arriveAfterPass(latch: FanOutLatch, slot: S?) {
+        if (slot == null) { latch.arrive(); return }
+        scope.launch {
+            try { slot.awaitPassFinished() } finally { latch.arrive() }
+        }
+    }
+
+    private fun collectLosses(report: SessionLossReport, serverId: UUID) {
+        val config = bookmarks.firstOrNull { it.id == serverId }
+        val serverName = config?.let { it.displayName ?: it.name }.orEmpty()
+        fun items(lost: List<LostSession>) = lost.map { SessionLossItem(serverId, serverName, it) }
+        if (report.taken.isNotEmpty()) lossCollector.report(items(report.taken), SessionLossKind.TAKEN)
+        if (report.ended.isNotEmpty()) lossCollector.report(items(report.ended), SessionLossKind.ENDED)
+    }
+
+    private fun presentLosses(taken: List<SessionLossItem>, ended: List<SessionLossItem>) {
+        if (taken.isNotEmpty()) {
+            // An unread dialog absorbs the new batch: replacing it would mean the
+            // earlier sessions were never announced. Same id: it stays up.
+            val pending = _takenAlert.value
+            val merged = (if (pending == null) emptyList() else shownTaken).toMutableList()
+            for (item in taken) {
+                if (merged.none { it.serverId == item.serverId && it.session.id == item.session.id }) merged += item
+            }
+            val ordered = inSidebarOrder(merged)
+            shownTaken = ordered
+            _takenAlert.value = SessionLossAlert(
+                SessionLossCopy.takenTitle(ordered.size), SessionLossCopy.takenBody(ordered),
+                pending?.id ?: UUID.randomUUID())
+        }
+        if (ended.isNotEmpty()) noticeFlow.value = SessionLossCopy.endedBody(inSidebarOrder(ended))
+    }
+
+    /** Sorts by server in sidebar (bookmark) order, keeping each server's own order (stable sort). */
+    private fun inSidebarOrder(items: List<SessionLossItem>): List<SessionLossItem> {
+        val rank = HashMap<UUID, Int>()
+        bookmarks.forEachIndexed { index, config -> rank.putIfAbsent(config.id, index) }
+        return items.sortedBy { rank[it.serverId] ?: Int.MAX_VALUE }
     }
 
     /** One server (the section's Retry) or every server. */
@@ -433,4 +569,22 @@ class ServerHub<S : ServerSlot>(
         const val MAX_ENABLED = 8
         internal const val NO_TOKEN = "No token stored for this server"
     }
+}
+
+/**
+ * Counts a fan-out's slots down to zero; [await] returns once every slot has
+ * arrived (at once when there were none). The hub races it against the cap, so
+ * a slot that never arrives only leaves a cancelled waiter behind.
+ */
+internal class FanOutLatch(count: Int) {
+    private var remaining = count
+    private val done = CompletableDeferred<Unit>().also { if (count <= 0) it.complete(Unit) }
+
+    fun arrive() {
+        if (remaining <= 0) return
+        remaining -= 1
+        if (remaining == 0) done.complete(Unit)
+    }
+
+    suspend fun await() = done.await()
 }

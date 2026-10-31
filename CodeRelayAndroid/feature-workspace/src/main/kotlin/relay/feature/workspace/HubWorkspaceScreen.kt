@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -75,6 +77,7 @@ fun <S : WorkspaceSlot> WorkspaceScreen(
     val sections by hub.sections.collectAsState()
     val aggregate by hub.aggregate.collectAsState()
     val notice by hub.notice.collectAsState()
+    val takenAlert by hub.takenAlert.collectAsState()
     val hasStarted by hub.hasStarted.collectAsState()
     val slot = active ?: focus
 
@@ -129,10 +132,25 @@ fun <S : WorkspaceSlot> WorkspaceScreen(
         }
     }
 
-    LaunchedEffect(notice) {
+    // The timer starts (or restarts) only once the session-loss dialog is gone,
+    // or the pill would expire unseen behind it.
+    val alertUp = takenAlert != null
+    LaunchedEffect(notice, alertUp) {
         val shown = notice ?: return@LaunchedEffect
+        if (alertUp) return@LaunchedEffect
         delay(NOTICE_MS)
         if (hub.notice.value == shown) hub.setNotice(null)
+    }
+
+    // One session-loss dialog for every server, composed at the root above the
+    // re-keyed per-server pane so a cross-server switch can never drop it.
+    takenAlert?.let { alert ->
+        AlertDialog(
+            onDismissRequest = { hub.dismissTakenAlert() },
+            title = { Text(alert.title) },
+            text = { Text(alert.message) },
+            confirmButton = { TextButton(onClick = { hub.dismissTakenAlert() }) { Text("OK") } },
+        )
     }
 
     SessionLoadingSheetHost(loading, onCancel = { (active ?: focus)?.coordinator?.cancelRecovery() })

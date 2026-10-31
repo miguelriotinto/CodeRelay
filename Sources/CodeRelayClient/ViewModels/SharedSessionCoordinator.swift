@@ -64,11 +64,19 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// proceeding anyway (spec §7.4, §12). Settable for tests.
     public var detachBudget: Duration = .seconds(3)
 
-    /// Live agent / awaiting-input / stolen-session state. Extracted into its
-    /// own object so the server-event fan-in (activity, stolen, rename) is
-    /// self-contained and independently testable. Views that need to bind
-    /// against the stolen-session alert reach through
-    /// `coordinator.activityCoordinator.showSessionStolen`; reads of
+    /// Sessions this server lost — taken by another device, or ended while
+    /// away — reported once per pass to the hub, which aggregates and presents
+    /// them. The coordinator raises no alert of its own (spec §2).
+    public var onSessionsLost: ((SessionLossReport) -> Void)?
+    /// `session_ended` (and so "ended") exists from this protocol version on.
+    /// Against an older relay a live exit is never pushed, so "ended while you
+    /// were away" could be false: ended losses are dropped (spec §3).
+    static let endedReportingProtocolVersion = 4
+    /// Callers of `awaitPassFinished()` parked until the coordinator is idle.
+    private var passWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Live agent / awaiting-input state. Extracted into its own object so the
+    /// activity fan-in is self-contained and independently testable; reads of
     /// `agentSessions` / `sessionsAwaitingInput` are available via the
     /// read-only forwarders below.
     public let activityCoordinator: ActivityCoordinator
@@ -87,22 +95,6 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         set { activityCoordinator.sessionsAwaitingInput = newValue }
     }
 
-    /// Read-through to the stolen-session UI flags. Setters are provided so
-    /// `WorkspaceView`'s `.alert(..., isPresented: $coordinator...)` can
-    /// reset the flag on dismiss if it chooses to bind through the parent.
-    /// (New views should prefer `$coordinator.activityCoordinator...`.)
-    public var stolenSessionName: String? {
-        get { activityCoordinator.stolenSessionName }
-        set { activityCoordinator.stolenSessionName = newValue }
-    }
-    public var stolenSessionShortId: String? {
-        get { activityCoordinator.stolenSessionShortId }
-        set { activityCoordinator.stolenSessionShortId = newValue }
-    }
-    public var showSessionStolen: Bool {
-        get { activityCoordinator.showSessionStolen }
-        set { activityCoordinator.showSessionStolen = newValue }
-    }
     public enum RecoveryPhase {
         case reconnecting, authenticating, resuming
 
@@ -115,13 +107,17 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         }
     }
 
-    @Published public var isRecovering = false
+    @Published public var isRecovering = false {
+        didSet { if !isRecovering { resumePassWaitersIfIdle() } }
+    }
     /// True while the connect → authenticate → list-owned-sessions handshake is
     /// running. Owned by `SessionHandshake`; read by `RecoveryController`, which
     /// refuses to reconnect while it is set (recovery replacing the socket
     /// mid-handshake is what left the pane empty on relaunch). Views may bind to
     /// it to show a "loading sessions" affordance.
-    @Published public internal(set) var isPerformingHandshake = false
+    @Published public internal(set) var isPerformingHandshake = false {
+        didSet { if !isPerformingHandshake { resumePassWaitersIfIdle() } }
+    }
     @Published public var recoveryPhase: RecoveryPhase = .reconnecting
     @Published public internal(set) var recoveryFailed = false
     @Published public var errorMessage: String?
@@ -156,7 +152,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
 
     /// Subscription that republishes `activityCoordinator.objectWillChange`
     /// onto this parent so SwiftUI views observing the parent `@ObservedObject`
-    /// re-render when agent / awaiting-input / stolen state changes.
+    /// re-render when agent / awaiting-input state changes.
     private var activityObjectWillChangeSubscription: AnyCancellable?
 
     /// The sidebar + tab-bar data source. The SERVER is authoritative for
@@ -346,6 +342,11 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                 self?.handleSessionStolen(sessionId: sessionId)
             }
         }
+        connection.onSessionEnded = { [weak self] sessionId, reason in
+            Task { @MainActor [weak self] in
+                self?.handleSessionEnded(sessionId: sessionId, reason: reason)
+            }
+        }
         connection.onSessionRenamed = { [weak self] sessionId, name in
             Task { @MainActor [weak self] in
                 self?.handleSessionRenamed(sessionId: sessionId, name: name)
@@ -387,9 +388,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// unconditionally on every entry into the workspace — cold launch,
     /// foreground, wake, network restore.
     ///
-    /// - Parameter reason: `.launch` stays silent about sessions another client
-    ///   took while this app was closed; `.wake` announces them (the live
-    ///   `session_stolen` push was missed while the socket was down).
+    /// - Parameter reason: `.launch` and `.wake` report sessions lost since the
+    ///   persisted baseline; `.enable` only resets the baseline.
     /// - Returns: true once the pane reflects the server's list. Owning zero
     ///   sessions is a success, not a failure.
     @discardableResult
@@ -536,6 +536,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                 self?.isLoading = false
                 self?.isFetchingSessions = false
                 self?.inFlightSessionsFetch = nil
+                self?.resumePassWaitersIfIdle()
             }
             do {
                 // The server is authoritative for ownership: `listSessions()` is
@@ -545,7 +546,9 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                 // below), so a transient failure never blanks the pane.
                 guard let self else { return }
                 let tokenScoped = try await self.withAuth { try await $0.listSessions() }
-                self.reconcile(tokenScoped: tokenScoped)
+                let lost = self.reconcile(tokenScoped: tokenScoped)
+                // Inside the fetch task, so `awaitPassFinished` covers it.
+                await self.reportLosses(lost)
             } catch {
                 // A refresh, not the authoritative population of the pane —
                 // that is `performHandshake`, which retries and surfaces
@@ -568,12 +571,21 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     ///   set: `activeSessions` renders `sessions` (minus terminal), so assigning
     ///   `sessions = tokenScoped` is what makes a session appear or disappear.
     ///
-    /// Cleanup for sessions that dropped out of the token-scoped list (attached
-    /// by another client, or terminated) is driven live by the `session_stolen`
-    /// push while the client is connected (see `handleSessionStolen`). On a cold
-    /// relaunch we simply don't list them — no reconciliation, no persisted set,
-    /// so there is nothing that can drift from the server and blank the pane.
-    func reconcile(tokenScoped: [SessionInfo]) {
+    /// The single diff point (spec §3): every list application compares the
+    /// list against the persisted per-server baseline and returns the baseline
+    /// entries this token no longer lists as live. The baseline only counts when
+    /// it was recorded under the current token id — a token change (bookmark
+    /// edited, re-paired) or a first run yields nothing. Afterwards the baseline
+    /// is ALWAYS rewritten from the list, stamped with the current token id. It
+    /// is a diff baseline only and never populates the pane.
+    ///
+    /// The caller (fetch, handshake) classifies and reports; see `reportLosses`.
+    @discardableResult
+    func reconcile(tokenScoped: [SessionInfo]) -> [LostSession] {
+        let tokenId = currentTokenId
+        let stored = ownershipStore.loadBaseline()
+        let before = stored?.tokenId == tokenId ? stored?.sessions ?? [] : []
+
         sessions = tokenScoped
 
         for session in sessions {
@@ -635,6 +647,49 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                 }
             }
         }
+
+        ownershipStore.saveBaseline(SessionBaseline(
+            tokenId: tokenId,
+            sessions: activeSessions.map { LostSession(id: $0.id, name: name(for: $0.id)) }))
+        return SessionLossClassifier.lost(before: before, owned: tokenScoped)
+    }
+
+    /// The token id the baseline is stamped with. Empty against a relay that
+    /// does not report one; the stamp then still detects a change to a known id.
+    private var currentTokenId: String { sessionController?.tokenId ?? "" }
+
+    /// Classifies `lost` and reports it. `session_list_all` is asked only when
+    /// something was lost; if it fails every loss counts as taken (Task 2's
+    /// classifier rule). Ended losses are dropped against a pre-v4 relay.
+    func reportLosses(_ lost: [LostSession]) async {
+        guard !lost.isEmpty else { return }
+        let all = try? await withAuth { try await $0.listAllSessions() }
+        let split = SessionLossClassifier.classify(lost: lost, all: all, myTokenId: currentTokenId)
+        let speaksEnded = (sessionController?.serverProtocolVersion ?? 0) >= Self.endedReportingProtocolVersion
+        let report = SessionLossReport(taken: split.taken, ended: speaksEnded ? split.ended : [])
+        guard !report.taken.isEmpty || !report.ended.isEmpty, !isTornDown else { return }
+        onSessionsLost?(report)
+    }
+
+    /// Drops one session from the persisted baseline. Every LOCAL removal
+    /// (terminate, steal clean-up, live end) calls this before any refetch, so
+    /// the next diff never reports what this device already knows is gone.
+    /// Returns whether the id was in the baseline.
+    @discardableResult
+    private func removeFromBaseline(_ id: UUID) -> Bool {
+        guard let stored = ownershipStore.loadBaseline(),
+              stored.sessions.contains(where: { $0.id == id }) else { return false }
+        ownershipStore.saveBaseline(SessionBaseline(
+            tokenId: stored.tokenId, sessions: stored.sessions.filter { $0.id != id }))
+        return true
+    }
+
+    /// Forgets the baseline outright. An `.enable` pass calls this before its
+    /// first await, so no list applied while the server was just enabled —
+    /// the handshake's own or a refresh racing ahead of it — diffs against
+    /// losses from before it was turned off.
+    func clearLossBaseline() {
+        ownershipStore.saveBaseline(nil)
     }
 
     // MARK: - Access
@@ -1044,6 +1099,10 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
 
     open func terminateSession(id: UUID) async {
         guard !isRecovering else { return }
+        // Out of the baseline before the send suspends: a list applied while it
+        // is in flight must not report this device's own terminate as a loss.
+        // A failed send costs nothing — the next list re-baselines it.
+        removeFromBaseline(id)
         do {
             try await connection.send(.sessionTerminate(sessionId: id))
             if activeSessionId == id {
@@ -1099,44 +1158,62 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     private func handleSessionStolen(sessionId: UUID) {
         // The server sends `session_stolen` to this (previous-owner) token when
         // ANOTHER client attaches a session we currently hold. Only act if it's
-        // still in our pane / active, so a duplicate or late push doesn't
-        // re-raise the alert for an already-handled session.
+        // still in our pane / active, so a duplicate or late push (or one that
+        // a refresh already dropped — and so already reported) is a no-op.
         guard sessions.contains(where: { $0.id == sessionId }) || activeSessionId == sessionId else { return }
+        let lost = LostSession(id: sessionId, name: name(for: sessionId))
+        // Report unless a diff already did. A diff that dropped (and reported)
+        // this session removed it from BOTH `sessions` and the baseline but left
+        // `activeSessionId` alone, so a queued push still passes the guard. A
+        // session created or attached here and taken before any list carried it
+        // into the baseline is still in `sessions` (both paths insert it before
+        // setting `activeSessionId`), so it is reported. Clean up regardless.
+        let listed = sessions.contains(where: { $0.id == sessionId })
+        let unreported = removeFromBaseline(sessionId) || listed
         cleanUpStolenSession(sessionId)
+        // No classification: the server sends `session_stolen` only for a takeover.
+        if unreported {
+            onSessionsLost?(SessionLossReport(taken: [lost], ended: []))
+        }
     }
 
-    /// Handles a session that was attached by another client: removes it from
-    /// the pane and raises the "attached by another client" popup. Ordering
-    /// matches the product spec — the session vanishes from the sidebar + tab
-    /// bar FIRST (clear `activeSessionId`, drop from `sessions`, evict the
-    /// terminal), THEN the alert is raised — so when the user taps OK the UI is
-    /// already clean.
+    /// Removes a session another client attached from the pane: clears
+    /// `activeSessionId`, drops it from `sessions` and the baseline, evicts the
+    /// terminal. Raises nothing — the caller reports the loss.
     ///
-    /// - Parameters:
-    ///   - alert: raise the popup. True for the live `session_stolen` push.
-    ///   - refetch: re-run `fetchSessions` afterward. False when called from
-    ///     inside a fetch pass to avoid re-entrancy.
-    func cleanUpStolenSession(_ sessionId: UUID, alert: Bool = true, refetch: Bool = true) {
-        let stolenName = name(for: sessionId)
-
-        // 1) Remove from the UI first. The pane is driven by `sessions`, so drop
-        //    it there directly (there is no owned set to unclaim anymore).
+    /// - Parameter refetch: re-run `fetchSessions` afterward. False when called
+    ///   from inside a fetch pass to avoid re-entrancy.
+    func cleanUpStolenSession(_ sessionId: UUID, refetch: Bool = true) {
         if activeSessionId == sessionId {
             activeSessionId = nil
         }
         terminalViewModels[sessionId]?.isSendingSuppressed = true
         activityCoordinator.forgetSession(sessionId)
         sessions.removeAll { $0.id == sessionId }   // @Published → sidebar/tab re-render
+        removeFromBaseline(sessionId)
         evictTerminal(for: sessionId)
-
-        // 2) Then raise the alert (OK-only). ActivityCoordinator owns the flag.
-        if alert {
-            activityCoordinator.presentStolenAlert(sessionId: sessionId, name: stolenName)
-        }
 
         // force: bypass the debounce so a list response snapshotted before the
         // server's token reassignment can't slip in and re-add the stolen row.
         if refetch { Task { await fetchSessions(force: true) } }
+    }
+
+    /// v4 `session_ended`: one of this token's sessions exited, was terminated
+    /// or expired while this client was connected. The user was here, so it
+    /// leaves the pane and the baseline at once and SILENTLY (spec §4b) — no
+    /// later diff may call it "ended while you were away". Idempotent: a
+    /// client-initiated terminate gets this after already removing the row.
+    func handleSessionEnded(sessionId: UUID, reason: String) {
+        removeFromBaseline(sessionId)
+        guard sessions.contains(where: { $0.id == sessionId }) || activeSessionId == sessionId else { return }
+        recoveryLog.info("session \(sessionId, privacy: .public) ended (\(reason, privacy: .public))")
+        if activeSessionId == sessionId {
+            activeSessionId = nil
+        }
+        terminalViewModels[sessionId]?.isSendingSuppressed = true
+        activityCoordinator.forgetSession(sessionId)
+        sessions.removeAll { $0.id == sessionId }
+        evictTerminal(for: sessionId)
     }
 
     private func handleSessionRenamed(sessionId: UUID, name: String) {
@@ -1249,10 +1326,27 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     @Published public private(set) var connectionState: RelayConnection.ConnectionState = .disconnected
     private var connectionStateSubscription: AnyCancellable?
 
-    /// Opens the socket and runs the launch handshake. The shared base has no
+    /// Opens the socket and runs the handshake for `reason`. The shared base has no
     /// bookmark to dial, so this is a no-op here; platform subclasses override
     /// (the macOS `SessionCoordinator.start()` already did exactly this).
-    open func start() async {}
+    open func start(reason: SessionHandshake.Reason) async {}
+
+    /// The body every platform `start(reason:)` runs: dial, then the
+    /// single-flight handshake. `.enable` is silent per slot, so the stale
+    /// baseline goes BEFORE the dial suspends — a fetch applied while the dial
+    /// is in flight must not diff against losses from before the server was
+    /// turned on (the handshake's own clear comes too late for that). A failed
+    /// dial is not fatal: the handshake reconnects on its own, so it becomes a
+    /// retry rather than a dead section. Mirrors Kotlin `SessionCoordinator.connect`.
+    public func dialAndHandshake(reason: SessionHandshake.Reason, dial: () async throws -> Void) async {
+        if case .enable = reason { clearLossBaseline() }
+        do {
+            try await dial()
+        } catch {
+            presentError(error.localizedDescription)
+        }
+        await performHandshake(reason: reason)
+    }
 
     /// Detaches whatever this coordinator has attached and clears the selection,
     /// so the hub can attach on another server (D9: one attachment across all
@@ -1278,6 +1372,32 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                 recoveryLog.debug("detachActive: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    /// True while a handshake, a recovery pass or a session fetch is running —
+    /// anything that may still apply a list and report a loss.
+    var isPassInFlight: Bool {
+        isPerformingHandshake || isRecovering || isFetchingSessions
+            || recoveryController.isForegroundPassInFlight
+    }
+
+    /// Returns once no handshake, recovery or session fetch is in flight,
+    /// immediately when idle. A pass already running when this is called is
+    /// waited for (the hub's fan-out hold relies on it, Review Focus #1); so is
+    /// one that chains into another (recovery → handshake) without going idle.
+    public func awaitPassFinished() async {
+        while isPassInFlight, !isTornDown {
+            await withCheckedContinuation { passWaiters.append($0) }
+        }
+    }
+
+    /// Wakes `awaitPassFinished` callers if nothing is in flight any more. Each
+    /// waiter re-checks, so a spurious wake is harmless.
+    func resumePassWaitersIfIdle() {
+        guard !isPassInFlight || isTornDown, !passWaiters.isEmpty else { return }
+        let waiters = passWaiters
+        passWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
     }
 
     /// True when `detachActive()` ran since `epoch` was captured. The caller
@@ -1333,6 +1453,7 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         }
         terminalCache.removeAll()
         connection.disconnect()
+        resumePassWaitersIfIdle()
     }
 
     // MARK: - Test Hooks

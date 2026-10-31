@@ -106,6 +106,53 @@ final class SessionOwnershipTests: SessionManagerTestCase {
         }
     }
 
+    func testEndObserverFiresOnPTYExitTerminateAndExpiry() async throws {
+        let (_, tokenT) = try await createTestToken()
+        let (_, tokenU) = try await tokenStore.create(label: "other")
+        var cfg = RelayConfig.default
+        cfg.detachTimeout = 1
+        cfg.scrollbackSize = 4096
+        let manager = makeManager(config: cfg)
+
+        let s1 = try await manager.createSession(tokenId: tokenT.id)
+        let s2 = try await manager.createSession(tokenId: tokenT.id)
+        let s3 = try await manager.createSession(tokenId: tokenT.id)
+
+        final class Box: @unchecked Sendable {
+            let lock = NSLock()
+            var events: [(UUID, String)] = []
+            func add(_ id: UUID, _ r: String) { lock.lock(); events.append((id, r)); lock.unlock() }
+            var snapshot: [(UUID, String)] { lock.lock(); defer { lock.unlock() }; return events }
+        }
+        let t = Box(), u = Box(), removed = Box()
+        _ = await manager.addEndObserver(tokenId: tokenT.id) { t.add($0, $1) }
+        _ = await manager.addEndObserver(tokenId: tokenU.id) { u.add($0, $1) }
+        let removedId = await manager.addEndObserver(tokenId: tokenT.id) { removed.add($0, $1) }
+        await manager.removeEndObserver(id: removedId)
+
+        // exit: attach to get the mock, then simulate shell exit
+        let (_, ptyAny) = try await manager.attachSession(id: s1.id, tokenId: tokenT.id)
+        let pty = try XCTUnwrap(ptyAny as? MockPTYSession)
+        await pty.triggerExit()
+        // terminate
+        try await manager.terminateSession(id: s2.id, tokenId: tokenT.id)
+        // expiry: attach then detach arms the 1 s timer
+        _ = try await manager.attachSession(id: s3.id, tokenId: tokenT.id)
+        try await manager.detachSession(id: s3.id)
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while t.snapshot.count < 3, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let got = Dictionary(uniqueKeysWithValues: t.snapshot.map { ($0.0, $0.1) })
+        XCTAssertEqual(got[s1.id], "exited")
+        XCTAssertEqual(got[s2.id], "terminated")
+        XCTAssertEqual(got[s3.id], "expired")
+        XCTAssertEqual(t.snapshot.count, 3)
+        XCTAssertTrue(u.snapshot.isEmpty)
+        XCTAssertTrue(removed.snapshot.isEmpty)
+    }
+
     func testRenameSessionBroadcastsToObservers() async throws {
         let (_, tokenInfo) = try await createTestToken()
         let manager = makeManager()

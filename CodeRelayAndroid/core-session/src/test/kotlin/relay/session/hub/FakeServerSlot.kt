@@ -8,6 +8,7 @@ import relay.protocol.ConnectionConfig
 import relay.protocol.ServerIdentity
 import relay.protocol.SessionInfo
 import relay.protocol.WorkspaceRollup
+import relay.session.SessionHandshake
 import java.util.UUID
 
 /** Scripted [ServerSlot] for the hub tests (port of the Swift `FakeServerSlot`). */
@@ -27,6 +28,11 @@ class FakeServerSlot(override val config: ConnectionConfig) : ServerSlot {
 
     var log: ((String) -> Unit)? = null
     var startCount = 0
+    val startReasons = mutableListOf<SessionHandshake.Reason>()
+    override var onSessionsLost: ((SessionLossReport) -> Unit)? = null
+    var passFinishedCount = 0
+    /** When set, [awaitPassFinished] parks on it (a pass still in flight). */
+    var passGate: CompletableDeferred<Unit>? = null
     var foregroundCount = 0
     var recoveryCount = 0
     var detachCount = 0
@@ -42,8 +48,8 @@ class FakeServerSlot(override val config: ConnectionConfig) : ServerSlot {
     var switchFails = false
 
     override fun rollups(sessions: List<SessionInfo>): List<WorkspaceRollup> = emptyList()
-    override suspend fun start() {
-        startCount += 1; log?.invoke("start:${config.name}")
+    override suspend fun start(reason: SessionHandshake.Reason) {
+        startCount += 1; startReasons += reason; log?.invoke("start:${config.name}")
         if (startHangs) startGate.await()
     }
     override suspend fun switchToSession(id: UUID) {
@@ -63,15 +69,25 @@ class FakeServerSlot(override val config: ConnectionConfig) : ServerSlot {
     override suspend fun attachRemoteSession(id: UUID, serverName: String?) {
         remoteAttaches += id; activeSessionId.value = id; changed()
     }
-    override fun handleForegroundTransition() { foregroundCount += 1; log?.invoke("fg:${config.name}") }
+    /** Runs inside [handleForegroundTransition] (to report mid-pass). */
+    var onForeground: (() -> Unit)? = null
+    override fun handleForegroundTransition() { foregroundCount += 1; log?.invoke("fg:${config.name}"); onForeground?.invoke() }
     override fun triggerUserRecovery() { recoveryCount += 1; log?.invoke("recover:${config.name}") }
     override suspend fun syncPush(settings: PushSettings) { pushSyncs += settings; log?.invoke("push:${settings.pushEnabled}") }
+    override suspend fun awaitPassFinished() {
+        passGate?.await()
+        passFinishedCount += 1
+    }
     override suspend fun tearDown() { tornDown = true; log?.invoke("teardown:${config.name}") }
 
     fun goLive(list: List<SessionInfo>) {
         connected.value = true; isPerformingHandshake.value = false; sessions.value = list; changed()
     }
     fun goOffline() { connected.value = false; changed() }
+    /** What a coordinator's diff or live steal does: report through the hook. */
+    fun reportLost(taken: List<LostSession> = emptyList(), ended: List<LostSession> = emptyList()) {
+        onSessionsLost?.invoke(SessionLossReport(taken, ended))
+    }
 }
 
 class InMemoryBookmarks(initial: List<ConnectionConfig> = emptyList()) : BookmarkStore {

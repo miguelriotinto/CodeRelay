@@ -6,7 +6,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import relay.net.SessionException
-import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -58,28 +57,38 @@ class SessionHandshake internal constructor(
 
     /**
      * Why the handshake is running. Controls exactly one thing: whether sessions
-     * that vanished from the server's list are announced to the user.
+     * that vanished since the persisted baseline are reported.
      */
     enum class Reason {
         /**
-         * Cold app launch. Sessions another client took while this app was
-         * closed are simply absent from the list — the user is NOT told, per
-         * product spec: there is no "before" to compare against, and reporting
-         * it on every launch is noise.
+         * Cold app launch (or a hub re-created while the process kept running).
+         * Reports: the baseline from the last run is the "before", so sessions
+         * taken or ended while the app was closed are announced (spec §3b).
          */
         LAUNCH,
 
         /**
          * The app was already open and is coming back: foreground, wake from
-         * sleep, network restored, post-reconnect. Here there IS a "before", so
-         * a session that dropped out of the list while we were away is
-         * announced as "attached by another client" — the live `session_stolen`
-         * push that would normally do it was missed because our socket was down.
+         * sleep, network restored, post-reconnect. Reports.
          */
         WAKE,
+
+        /**
+         * The slot was just built because the user enabled this server, or
+         * rebuilt after a bookmark edit. Silent: resets the baseline from the
+         * fresh list and reports nothing — a server that was off for days must
+         * not open with a list of old losses.
+         */
+        ENABLE,
         ;
 
-        val label: String get() = if (this == LAUNCH) "launch" else "wake"
+        val label: String get() = when (this) {
+            LAUNCH -> "launch"
+            WAKE -> "wake"
+            ENABLE -> "enable"
+        }
+
+        val reportsLosses: Boolean get() = this != ENABLE
     }
 
     /**
@@ -97,6 +106,11 @@ class SessionHandshake internal constructor(
      * "you own zero sessions" answer, which is a SUCCESS, not a retry case.
      */
     suspend fun perform(reason: Reason): Boolean {
+        // ENABLE is silent per SLOT, not per pass: drop the stale baseline before
+        // any suspension, so a refresh that applies a list ahead of this
+        // handshake has nothing to diff against either.
+        if (reason == Reason.ENABLE) coordinator.clearLossBaseline()
+
         // Single-flight. A second caller does not get its own pass: the
         // in-flight one is already doing precisely what it wants, and a parallel
         // `session_list` is a needless round-trip against a socket the other
@@ -158,12 +172,6 @@ class SessionHandshake internal constructor(
     private suspend fun run(reason: Reason): Boolean {
         if (coordinator.isTornDown) return false
 
-        // Snapshot the pane BEFORE the fetch so a WAKE pass can tell the user
-        // which sessions another device took while we were away. Captured with
-        // names, because applying the server list prunes the name map — after
-        // that runs, the lost session's name is gone.
-        val before = coordinator.activeSessions.value.map { LostSession(it.id, coordinator.name(it.id)) }
-
         RETRY_DELAYS_MS.forEachIndexed { attempt, delayMs ->
             // delay() throws CancellationException on teardown, which propagates
             // out of run() into perform()'s finally — gate cleared, joiners
@@ -195,9 +203,11 @@ class SessionHandshake internal constructor(
                 val owned = coordinator.sessionController.listSessions()
                 if (coordinator.isTornDown) return false
 
-                // 4. Render.
-                coordinator.applyServerSessions(owned)
-                if (reason == Reason.WAKE) announceSessionsTakenElsewhere(before)
+                // 4. Render. `applyServerSessions` diffs against the persisted
+                //    baseline and returns what this token no longer lists.
+                val lost = coordinator.applyServerSessions(owned)
+                if (reason.reportsLosses) coordinator.reportLosses(lost)
+                if (coordinator.isTornDown) return false
 
                 // A completed handshake means the connection is demonstrably
                 // healthy: clear any stale failure banners from an earlier pass.
@@ -240,16 +250,6 @@ class SessionHandshake internal constructor(
     // MARK: - Outcomes
 
     /**
-     * Report a session that dropped out of the server's list while we were away.
-     * One notice is enough — this is a notification, not a queue.
-     */
-    private fun announceSessionsTakenElsewhere(before: List<LostSession>) {
-        val stillOwned = coordinator.sessions.value.map { it.id }.toSet()
-        val lost = firstLostSession(before, stillOwned) ?: return
-        coordinator.activityCoordinator.sessionStolen(lost.id) { lost.name }
-    }
-
-    /**
      * Surface a handshake that could not complete. Deliberately does NOT set the
      * terminal `connectionTimedOut` flag — that tears the workspace down, and the
      * right response to "couldn't load the list" is to let the user retry
@@ -274,9 +274,6 @@ class SessionHandshake internal constructor(
         if (coordinator.activeSessionId.value == null) coordinator.setSessionLoadPhase(phase)
     }
 
-    /** A pane row captured before the fetch, so its name survives the prune. */
-    internal data class LostSession(val id: UUID, val name: String)
-
     companion object {
         /**
          * Retry schedule. Five attempts over ~3.75 s of delay. Front-loaded
@@ -285,20 +282,6 @@ class SessionHandshake internal constructor(
          * next try — while the tail accommodates a server still coming up.
          */
         val RETRY_DELAYS_MS = longArrayOf(0, 250, 500, 1_000, 2_000)
-
-        /**
-         * The first session that was in the pane before the handshake and is not
-         * in the server's fresh token-scoped list — i.e. another device attached
-         * it while we were away. Pure, so the rule is testable without a server.
-         *
-         * `before` arrives ordered by `createdAt` (it comes from
-         * `activeSessions`), so the session reported is deterministic rather than
-         * set-iteration luck.
-         */
-        internal fun firstLostSession(
-            before: List<LostSession>,
-            stillOwned: Set<UUID>,
-        ): LostSession? = before.firstOrNull { it.id !in stillOwned }
 
         /**
          * True for errors that mean "this token will never be accepted", as

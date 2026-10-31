@@ -31,6 +31,9 @@ public actor SessionManager {
     private var activityObservers = ObserverRegistry<ActivityObserver>()
     public typealias StealObserver = @Sendable (UUID) -> Void
     private var stealObservers = ObserverRegistry<StealObserver>()
+    /// `(sessionId, reason)`; reason is `exited` | `terminated` | `expired`.
+    public typealias EndObserver = @Sendable (UUID, String) -> Void
+    private var endObservers = ObserverRegistry<EndObserver>()
     public typealias RenameObserver = @Sendable (UUID, String) -> Void
     private var renameObservers = ObserverRegistry<RenameObserver>()
     /// Token-agnostic activity observer, carrying the owning token id + the
@@ -378,6 +381,7 @@ public actor SessionManager {
         detachTimers[id]?.cancel()
         detachTimers[id] = nil
 
+        reportSessionEnded(sessionId: id, tokenId: managed.info.tokenId, reason: "terminated")
         purgeTerminalSessions()
     }
 
@@ -580,6 +584,27 @@ public actor SessionManager {
         }
     }
 
+    // MARK: - End Observers
+
+    @discardableResult
+    public func addEndObserver(
+        tokenId: String,
+        callback: @escaping EndObserver
+    ) -> UUID {
+        endObservers.add(tokenId: tokenId, callback: callback)
+    }
+
+    public func removeEndObserver(id: UUID) {
+        endObservers.remove(id: id)
+    }
+
+    /// Call only after the state transition is committed.
+    private func reportSessionEnded(sessionId: UUID, tokenId: String, reason: String) {
+        for (_, callback) in endObservers.forToken(tokenId) {
+            callback(sessionId, reason)
+        }
+    }
+
     // MARK: - Rename Observers
 
     @discardableResult
@@ -603,6 +628,7 @@ public actor SessionManager {
         let cutoff = Date().addingTimeInterval(-seconds)
         let purged = activityObservers.purgeStale(olderThan: cutoff)
             + stealObservers.purgeStale(olderThan: cutoff)
+            + endObservers.purgeStale(olderThan: cutoff)
             + renameObservers.purgeStale(olderThan: cutoff)
         if purged > 0 {
             RelayLogger.log(.info, category: "session",
@@ -628,7 +654,7 @@ public actor SessionManager {
 
     /// Exposed only for tests. Do not call from production code.
     public var _testOnly_observerCount: Int {
-        activityObservers.count + stealObservers.count + renameObservers.count
+        activityObservers.count + stealObservers.count + endObservers.count + renameObservers.count
     }
 
     /// Exposed only for tests. Do not call from production code.
@@ -707,6 +733,7 @@ public actor SessionManager {
         detachTimers[sessionId]?.cancel()
         detachTimers.removeValue(forKey: sessionId)
 
+        reportSessionEnded(sessionId: sessionId, tokenId: managed.info.tokenId, reason: "exited")
         purgeTerminalSessions()
     }
 
@@ -812,6 +839,7 @@ public actor SessionManager {
         managed.ptySession = nil
         sessions[sessionId] = managed
 
+        reportSessionEnded(sessionId: sessionId, tokenId: managed.info.tokenId, reason: "expired")
         purgeTerminalSessions()
     }
 }
