@@ -10,7 +10,7 @@ extension View {
         self.alert(
             alert.wrappedValue?.title ?? "",
             isPresented: Binding(get: { isTopmost && alert.wrappedValue != nil },
-                                 set: { if !$0 { alert.wrappedValue = nil } }),
+                                 set: { _ in }),   // only OK clears it: a copy being torn down must not lose an unread alert
             presenting: alert.wrappedValue
         ) { _ in
             Button("OK", role: .cancel) { alert.wrappedValue = nil }

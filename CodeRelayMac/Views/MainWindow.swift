@@ -69,11 +69,12 @@ private struct WorkspaceView: View {
     /// (Reconnecting sheet, error alerts, QR scanner, status bar) — G8.
     private var focus: SessionCoordinator? { hub.focusCoordinator }
 
-    private enum PresentedSheet { case management, loading }
+    private enum PresentedSheet { case management, loading, qrScanner }
 
     private var topmostSheet: PresentedSheet? {
         if hub.isShowingServerList { return .management }
         if loading.isPresented { return .loading }
+        if focus?.showQRScanner == true { return .qrScanner }
         return nil
     }
 
@@ -130,6 +131,7 @@ private struct WorkspaceView: View {
         .background {
             if let focus {
                 ActiveCoordinatorModifiers(coordinator: focus, loading: loading,
+                                           takenAlert: $hub.takenAlert, alertOnQRScanner: topmostSheet == .qrScanner,
                                            serverName: hub.sections.first { $0.id == hub.focusServerId }?.title)
                     .id(ObjectIdentifier(focus))
             }
@@ -290,6 +292,8 @@ private struct WorkspaceView: View {
 private struct ActiveCoordinatorModifiers: View {
     @ObservedObject var coordinator: SessionCoordinator
     @ObservedObject var loading: SessionLoadingSheetModel
+    @Binding var takenAlert: SessionLossAlert?
+    let alertOnQRScanner: Bool
     let serverName: String?
 
     private var presentation: SessionLoadingPresentation {
@@ -308,6 +312,7 @@ private struct ActiveCoordinatorModifiers: View {
         Color.clear
             .sheet(isPresented: $coordinator.showQRScanner) {
                 QRScannerSheet(coordinator: coordinator)
+                    .sessionLossAlert($takenAlert, isTopmost: alertOnQRScanner)
             }
             .onChange(of: presentation, initial: true) { _, current in loading.update(current) }
             .alert("Cannot Open Session", isPresented: $coordinator.sessionAttachFailed) {
