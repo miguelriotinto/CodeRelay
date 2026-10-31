@@ -160,8 +160,9 @@ final class ServerHubTests: XCTestCase {
         // returns at once because a handshake is already running; its result
         // lands later.
         a.passHangs = true
-        let waitsBefore = a.passWaits                    // start() awaited the launch pass too
-        let fg = Task { await h.hub.handleForegroundTransition(userInitiated: false) }
+        let waitsBefore = a.passWaits                    // start() waited on the launch pass too
+        await h.hub.handleForegroundTransition(userInitiated: false)
+        let hold = h.hub.lastLossHold
         await hubSettle()
         XCTAssertEqual(a.foregroundCount, 1)
         XCTAssertEqual(a.passWaits - waitsBefore, 1, "the hold awaits the pass, not just the trigger")
@@ -170,7 +171,7 @@ final class ServerHubTests: XCTestCase {
         XCTAssertTrue(alerts.isEmpty, "held while the in-flight pass runs")
         a.reportLost(taken: [LostSession(id: UUID(), name: "web")])
         a.releasePass()
-        await fg.value
+        await hold?.value
         await hubSettle()
         XCTAssertEqual(alerts.count, 1, "one alert for the whole fan-out")
         XCTAssertEqual(alerts.first?.title, "Sessions Moved")
@@ -179,22 +180,54 @@ final class ServerHubTests: XCTestCase {
 
     func testFanOutCapsAt10s() async {
         let (h, cfg) = await liveLossHub(["dead", "ok"])
-        XCTAssertEqual(h.hub.fanOutBudget, .seconds(10), "the production cap is 10 s")
-        h.hub.fanOutBudget = .milliseconds(300)          // scaled down for the test
         let dead = h.slot(cfg[0].id)!, ok = h.slot(cfg[1].id)!
-        dead.foregroundHangs = true                       // never finishes
+        h.gatedHoldCap = true
+        dead.passHangs = true                             // its pass never finishes
         ok.onForeground = { ok.reportLost(taken: [LostSession(id: UUID(), name: "api")]) }
-        let fg = Task { await h.hub.handleForegroundTransition(userInitiated: false) }
+        await h.hub.handleForegroundTransition(userInitiated: false)
+        let hold = h.hub.lastLossHold
         await hubSettle()
         XCTAssertEqual(ok.foregroundCount, 1)
+        XCTAssertEqual(h.holdCapBudgets.last, .seconds(10), "the cap is 10 s")
         XCTAssertNil(h.hub.takenAlert, "held: the dead server's pass has not finished")
-        try? await Task.sleep(for: .milliseconds(400))
-        await hubSettle()
+        h.releaseHoldCaps()                               // the 10 s elapse
+        await hold?.value
         XCTAssertEqual(h.hub.takenAlert?.message, "api was attached from another device.",
                        "the cap releases the other server's report")
         XCTAssertEqual(h.hub.takenAlert?.title, "Session Moved")
-        dead.foregroundGate?.resume(); dead.foregroundGate = nil
-        await fg.value
+        dead.releasePass()
+    }
+
+    func testANeverFinishingPassDelaysNeitherStartNorFanOut() async {
+        let a = makeConfig("a"), b = makeConfig("b")
+        let h = HubHarness(configs: [a, b])
+        h.passHangs = [a.id]
+        h.gatedHoldCap = true                             // and the cap never fires either
+        var startReturned = false, fanOutReturned = false
+        await BoundedWait.run(budget: .seconds(2)) { await h.hub.start(); startReturned = true }
+        XCTAssertTrue(startReturned, "start() returns once every slot is built, not when every pass ends")
+        XCTAssertTrue(h.hub.startCompleted, "deep links waiting on the first start are released")
+        await BoundedWait.run(budget: .seconds(2)) {
+            await h.hub.handleForegroundTransition(userInitiated: true); fanOutReturned = true
+        }
+        XCTAssertTrue(fanOutReturned, "the fan-out (pull-to-refresh) returns once its triggers do")
+        h.slot(a.id)?.releasePass()
+        h.releaseHoldCaps()
+    }
+
+    func testStopDropsAHeldNotice() async {
+        let (h, cfg) = await liveLossHub(["a"])
+        let a = h.slot(cfg[0].id)!
+        a.passHangs = true
+        await h.hub.handleForegroundTransition(userInitiated: false)
+        let hold = h.hub.lastLossHold
+        await hubSettle()
+        a.reportLost(taken: [LostSession(id: UUID(), name: "api")])
+        h.hub.stop()
+        a.releasePass()
+        await hold?.value
+        await hubSettle()
+        XCTAssertNil(h.hub.takenAlert, "nothing lands behind a closed window")
     }
 
     func testStealOnNonFocusedServerSurfaces() async {
@@ -222,14 +255,14 @@ final class ServerHubTests: XCTestCase {
         let b = makeConfig("b")
         let h = HubHarness(configs: [a, b])
         await h.hub.start()
-        h.hub.fanOutBudget = .seconds(5)
         h.slot(b.id)!.passHangs = true
-        let fg = Task { await h.hub.handleForegroundTransition(userInitiated: false) }
+        await h.hub.handleForegroundTransition(userInitiated: false)
+        let hold = h.hub.lastLossHold
         await hubSettle()
         h.slot(a.id)!.reportLost(taken: [LostSession(id: UUID(), name: "api")])
         h.slot(b.id)!.reportLost(taken: [LostSession(id: UUID(), name: "web")])
         h.slot(b.id)!.releasePass()
-        await fg.value
+        await hold?.value
         XCTAssertEqual(h.hub.takenAlert?.message, "api (on Studio) and web (on b) were attached from another device.")
     }
 

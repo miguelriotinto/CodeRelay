@@ -30,6 +30,8 @@ public final class SessionLossCollector {
     private var pendingKeys: Set<Key> = []
     private var announced: [Key: Date] = [:]
     private var holdDepth = 0
+    /// Bumped by `reset()`; a hold opened before a reset cannot end one after it.
+    private var epoch: UInt64 = 0
     /// Bumped by every report and hold change; a debounce that wakes to a
     /// different value was superseded and does nothing. The injected `sleep`
     /// need not honour cancellation, so this — not `Task.cancel` — is the guard.
@@ -60,15 +62,30 @@ public final class SessionLossCollector {
         scheduleDebouncedFlush()
     }
 
-    public func beginHold() {
+    /// Returns the epoch to hand back to `endHold(epoch:)`.
+    @discardableResult
+    public func beginHold() -> UInt64 {
         holdDepth += 1
         debounceGeneration &+= 1
+        return epoch
     }
 
-    public func endHold() {
+    /// A hold from before the last `reset()` (its `epoch` differs) is a no-op.
+    public func endHold(epoch holdEpoch: UInt64? = nil) {
+        if let holdEpoch, holdEpoch != epoch { return }
         guard holdDepth > 0 else { return }
         holdDepth -= 1
         if holdDepth == 0 { flush() }
+    }
+
+    /// Drops everything pending, cancels a pending debounce and closes every
+    /// hold (hub `stop()`). The announced memory stays, so suppression holds
+    /// across a window re-open.
+    public func reset() {
+        taken.removeAll(); ended.removeAll(); pendingKeys.removeAll()
+        holdDepth = 0
+        debounceGeneration &+= 1
+        epoch &+= 1
     }
 
     private func scheduleDebouncedFlush() {

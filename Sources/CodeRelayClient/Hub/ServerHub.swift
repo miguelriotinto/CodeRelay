@@ -88,6 +88,10 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     /// one dead server must not hold everyone's notice (spec §2, §6).
     public var fanOutBudget: Duration = .seconds(10)
     let lossCollector: SessionLossCollector
+    private let holdCapSleep: @MainActor (Duration) async -> Void
+    /// Test hook: the most recent fan-out's hold. Callers never await it — the
+    /// notice must not delay the fan-out (spec anti-goal).
+    var lastLossHold: Task<Void, Never>?
 
     // Test hooks
     public var onTestEvent: ((String) -> Void)?
@@ -105,7 +109,8 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
                 stagger: Duration = .milliseconds(150),
                 sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) },
                 now: @escaping () -> Date = Date.init,
-                lossSleep: @escaping (Duration) async -> Void = { try? await Task.sleep(for: $0) }) {
+                lossSleep: @escaping (Duration) async -> Void = { try? await Task.sleep(for: $0) },
+                holdCapSleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }) {
         self.bookmarkStore = bookmarks
         self.tokens = tokens
         self.stateStore = stateStore
@@ -118,6 +123,7 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         self.defaults = defaults
         self.collapsedServers = stateStore.loadCollapsedServers()
         self.lossCollector = SessionLossCollector(now: now, sleep: lossSleep)
+        self.holdCapSleep = holdCapSleep
         lossCollector.onFlush = { [weak self] taken, ended in self?.presentLosses(taken: taken, ended: ended) }
     }
 
@@ -154,16 +160,14 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
                 let delay = stagger * index
                 recordedSleeps.append(delay)
                 group.addTask { @MainActor [weak self] in
-                    defer { hold.latch.arrive() }
-                    guard let self else { return }
+                    guard let self else { hold.arrive(); return }
                     await self.sleep(delay)
-                    guard self.started, !Task.isCancelled else { return }
+                    guard self.started, !Task.isCancelled else { hold.arrive(); return }
                     await self.buildSlot(for: config, reason: .launch)
-                    await self.slots[config.id]?.awaitPassFinished()
+                    hold.arriveAfterPass(of: self.slots[config.id])
                 }
             }
         }
-        await hold.closed.value
         publish()
     }
 
@@ -174,6 +178,8 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
     }
 
     public func stop() {
+        // No notice may land behind a closed window; suppression memory stays.
+        lossCollector.reset()
         for (_, slot) in slots { slot.tearDown() }
         slots.removeAll()
         slotSubscriptions.removeAll()
@@ -414,37 +420,40 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
                 let delay = stagger * index
                 recordedSleeps.append(delay)
                 group.addTask { @MainActor [weak self] in
-                    defer { hold.latch.arrive() }
-                    guard let self else { return }
+                    guard let self else { hold.arrive(); return }
                     await self.sleep(delay)
                     await slot.handleForegroundTransition(userInitiated: userInitiated)
                     // The trigger returns at once when a handshake or recovery
-                    // is already running (the launch case); wait for that pass,
-                    // whose list application is what reports (spec §6).
-                    await slot.awaitPassFinished()
+                    // is already running (the launch case); the hold waits for
+                    // that pass, whose list application is what reports (§6).
+                    hold.arriveAfterPass(of: slot)
                 }
             }
         }
-        await hold.closed.value
         publish()
     }
 
     // MARK: - Session-loss notices (session takeover spec §2, §6)
 
     /// Opens a collector hold for one fan-out of `count` slots. It closes when
-    /// every slot has arrived on the latch (trigger AND `awaitPassFinished`
-    /// returned) or after `fanOutBudget`, whichever is first — raced through
-    /// `BoundedWait`, because `awaitPassFinished` ignores cancellation. Reports
-    /// arriving after the cap form the next (debounced) batch.
-    private func openLossHold(count: Int) -> (latch: FanOutLatch, closed: Task<Void, Never>) {
+    /// every slot's trigger AND `awaitPassFinished` have returned, or after
+    /// `fanOutBudget`, whichever is first — raced through `BoundedWait`, because
+    /// `awaitPassFinished` ignores cancellation. The pass waits are unawaited
+    /// side tasks: the fan-out itself returns as soon as its triggers do.
+    /// Reports arriving after the cap form the next (debounced) batch.
+    ///
+    /// Holds nest in the collector, so a fan-out that starts while another is
+    /// held extends the batch to the later hold's end (up to 2 × the cap).
+    private func openLossHold(count: Int) -> LossHold {
         let latch = FanOutLatch(count: count)
-        lossCollector.beginHold()
+        let epoch = lossCollector.beginHold()
         let budget = fanOutBudget
-        let closed = Task { @MainActor [lossCollector] in
-            await BoundedWait.run(budget: budget) { await latch.wait() }
-            lossCollector.endHold()
+        let capSleep = holdCapSleep
+        lastLossHold = Task { @MainActor [lossCollector] in
+            await BoundedWait.run(budget: budget, sleep: capSleep) { await latch.wait() }
+            lossCollector.endHold(epoch: epoch)
         }
-        return (latch, closed)
+        return LossHold(latch: latch)
     }
 
     private func collectLosses(_ report: SessionLossReport, serverId: UUID) {
@@ -486,5 +495,24 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
         if collapsed { collapsedServers.insert(serverId) } else { collapsedServers.remove(serverId) }
         stateStore.saveCollapsedServers(collapsedServers)
         publish()
+    }
+}
+
+/// One fan-out's arrivals on its hold latch.
+@MainActor
+struct LossHold {
+    let latch: FanOutLatch
+
+    func arrive() { latch.arrive() }
+
+    /// Arrives once `slot`'s in-flight pass finishes, without making the
+    /// caller wait for it. A nil slot (not built) arrives at once.
+    func arriveAfterPass<Slot: ServerSlotCoordinating>(of slot: Slot?) {
+        guard let slot else { latch.arrive(); return }
+        let latch = latch
+        Task { @MainActor in
+            await slot.awaitPassFinished()
+            latch.arrive()
+        }
     }
 }

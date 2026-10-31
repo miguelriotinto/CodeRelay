@@ -119,6 +119,13 @@ final class HubHarness {
     private(set) var built: [FakeServerSlot] = []
     /// Bookmarks whose fake should park in `start()` until released.
     var startHangs: Set<UUID> = []
+    /// Bookmarks whose fake's `awaitPassFinished` parks until `releasePass()`.
+    var passHangs: Set<UUID> = []
+    /// When on, the hub's fan-out hold cap parks until `releaseHoldCaps()`
+    /// instead of sleeping for real; requested budgets are recorded either way.
+    var gatedHoldCap = false
+    private var holdCapGates: [CheckedContinuation<Void, Never>] = []
+    private(set) var holdCapBudgets: [Duration] = []
     /// When `gatedSleep` is on, every hub sleep parks here until `releaseSleeps()`.
     private var sleepGates: [CheckedContinuation<Void, Never>] = []
     private(set) var sleepCalls = 0
@@ -144,6 +151,7 @@ final class HubHarness {
                         factory: { [unowned self] config, _ in
                             let slot = FakeServerSlot(config: config, defaults: d)
                             slot.startHangs = self.startHangs.contains(config.id)
+                            slot.passHangs = self.passHangs.contains(config.id)
                             self.built.append(slot)
                             return slot
                         },
@@ -152,9 +160,20 @@ final class HubHarness {
                             self.sleepCalls += 1
                             if gatedSleep { await withCheckedContinuation { self.sleepGates.append($0) } }
                         },
-                        lossSleep: { _ in })
+                        lossSleep: { _ in },
+                        holdCapSleep: { [weak self] budget in
+                            // Weak: a hold whose pass never finishes outlives its test.
+                            guard let self else { return }
+                            self.holdCapBudgets.append(budget)
+                            if self.gatedHoldCap {
+                                await withCheckedContinuation { self.holdCapGates.append($0) }
+                            } else {
+                                try? await Task.sleep(for: budget)
+                            }
+                        })
     }
 
+    func releaseHoldCaps() { let gates = holdCapGates; holdCapGates.removeAll(); for g in gates { g.resume() } }
     func releaseSleeps() { let gates = sleepGates; sleepGates.removeAll(); for g in gates { g.resume() } }
     func releaseStart(_ id: UUID) { slot(id)?.startGate?.resume(); slot(id)?.startGate = nil }
 

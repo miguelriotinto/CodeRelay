@@ -96,4 +96,26 @@ final class SessionLossCollectorTests: XCTestCase {
         XCTAssertEqual(flushes.first?.taken.map(\.serverId), [server, other])
         XCTAssertEqual(flushes.first?.ended, [])
     }
+
+    func testResetDropsPendingAndALateEndHoldIsANoOp() async {
+        let id = UUID()
+        let stale = collector.beginHold()
+        collector.report([item("api", id: id)], kind: .taken)
+        collector.reset()
+        collector.endHold(epoch: stale)                 // the old hold's cap fires late
+        XCTAssertFalse(collector.isHolding)
+        XCTAssertTrue(flushes.isEmpty, "pending items were dropped, no flush")
+
+        let fresh = collector.beginHold()
+        collector.report([item("web")], kind: .taken)
+        collector.endHold(epoch: stale)
+        XCTAssertTrue(collector.isHolding, "a pre-reset hold cannot close a new one")
+        collector.endHold(epoch: fresh)
+        XCTAssertEqual(flushes.map { $0.taken.map(\.session.name) }, [["web"]])
+
+        collector.report([item("db")], kind: .taken)
+        collector.reset()
+        await elapseDebounce()
+        XCTAssertEqual(flushes.count, 1, "reset cancels a pending debounce")
+    }
 }

@@ -11,13 +11,15 @@ enum BoundedWait {
         func fire() { continuation?.resume(); continuation = nil }
     }
 
-    static func run(budget: Duration, _ operation: @escaping @MainActor () async -> Void) async {
+    static func run(budget: Duration,
+                    sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) },
+                    _ operation: @escaping @MainActor () async -> Void) async {
         var timer: Task<Void, Never>?
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             let shot = OneShot(c)
             Task { @MainActor in await operation(); shot.fire() }
             timer = Task { @MainActor in
-                try? await Task.sleep(for: budget)
+                await sleep(budget)
                 shot.fire()
             }
         }
