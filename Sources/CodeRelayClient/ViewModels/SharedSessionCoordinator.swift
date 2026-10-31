@@ -1159,11 +1159,14 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         // a refresh already dropped — and so already reported) is a no-op.
         guard sessions.contains(where: { $0.id == sessionId }) || activeSessionId == sessionId else { return }
         let lost = LostSession(id: sessionId, name: name(for: sessionId))
-        // A diff that already dropped (and reported) this session removed it
-        // from the baseline but left `activeSessionId` alone, so a queued push
-        // still passes the guard: clean up regardless, report only if the
-        // baseline still had it.
-        let unreported = removeFromBaseline(sessionId)
+        // Report unless a diff already did. A diff that dropped (and reported)
+        // this session removed it from BOTH `sessions` and the baseline but left
+        // `activeSessionId` alone, so a queued push still passes the guard. A
+        // session created or attached here and taken before any list carried it
+        // into the baseline is still in `sessions` (both paths insert it before
+        // setting `activeSessionId`), so it is reported. Clean up regardless.
+        let listed = sessions.contains(where: { $0.id == sessionId })
+        let unreported = removeFromBaseline(sessionId) || listed
         cleanUpStolenSession(sessionId)
         // No classification: the server sends `session_stolen` only for a takeover.
         if unreported {

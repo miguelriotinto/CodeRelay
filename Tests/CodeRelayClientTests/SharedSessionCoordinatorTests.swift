@@ -808,6 +808,35 @@ final class SharedSessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(h.reports.items.count, 1, "the queued steal must not report A a second time")
     }
 
+    /// A session created on this device and taken elsewhere before any list
+    /// has carried it into the baseline must still be reported: it is in
+    /// `sessions` (create inserts it optimistically) when the steal arrives.
+    func testStealOfJustCreatedSessionBeforeRefetchIsReported() async throws {
+        let created = UUID()
+        let h = try await ScriptedCoordinator.make(baseline: baseline())
+        // `session_create` answers; the follow-up `session_list` never does, so
+        // no list is applied before the steal.
+        h.conn.autoRespond = { message in
+            message.typeString == "session_create"
+                ? .sessionCreated(sessionId: created, cols: 80, rows: 24)
+                : nil
+        }
+
+        let creating = Task { await h.coordinator.createNewSession() }
+        await pollUntil("the created session to be shown") {
+            h.coordinator.activeSessionId == created && h.coordinator.sessions.contains { $0.id == created }
+        }
+        XCTAssertFalse(h.persistedBaseline?.sessions.contains { $0.id == created } ?? false,
+                       "precondition: no list has written it to the baseline")
+
+        h.coordinator.connection.onSessionStolen?(created)
+        await pollUntil("the steal to clear the active slot") { h.coordinator.activeSessionId == nil }
+
+        XCTAssertEqual(h.reports.items.map { $0.taken.map(\.id) }, [[created]], "reported exactly once")
+        creating.cancel()
+        _ = await creating.value
+    }
+
     /// Review focus #1: the hub's fan-out hold must see a pass that was already
     /// in flight when it asked.
     func testAwaitPassFinishedWaitsForInFlightHandshake() async throws {
