@@ -6,7 +6,7 @@ import kotlin.math.abs
  * Whether a one-finger drag is the left-edge swipe that opens the session list
  * (docs/superpowers/specs/2026-10-31-edge-swipe-sessions.md). Pure, in dp, so the
  * rule is unit-tested and the Compose strip only feeds it pointer deltas. The iOS
- * twin is `EdgeSwipeRule` (CodeRelayApp/Views/EdgeSwipeRule.swift); keep the
+ * twin is `EdgeSwipeRule` (CodeRelayApp/Views/WorkspaceView.swift); keep the
  * numbers in step.
  *
  * Start is measured in the workspace's own coordinates: x from the left edge, y

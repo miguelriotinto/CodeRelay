@@ -163,6 +163,8 @@ struct ActiveTerminalView: View {
                 // columns over the whole height. The top bar does NOT bleed
                 // (see below), so no control can land under the camera.
                 .ignoresSafeArea(.container, edges: .horizontal)
+                // Terminal area only: below the top bar, above the key bar.
+                .overlay(alignment: .leading) { edgeSwipeStrip }
 
                 if showKeyBar {
                     KeyboardAccessory { data in
@@ -181,6 +183,7 @@ struct ActiveTerminalView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .leading) { edgeSwipeStrip }
             }
         }
         .safeAreaInset(edge: .top) {
@@ -254,7 +257,6 @@ struct ActiveTerminalView: View {
             .background(.black)
         }
         .background(.black)
-        .overlay(alignment: .leading) { edgeSwipeStrip }
         // Deliberately NO horizontal `ignoresSafeArea` at this level: it would
         // also widen the `safeAreaInset` top bar above, putting the session
         // name and QR button under the Duo's status pill — or under the outer

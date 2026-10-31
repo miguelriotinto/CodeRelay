@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -67,7 +68,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.feature.workspace.ui.ConnectionQualityDot
-import relay.feature.workspace.ui.EdgeSwipeStrip
+import relay.feature.workspace.ui.edgeSwipeOpen
 import relay.feature.workspace.ui.SessionLoadingSheetHost
 import relay.feature.workspace.ui.terminalLoadingCover
 import relay.feature.workspace.ui.SessionSidebar
@@ -413,67 +414,77 @@ internal fun WorkspacePane(
                 }
             }
 
-            if (expanded) {
-                // Fold-open / tablet: sidebar and terminal share the width in a Row.
-                // See `twoPaneSidebarOpen` for why this is not a navigation drawer.
-                val sidebarWidth by animateDpAsState(
-                    targetValue = if (twoPaneSidebarOpen) TWO_PANE_SIDEBAR_WIDTH else 0.dp,
-                    animationSpec = tween(TWO_PANE_SIDEBAR_ANIM_MS),
-                    label = "twoPaneSidebarWidth",
-                )
-                Row(modifier = Modifier.fillMaxSize()) {
-                    if (sidebarWidth > 0.dp) {
-                        // Clip so the pane slides in/out instead of squeezing its
-                        // rows; the inner Box keeps the sidebar at its full width
-                        // while the outer one animates.
-                        Box(
-                            modifier = Modifier
-                                .width(sidebarWidth)
-                                .fillMaxHeight()
-                                .clipToBounds()
-                                .background(MaterialTheme.colorScheme.surface),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .width(TWO_PANE_SIDEBAR_WIDTH)
-                                    .fillMaxHeight()
-                                    // A leftward drag on the sidebar hides it — the swipe
-                                    // the compact ModalNavigationDrawer users expect.
-                                    .pointerInput(Unit) {
-                                        detectHorizontalDragGestures { _, dragAmount ->
-                                            if (dragAmount < -SWIPE_CLOSE_THRESHOLD_PX) twoPaneSidebarOpen = false
-                                        }
-                                    },
-                            ) { sidebar() }
-                        }
-                    }
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                        terminalColumn({ twoPaneSidebarOpen = !twoPaneSidebarOpen }, false)
-                    }
-                }
-            } else {
-                ModalNavigationDrawer(
-                    drawerState = drawerState,
-                    drawerContent = {
-                        Box(modifier = Modifier.width(320.dp).fillMaxHeight()) { sidebar() }
-                    },
-                ) {
-                    terminalColumn({ scope.launch { drawerState.open() } }, false)
-                }
-            }
+            val sidebarWidth by animateDpAsState(
+                targetValue = if (twoPaneSidebarOpen) TWO_PANE_SIDEBAR_WIDTH else 0.dp,
+                animationSpec = tween(TWO_PANE_SIDEBAR_ANIM_MS),
+                label = "twoPaneSidebarWidth",
+            )
 
             // Left-edge swipe opens the list through the same action as the top-left
-            // button (terminalColumn's onSidebarToggle); a no-op while it is open.
-            EdgeSwipeStrip(
-                viewportHeight = maxHeight,
-                listOpen = if (expanded) twoPaneSidebarOpen else drawerState.isOpen,
-                onOpen = if (expanded) {
-                    { twoPaneSidebarOpen = !twoPaneSidebarOpen }
+            // button (terminalColumn's onSidebarToggle). Detection sits on this parent
+            // (Initial pass, touch only, nothing consumed until it fires), so terminal
+            // taps/scrolls and Linux mouse clicks in the strip reach their targets.
+            Box(
+                modifier = Modifier.fillMaxSize().edgeSwipeOpen(
+                    isListOpen = { if (expanded) twoPaneSidebarOpen || sidebarWidth > 0.dp else drawerState.isOpen },
+                    onOpen = {
+                        if (expanded) twoPaneSidebarOpen = !twoPaneSidebarOpen
+                        else scope.launch { drawerState.open() }
+                    },
+                ),
+            ) {
+                if (expanded) {
+                    // Fold-open / tablet: sidebar and terminal share the width in a Row.
+                    // See `twoPaneSidebarOpen` for why this is not a navigation drawer.
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        if (sidebarWidth > 0.dp) {
+                            // Clip so the pane slides in/out instead of squeezing its
+                            // rows; the inner Box keeps the sidebar at its full width
+                            // while the outer one animates.
+                            Box(
+                                modifier = Modifier
+                                    .width(sidebarWidth)
+                                    .fillMaxHeight()
+                                    .clipToBounds()
+                                    .background(MaterialTheme.colorScheme.surface),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(TWO_PANE_SIDEBAR_WIDTH)
+                                        .fillMaxHeight()
+                                        // A leftward drag on the sidebar hides it — the swipe
+                                        // the compact ModalNavigationDrawer users expect.
+                                        .pointerInput(Unit) {
+                                            detectHorizontalDragGestures { _, dragAmount ->
+                                                if (dragAmount < -SWIPE_CLOSE_THRESHOLD_PX) twoPaneSidebarOpen = false
+                                            }
+                                        },
+                                ) { sidebar() }
+                            }
+                        }
+                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                            terminalColumn({ twoPaneSidebarOpen = !twoPaneSidebarOpen }, false)
+                        }
+                    }
                 } else {
-                    { scope.launch { drawerState.open() } }
-                },
-                modifier = Modifier.align(Alignment.CenterStart),
-            )
+                    ModalNavigationDrawer(
+                        drawerState = drawerState,
+                        drawerContent = {
+                            Box(modifier = Modifier.width(320.dp).fillMaxHeight()) { sidebar() }
+                        },
+                    ) {
+                        terminalColumn({ scope.launch { drawerState.open() } }, false)
+                    }
+                }
+                // Only carries the system-Back exclusion for the band; no pointer input.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .width(EdgeSwipeLogic.STRIP_WIDTH_DP.dp)
+                        .height(EdgeSwipeLogic.BAND_HEIGHT_DP.dp)
+                        .backGestureExclusion(),
+                )
+            }
         }
 
         // Back cannot dismiss a reconnect; the sheet's Cancel does.

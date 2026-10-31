@@ -24,7 +24,7 @@ class EdgeSwipeLogicTest {
 
     @Test fun exactlyAtThresholdOpens() = assertTrue(open(dx = 40f))
 
-    @Test fun tooVerticalDoesNot() = assertFalse(open(dx = 60f, dy = 30f))
+    @Test fun tooVerticalDoesNot() = assertFalse(open(dx = 60f, dy = 80f))
 
     @Test fun exactlyTwiceVerticalDoesNot() = assertFalse(open(dx = 60f, dy = 30f))
 
