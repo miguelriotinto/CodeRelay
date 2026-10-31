@@ -45,6 +45,9 @@ class LivePaneTransitionsTest {
         private val a = mutableMapOf<UUID, String>()
         override val names get() = n
         override val agents get() = a
+        override var baseline: relay.protocol.SessionBaseline? = null
+            private set
+        override fun setBaseline(b: relay.protocol.SessionBaseline?) { baseline = b }
         override fun setName(id: UUID, name: String?) { if (name == null) n.remove(id) else n[id] = name }
         override fun setAgent(id: UUID, agentId: String?) { if (agentId == null) a.remove(id) else a[id] = agentId }
     }

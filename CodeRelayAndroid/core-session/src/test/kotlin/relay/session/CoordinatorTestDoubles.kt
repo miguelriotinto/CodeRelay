@@ -221,6 +221,9 @@ internal class FakeOwnershipStore(
     override val names: Map<UUID, String> get() = namesMap.toMap()
     override val agents: Map<UUID, String> get() = agentsMap.toMap()
 
+    override var baseline: relay.protocol.SessionBaseline? = null
+        private set
+    override fun setBaseline(b: relay.protocol.SessionBaseline?) { baseline = b }
     override fun setName(id: UUID, name: String?) {
         if (name == null) namesMap.remove(id) else namesMap[id] = name
     }

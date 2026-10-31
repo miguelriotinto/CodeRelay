@@ -2,6 +2,7 @@ package relay.storage
 
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import relay.protocol.SessionBaseline
 import relay.protocol.WireJson
 import java.io.File
 import java.util.UUID
@@ -44,6 +45,37 @@ class SessionOwnershipStore(
 
     private val namesCache: MutableMap<UUID, String> = load(namesKey)
     private val agentsCache: MutableMap<UUID, String> = load(agentsKey)
+
+    /** Key (and filename stem) for the diff baseline. */
+    val baselineKey: String = if (namespace.isEmpty()) BASELINE_KEY else "$namespace.$BASELINE_KEY"
+
+    private var baselineCache: SessionBaseline? = loadBaseline()
+
+    /** The sessions this server's pane last showed. A diff baseline only. */
+    val baseline: SessionBaseline? get() = baselineCache
+
+    /**
+     * Persists [b]; null removes the file. Writes only when the value changed.
+     */
+    fun setBaseline(b: SessionBaseline?) {
+        if (b == baselineCache) return
+        baselineCache = b
+        if (b == null) {
+            runCatching { fileFor(baselineKey).delete() }
+        } else {
+            val json = WireJson.instance.encodeToString(SessionBaseline.serializer(), b)
+            runCatching { XdgPaths.writeAtomically(fileFor(baselineKey), json) }
+        }
+    }
+
+    private fun loadBaseline(): SessionBaseline? {
+        val f = fileFor(baselineKey)
+        if (!f.isFile) return null
+        val json = runCatching { f.readText() }.getOrNull() ?: return null
+        return runCatching {
+            WireJson.instance.decodeFromString(SessionBaseline.serializer(), json)
+        }.getOrNull()
+    }
 
     /** Snapshot of UUID→name. */
     val names: Map<UUID, String> get() = namesCache.toMap()
@@ -130,6 +162,7 @@ class SessionOwnershipStore(
     companion object {
         private const val NAMES_KEY = "sessionNames"
         private const val AGENTS_KEY = "agentSessions"
+        private const val BASELINE_KEY = "sessionBaseline"
 
         private val MAP_SERIALIZER =
             MapSerializer(String.serializer(), String.serializer())

@@ -114,6 +114,12 @@ interface OwnershipStore : AgentPersistence {
 
     /** Sets (or, when [name] is null, removes) the display name for [id]. */
     fun setName(id: UUID, name: String?)
+
+    /** The sessions this server's pane last showed (diff baseline only), or null. */
+    val baseline: relay.protocol.SessionBaseline?
+
+    /** Persists [b]; null removes it. */
+    fun setBaseline(b: relay.protocol.SessionBaseline?)
 }
 
 /**

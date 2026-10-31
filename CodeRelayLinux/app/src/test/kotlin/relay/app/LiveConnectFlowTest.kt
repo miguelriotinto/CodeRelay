@@ -58,6 +58,9 @@ class LiveConnectFlowTest {
         private val agentMap = mutableMapOf<UUID, String>()
         override val names: Map<UUID, String> get() = nameMap
         override val agents: Map<UUID, String> get() = agentMap
+        override var baseline: relay.protocol.SessionBaseline? = null
+            private set
+        override fun setBaseline(b: relay.protocol.SessionBaseline?) { baseline = b }
         override fun setName(id: UUID, name: String?) {
             if (name == null) nameMap.remove(id) else nameMap[id] = name
         }
