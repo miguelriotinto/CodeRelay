@@ -6,6 +6,15 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
+### Session takeover notices
+
+Every client (iOS, macOS, Android, Linux) now tells you, once and aggregated
+across all your servers, when a session was attached from another device or
+ended while you were away, instead of the session silently vanishing from the
+list. Servers push a new `session_ended` message (protocol v4, with reason
+exited, terminated or expired); older relays still get takeover notices, just
+not ended ones.
+
 ## [0.3.24] - 2026-09-05 — native Linux server, one release page for everything
 
 ### Server — Linux port

@@ -71,6 +71,17 @@ UI atoms both apps host (`Views/`).
 - `SharedSessionCoordinator.connectionState` is `@Published`, mirrored from
   `connection.$state`; a computed property fired no `objectWillChange`, so
   without a subclass mirror (iOS) the hub never saw a dropped socket.
+- **Session loss notices** (`SessionLoss.swift`, `SessionLossCollector.swift`; spec
+  `docs/superpowers/specs/2026-10-31-session-takeover-notices-design.md`). Slots
+  report taken-over/ended sessions to the hub's `SessionLossCollector`: dedupe per
+  batch, 120 s repeat suppression, 1 s live debounce, holds nest with an epoch.
+  A fan-out (`start`, foreground) holds the collector until every slot's
+  `awaitPassFinished()` returns or 10 s pass, so N servers yield one aggregated
+  alert; the fan-out never blocks its caller, and `stop()` resets the collector.
+  The coordinator's `SessionOwnershipStore` baseline is diff-only (token-stamped,
+  `.enable` is silent). The alert is `sessionLossAlert(_:isTopmost:)` on the root
+  and every sheet, enabled on the topmost presenter only; its binding setter
+  ignores `false`, so only OK clears an unread alert.
 
 ## Session loading sheet (`Views/SessionLoadingPresentation.swift`, `SessionLoadingSheet.swift`)
 
