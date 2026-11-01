@@ -28,6 +28,14 @@ Install the Mac server with `brew install miguelriotinto/coderelay/clauderelay`.
   The marketing version is `MARKETING_VERSION` in `project.yml`, changed by PR.
 - **Dry run:** `-f dry_run=true` archives and checks the build number, then
   stops before upload, tag and What to Test.
+- **Upload.** The archive is exported locally (`destination: export`) and the
+  `.ipa`/`.pkg` uploaded with `xcrun altool --upload-app`. Not
+  `destination: upload`: that asks for store configuration through an Xcode
+  *account*, and with only an API key fails `Cannot verify client's JWT
+  headers` / `App Store Connect access for "T9WF95GC9T" is required`, whatever
+  the key. Proof of upload is `UPLOAD SUCCEEDED` in the run log.
+- **Xcode** is the newest *release* Xcode 27 on the runner (RC and beta builds
+  are skipped, symlinks resolved), currently 27.1.
 - **What to Test** is set from the commit subjects since the previous
   `*-build-*` tag by a follow-up job that waits up to 90 min for Apple's
   processing. Its failure never fails or retracts the upload.
@@ -63,9 +71,9 @@ Eight repository secrets (`gh secret list`). Rotate one with
 The keystore and its passwords live in the password manager. `AUR_SSH_KEY`
 (and `AUR_USERNAME`) predate this pipeline and are unchanged.
 
-The App Store Connect key's role: _to be recorded after the first run_
-(expected Admin, or App Manager with certificate access — automatic signing
-on a fresh runner has to create its certificates).
+The App Store Connect key "GitHub Actions" is a **Team Key** with **Admin**
+access (first CI uploads: iOS 202 and macOS 116, 2026-11-01). Automatic
+signing on a fresh runner creates its certificates and profiles through it.
 
 ## One-time cut-over (Mac server)
 
