@@ -6,10 +6,11 @@ name: Release
 #      releases; you type the version ("v0.3.4") manually
 #
 # Both paths produce identical artifacts: the Linux client tarball, the Linux
-# server + CLI tarball, the Android APK (and the macOS server tarballs when
-# that best-effort build succeeds), a GitHub Release whose body has one
-# section per platform, and auto-pushed bumps to the homebrew-clauderelay tap
-# and the AUR so `brew upgrade` / `yay -Syu` pick the version up immediately.
+# server + CLI tarball, the Android APK, a GitHub Release whose body has one
+# section per platform, an arm64 Homebrew bottle of the macOS server uploaded
+# to that release, and auto-pushed bumps to the homebrew-coderelay tap (with
+# the bottle) and the AUR so `brew upgrade` / `yay -Syu` pick the version up
+# immediately. The iOS and macOS apps ship separately (apple-release.yml).
 
 on:
   push:
@@ -52,67 +53,6 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Releasing: $TAG"
-
-  # ── Build release binaries ──────────────────────────────────────────────
-
-  build:
-    needs: resolve-version
-    # Best-effort. The macOS server binaries are not what ships: the server is
-    # installed with `brew` from HEAD on the Mac, and this build has failed on
-    # the runner toolchain for the last three tags, which also blocked the
-    # release job and, with it, the Linux tarball. A failure here is surfaced
-    # as an annotation, not a blocked release.
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            arch: arm64
-          - os: macos-15
-            arch: x86_64
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.resolve-version.outputs.tag }}
-
-      - name: Build release binaries
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          # Build ONLY the two server products (matches Formula/clauderelay.rb).
-          # A bare `swift build` compiles the whole package; scoping to the
-          # products means SPM only compiles their dependency subgraph.
-          if [ "$ARCH" = "x86_64" ]; then
-            swift build -c release --disable-sandbox -Xswiftc -cross-module-optimization --triple x86_64-apple-macosx --product claude-relay-server --product claude-relay
-          else
-            swift build -c release --disable-sandbox -Xswiftc -cross-module-optimization --product claude-relay-server --product claude-relay
-          fi
-
-      - name: Package binaries
-        env:
-          TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          mkdir -p dist
-          if [ "$ARCH" = "x86_64" ]; then
-            cp .build/x86_64-apple-macosx/release/claude-relay dist/
-            cp .build/x86_64-apple-macosx/release/claude-relay-server dist/
-          else
-            cp .build/release/claude-relay dist/
-            cp .build/release/claude-relay-server dist/
-          fi
-          cd dist
-          tar czf "claude-relay-${TAG_NAME}-macos-${ARCH}.tar.gz" claude-relay claude-relay-server
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: claude-relay-${{ matrix.arch }}
-          path: dist/*.tar.gz
-
 
   # ── Build the Linux desktop client ──────────────────────────────────────
   # Produces a self-contained image: the app, its jars, the libvterm JNI
@@ -413,10 +353,10 @@ jobs:
   # ── Create GitHub Release + publish artifacts ───────────────────────────
 
   release:
-    needs: [resolve-version, build, build-linux, build-linux-server, build-android]
+    needs: [resolve-version, build-linux, build-linux-server, build-android]
     # The Linux client, Linux server and Android APK are the artifacts this
-    # release exists to publish, so all three gate it; the macOS build above is
-    # best-effort (see its comment) and only adds assets when it succeeds.
+    # release exists to publish, so all three gate it. The macOS bottle is
+    # built after it (job `bottle`) and uploaded to this release.
     if: ${{ !cancelled() && needs.resolve-version.result == 'success' && needs.build-linux.result == 'success' && needs.build-linux-server.result == 'success' && needs.build-android.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
@@ -436,7 +376,7 @@ jobs:
       - name: Compute binary checksums
         run: |
           cd artifacts
-          sha256sum *.tar.gz *.apk | tee checksums.txt
+          sha256sum -- *.tar.gz *.apk | tee checksums.txt
 
       - name: Compute source tarball SHA256
         id: sha
@@ -486,12 +426,7 @@ jobs:
             echo "| Linux client (x86_64) | [\`${CLIENT}\`](${DL}/${CLIENT}) | ${TAG_NAME} |"
             echo "| Linux server + CLI (x86_64) | [\`${SERVER}\`](${DL}/${SERVER}) | ${TAG_NAME} |"
             echo "| Android client | [\`${APK}\`](${DL}/${APK}) | ${ANDROID_VERSION_NAME} (versionCode ${ANDROID_VERSION_CODE}) |"
-            for f in artifacts/claude-relay-${TAG_NAME}-macos-*.tar.gz; do
-              [ -f "$f" ] || continue
-              b=$(basename "$f"); arch=${b#claude-relay-${TAG_NAME}-macos-}; arch=${arch%.tar.gz}
-              echo "| macOS server + CLI (${arch}) | [\`${b}\`](${DL}/${b}) | ${TAG_NAME} |"
-            done
-            echo "| macOS server + CLI | Homebrew: \`brew install miguelriotinto/clauderelay/clauderelay\` | ${TAG_NAME} |"
+            echo "| macOS server + CLI (Apple silicon) | Homebrew: \`brew install miguelriotinto/coderelay/clauderelay\` | ${TAG_NAME} |"
             echo "| iOS / macOS app | TestFlight | — |"
             echo
             echo "### Linux client"
@@ -527,7 +462,7 @@ jobs:
             echo
             echo "### macOS"
             echo
-            echo "The server ships through Homebrew (the tap is bumped by this release); the desktop and iOS apps go through TestFlight. The macOS tarballs above, when present, are the bare server + CLI binaries for a manual install."
+            echo "The server ships through Homebrew as a prebuilt Apple-silicon bottle (the tap is bumped by this release); the desktop and iOS apps go through TestFlight."
             echo
             echo "### Checksums (SHA-256)"
             echo
@@ -551,83 +486,149 @@ jobs:
             artifacts/*.apk
             artifacts/checksums.txt
 
-  # ── Push formula update to homebrew-clauderelay tap ─────────────────────
-  # Needs the HOMEBREW_TAP_TOKEN repo secret: a PAT with `contents: write`
-  # on miguelriotinto/homebrew-coderelay. If the secret is missing or
-  # empty, this job is skipped (useful for dry-run tag pushes).
+  # ── Homebrew bottle of the macOS server (arm64) ─────────────────────────
+  # Runs after the release exists so a bottle failure never holds back the
+  # Linux/Android assets; the tap is only bumped once a bottle is uploaded.
+  # Recover a failure by re-running this job, then `homebrew`.
 
-  homebrew:
+  bottle:
     needs: [resolve-version, release]
-    runs-on: ubuntu-latest
     if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: xcode-27
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
     steps:
-      - name: Check tap token is configured
-        id: check_token
-        env:
-          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          if [ -z "$TOKEN" ]; then
-            echo "HOMEBREW_TAP_TOKEN secret is not set; skipping tap update."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout tap
-        if: steps.check_token.outputs.skip == 'false'
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
-          repository: miguelriotinto/homebrew-coderelay
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: tap
+          ref: ${{ needs.resolve-version.outputs.tag }}
 
-      - name: Update formula url + sha256
-        if: steps.check_token.outputs.skip == 'false'
+      - name: Select newest Xcode 27
+        run: |
+          # shellcheck disable=SC2012  # version-sorted glob of fixed app names
+          XCODE=$(ls -d /Applications/Xcode_27.*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
+          echo "Using: $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Unit-test the release scripts
+        run: python3 -m unittest discover -s Scripts/ci/tests -v
+
+      - name: Build the bottle
         env:
           TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
           SOURCE_SHA: ${{ needs.release.outputs.source_sha256 }}
           REPO: ${{ github.repository }}
         run: |
-          cd tap
-          FORMULA=Formula/clauderelay.rb
+          brew tap-new --no-git local/ci
+          TAP_DIR="$(brew --repository)/Library/Taps/local/homebrew-ci"
+          cp Formula/clauderelay.rb "$TAP_DIR/Formula/clauderelay.rb"
+          python3 Scripts/ci/formula.py "$TAP_DIR/Formula/clauderelay.rb" \
+            --repo "$REPO" --tag "$TAG_NAME" --source-sha "$SOURCE_SHA"
+          brew install --build-bottle local/ci/clauderelay
+          mkdir -p bottle && cd bottle
+          brew bottle --json --root-url="https://github.com/${REPO}/releases/download/${TAG_NAME}" local/ci/clauderelay
 
-          # Replace url line (anchored to the archive path so we only touch
-          # the release URL, not the head "…" URL).
-          sed -i.bak -E \
-            "s|^(  url \"https://github.com/${REPO//\//\\/}/archive/refs/tags/)v[0-9]+\.[0-9]+\.[0-9]+(\.tar\.gz\")$|\1${TAG_NAME}\2|" \
-            "$FORMULA"
-
-          # Replace sha256 line (the first one, which belongs to `url`; the
-          # formula has no bottle block so there's only one).
-          sed -i.bak -E \
-            "s|^(  sha256 \")[a-f0-9]{64}(\")$|\1${SOURCE_SHA}\2|" \
-            "$FORMULA"
-
-          rm -f "$FORMULA.bak"
-
-          echo "=== Diff ==="
-          git --no-pager diff "$FORMULA"
-
-          if git diff --quiet "$FORMULA"; then
-            echo "Formula unchanged (already at ${TAG_NAME}?). Nothing to commit."
-            exit 0
-          fi
-
-      - name: Commit + push
-        if: steps.check_token.outputs.skip == 'false'
+      - name: Upload the bottle to the release
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
         run: |
+          cd bottle
+          shopt -s nullglob
+          files=(*.bottle.tar.gz)
+          [ "${#files[@]}" -eq 1 ] || { echo "expected one bottle, found ${#files[@]}: ${files[*]}"; exit 1; }
+          # `brew bottle` writes name--version.tag.bottle.tar.gz; Homebrew
+          # downloads name-version.tag.bottle.tar.gz from root_url.
+          LOCAL="${files[0]}"
+          ASSET="${LOCAL/--/-}"
+          case "$ASSET" in *--*|"$LOCAL") echo "unexpected bottle name $LOCAL"; exit 1 ;; esac
+          mv "$LOCAL" "$ASSET"
+          echo "bottle: $ASSET"
+          gh release upload "$TAG_NAME" "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bottle-json
+          path: bottle/*.json
+
+  # ── Push the formula (url, sha256, bottle) to the tap and to main ───────
+  # Needs HOMEBREW_TAP_TOKEN: a fine-grained PAT with Contents read/write on
+  # miguelriotinto/homebrew-coderelay. The tap copy is rendered from the
+  # tagged Formula/clauderelay.rb, main's from main's, so both carry the same
+  # url/sha256/bottle and a formula change merged after the tag is not reverted.
+
+  homebrew:
+    needs: [resolve-version, release, bottle]
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && needs.bottle.result == 'success' }}
+    env:
+      TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
+      SOURCE_SHA: ${{ needs.release.outputs.source_sha256 }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Check tap token is configured
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          # A missing token used to skip silently, which left the Mac on an old
+          # server with every run green. Now it fails the run.
+          if [ -z "$TOKEN" ]; then echo "HOMEBREW_TAP_TOKEN secret is not set"; exit 1; fi
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-version.outputs.tag }}
+          path: tagged
+
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          path: main
+
+      - name: Checkout tap
+        uses: actions/checkout@v5
+        with:
+          repository: miguelriotinto/homebrew-coderelay
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bottle-json
+          path: bottle-json
+
+      - name: Render both formula copies
+        run: |
+          JSON=$(ls bottle-json/*.json)
+          cp tagged/Formula/clauderelay.rb tap/Formula/clauderelay.rb
+          for f in tap/Formula/clauderelay.rb main/Formula/clauderelay.rb; do
+            python3 tagged/Scripts/ci/formula.py "$f" \
+              --repo "$REPO" --tag "$TAG_NAME" --source-sha "$SOURCE_SHA" --bottle-json "$JSON"
+          done
+          echo "=== tap diff ==="; git -C tap --no-pager diff
+          echo "=== main diff ==="; git -C main --no-pager diff
+
+      - name: Push the tap
+        run: |
           cd tap
-          if git diff --quiet Formula/clauderelay.rb; then
-            echo "No changes to commit."
-            exit 0
-          fi
+          if git diff --quiet Formula/clauderelay.rb; then echo "Tap already at ${TAG_NAME}."; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/clauderelay.rb
           git commit -m "clauderelay ${TAG_NAME}" -m "Automated bump from CodeRelay release workflow."
           git push
+
+      - name: Push Formula/ to main
+        run: |
+          cd main
+          if git diff --quiet Formula/clauderelay.rb; then echo "main's formula already at ${TAG_NAME}."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/clauderelay.rb
+          git commit -m "chore(formula): ${TAG_NAME} bottle"
+          # main may have moved since checkout; Formula/ is touched only here.
+          git push origin HEAD:main || { git pull --rebase origin main && git push origin HEAD:main; }
 
   # ── Push PKGBUILD update to the AUR ─────────────────────────────────────
   # Needs two secrets:
