@@ -509,7 +509,7 @@ jobs:
           # rule as apple-build.yml so CI compiles with what ships.
           XCODE=$(for app in /Applications/Xcode_27.*.app; do
                     real=$(basename "$(realpath "$app")")
-                    case "$real" in *Release_Candidate*|*[Bb]eta*) continue ;; esac
+                    case "$real" in (*Release_Candidate*|*[Bb]eta*) continue ;; esac
                     echo "/Applications/$real"
                   done | sort -uV | tail -1)
           if [ -z "$XCODE" ]; then echo "No release Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
