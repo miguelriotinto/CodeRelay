@@ -52,6 +52,39 @@ struct WorkspaceView: View {
     @StateObject private var networkMonitor = NetworkMonitor()
     /// One sheet + blackout for switch, session-name refresh and reconnect.
     @StateObject private var loading = SessionLoadingSheetModel()
+    /// The presentation dump shown by a long-press on the sidebar button. An
+    /// overlay, not an alert: it must show even when presentations are wedged.
+    @State private var presentationDump: String?
+
+    /// Every presentation flag on this presenter plus UIKit's actual presented
+    /// chain, to find what blocks new sheets when the toolbar buttons go dead.
+    private func dumpPresentations() -> String {
+        var lines = [
+            "sizeClass: \(sizeClass == .compact ? "compact" : "regular")",
+            "showSidebarSheet: \(showSidebarSheet)",
+            "isShowingServerList: \(hub.isShowingServerList)",
+            "pendingPairing: \(pendingPairing != nil)",
+            "loading.isPresented: \(loading.isPresented)",
+            "takenAlert: \(hub.takenAlert != nil)",
+            "topmostSheet: \(topmostSheet.map { "\($0)" } ?? "none")",
+        ]
+        if let focus = hub.focusCoordinator {
+            lines.append("focus alerts: timedOut=\(focus.connectionTimedOut) error=\(focus.showError) attachFailed=\(focus.sessionAttachFailed)")
+        }
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            lines.append("scene \(scene.session.role.rawValue) state=\(scene.activationState.rawValue)")
+            for window in scene.windows where window.rootViewController != nil {
+                var vc = window.rootViewController
+                var depth = 0
+                while let current = vc {
+                    lines.append("  [\(depth)] \(type(of: current)) presenting=\(current.isBeingPresented) dismissing=\(current.isBeingDismissed)")
+                    vc = current.presentedViewController
+                    depth += 1
+                }
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
 
     /// Maps the sidebar button's columnVisibility toggle directly to showSidebarSheet on iPhone.
     private var sidebarSheetBinding: Binding<NavigationSplitViewVisibility> {
@@ -84,7 +117,8 @@ struct WorkspaceView: View {
         Group {
             if sizeClass == .compact {
                 // iPhone: detail-only with the sidebar as a sheet
-                ActiveTerminalView(hub: hub, columnVisibility: sidebarSheetBinding, loading: loading)
+                ActiveTerminalView(hub: hub, columnVisibility: sidebarSheetBinding, loading: loading,
+                                   onDiagnose: { presentationDump = dumpPresentations() })
                     .sheet(isPresented: $showSidebarSheet) {
                         NavigationStack {
                             SessionSidebarView(hub: hub)
@@ -102,7 +136,8 @@ struct WorkspaceView: View {
                 NavigationSplitView(columnVisibility: $columnVisibility) {
                     SessionSidebarView(hub: hub)
                 } detail: {
-                    ActiveTerminalView(hub: hub, columnVisibility: $columnVisibility, loading: loading)
+                    ActiveTerminalView(hub: hub, columnVisibility: $columnVisibility, loading: loading,
+                                       onDiagnose: { presentationDump = dumpPresentations() })
                 }
                 .navigationSplitViewStyle(.prominentDetail)
                 .navigationBarHidden(true)
@@ -223,6 +258,21 @@ struct WorkspaceView: View {
                         guard !Task.isCancelled else { return }
                         if hub.notice == notice { hub.notice = nil }
                     }
+            }
+        }
+        .overlay {
+            if let dump = presentationDump {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(dump).font(.system(size: 11, design: .monospaced))
+                    Text("Tap to copy and close").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .padding(16)
+                .onTapGesture {
+                    UIPasteboard.general.string = dump
+                    presentationDump = nil
+                }
             }
         }
         // Session loss belongs to the hub, never to the focus coordinator. The
