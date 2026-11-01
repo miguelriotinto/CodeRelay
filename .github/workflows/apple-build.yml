@@ -29,7 +29,10 @@ jobs:
 
       - name: Platform settings
         run: |
-          echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          # Named AuthKey_<KEYID>.p8 like altool expects: with a plain AuthKey.p8
+          # the upload failed "Cannot verify client's JWT headers" (CDWebService
+          # 3004) while the archive and the App Store Connect API accepted it.
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8" >> "$GITHUB_ENV"
           case "${{ inputs.platform }}" in
             ios)   echo "SCHEME=CodeRelayApp" ; echo "BUNDLE_ID=com.claude.relay" ;
                    echo "DESTINATION=generic/platform=iOS" ; echo "TAG_PREFIX=ios-build" ;;
@@ -155,7 +158,7 @@ jobs:
 
       - name: Remove the App Store Connect key
         if: always()
-        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+        run: rm -f "$ASC_KEY_PATH"
 
   what-to-test:
     # Apple-side processing takes up to ~1 h; this job failing never retracts
