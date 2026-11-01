@@ -29,9 +29,7 @@ jobs:
 
       - name: Platform settings
         run: |
-          # Named AuthKey_<KEYID>.p8 like altool expects: with a plain AuthKey.p8
-          # the upload failed "Cannot verify client's JWT headers" (CDWebService
-          # 3004) while the archive and the App Store Connect API accepted it.
+          # Named after the key ID, the way altool and ~/.appstoreconnect lay keys out.
           echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8" >> "$GITHUB_ENV"
           case "${{ inputs.platform }}" in
             ios)   echo "SCHEME=CodeRelayApp" ; echo "BUNDLE_ID=com.claude.relay" ;
@@ -41,11 +39,17 @@ jobs:
             *) echo "unknown platform ${{ inputs.platform }}"; exit 1 ;;
           esac >> "$GITHUB_ENV"
 
-      - name: Select newest Xcode 27
+      - name: Select newest release Xcode 27
         run: |
-          # shellcheck disable=SC2012  # version-sorted glob of fixed app names
-          XCODE=$(ls -d /Applications/Xcode_27.*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE" ]; then echo "No Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
+          # Release builds only: under Xcode_27.2_Release_Candidate (also linked as
+          # Xcode_27.2.app) every TestFlight export failed "Cannot verify client's
+          # JWT headers". Symlinks are resolved so the RC can't slip in by alias.
+          XCODE=$(for app in /Applications/Xcode_27.*.app; do
+                    real=$(basename "$(realpath "$app")")
+                    case "$real" in (*Release_Candidate*|*[Bb]eta*) continue ;; esac
+                    echo "/Applications/$real"
+                  done | sort -uV | tail -1)
+          if [ -z "$XCODE" ]; then echo "No release Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version

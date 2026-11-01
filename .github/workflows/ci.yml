@@ -118,10 +118,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 27
+      - name: Select newest release Xcode 27
         run: |
-          XCODE=$(ls -d /Applications/Xcode_27.*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE" ]; then echo "No Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
+          # Release builds only, symlinks resolved (Xcode_27.2.app is the RC); same
+          # rule as apple-build.yml so CI compiles with what ships.
+          XCODE=$(for app in /Applications/Xcode_27.*.app; do
+                    real=$(basename "$(realpath "$app")")
+                    case "$real" in (*Release_Candidate*|*[Bb]eta*) continue ;; esac
+                    echo "/Applications/$real"
+                  done | sort -uV | tail -1)
+          if [ -z "$XCODE" ]; then echo "No release Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
@@ -166,10 +172,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 27
+      - name: Select newest release Xcode 27
         run: |
-          XCODE=$(ls -d /Applications/Xcode_27.*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE" ]; then echo "No Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
+          # Release builds only, symlinks resolved (Xcode_27.2.app is the RC); same
+          # rule as apple-build.yml so CI compiles with what ships.
+          XCODE=$(for app in /Applications/Xcode_27.*.app; do
+                    real=$(basename "$(realpath "$app")")
+                    case "$real" in (*Release_Candidate*|*[Bb]eta*) continue ;; esac
+                    echo "/Applications/$real"
+                  done | sort -uV | tail -1)
+          if [ -z "$XCODE" ]; then echo "No release Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
