@@ -29,7 +29,7 @@ jobs:
 
       - name: Platform settings
         run: |
-          # Named after the key ID, the way altool and ~/.appstoreconnect lay keys out.
+          # altool finds the key as $API_PRIVATE_KEYS_DIR/AuthKey_<KEYID>.p8.
           echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8" >> "$GITHUB_ENV"
           case "${{ inputs.platform }}" in
             ios)   echo "SCHEME=CodeRelayApp" ; echo "BUNDLE_ID=com.claude.relay" ;
@@ -41,9 +41,8 @@ jobs:
 
       - name: Select newest release Xcode 27
         run: |
-          # Release builds only: under Xcode_27.2_Release_Candidate (also linked as
-          # Xcode_27.2.app) every TestFlight export failed "Cannot verify client's
-          # JWT headers". Symlinks are resolved so the RC can't slip in by alias.
+          # Release builds only; symlinks are resolved because the image links
+          # Xcode_27.2.app to Xcode_27.2_Release_Candidate.
           XCODE=$(for app in /Applications/Xcode_27.*.app; do
                     real=$(basename "$(realpath "$app")")
                     case "$real" in (*Release_Candidate*|*[Bb]eta*) continue ;; esac
@@ -107,6 +106,10 @@ jobs:
 
       - name: Export and upload to App Store Connect
         if: ${{ !inputs.dry_run }}
+        # Export locally, then upload with altool. xcodebuild's destination=upload
+        # needs an Xcode account for its store-configuration request and fails
+        # "Cannot verify client's JWT headers" with only an API key; altool
+        # authenticates with the key alone.
         run: |
           cat > "$RUNNER_TEMP/ExportOptions.plist" <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -114,7 +117,7 @@ jobs:
           <plist version="1.0">
           <dict>
             <key>method</key><string>app-store-connect</string>
-            <key>destination</key><string>upload</string>
+            <key>destination</key><string>export</string>
             <key>signingStyle</key><string>automatic</string>
             <key>teamID</key><string>T9WF95GC9T</string>
           </dict>
@@ -128,11 +131,13 @@ jobs:
             -authenticationKeyPath "$ASC_KEY_PATH" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
-          # The distribution log dir is named after the scheme, not PRODUCT_NAME.
-          # shellcheck disable=SC2012  # newest-first by mtime
-          LOG=$(ls -dt "${TMPDIR:-/tmp}"/"${SCHEME}"_*.xcdistributionlogs 2>/dev/null | head -1)
-          [ -n "$LOG" ] || { echo "no ${SCHEME}_*.xcdistributionlogs under ${TMPDIR:-/tmp}"; exit 1; }
-          grep -q "UPLOAD SUCCEEDED" "$LOG/ContentDelivery.log" || { echo "UPLOAD SUCCEEDED not in $LOG/ContentDelivery.log"; exit 1; }
+          case "${{ inputs.platform }}" in ios) EXT=ipa ;; macos) EXT=pkg ;; esac
+          PKG=$(find "$RUNNER_TEMP/export" -maxdepth 1 -name "*.$EXT" | head -1)
+          [ -n "$PKG" ] || { echo "no .$EXT in $RUNNER_TEMP/export"; ls "$RUNNER_TEMP/export"; exit 1; }
+          API_PRIVATE_KEYS_DIR=$(dirname "$ASC_KEY_PATH") xcrun altool --upload-app \
+            -f "$PKG" -t "${{ inputs.platform }}" \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tee "$RUNNER_TEMP/altool.log"
+          grep -q "UPLOAD SUCCEEDED" "$RUNNER_TEMP/altool.log" || { echo "UPLOAD SUCCEEDED not in the altool output"; exit 1; }
           echo "UPLOAD SUCCEEDED (build $BUILD)"
 
       - name: Notes since the previous build
