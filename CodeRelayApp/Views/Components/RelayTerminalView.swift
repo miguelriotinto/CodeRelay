@@ -349,6 +349,9 @@ struct TerminalHostView: UIViewRepresentable {
     var fontSize: CGFloat
     @Binding var isKeyboardVisible: Bool
     var onLeftEdgeSwipe: () -> Void
+    /// True while the session-loading sheet is up: the keyboard would cover
+    /// two thirds of it, so the terminal gives up focus until the sheet goes.
+    var deferFocus: Bool
 
     func makeCoordinator() -> HostCoordinator {
         HostCoordinator(isKeyboardVisible: $isKeyboardVisible)
@@ -434,8 +437,9 @@ struct TerminalHostView: UIViewRepresentable {
         // time a coordinator property changes.
         if sessionChanged {
             context.coordinator.lastFocusedSessionId = activeId
-            _ = cached.view.becomeFirstResponder()
+            context.coordinator.focusPending = true
         }
+        context.coordinator.applyFocus(to: cached.view, deferred: deferFocus)
     }
 
     static func dismantleUIView(_ uiView: UIView, coordinator: HostCoordinator) {
@@ -492,6 +496,42 @@ final class HostCoordinator: NSObject {
     /// `terminalReady()` is already internally idempotent, this avoids the
     /// guard dispatch + flush loop cost on each update pass.
     var readiedSessionId: UUID?
+
+    /// The terminal should take focus once the loading sheet is gone: set by a
+    /// session switch, and by a load that took the keyboard down.
+    var focusPending = false
+    private var focusWork: DispatchWorkItem?
+    /// The terminal `focusWork` will focus; a switch before it fires retargets it.
+    private weak var focusTarget: RelayTerminalView?
+
+    /// How long the loading sheet takes to slide away, so the keyboard rises
+    /// into an empty screen instead of over the departing sheet.
+    static let sheetDismissDelay: TimeInterval = 0.35
+
+    /// Holds the keyboard down while `deferred`, then raises it after the
+    /// sheet's dismissal — once, and only if nothing deferred it again.
+    func applyFocus(to view: RelayTerminalView, deferred: Bool) {
+        if deferred {
+            focusWork?.cancel()
+            focusWork = nil
+            if view.isFirstResponder {
+                _ = view.resignFirstResponder()
+                focusPending = true
+            }
+            return
+        }
+        guard focusPending, focusWork == nil || focusTarget !== view else { return }
+        focusWork?.cancel()
+        focusTarget = view
+        let work = DispatchWorkItem { [weak self, weak view] in
+            guard let self else { return }
+            self.focusWork = nil
+            self.focusPending = false
+            _ = view?.becomeFirstResponder()
+        }
+        focusWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.sheetDismissDelay, execute: work)
+    }
 
     init(isKeyboardVisible: Binding<Bool>) {
         self.isKeyboardVisible = isKeyboardVisible

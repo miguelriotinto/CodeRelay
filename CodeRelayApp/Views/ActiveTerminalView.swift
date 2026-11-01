@@ -141,7 +141,8 @@ struct ActiveTerminalView: View {
                         coordinator: coordinator,
                         fontSize: CGFloat(settings.terminalFontSize),
                         isKeyboardVisible: $isKeyboardVisible,
-                        onLeftEdgeSwipe: { if columnVisibility == .detailOnly { toggleSidebar() } }
+                        onLeftEdgeSwipe: { if columnVisibility == .detailOnly { toggleSidebar() } },
+                        deferFocus: loading.isPresented
                     )
                     // Black while the loading sheet is up (switch, name-label
                     // refresh, reconnect); covers only the terminal, not the
