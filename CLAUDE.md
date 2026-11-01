@@ -33,9 +33,9 @@ setting: built with the iOS 26 SDK the app runs centred on the open inner
 display with empty space around it and left of the status bar on the closed
 outer display; built with the iOS 27.1 SDK it fills both displays and the
 system lays container toolbars out vertically beside the right-edge status
-bar. CI's iOS and macOS app builds run on the `xcode-27` runner label
-(preview) so they compile with the same toolchain as the TestFlight archive,
-which is still made locally; the `swift build + test` job stays on `macos-26`
+bar. CI's iOS and macOS app builds and the TestFlight archive
+(`apple-release.yml`) all run on the `xcode-27` runner label (preview), so what
+CI compiles is what ships; the `swift build + test` job stays on `macos-26`
 (Xcode 26), whose image carries only 26.x. Xcode 27
 no longer bundles the Metal toolchain SwiftTerm's shader needs:
 `xcodebuild -downloadComponent MetalToolchain` once per machine, and
@@ -54,10 +54,13 @@ under the camera. Every other view honours the inset.
 
 ## Release Process
 
-Use `/coderelay-deploy [ios|android|mac|server|all]` to build, publish, and verify; `/coderelay-health` for a read-only "is everything published and running?" check. Those skills own the version-bump trio, the publish targets, and the mandatory verification steps — never claim something is published without running them.
+**Nothing that ships is built locally** — `docs/RELEASING.md` has the full map, the secrets and the break-glass manual upload. Use `/coderelay-deploy [ios|android|mac|server|all]` to start the GitHub Actions runs and verify them; `/coderelay-health` for a read-only "is everything published and running?" check. Those skills own the publish targets and the mandatory verification steps — never claim something is published without running them.
+
+- **Apple apps:** `apple-release.yml` (`workflow_dispatch`, `platform: ios|macos|both`) archives on `xcode-27` and uploads to TestFlight, gated on a green `CI` run covering the commit. The build number is App Store Connect's highest + 1 — never bump `CURRENT_PROJECT_VERSION` in `project.yml` for a release (it is only a floor) — and each upload is tagged `ios-build-<N>` / `mac-build-<N>`.
+- **Mac server:** a CI-built arm64 Homebrew bottle, attached to the `vX.Y.Z` release; the `homebrew` job writes the bottle into the tap and into `Formula/clauderelay.rb` on `main` — do not hand-edit its url/sha256/bottle.
 
 - **The user installs APKs by downloading from GitHub Releases on the phone — the Android device is NOT adb-connected to this machine.** Never assume `adb install` reaches the user's device.
-- **A `vX.Y.Z` tag is the release.** `release.yml` builds and publishes the Linux client tarball, the Linux server + CLI tarball and the Android APK together, with a release body sectioned per platform, then bumps the Homebrew tap and the AUR. The APK is only signed with the project key when the `ANDROID_KEYSTORE_*` repo secrets exist (see `CodeRelayAndroid/RELEASE.md`); until then it is debug-signed and the body flags it.
+- **A `vX.Y.Z` tag is the release.** `release.yml` builds and publishes the Linux client tarball, the Linux server + CLI tarball and the Android APK together, with a release body sectioned per platform, then builds the macOS server bottle and bumps the Homebrew tap and the AUR. The APK is only signed with the project key when the `ANDROID_KEYSTORE_*` repo secrets exist (see `CodeRelayAndroid/RELEASE.md`); until then it is debug-signed and the body flags it.
 
 ## Architecture
 
