@@ -517,6 +517,11 @@ jobs:
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
+      - name: Download the Metal toolchain
+        # Xcode 27 no longer bundles it; SwiftTerm's shader is part of the
+        # package graph brew builds.
+        run: xcodebuild -downloadComponent MetalToolchain
+
       - name: Unit-test the release scripts
         run: python3 -m unittest discover -s Scripts/ci/tests -v
 
