@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # GitHub-hosted preview image carrying Xcode 27 (ci.yml, apple-build.yml, release.yml).
+  labels:
+    - xcode-27

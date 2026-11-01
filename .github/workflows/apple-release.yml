@@ -1,0 +1,63 @@
+# TestFlight releases of the iOS and macOS apps, built on GitHub Actions only.
+# Started by `/coderelay-deploy ios|mac` (gh workflow run apple-release.yml -f platform=…).
+# Spec: docs/superpowers/specs/2026-11-01-remote-release-pipeline-design.md (Part A).
+name: Apple release
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Which app to ship
+        type: choice
+        options: [ios, macos, both]
+        default: ios
+      dry_run:
+        description: Archive and check the build number only — no upload, tag or What to Test
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # push the ios-build-N / mac-build-N tag
+  actions: read     # the gate reads ci.yml runs
+
+jobs:
+  gate:
+    # The dispatched commit must be on main and covered by a green CI run
+    # (spec Part A §2; Scripts/ci/ci_gate.py).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Unit-test the release scripts
+        run: python3 -m unittest discover -s Scripts/ci/tests -v
+      - name: CI coverage gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/ci/ci_gate.py "$GITHUB_SHA"
+
+  # Separate jobs so one platform failing never stops the other, and one
+  # concurrency group each so two runs can never read the same "highest build".
+  ios:
+    needs: gate
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'both' }}
+    concurrency:
+      group: apple-release-ios
+      cancel-in-progress: false
+    uses: ./.github/workflows/apple-build.yml
+    with:
+      platform: ios
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit
+
+  macos:
+    needs: gate
+    if: ${{ inputs.platform == 'macos' || inputs.platform == 'both' }}
+    concurrency:
+      group: apple-release-macos
+      cancel-in-progress: false
+    uses: ./.github/workflows/apple-build.yml
+    with:
+      platform: macos
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit

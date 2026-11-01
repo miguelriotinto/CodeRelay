@@ -1,0 +1,192 @@
+# One Apple app's archive → TestFlight upload, called by apple-release.yml
+# once per platform. Spec: docs/superpowers/specs/2026-11-01-remote-release-pipeline-design.md
+# (Part A). Never falls back to a local build or to an Xcode 26 runner.
+name: Apple build (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        type: string   # ios | macos
+        required: true
+      dry_run:
+        type: boolean
+        required: true
+
+jobs:
+  build:
+    name: Archive and upload (${{ inputs.platform }})
+    runs-on: xcode-27
+    outputs:
+      build: ${{ steps.number.outputs.build }}
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # tags + history for the notes and the gate's ancestor
+
+      - name: Platform settings
+        run: |
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          case "${{ inputs.platform }}" in
+            ios)   echo "SCHEME=CodeRelayApp" ; echo "BUNDLE_ID=com.claude.relay" ;
+                   echo "DESTINATION=generic/platform=iOS" ; echo "TAG_PREFIX=ios-build" ;;
+            macos) echo "SCHEME=CodeRelayMac" ; echo "BUNDLE_ID=com.claude.relay.mac" ;
+                   echo "DESTINATION=generic/platform=macOS" ; echo "TAG_PREFIX=mac-build" ;;
+            *) echo "unknown platform ${{ inputs.platform }}"; exit 1 ;;
+          esac >> "$GITHUB_ENV"
+
+      - name: Select newest Xcode 27
+        run: |
+          # shellcheck disable=SC2012  # version-sorted glob of fixed app names
+          XCODE=$(ls -d /Applications/Xcode_27.*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
+          echo "Using: $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Download the Metal toolchain
+        # Xcode 27 no longer bundles it; SwiftTerm's shader needs it.
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Generate Xcode project
+        run: brew install xcodegen && xcodegen
+
+      - name: Write the App Store Connect key
+        env:
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          if [ -z "$ASC_API_KEY_P8" ] || [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ]; then
+            echo "ASC_API_KEY_P8 / ASC_API_KEY_ID / ASC_API_ISSUER_ID secrets are not set"; exit 1
+          fi
+          umask 077
+          printf '%s\n' "$ASC_API_KEY_P8" > "$ASC_KEY_PATH"
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet 'pyjwt[crypto]'
+
+      - name: Next build number
+        id: number
+        run: |
+          # project.yml's value is only a floor (spec Part A §3).
+          FLOOR=$(awk -v t="  $SCHEME:" '$0==t{f=1} f&&/CURRENT_PROJECT_VERSION:/{gsub(/[^0-9]/,"");print;exit}' project.yml)
+          [ -n "$FLOOR" ] || { echo "no CURRENT_PROJECT_VERSION for $SCHEME in project.yml"; exit 1; }
+          N=$("$RUNNER_TEMP/venv/bin/python" Scripts/ci/asc.py next-build --bundle-id "$BUNDLE_ID" --floor "$FLOOR")
+          echo "floor $FLOOR → build $N"
+          echo "build=$N" >> "$GITHUB_OUTPUT"
+          echo "BUILD=$N" >> "$GITHUB_ENV"
+
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -project CodeRelay.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "$DESTINATION" \
+            -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            -skipMacroValidation \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD"
+          GOT=$(/usr/libexec/PlistBuddy -c "Print :ApplicationProperties:CFBundleVersion" "$RUNNER_TEMP/app.xcarchive/Info.plist")
+          [ "$GOT" = "$BUILD" ] || { echo "archive CFBundleVersion $GOT != $BUILD"; exit 1; }
+          echo "archive CFBundleVersion $GOT"
+
+      - name: Export and upload to App Store Connect
+        if: ${{ !inputs.dry_run }}
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>T9WF95GC9T</string>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          # The distribution log dir is named after the scheme, not PRODUCT_NAME.
+          # shellcheck disable=SC2012  # newest-first by mtime
+          LOG=$(ls -dt "${TMPDIR:-/tmp}"/"${SCHEME}"_*.xcdistributionlogs 2>/dev/null | head -1)
+          [ -n "$LOG" ] || { echo "no ${SCHEME}_*.xcdistributionlogs under ${TMPDIR:-/tmp}"; exit 1; }
+          grep -q "UPLOAD SUCCEEDED" "$LOG/ContentDelivery.log" || { echo "UPLOAD SUCCEEDED not in $LOG/ContentDelivery.log"; exit 1; }
+          echo "UPLOAD SUCCEEDED (build $BUILD)"
+
+      - name: Notes since the previous build
+        run: |
+          # Before tagging, so a rebuild of an already-tagged commit reads "no changes".
+          PREV=$(git describe --tags --abbrev=0 --match "$TAG_PREFIX-*" HEAD 2>/dev/null || true)
+          if [ -n "$PREV" ]; then git log --format=%s "$PREV..HEAD" > notes.txt; else git log --format=%s HEAD > notes.txt; fi
+          VERSION=$(awk -v t="  $SCHEME:" '$0==t{f=1} f&&/MARKETING_VERSION:/{gsub(/[^0-9.]/,"");print;exit}' project.yml)
+          {
+            echo "### ${{ inputs.platform }} $VERSION ($BUILD)${{ inputs.dry_run && ' — dry run, not uploaded' || '' }}"
+            echo
+            echo "Commit \`$GITHUB_SHA\`, changes since ${PREV:-the first commit} ($(wc -l < notes.txt | tr -d ' ') commits):"
+            echo
+            head -100 notes.txt | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.platform }}-notes
+          path: notes.txt
+
+      - name: Tag the build
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git tag "$TAG_PREFIX-$BUILD" "$GITHUB_SHA"
+          git push origin "$TAG_PREFIX-$BUILD"
+
+      - name: Remove the App Store Connect key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+  what-to-test:
+    # Apple-side processing takes up to ~1 h; this job failing never retracts
+    # or fails the upload (spec Part A §9).
+    name: What to Test (${{ inputs.platform }})
+    needs: build
+    if: ${{ !inputs.dry_run && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    continue-on-error: true
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.platform }}-notes
+      - name: Set What to Test
+        env:
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          export ASC_KEY_PATH
+          umask 077
+          printf '%s\n' "$ASC_API_KEY_P8" > "$ASC_KEY_PATH"
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet 'pyjwt[crypto]'
+          case "${{ inputs.platform }}" in ios) BUNDLE_ID=com.claude.relay ;; macos) BUNDLE_ID=com.claude.relay.mac ;; esac
+          "$RUNNER_TEMP/venv/bin/python" Scripts/ci/asc.py what-to-test \
+            --bundle-id "$BUNDLE_ID" --build "${{ needs.build.outputs.build }}" --notes-file notes.txt
+      - name: Report failure
+        if: failure()
+        run: echo "⚠️ What to Test was not set on ${{ inputs.platform }} build ${{ needs.build.outputs.build }}; the upload itself succeeded." >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove the App Store Connect key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
