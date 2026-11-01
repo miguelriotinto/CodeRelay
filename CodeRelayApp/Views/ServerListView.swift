@@ -174,6 +174,7 @@ struct ServerRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(section.title).font(.body).fontWeight(.medium)
+                        .textCase(.uppercase)
                     if section.isDuplicateInstance {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                             .accessibilityLabel("Another bookmark points at this same relay")
