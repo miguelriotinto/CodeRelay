@@ -90,8 +90,9 @@ VERIFY:
   show `CN=Android Debug`.
 - The tap carries the bottle:
   `gh api repos/miguelriotinto/homebrew-coderelay/contents/Formula/clauderelay.rb --jq .content | base64 -d | grep -A3 'bottle do'`
-  shows `root_url …/releases/download/vX.Y.Z`; `git pull` and
-  `Formula/clauderelay.rb` on `main` matches.
+  shows `root_url …/releases/download/vX.Y.Z`; after `git pull`,
+  `Formula/clauderelay.rb` on `main` carries the same `url`, `sha256` and
+  `bottle do` block (the rest can differ only if `Formula/` changed after the tag).
 
 ## 4. Mac server (after a tag release)
 

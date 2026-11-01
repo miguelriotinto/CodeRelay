@@ -34,8 +34,14 @@ def uncovered_path(changed: List[str], prefixes: Tuple[str, ...] = IGNORED_PREFI
     return None
 
 
-def _run(*args: str) -> str:
-    return subprocess.run(args, check=True, capture_output=True, text=True).stdout.strip()
+def _run(*args: str, cwd: Optional[str] = None) -> str:
+    return subprocess.run(args, check=True, capture_output=True, text=True, cwd=cwd).stdout.strip()
+
+
+def changed_paths(base: str, head: str, cwd: Optional[str] = None) -> List[str]:
+    # --no-renames: a file moved out of an app directory must list its old path
+    # too, or a move into CodeRelayAndroid/ would read as covered.
+    return _run("git", "diff", "--no-renames", "--name-only", base, head, cwd=cwd).splitlines()
 
 
 class _GreenRuns:
@@ -66,7 +72,7 @@ def main(argv: List[str]) -> int:
     if ancestor is None:
         print(f"no green CI run within {WALK_LIMIT} commits of {sha}")
         return 1
-    changed = _run("git", "diff", "--name-only", ancestor, sha).splitlines()
+    changed = changed_paths(ancestor, sha)
     path = uncovered_path(changed)
     if path is not None:
         print(f"{path} changed since green {ancestor}; wait for CI on {sha}")

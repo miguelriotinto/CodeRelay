@@ -77,12 +77,21 @@ def _request(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> D
     return json.loads(raw) if raw else {}
 
 
+def app_id_for(apps: List[Dict[str, Any]], bundle_id: str) -> Optional[str]:
+    """filter[bundleId] is not guaranteed exact: com.claude.relay can also list
+    com.claude.relay.mac, so re-check before trusting the first entry."""
+    for app in apps:
+        if app["attributes"]["bundleId"] == bundle_id:
+            return app["id"]
+    return None
+
+
 def _app_id(bundle_id: str) -> str:
     q = urllib.parse.urlencode({"filter[bundleId]": bundle_id})
-    apps = _request("GET", f"/v1/apps?{q}")["data"]
-    if not apps:
+    found = app_id_for(_request("GET", f"/v1/apps?{q}")["data"], bundle_id)
+    if found is None:
         raise SystemExit(f"no App Store Connect app with bundle id {bundle_id}")
-    return apps[0]["id"]
+    return found
 
 
 def _builds(app_id: str, **filters: str) -> List[Dict[str, Any]]:
