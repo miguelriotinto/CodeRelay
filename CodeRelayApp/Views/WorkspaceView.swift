@@ -113,12 +113,31 @@ struct WorkspaceView: View {
         return nil
     }
 
+    private func showPresentationDump() { presentationDump = dumpPresentations() }
+
+    /// Kept out of `body`, which Xcode 26's type checker can no longer take whole.
+    @ViewBuilder private var presentationDumpOverlay: some View {
+        if let dump = presentationDump {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(dump).font(.system(size: 11, design: .monospaced))
+                Text("Tap to copy and close").font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .padding(16)
+            .onTapGesture {
+                UIPasteboard.general.string = dump
+                presentationDump = nil
+            }
+        }
+    }
+
     var body: some View {
         Group {
             if sizeClass == .compact {
                 // iPhone: detail-only with the sidebar as a sheet
                 ActiveTerminalView(hub: hub, columnVisibility: sidebarSheetBinding, loading: loading,
-                                   onDiagnose: { presentationDump = dumpPresentations() })
+                                   onDiagnose: showPresentationDump)
                     .sheet(isPresented: $showSidebarSheet) {
                         NavigationStack {
                             SessionSidebarView(hub: hub)
@@ -137,7 +156,7 @@ struct WorkspaceView: View {
                     SessionSidebarView(hub: hub)
                 } detail: {
                     ActiveTerminalView(hub: hub, columnVisibility: $columnVisibility, loading: loading,
-                                       onDiagnose: { presentationDump = dumpPresentations() })
+                                       onDiagnose: showPresentationDump)
                 }
                 .navigationSplitViewStyle(.prominentDetail)
                 .navigationBarHidden(true)
@@ -260,21 +279,7 @@ struct WorkspaceView: View {
                     }
             }
         }
-        .overlay {
-            if let dump = presentationDump {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(dump).font(.system(size: 11, design: .monospaced))
-                    Text("Tap to copy and close").font(.caption).foregroundStyle(.secondary)
-                }
-                .padding(12)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                .padding(16)
-                .onTapGesture {
-                    UIPasteboard.general.string = dump
-                    presentationDump = nil
-                }
-            }
-        }
+        .overlay { presentationDumpOverlay }
         // Session loss belongs to the hub, never to the focus coordinator. The
         // root copy is live only with no sheet up; each sheet carries its own.
         .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == nil, onOK: { hub.dismissTakenAlert() })
