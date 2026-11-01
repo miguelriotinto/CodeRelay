@@ -34,6 +34,9 @@ struct ActiveTerminalView: View {
     @Binding var columnVisibility: NavigationSplitViewVisibility
     /// Drives the blackout under the loading sheet (see `FocusCoordinatorModifiers`).
     @ObservedObject var loading: SessionLoadingSheetModel
+    /// Long-press on the sidebar button: dump presentation state (diagnostic
+    /// for the buttons going dead on the closed iPhone Duo).
+    var onDiagnose: () -> Void = {}
     @State private var showKeyBar = true
     @State private var isKeyboardVisible = false
     @State private var hasHardwareKeyboard = GCKeyboard.coalesced != nil
@@ -190,6 +193,7 @@ struct ActiveTerminalView: View {
         .safeAreaInset(edge: .top) {
             HStack(spacing: 6) {
                 ToolbarIconButton(icon: "sidebar.left") { toggleSidebar() }
+                .simultaneousGesture(LongPressGesture(minimumDuration: 0.8).onEnded { _ in onDiagnose() })
                 .accessibilityLabel("Toggle Sidebar")
                 ToolbarIconButton(icon: "server.rack") { hub.isShowingServerList = true }
                     .accessibilityLabel("Servers")

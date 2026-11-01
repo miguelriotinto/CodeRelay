@@ -58,6 +58,7 @@ public struct ServerSectionHeader: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(model.title)
                             .font(.system(.caption, design: .rounded, weight: .bold))
+                            .textCase(.uppercase)
                             .lineLimit(1)
                         if let subtitle = model.subtitle {
                             Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)

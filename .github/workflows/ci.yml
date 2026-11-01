@@ -109,22 +109,26 @@ jobs:
   ios-build:
     # Builds for the iOS *device* SDK (not simulator): the same build plan
     # TestFlight archives go through, so this is the signal we actually care
-    # about — "does what we ship compile?" Runs on the same Xcode 26 the
-    # committed pins were resolved with, so the workspace Package.resolved
-    # guard below is meaningful (a 6.1 toolchain prunes 6.2-tools packages).
+    # about — "does what we ship compile?" Runs on Xcode 27, the toolchain
+    # TestFlight archives are made with (iPhone Duo gates its layout on the
+    # iOS 27.1 SDK), so the workspace Package.resolved guard below checks the
+    # pins that archive actually resolves against.
     name: iOS app build (device SDK)
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 26
+      - name: Select newest Xcode 27
         run: |
-          # macos-26 ships Xcode 26.x, whose SDK the committed pins were
-          # resolved with. Pick the highest 26.x available.
-          XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
+          XCODE=$(ls -d /Applications/Xcode_27.*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
+
+      - name: Download the Metal toolchain
+        # Xcode 27 no longer bundles it; SwiftTerm's shader needs it.
+        run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -157,19 +161,22 @@ jobs:
     # guarded at runtime by `if #available(macOS 26.0, *)`). `#available` gates
     # execution, but the symbol must still exist in the *compile-time SDK* —
     # Xcode 16.4 (the newest on macos-15) predates it and fails with "cannot
-    # find 'ToolbarSpacer' in scope". Build against the macOS 26 SDK instead.
-    runs-on: macos-26
+    # find 'ToolbarSpacer' in scope". Built with Xcode 27, like its archives.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 26
+      - name: Select newest Xcode 27
         run: |
-          # macos-26 ships Xcode 26.x, whose SDK contains the macOS 26 toolbar
-          # APIs the app uses. Pick the highest 26.x available.
-          XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
+          XCODE=$(ls -d /Applications/Xcode_27.*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then echo "No Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
+
+      - name: Download the Metal toolchain
+        # Xcode 27 no longer bundles it; SwiftTerm's shader needs it.
+        run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Install XcodeGen
         run: brew install xcodegen

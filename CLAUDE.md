@@ -33,9 +33,10 @@ setting: built with the iOS 26 SDK the app runs centred on the open inner
 display with empty space around it and left of the status bar on the closed
 outer display; built with the iOS 27.1 SDK it fills both displays and the
 system lays container toolbars out vertically beside the right-edge status
-bar. The GitHub `macos-26` runner image carries only Xcode 26.x, so CI's
-compile checks run on 26 while the TestFlight archive is made locally; the
-`xcode-27` runner label (preview) has 27.1 if CI ever needs to match. Xcode 27
+bar. CI's iOS and macOS app builds run on the `xcode-27` runner label
+(preview) so they compile with the same toolchain as the TestFlight archive,
+which is still made locally; the `swift build + test` job stays on `macos-26`
+(Xcode 26), whose image carries only 26.x. Xcode 27
 no longer bundles the Metal toolchain SwiftTerm's shader needs:
 `xcodebuild -downloadComponent MetalToolchain` once per machine, and
 `xcodebuild -downloadPlatform iOS` for the iOS 27.1 simulator runtime
