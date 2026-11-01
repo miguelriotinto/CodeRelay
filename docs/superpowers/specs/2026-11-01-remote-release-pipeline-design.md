@@ -128,6 +128,10 @@ and a CI/local Xcode split that let a type-checker timeout through), and
    `bottle do` block (`root_url` pointing at the release download, arm64
    sha256) into the tap formula, and opens a commit to this repo's
    `Formula/clauderelay.rb` with the same content so the copies cannot drift.
+   **(decision 15, 2026-11-01)** The tap copy is rendered from the *tagged*
+   `Formula/clauderelay.rb` and `main`'s from `main`'s: `url`, `sha256` and the
+   bottle block are always identical; the rest differs only when `Formula/`
+   changed after the tag, so such a change is never reverted.
    The existing `sed` that assumes "no bottle block, so only one sha256" must
    be replaced — it would clobber the bottle checksum.
 3. **Signing stays ad hoc (decision 8).** No Developer ID, no notarization.
