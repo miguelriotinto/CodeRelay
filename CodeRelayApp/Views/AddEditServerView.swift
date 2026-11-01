@@ -26,6 +26,8 @@ struct AddEditServerView: View {
                 Section("Server") {
                     TextField("Server Name", text: $viewModel.name)
                         .textContentType(.name)
+                        // Server names display uppercased everywhere; type them that way too.
+                        .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
 
                     TextField("Host", text: $viewModel.host)
