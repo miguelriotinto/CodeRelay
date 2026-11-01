@@ -1,10 +1,15 @@
 class Clauderelay < Formula
   desc "Remote terminal relay server and CLI over WebSocket"
   homepage "https://github.com/miguelriotinto/CodeRelay"
-  url "https://github.com/miguelriotinto/CodeRelay/archive/refs/tags/v0.3.38.tar.gz"
-  sha256 "70f5403994249d8b605b8e5669105fe6729176ab12b45d5a158e3c888859e299"
+  url "https://github.com/miguelriotinto/CodeRelay/archive/refs/tags/v0.3.39.tar.gz"
+  sha256 "9bc3436c5b8de47227bfec4e10d0e874e58a7f160a1e5b18adc8a4ad998f6979"
   license "MIT"
   head "https://github.com/miguelriotinto/CodeRelay.git", branch: "main"
+
+  bottle do
+    root_url "https://github.com/miguelriotinto/CodeRelay/releases/download/v0.3.39"
+    sha256 cellar: "/opt/homebrew/Cellar", arm64_golden_gate: "ef7d38cf422eb3f4a1a8f91fe72f33fc6e29b2ad967cd379f2ea1d7ccc80c52e"
+  end
 
   depends_on xcode: ["15.0", :build]
   depends_on :macos
