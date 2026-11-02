@@ -160,6 +160,9 @@ jobs:
       # swift-actions/setup-swift has no Node 24 release.
       - name: Install Swift
         run: |
+          # swiftly exits 1 when the toolchain's system dependencies are missing.
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
           cd "$RUNNER_TEMP"
           curl -fsSLO "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
           tar zxf "swiftly-$(uname -m).tar.gz"
