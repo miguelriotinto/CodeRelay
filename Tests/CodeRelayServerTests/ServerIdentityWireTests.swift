@@ -36,15 +36,28 @@ final class ServerIdentityWireTests: SessionManagerTestCase {
         try await Task.sleep(for: .milliseconds(50))
     }
 
-    private func serverMessages(_ channel: NIOAsyncTestingChannel) async throws -> [ServerMessage] {
+    /// Collects outbound server messages until one matches `expected` or
+    /// `timeout` passes. A fixed sleep after `send` was not enough: on a starved
+    /// CI runner pairing (token mint + disk write) outlasted it, the test read an
+    /// empty outbox, and teardown removed the temp dir under the live handler.
+    private func serverMessages(
+        _ channel: NIOAsyncTestingChannel,
+        until expected: (ServerMessage) -> Bool,
+        timeout: Duration = .seconds(5)
+    ) async throws -> [ServerMessage] {
         var out: [ServerMessage] = []
-        while let frame = try await channel.readOutbound(as: WebSocketFrame.self) {
-            guard frame.opcode == .text else { continue }
-            var data = frame.unmaskedData
-            guard let bytes = data.readBytes(length: data.readableBytes) else { continue }
-            if case .server(let message) = try JSONDecoder().decode(MessageEnvelope.self, from: Data(bytes)) {
-                out.append(message)
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            while let frame = try await channel.readOutbound(as: WebSocketFrame.self) {
+                guard frame.opcode == .text else { continue }
+                var data = frame.unmaskedData
+                guard let bytes = data.readBytes(length: data.readableBytes) else { continue }
+                if case .server(let message) = try JSONDecoder().decode(MessageEnvelope.self, from: Data(bytes)) {
+                    out.append(message)
+                }
             }
+            if out.contains(where: expected) { return out }
+            try await Task.sleep(for: .milliseconds(20))
         }
         return out
     }
@@ -53,8 +66,9 @@ final class ServerIdentityWireTests: SessionManagerTestCase {
         let (plaintext, _) = try await tokenStore.create(label: "t")
         let channel = try await makeChannel()
         try await send(#"{"type":"auth_request","payload":{"token":"\#(plaintext)","protocolVersion":3}}"#, on: channel)
-        let messages = try await serverMessages(channel)
-        guard let auth = messages.first(where: { if case .authSuccess = $0 { return true } else { return false } }),
+        let isAuth: (ServerMessage) -> Bool = { if case .authSuccess = $0 { return true } else { return false } }
+        let messages = try await serverMessages(channel, until: isAuth)
+        guard let auth = messages.first(where: isAuth),
               case .authSuccess(let version, _, _, let server) = auth else {
             return XCTFail("expected auth_success, got \(messages)")
         }
@@ -67,8 +81,9 @@ final class ServerIdentityWireTests: SessionManagerTestCase {
         let grant = await store.mint(label: nil)
         let channel = try await makeChannel(pairingStore: store)
         try await send(#"{"type":"pair_request","payload":{"code":"\#(grant.code)","deviceName":"Phone","platform":"ios"}}"#, on: channel)
-        let messages = try await serverMessages(channel)
-        guard let paired = messages.first(where: { if case .pairSuccess = $0 { return true } else { return false } }),
+        let isPaired: (ServerMessage) -> Bool = { if case .pairSuccess = $0 { return true } else { return false } }
+        let messages = try await serverMessages(channel, until: isPaired)
+        guard let paired = messages.first(where: isPaired),
               case .pairSuccess(_, _, _, let server) = paired else {
             return XCTFail("expected pair_success, got \(messages)")
         }
