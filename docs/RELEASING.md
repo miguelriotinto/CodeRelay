@@ -74,7 +74,7 @@ the AUR account's *SSH Public Key* field, which owns both `coderelay-bin` and
 `coderelay-server-bin`. Check it with
 `ssh -i ~/.ssh/aur -o IdentitiesOnly=yes aur@aur.archlinux.org help`.
 `AUR_USERNAME` is only the commit author. Without `AUR_SSH_KEY` the `aur` legs
-skip and pass — nothing was published before v0.3.40 for exactly that reason —
+skip and pass — that is why nothing reached the AUR through v0.3.39 —
 so a green `aur` job is not proof; `https://aur.archlinux.org/packages/<name>` is.
 
 The App Store Connect key "GitHub Actions" is a **Team Key** with **Admin**
