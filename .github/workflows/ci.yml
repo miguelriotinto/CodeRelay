@@ -75,8 +75,8 @@ jobs:
     # server against the SAME test suite the macOS job runs, plus the Linux
     # seam tests.
     name: linux server build + test
-    # Pinned: ubuntu-latest became 26.04 in Oct 2026 and swift-actions/setup-swift
-    # rejects it ("Version 26.04 of Ubuntu is not supported").
+    # Pinned: ubuntu-latest became 26.04 in Oct 2026, and Swift 6.2 has no
+    # Ubuntu 26.04 toolchain.
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -87,10 +87,17 @@ jobs:
       # swift-tools-version up to 6.2, which this toolchain can load. The diff
       # step below enforces the actual invariant: no job may rewrite the
       # committed Package.resolved.
+      # swiftly is swift.org's installer and checks the toolchain signature;
+      # swift-actions/setup-swift has no Node 24 release.
       - name: Install Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '6.2'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+          tar zxf "swiftly-$(uname -m).tar.gz"
+          ./swiftly init --assume-yes --quiet-shell-followup --skip-install
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --assume-yes --use 6.2
+          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
 
       # forkpty(3) lives in libutil; wl-clipboard/xclip are runtime optionals
       # the clipboard tests inject around, so they are not needed here.

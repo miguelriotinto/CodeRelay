@@ -26,13 +26,13 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           # The action's default is `tools platform-tools`, and `tools` no longer
           # exists in Google's repo — the step fails with "Failed to find package
@@ -40,7 +40,7 @@ jobs:
           packages: platform-tools
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: Run JVM unit tests (all modules — pure-JVM `test` + Android-lib `testDebugUnitTest`)
         # Aggregate tasks run unit tests across EVERY module that defines them, so
