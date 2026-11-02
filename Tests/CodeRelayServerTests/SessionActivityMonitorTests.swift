@@ -591,16 +591,19 @@ final class SessionActivityMonitorTests: XCTestCase {
             func snapshot() -> [ActivityState] { lock.lock(); defer { lock.unlock() }; return values }
         }
         let recorder = StateRecorder()
-        let monitor = makeMonitorStateOnly(silenceThreshold: 0.1) { state in
+        // The threshold is far above the pre-cancel sleep: with 100 ms against
+        // a 50 ms sleep, a starved CI runner overslept the threshold and the
+        // timer fired legitimately before cancel() (the test then took 4.5 s).
+        let monitor = makeMonitorStateOnly(silenceThreshold: 1.0) { state in
             recorder.append(state)
         }
 
-        // Arm the timer, give it half the threshold, cancel before it fires,
+        // Arm the timer, let the Task start, cancel well before it fires,
         // then wait well past the threshold.
         monitor.processOutput(output("arm timer"))
         try? await Task.sleep(for: .milliseconds(50))
         monitor.cancel()
-        try? await Task.sleep(for: .milliseconds(200))
+        try? await Task.sleep(for: .milliseconds(1500))
 
         XCTAssertFalse(recorder.snapshot().contains(.idle),
             "Cancelled silence Task must not fire a late .idle transition")
