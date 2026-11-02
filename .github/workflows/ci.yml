@@ -75,8 +75,8 @@ jobs:
     # server against the SAME test suite the macOS job runs, plus the Linux
     # seam tests.
     name: linux server build + test
-    # Pinned: ubuntu-latest became 26.04 in Oct 2026, and Swift 6.2 has no
-    # Ubuntu 26.04 toolchain.
+    # Pinned to 24.04, not ubuntu-latest (26.04): the release tarball's glibc
+    # floor is the build host's, so this keeps it running on 24.04 hosts.
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -84,7 +84,8 @@ jobs:
 
       # Pinned (not floating like the macOS job, which takes whatever Xcode the
       # image ships) so the Linux resolve is reproducible; the pins declare
-      # swift-tools-version up to 6.2, which this toolchain can load. The diff
+      # swift-tools-version up to 6.2, which this toolchain can load. 6.4
+      # matches the Xcode 27.1 toolchain that builds the macOS bottle. The diff
       # step below enforces the actual invariant: no job may rewrite the
       # committed Package.resolved.
       # swiftly is swift.org's installer and checks the toolchain signature;
@@ -99,7 +100,7 @@ jobs:
           tar zxf "swiftly-$(uname -m).tar.gz"
           ./swiftly init --assume-yes --quiet-shell-followup --skip-install
           . "$HOME/.local/share/swiftly/env.sh"
-          swiftly install --assume-yes --use 6.2
+          swiftly install --assume-yes --use 6.4
           echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
 
       # forkpty(3) lives in libutil; wl-clipboard/xclip are runtime optionals
