@@ -16,32 +16,39 @@ concurrency:
 jobs:
   swift:
     name: swift build + test + lint
-    runs-on: macos-26
+    # Same toolchain that builds the shipped macOS bottle (release.yml).
+    runs-on: xcode-27
     # A healthy job finishes in a few minutes. Cap it so a hung test fails fast
     # (~15 min) instead of stalling toward GitHub's 6h default.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
-      - name: Select newest Xcode 26
+      - name: Select newest release Xcode 27
         run: |
-          # Runs the newest Xcode 26.x present on the runner image. The float is
-          # deliberate: image minors are retired without notice, so pinning one
-          # would trade a toolchain surprise for a "no such Xcode" surprise.
-          # Several pins declare swift-tools-version 6.2, so a 26.x toolchain is
-          # the floor for loading their manifests at all.
-          XCODE=$(ls -d /Applications/Xcode_26.*.app 2>/dev/null | sort -V | tail -1)
+          # Release builds only, symlinks resolved (Xcode_27.2.app is the RC); same
+          # rule as apple-build.yml and the bottle job so CI tests with what ships.
+          XCODE=$(for app in /Applications/Xcode_27.*.app; do
+                    real=$(basename "$(realpath "$app")")
+                    case "$real" in (*Release_Candidate*|*[Bb]eta*) continue ;; esac
+                    echo "/Applications/$real"
+                  done | sort -uV | tail -1)
+          if [ -z "$XCODE" ]; then echo "No release Xcode 27 on this runner:"; ls -d /Applications/Xcode*.app; exit 1; fi
           echo "Using: $XCODE"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
+
+      - name: Download the Metal toolchain
+        # Xcode 27 no longer bundles it; SwiftTerm's shader needs it.
+        run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Cache SPM artifacts
         uses: actions/cache@v5
         with:
           path: .build
-          key: spm-${{ runner.os }}-xcode26-${{ hashFiles('Package.resolved') }}
+          key: spm-${{ runner.os }}-xcode27-${{ hashFiles('Package.resolved') }}
           restore-keys: |
-            spm-${{ runner.os }}-xcode26-
+            spm-${{ runner.os }}-xcode27-
 
       - name: Swift version
         run: swift --version
