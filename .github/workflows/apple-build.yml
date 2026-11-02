@@ -196,6 +196,25 @@ jobs:
           git tag "$TAG_PREFIX-$BUILD" "$GITHUB_SHA"
           git push origin "$TAG_PREFIX-$BUILD"
 
+      - name: Collect the distribution logs
+        # `xcodebuild -exportArchive` reports only a one-line summary ("The data
+        # couldn't be read because it isn't in the correct format"); the cause
+        # is in the .xcdistributionlogs bundle it writes under $TMPDIR.
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/distlogs"
+          find "${TMPDIR:-/tmp}" -maxdepth 2 -name '*.xcdistributionlogs' -exec cp -R {} "$RUNNER_TEMP/distlogs/" \; 2>/dev/null || true
+          ls "$RUNNER_TEMP/distlogs"
+
+      - name: Upload the distribution logs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ inputs.platform }}-distribution-logs
+          path: ${{ runner.temp }}/distlogs
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Remove the App Store Connect key
         if: always()
         run: rm -f "$ASC_KEY_PATH"
