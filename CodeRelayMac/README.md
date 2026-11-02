@@ -7,7 +7,7 @@ Native macOS terminal client for CodeRelay. Provides persistent terminal session
 - macOS 14 (Sonoma) or later
 - Xcode 15 or later
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
-- A running CodeRelay server — `brew install miguelriotinto/clauderelay/clauderelay`
+- A running CodeRelay server — `brew install miguelriotinto/coderelay/coderelay`
 
 ## Setup
 

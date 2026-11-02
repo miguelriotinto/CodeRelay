@@ -212,6 +212,10 @@ struct HookInstallCommand: AsyncParsableCommand {
             .deletingLastPathComponent()
         let candidates = [
             cliDir.appendingPathComponent("claude-relay-state-hook.sh"),
+            cliDir.appendingPathComponent("../share/coderelay/claude-relay-state-hook.sh"),
+            URL(fileURLWithPath: "/opt/homebrew/share/coderelay/claude-relay-state-hook.sh"),
+            URL(fileURLWithPath: "/usr/local/share/coderelay/claude-relay-state-hook.sh"),
+            // Installs from before the formula rename (clauderelay → coderelay).
             cliDir.appendingPathComponent("../share/clauderelay/claude-relay-state-hook.sh"),
             URL(fileURLWithPath: "/opt/homebrew/share/clauderelay/claude-relay-state-hook.sh"),
             URL(fileURLWithPath: "/usr/local/share/clauderelay/claude-relay-state-hook.sh"),

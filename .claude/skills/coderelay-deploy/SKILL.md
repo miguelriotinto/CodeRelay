@@ -82,22 +82,22 @@ VERIFY:
 - `gh release view vX.Y.Z --json assets --jq '.assets[].name'` lists
   `coderelay-vX.Y.Z-linux-x86_64.tar.gz`, `claude-relay-vX.Y.Z-linux-x86_64.tar.gz`,
   `coderelay-vX.Y.Z-android.apk`, `checksums.txt` and
-  `clauderelay-X.Y.Z.<tag>.bottle.tar.gz` (single dash before the version).
+  `coderelay-X.Y.Z.<tag>.bottle.tar.gz` (single dash before the version).
 - `gh release view vX.Y.Z` prints the per-platform sections.
 - Android: `gh release download vX.Y.Z -p '*.apk' -D /tmp/cr-apk` and
   `aapt2 dump badging` shows the expected `versionCode`/`versionName`; byte
   size is not proof. The run log's `apksigner verify --print-certs` must not
   show `CN=Android Debug`.
 - The tap carries the bottle:
-  `gh api repos/miguelriotinto/homebrew-coderelay/contents/Formula/clauderelay.rb --jq .content | base64 -d | grep -A3 'bottle do'`
+  `gh api repos/miguelriotinto/homebrew-coderelay/contents/Formula/coderelay.rb --jq .content | base64 -d | grep -A3 'bottle do'`
   shows `root_url …/releases/download/vX.Y.Z`; after `git pull`,
-  `Formula/clauderelay.rb` on `main` carries the same `url`, `sha256` and
+  `Formula/coderelay.rb` on `main` carries the same `url`, `sha256` and
   `bottle do` block (the rest can differ only if `Formula/` changed after the tag).
 
 ## 4. Mac server (after a tag release)
 
 ```bash
-brew update && brew upgrade clauderelay && brew services restart clauderelay
+brew update && brew upgrade coderelay && brew services restart coderelay
 ```
 
 `brew upgrade` must pour the bottle (no `swift build` in its output). Never
@@ -106,7 +106,7 @@ run the server binary directly or `pkill` it.
 VERIFY:
 - `claude-relay status` reports the new version; `curl -s http://127.0.0.1:9100/health` is ok.
 - `ls -l /opt/homebrew/bin/claude-relay-server` points at
-  `Cellar/clauderelay/X.Y.Z/…` — a `HEAD-<sha>` path means the Mac is still on
+  `Cellar/coderelay/X.Y.Z/…` — a `HEAD-<sha>` path means the Mac is still on
   a HEAD install (see `docs/RELEASING.md`, one-time cut-over).
 - Full Disk Access may need re-granting after the upgrade (ad-hoc signed).
 

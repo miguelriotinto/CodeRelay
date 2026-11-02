@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(HERE, ".."))
 
 from formula import Bottle, render  # noqa: E402
 
-with open(os.path.join(HERE, "..", "..", "..", "Formula", "clauderelay.rb")) as f:
+with open(os.path.join(HERE, "..", "..", "..", "Formula", "coderelay.rb")) as f:
     FIXTURE = f.read()
 
 REPO = "miguelriotinto/CodeRelay"

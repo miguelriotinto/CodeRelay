@@ -44,9 +44,9 @@ final class ServiceManagerDetectorTests: XCTestCase {
 
     func testHomebrewOwnerYieldsBrewCommands() {
         let d = detector(brew: true, agent: false)
-        XCTAssertEqual(d.startCommand(), "brew services start clauderelay")
-        XCTAssertEqual(d.stopCommand(), "brew services stop clauderelay")
-        XCTAssertEqual(d.restartCommand(), "brew services restart clauderelay")
+        XCTAssertEqual(d.startCommand(), "brew services start coderelay")
+        XCTAssertEqual(d.stopCommand(), "brew services stop coderelay")
+        XCTAssertEqual(d.restartCommand(), "brew services restart coderelay")
     }
 
     func testLaunchAgentOwnerYieldsCLICommands() {
@@ -77,7 +77,7 @@ final class ServiceManagerDetectorTests: XCTestCase {
     func testLoadIsNudgedUnderHomebrewToAvoidASecondManager() {
         let nudge = detector(brew: true, agent: false).nudge(for: .load)
         XCTAssertNotNil(nudge)
-        XCTAssertTrue(nudge!.contains("brew services start clauderelay"), nudge!)
+        XCTAssertTrue(nudge!.contains("brew services start coderelay"), nudge!)
     }
 
     func testLoadIsNotNudgedOnAFreshMachine() {
@@ -151,5 +151,42 @@ final class ServiceManagerDetectorTests: XCTestCase {
             binaryPath: "/opt/homebrew/bin/claude-relay"
         )
         XCTAssertEqual(d.owner, .both)
+    }
+
+    // MARK: - Formula rename (clauderelay → coderelay)
+
+    func testRenamedFormulaLabelIsRecognisedFirst() {
+        XCTAssertEqual(ServiceManagerDetector.homebrewPlistNames.first, "sh.brew.coderelay.plist")
+        XCTAssertTrue(ServiceManagerDetector.homebrewPlistNames.contains("sh.brew.clauderelay.plist"))
+    }
+
+    func testRenamedFormulaLabelYieldsCoderelayCommands() {
+        let d = ServiceManagerDetector(
+            homebrewPlistExists: true,
+            homebrewPlistName: "sh.brew.coderelay.plist",
+            launchAgentPlistExists: false,
+            binaryPath: "/opt/homebrew/bin/claude-relay"
+        )
+        XCTAssertEqual(d.owner, .homebrew)
+        XCTAssertEqual(d.restartCommand(), "brew services restart coderelay")
+        XCTAssertTrue(d.nudge(for: .stop)!.contains("brew services stop coderelay"))
+    }
+
+    func testUnmigratedFormulaLabelKeepsItsOwnName() {
+        // A Mac that has not upgraded since the rename still runs the service
+        // under the old formula; `brew services … coderelay` would not find it.
+        let d = ServiceManagerDetector(
+            homebrewPlistExists: true,
+            homebrewPlistName: "sh.brew.clauderelay.plist",
+            launchAgentPlistExists: false,
+            binaryPath: "/opt/homebrew/bin/claude-relay"
+        )
+        XCTAssertTrue(d.nudge(for: .restart)!.contains("brew services restart clauderelay"))
+        XCTAssertFalse(d.nudge(for: .restart)!.contains("coderelay"))
+    }
+
+    func testFreshHomebrewMachineIsPointedAtTheNewFormula() {
+        let nudge = detector(brew: false, agent: false).nudge(for: .start)
+        XCTAssertTrue(nudge!.contains("brew services start coderelay"), nudge!)
     }
 }

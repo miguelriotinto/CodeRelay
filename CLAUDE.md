@@ -57,7 +57,7 @@ under the camera. Every other view honours the inset.
 **Nothing that ships is built locally** — `docs/RELEASING.md` has the full map, the secrets and the break-glass manual upload. Use `/coderelay-deploy [ios|android|mac|server|all]` to start the GitHub Actions runs and verify them; `/coderelay-health` for a read-only "is everything published and running?" check. Those skills own the publish targets and the mandatory verification steps — never claim something is published without running them.
 
 - **Apple apps:** `apple-release.yml` (`workflow_dispatch`, `platform: ios|macos|both`) archives on `xcode-27` and uploads to TestFlight, gated on a green `CI` run covering the commit. The build number is App Store Connect's highest + 1 — never bump `CURRENT_PROJECT_VERSION` in `project.yml` for a release (it is only a floor) — and each upload is tagged `ios-build-<N>` / `mac-build-<N>`.
-- **Mac server:** a CI-built arm64 Homebrew bottle, attached to the `vX.Y.Z` release; the `homebrew` job writes the bottle into the tap and into `Formula/clauderelay.rb` on `main` — do not hand-edit its url/sha256/bottle.
+- **Mac server:** a CI-built arm64 Homebrew bottle, attached to the `vX.Y.Z` release; the `homebrew` job writes the bottle into the tap and into `Formula/coderelay.rb` on `main` — do not hand-edit its url/sha256/bottle.
 
 - **The user installs APKs by downloading from GitHub Releases on the phone — the Android device is NOT adb-connected to this machine.** Never assume `adb install` reaches the user's device.
 - **A `vX.Y.Z` tag is the release.** `release.yml` builds and publishes the Linux client tarball, the Linux server + CLI tarball and the Android APK together, with a release body sectioned per platform, then builds the macOS server bottle and bumps the Homebrew tap and the AUR. The APK is only signed with the project key when the `ANDROID_KEYSTORE_*` repo secrets exist (see `CodeRelayAndroid/RELEASE.md`); until then it is debug-signed and the body flags it.
@@ -493,8 +493,10 @@ received, so there is exactly one path to an authenticated connection.
 
 ### Service manager awareness
 
-Two launchd managers can own the server: `sh.brew.clauderelay` (from
-`brew services`; legacy `homebrew.mxcl.clauderelay` also recognised) and
+Two launchd managers can own the server: `sh.brew.coderelay` (from
+`brew services`; `sh.brew.clauderelay` and legacy `homebrew.mxcl.clauderelay`,
+from before the formula rename, also recognised — the nudges name whichever
+formula's plist is installed) and
 `com.claude.relay` (from `claude-relay load`). They must never both exist — both
 would bind `wsPort`. `ServiceManagerDetector` resolves the owner and every
 service command nudges with the correct command instead of driving the wrong

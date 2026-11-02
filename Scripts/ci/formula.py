@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point Formula/clauderelay.rb (or the tap's copy) at a release tag.
+"""Point Formula/coderelay.rb (or the tap's copy) at a release tag.
 
   formula.py <formula.rb> --repo R --tag T --source-sha S [--bottle-json F]
 

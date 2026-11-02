@@ -19,7 +19,7 @@ enum ServiceVerb: String {
 ///
 /// | Manager             | Label / plist                                          |
 /// | ------------------- | ------------------------------------------------------ |
-/// | `brew services`     | `sh.brew.clauderelay` (legacy: `homebrew.mxcl.clauderelay`) |
+/// | `brew services`     | `sh.brew.coderelay` (before the rename: `sh.brew.clauderelay`, `homebrew.mxcl.clauderelay`) |
 /// | `claude-relay load` | `com.claude.relay`                                     |
 ///
 /// Every service command used to hardcode `com.claude.relay`, so on a Homebrew
@@ -28,12 +28,15 @@ enum ServiceVerb: String {
 /// `status`/`health` were unaffected because they talk to the admin HTTP API.
 struct ServiceManagerDetector {
 
-    // Homebrew renamed its label prefix from homebrew.mxcl. to sh.brew.
-    // We recognise both for compatibility.
+    // The formula was renamed clauderelay → coderelay, and Homebrew renamed its
+    // label prefix from homebrew.mxcl. to sh.brew. A Mac that has not upgraded
+    // since still runs the service under an old label, so all are recognised.
     static let homebrewPlistNames = [
-        "sh.brew.clauderelay.plist",          // current
-        "homebrew.mxcl.clauderelay.plist"     // legacy
+        "sh.brew.coderelay.plist",            // current
+        "sh.brew.clauderelay.plist",          // before the formula rename
+        "homebrew.mxcl.clauderelay.plist"     // legacy label prefix
     ]
+    static let formulaName = "coderelay"
     static let launchAgentPlistName = "com.claude.relay.plist"
 
     private let homebrewPlistExists: Bool
@@ -72,6 +75,16 @@ struct ServiceManagerDetector {
         )
     }
 
+    /// The formula `brew services` must be given: the one whose plist was found
+    /// (an unmigrated install answers only to its old name), else the current one.
+    var formula: String {
+        guard let plist = homebrewPlistName else { return Self.formulaName }
+        return plist
+            .replacingOccurrences(of: ".plist", with: "")
+            .replacingOccurrences(of: "sh.brew.", with: "")
+            .replacingOccurrences(of: "homebrew.mxcl.", with: "")
+    }
+
     var owner: ServiceOwner {
         switch (homebrewPlistExists, launchAgentPlistExists) {
         case (true, true):   return .both
@@ -93,7 +106,7 @@ struct ServiceManagerDetector {
 
     private func command(for verb: ServiceVerb) -> String? {
         switch owner {
-        case .homebrew, .both: return "brew services \(verb.rawValue) clauderelay"
+        case .homebrew, .both: return "brew services \(verb.rawValue) \(formula)"
         case .launchAgent:     return "claude-relay \(verb.rawValue)"
         case .none:            return nil
         }
@@ -120,34 +133,34 @@ struct ServiceManagerDetector {
                 return nil  // Let it proceed to remove the CLI-installed manager.
             }
             return """
-            Two service managers are installed for clauderelay:
+            Two service managers are installed for \(formula):
               • \(brewPlist) (Homebrew)
               • \(Self.launchAgentPlistName) (claude-relay load)
             Both will try to bind the WebSocket port. Remove one before continuing:
-              brew services stop clauderelay     # keep the CLI-managed agent
+              brew services stop \(formula)     # keep the CLI-managed agent
               claude-relay unload                # keep the Homebrew-managed one
             """
 
         case .homebrew:
             if verb == .load {
                 return """
-                clauderelay is managed by Homebrew services.
+                \(formula) is managed by Homebrew services.
                 Running `load` would install a second launchd agent competing for the same port.
                 Use this instead:
-                  brew services start clauderelay
+                  brew services start \(formula)
                 Pass --force to install the CLI-managed agent anyway.
                 """
             }
             if verb == .unload {
                 return """
-                clauderelay is managed by Homebrew services; `unload` only removes a
+                \(formula) is managed by Homebrew services; `unload` only removes a
                 CLI-installed agent, and there isn't one. To stop the running service:
-                  brew services stop clauderelay
+                  brew services stop \(formula)
                 """
             }
             return """
-            clauderelay is managed by Homebrew services. Use:
-              brew services \(verb.rawValue) clauderelay
+            \(formula) is managed by Homebrew services. Use:
+              brew services \(verb.rawValue) \(formula)
             """
 
         case .launchAgent:
@@ -161,7 +174,7 @@ struct ServiceManagerDetector {
                 return "No service is installed — nothing to unload."
             case .start, .stop, .restart:
                 let installer = installedViaHomebrew
-                    ? "  brew services start clauderelay"
+                    ? "  brew services start \(formula)"
                     : "  claude-relay setup"
                 return """
                 No service is installed yet, so there is nothing to \(verb.rawValue).

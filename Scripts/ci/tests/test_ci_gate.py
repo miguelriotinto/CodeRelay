@@ -21,10 +21,10 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(find_green_ancestor(chain, {"55"}, limit=50))
 
     def test_android_and_formula_only_is_covered(self):
-        self.assertIsNone(uncovered_path(["CodeRelayAndroid/app/x.kt", "Formula/clauderelay.rb"]))
+        self.assertIsNone(uncovered_path(["CodeRelayAndroid/app/x.kt", "Formula/coderelay.rb"]))
 
     def test_app_path_breaks_coverage(self):
-        self.assertEqual(uncovered_path(["Formula/clauderelay.rb", "CodeRelayApp/Views/A.swift"]),
+        self.assertEqual(uncovered_path(["Formula/coderelay.rb", "CodeRelayApp/Views/A.swift"]),
                          "CodeRelayApp/Views/A.swift")
 
     def test_prefix_is_a_directory_not_a_string_prefix(self):

@@ -10,7 +10,7 @@
 # (swift build --static-swift-stdlib), so the package depends only on the small
 # CLI tools the server shells out to.
 #
-# The macOS distribution (Homebrew: miguelriotinto/clauderelay/clauderelay) is
+# The macOS distribution (Homebrew: miguelriotinto/coderelay/coderelay) is
 # unaffected; this is the Linux-only counterpart.
 
 pkgname=coderelay-server-bin
@@ -67,9 +67,9 @@ package() {
     "$pkgdir/usr/lib/systemd/user/claude-relay.service"
 
   # State hook, located by `claude-relay hook install` via its
-  # ../share/clauderelay candidate relative to /usr/bin.
+  # ../share/coderelay candidate relative to /usr/bin.
   install -Dm755 claude-relay-state-hook.sh \
-    "$pkgdir/usr/share/clauderelay/claude-relay-state-hook.sh"
+    "$pkgdir/usr/share/coderelay/claude-relay-state-hook.sh"
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
