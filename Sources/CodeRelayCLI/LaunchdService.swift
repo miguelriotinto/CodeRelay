@@ -123,7 +123,7 @@ struct LaunchdService: ServicePlatform {
     func setupStartPlan() -> SetupStartPlan {
         switch detector.owner {
         case .homebrew:
-            return .shell(command: "brew services start clauderelay",
+            return .shell(command: detector.startCommand() ?? "brew services start \(ServiceManagerDetector.formulaName)",
                           progress: "Starting via Homebrew services…")
         case .launchAgent:
             return .start(progress: "Starting the launchd agent…")
@@ -135,9 +135,9 @@ struct LaunchdService: ServicePlatform {
             // installing a CLI-managed agent that will conflict later.
             if detector.installedViaHomebrew {
                 return .fail(message: """
-                    clauderelay was installed via Homebrew.
+                    \(ServiceManagerDetector.formulaName) was installed via Homebrew.
                     Start the service with:
-                      brew services start clauderelay
+                      brew services start \(ServiceManagerDetector.formulaName)
                     """)
             }
             return .load(progress: "Installing the launchd agent…")

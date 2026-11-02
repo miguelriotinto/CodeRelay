@@ -15,7 +15,7 @@ verifies them (`/coderelay-deploy`); it does not build what ships. Design:
 | Linux client | `release.yml` | `vX.Y.Z` tag | GitHub Release; AUR `coderelay-bin` |
 | Android client | `release.yml` | `vX.Y.Z` tag | GitHub Release (APK, project-key signed) |
 
-Install the Mac server with `brew install miguelriotinto/coderelay/clauderelay`.
+Install the Mac server with `brew install miguelriotinto/coderelay/coderelay`.
 
 ### Apple runs
 
@@ -43,9 +43,9 @@ Install the Mac server with `brew install miguelriotinto/coderelay/clauderelay`.
 ### Tag releases
 
 The `release` job publishes the Linux tarballs and APK without waiting for
-the bottle. `bottle` then uploads `clauderelay-X.Y.Z.<tag>.bottle.tar.gz`, and
+the bottle. `bottle` then uploads `coderelay-X.Y.Z.<tag>.bottle.tar.gz`, and
 only after that does `homebrew` write url, sha256 and the `bottle do` block
-into the tap and into `main`'s `Formula/clauderelay.rb`
+into the tap and into `main`'s `Formula/coderelay.rb`
 (`Scripts/ci/formula.py`). A bottle failure leaves the release intact and the
 tap untouched: re-run the `bottle` job, then `homebrew`.
 
@@ -77,12 +77,19 @@ signing on a fresh runner creates its certificates and profiles through it.
 
 ## One-time cut-over (Mac server)
 
-Leaving the HEAD install, after the first bottled release:
+Leaving the HEAD install of the old `clauderelay` formula, once v0.3.40 (the
+first release under the `coderelay` name) is out:
 
 ```bash
-brew uninstall clauderelay && brew install miguelriotinto/coderelay/clauderelay
-ls -l /opt/homebrew/bin/claude-relay-server   # → Cellar/clauderelay/X.Y.Z, not HEAD-<sha>
+brew update
+brew services stop clauderelay
+brew uninstall clauderelay && brew install miguelriotinto/coderelay/coderelay
+brew services start coderelay
+ls -l /opt/homebrew/bin/claude-relay-server   # → Cellar/coderelay/X.Y.Z, not HEAD-<sha>
 ```
+
+A bottled `clauderelay` install needs none of this: the tap's
+`formula_renames.json` makes `brew upgrade` migrate it to `coderelay`.
 
 Then re-grant Full Disk Access. From then on the Mac server updates only on
 `vX.Y.Z` tags. On the phone, uninstall the Android app once before installing

@@ -46,7 +46,7 @@ The macOS server/CLI and the two Apple clients are built from one Swift package;
 ### Homebrew (macOS)
 
 ```bash
-brew install miguelriotinto/clauderelay/clauderelay
+brew install miguelriotinto/coderelay/coderelay
 ```
 
 ### Arch Linux / Omarchy
@@ -103,7 +103,7 @@ Binaries will be in `.build/release/`:
 ### 1. Install and pair
 
 ```bash
-brew install miguelriotinto/clauderelay/clauderelay
+brew install miguelriotinto/coderelay/coderelay
 claude-relay setup
 ```
 
@@ -388,7 +388,7 @@ CodeRelay/
 │   └── CodeRelayClientTests/ # Auth, Connection, SessionNaming, TerminalViewModel, LRU cache, RecoveryController
 ├── CodeRelayAppTests/        # iOS app unit tests (AppSettings, terminal swipe scroll)
 ├── Formula/
-│   └── clauderelay.rb          # Homebrew formula
+│   └── coderelay.rb            # Homebrew formula
 ├── docs/                       # Design specs and implementation plans
 └── Package.swift
 ```
@@ -529,5 +529,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Links
 
 - **GitHub**: https://github.com/miguelriotinto/CodeRelay
-- **Homebrew Tap**: https://github.com/miguelriotinto/homebrew-clauderelay
+- **Homebrew Tap**: https://github.com/miguelriotinto/homebrew-coderelay
 - **Issues**: https://github.com/miguelriotinto/CodeRelay/issues

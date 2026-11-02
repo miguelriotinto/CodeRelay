@@ -1,4 +1,4 @@
-class Clauderelay < Formula
+class Coderelay < Formula
   desc "Remote terminal relay server and CLI over WebSocket"
   homepage "https://github.com/miguelriotinto/CodeRelay"
   url "https://github.com/miguelriotinto/CodeRelay/archive/refs/tags/v0.3.39.tar.gz"
@@ -57,7 +57,7 @@ class Clauderelay < Formula
   def caveats
     <<~EOS
       To start the relay server as a background service:
-        brew services start clauderelay
+        brew services start coderelay
 
       Create an auth token:
         claude-relay token create --label "my-device"

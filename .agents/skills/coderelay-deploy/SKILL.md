@@ -29,7 +29,7 @@ since their last release tag and confirm the skip list with the user.
 - **Android**: bump `versionCode` and `versionName` (`0.3-mNN` milestone
   scheme) in `CodeRelayAndroid/app/build.gradle.kts`, including the
   "M-NN version." comment above them.
-- **Server**: bump the version constant + `Formula/clauderelay.rb`.
+- **Server**: bump the version constant + `Formula/coderelay.rb`.
 - Commit: `chore(release): <summary of bumps>` with the standard trailer.
 
 ## 3. Build & publish
@@ -44,8 +44,8 @@ since their last release tag and confirm the skip list with the user.
   `Android client test build — <versionName> (<one-line summary>)` and notes
   following the m20/m21 format (What's new, server-compat warning if protocol
   changed, Install section).
-- **Server**: push to main, `brew upgrade clauderelay && brew services restart
-  clauderelay` (never run the server binary directly or pkill).
+- **Server**: push to main, `brew upgrade coderelay && brew services restart
+  coderelay` (never run the server binary directly or pkill).
 
 ## 4. VERIFY — mandatory
 

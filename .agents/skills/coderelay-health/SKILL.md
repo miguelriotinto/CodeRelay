@@ -13,7 +13,7 @@ skill — report and let the user decide.
 ### Server
 1. `claude-relay status` (or `swift run claude-relay status`) → running? version? uptime? sessions?
 2. `curl -s http://127.0.0.1:9100/health` → ok?
-3. Version coherence: status version vs `Formula/clauderelay.rb` vs the version
+3. Version coherence: status version vs `Formula/coderelay.rb` vs the version
    constant in `Sources/`. The Homebrew Cellar symlink
    (`ls -l /opt/homebrew/bin/claude-relay-server`) encodes the built commit —
    compare to the latest release commit.

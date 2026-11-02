@@ -251,7 +251,7 @@ are the contracts the Linux code satisfies; the shared code calls them by these 
 | launchd plist + `launchctl` | systemd user unit + `systemctl --user` | `ServiceCommands`, `SystemdService` (AD-4) |
 | `ServiceManagerDetector` (Homebrew vs LaunchAgent) | `SystemdUnitDetector` (packaged vs user unit) | `ServiceCommands`, `SetupCommand` |
 | `scutil` / `ipconfig getifaddr` | `getifaddrs` / `gethostname` / Avahi check | `HostAddressProbe` (AD-9) |
-| `/opt/homebrew`, `/usr/local` search paths | `/usr/bin`, `/usr/share/clauderelay` | `findServerBinary`, `locateBundledScript` |
+| `/opt/homebrew`, `/usr/local` search paths | `/usr/bin`, `/usr/share/coderelay` | `findServerBinary`, `locateBundledScript` |
 | `Bundle.module` → `.bundle` beside the binary | `Bundle.module` → `CodeRelay_CodeRelayServer.resources/` beside the binary | PKGBUILD installs it |
 | `posix_spawnattr_t?` (opaque) in tests | `posix_spawnattr_t()` (struct) under `os(Linux)` | `PTYTerminateProcessGroupTests` |
 
@@ -422,8 +422,8 @@ the flag is harmless where a newer toolchain adds it itself). The link-time
 - `CodeRelay_CodeRelayServer.resources/` — the agent manifests `Bundle.module`
   resolves **next to the executable**; without it the server fatal-errors on the first
   session create (the Homebrew formula carries the same warning for `.bundle`).
-- `claude-relay-state-hook.sh` (→ `/usr/share/clauderelay/`, which
-  `locateBundledScript`'s `../share/clauderelay` candidate finds from `/usr/bin`).
+- `claude-relay-state-hook.sh` (→ `/usr/share/coderelay/`, which
+  `locateBundledScript`'s `../share/coderelay` candidate finds from `/usr/bin`).
 - `claude-relay.service` (→ `/usr/lib/systemd/user/`).
 
 Tarball: `claude-relay-v<ver>-linux-x86_64.tar.gz`, built by `release.yml` on

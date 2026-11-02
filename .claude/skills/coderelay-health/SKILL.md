@@ -13,13 +13,13 @@ skill — report and let the user decide.
 ### Server
 1. `claude-relay status` (or `swift run claude-relay status`) → running? version? uptime? sessions?
 2. `curl -s http://127.0.0.1:9100/health` → ok?
-3. Version coherence: status version vs `Formula/clauderelay.rb` vs the version
+3. Version coherence: status version vs `Formula/coderelay.rb` vs the version
    constant in `Sources/` vs the latest `v*` release. The Homebrew Cellar
    symlink (`ls -l /opt/homebrew/bin/claude-relay-server`) should point at
-   `Cellar/clauderelay/<version>` (the CI-built bottle); a `HEAD-<sha>` path
+   `Cellar/coderelay/<version>` (the CI-built bottle); a `HEAD-<sha>` path
    means "still on a HEAD install" — flag it (cut-over in `docs/RELEASING.md`).
 4. The release has its bottle: `gh release view <latest v*> --json assets`
-   lists `clauderelay-*.bottle.tar.gz`, and its `release.yml` run's `bottle`
+   lists `coderelay-*.bottle.tar.gz`, and its `release.yml` run's `bottle`
    and `homebrew` jobs succeeded.
 
 ### Android

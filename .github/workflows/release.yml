@@ -436,7 +436,7 @@ jobs:
             echo "| Linux client (x86_64) | [\`${CLIENT}\`](${DL}/${CLIENT}) | ${TAG_NAME} |"
             echo "| Linux server + CLI (x86_64) | [\`${SERVER}\`](${DL}/${SERVER}) | ${TAG_NAME} |"
             echo "| Android client | [\`${APK}\`](${DL}/${APK}) | ${ANDROID_VERSION_NAME} (versionCode ${ANDROID_VERSION_CODE}) |"
-            echo "| macOS server + CLI (Apple silicon) | Homebrew: \`brew install miguelriotinto/coderelay/clauderelay\` | ${TAG_NAME} |"
+            echo "| macOS server + CLI (Apple silicon) | Homebrew: \`brew install miguelriotinto/coderelay/coderelay\` | ${TAG_NAME} |"
             echo "| iOS / macOS app | TestFlight | — |"
             echo
             echo "### Linux client"
@@ -543,12 +543,12 @@ jobs:
         run: |
           brew tap-new --no-git local/ci
           TAP_DIR="$(brew --repository)/Library/Taps/local/homebrew-ci"
-          cp Formula/clauderelay.rb "$TAP_DIR/Formula/clauderelay.rb"
-          python3 Scripts/ci/formula.py "$TAP_DIR/Formula/clauderelay.rb" \
+          cp Formula/coderelay.rb "$TAP_DIR/Formula/coderelay.rb"
+          python3 Scripts/ci/formula.py "$TAP_DIR/Formula/coderelay.rb" \
             --repo "$REPO" --tag "$TAG_NAME" --source-sha "$SOURCE_SHA"
-          brew install --build-bottle local/ci/clauderelay
+          brew install --build-bottle local/ci/coderelay
           mkdir -p bottle && cd bottle
-          brew bottle --json --root-url="https://github.com/${REPO}/releases/download/${TAG_NAME}" local/ci/clauderelay
+          brew bottle --json --root-url="https://github.com/${REPO}/releases/download/${TAG_NAME}" local/ci/coderelay
 
       - name: Upload the bottle to the release
         env:
@@ -576,7 +576,7 @@ jobs:
   # ── Push the formula (url, sha256, bottle) to the tap and to main ───────
   # Needs HOMEBREW_TAP_TOKEN: a fine-grained PAT with Contents read/write on
   # miguelriotinto/homebrew-coderelay. The tap copy is rendered from the
-  # tagged Formula/clauderelay.rb, main's from main's, so both carry the same
+  # tagged Formula/coderelay.rb, main's from main's, so both carry the same
   # url/sha256/bottle and a formula change merged after the tag is not reverted.
 
   homebrew:
@@ -621,31 +621,37 @@ jobs:
       - name: Render both formula copies
         run: |
           JSON=$(ls bottle-json/*.json)
-          cp tagged/Formula/clauderelay.rb tap/Formula/clauderelay.rb
-          for f in tap/Formula/clauderelay.rb main/Formula/clauderelay.rb; do
+          cp tagged/Formula/coderelay.rb tap/Formula/coderelay.rb
+          # The formula was clauderelay through v0.3.39. formula_renames.json makes
+          # `brew upgrade` migrate an existing clauderelay install to coderelay.
+          git -C tap rm -q --ignore-unmatch Formula/clauderelay.rb
+          echo '{ "clauderelay": "coderelay" }' > tap/formula_renames.json
+          for f in tap/Formula/coderelay.rb main/Formula/coderelay.rb; do
             python3 tagged/Scripts/ci/formula.py "$f" \
               --repo "$REPO" --tag "$TAG_NAME" --source-sha "$SOURCE_SHA" --bottle-json "$JSON"
           done
-          echo "=== tap diff ==="; git -C tap --no-pager diff
+          echo "=== tap diff ==="; git -C tap status --short; git -C tap --no-pager diff
           echo "=== main diff ==="; git -C main --no-pager diff
 
       - name: Push the tap
         run: |
           cd tap
-          if git diff --quiet Formula/clauderelay.rb; then echo "Tap already at ${TAG_NAME}."; exit 0; fi
+          git add -A Formula formula_renames.json
+          # Staged, not `git diff`: the renamed formula and formula_renames.json
+          # are new files, which `git diff` does not see.
+          if git diff --cached --quiet; then echo "Tap already at ${TAG_NAME}."; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/clauderelay.rb
-          git commit -m "clauderelay ${TAG_NAME}" -m "Automated bump from CodeRelay release workflow."
+          git commit -m "coderelay ${TAG_NAME}" -m "Automated bump from CodeRelay release workflow."
           git push
 
       - name: Push Formula/ to main
         run: |
           cd main
-          if git diff --quiet Formula/clauderelay.rb; then echo "main's formula already at ${TAG_NAME}."; exit 0; fi
+          if git diff --quiet Formula/coderelay.rb; then echo "main's formula already at ${TAG_NAME}."; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/clauderelay.rb
+          git add Formula/coderelay.rb
           git commit -m "chore(formula): ${TAG_NAME} bottle"
           # main may have moved since checkout; Formula/ is touched only here.
           git push origin HEAD:main || { git pull --rebase origin main && git push origin HEAD:main; }
