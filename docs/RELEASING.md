@@ -54,7 +54,7 @@ need re-granting after an upgrade.
 
 ## Secrets
 
-Eight repository secrets (`gh secret list`). Rotate one with
+Ten repository secrets (`gh secret list`). Rotate one with
 `gh secret set <NAME>` (paste the value, or `< file`).
 
 | Secret | What | Rotate |
@@ -62,6 +62,8 @@ Eight repository secrets (`gh secret list`). Rotate one with
 | `ASC_API_KEY_P8` | Contents of the App Store Connect API key "GitHub Actions" (`.p8`) | Users and Access → Integrations → revoke + generate a new key; update all three ASC secrets |
 | `ASC_API_KEY_ID` | That key's ID | with the key |
 | `ASC_API_ISSUER_ID` | The team's issuer ID | only if the team changes |
+| `APPLE_DEV_CERT_P12_B64` | `base64` of a `.p12` export of one **Apple Development** certificate + key | when it expires (1 year); export the renewed one the same way |
+| `APPLE_DEV_CERT_PASSWORD` | The `.p12`'s export password | with the certificate |
 | `HOMEBREW_TAP_TOKEN` | Fine-grained PAT: repo `miguelriotinto/homebrew-coderelay`, Contents read/write, with an expiry | before it expires — the `homebrew` job fails loudly without it |
 | `ANDROID_KEYSTORE_B64` | `base64` of the release keystore (`CodeRelayAndroid/RELEASE.md` §1) | **never** — a new key means every phone must uninstall first |
 | `ANDROID_KEYSTORE_PASSWORD` | Store password | with the keystore |
@@ -79,7 +81,17 @@ so a green `aur` job is not proof; `https://aur.archlinux.org/packages/<name>` i
 
 The App Store Connect key "GitHub Actions" is a **Team Key** with **Admin**
 access (first CI uploads: iOS 202 and macOS 116, 2026-11-01). Automatic
-signing on a fresh runner creates its certificates and profiles through it.
+signing on a fresh runner creates its certificates and profiles through it —
+except the **development** certificate, which `apple-build.yml` imports from
+`APPLE_DEV_CERT_P12_B64` first. Without it every runner minted a new Apple
+Development certificate, and once the account hit Apple's cap the archive failed
+with "reached the maximum number of certificates" (macOS, 2026-11-02). To set it
+up: in Keychain Access, export the *Apple Development* identity (certificate and
+its private key) as a `.p12` with a password, then
+`base64 -i dev.p12 | gh secret set APPLE_DEV_CERT_P12_B64` and
+`gh secret set APPLE_DEV_CERT_PASSWORD`. If the cap is already hit, revoke the
+surplus CI-made *Apple Development* certificates on developer.apple.com first
+(never the Apple Distribution ones).
 
 ## One-time cut-over (Mac server)
 
