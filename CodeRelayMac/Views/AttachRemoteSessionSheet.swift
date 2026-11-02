@@ -1,14 +1,19 @@
 import SwiftUI
 import AVFoundation
+import CodeRelayClient
 import CodeRelayKit
 
+/// Offers every live server's attachable sessions, grouped under each server's
+/// name when there is more than one, and attaches through the hub on the row's
+/// own server. It used to ask the focus server alone, so a second server's
+/// sessions could never be offered.
 struct AttachRemoteSessionSheet: View {
-    @ObservedObject var coordinator: SessionCoordinator
+    @ObservedObject var hub: MacServerHub
     @Environment(\.dismiss) private var dismiss
 
-    @State private var sessions: [SessionInfo] = []
+    @State private var groups: [AttachableGroup] = []
     @State private var isLoading = true
-    @State private var selection: UUID?
+    @State private var selection: SessionRef?
     @State private var showQRScanner = false
     @State private var hasCamera = AVCaptureDevice.default(for: .video) != nil
 
@@ -24,7 +29,7 @@ struct AttachRemoteSessionSheet: View {
             if isLoading {
                 ProgressView("Looking for sessions...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if sessions.isEmpty {
+            } else if groups.allSatisfy({ $0.sessions.isEmpty }) {
                 VStack(spacing: 8) {
                     Image(systemName: "tray")
                         .font(.largeTitle)
@@ -35,16 +40,24 @@ struct AttachRemoteSessionSheet: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(selection: $selection) {
-                    ForEach(sessions, id: \.id) { session in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(session.name ?? String(session.id.uuidString.prefix(8)))
-                                .font(.headline)
-                            Text("State: \(session.state.rawValue) · Created \(session.createdAt.formatted(.dateTime))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    ForEach(groups) { group in
+                        Section {
+                            ForEach(group.sessions, id: \.id) { session in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(session.name ?? String(session.id.uuidString.prefix(8)))
+                                        .font(.headline)
+                                    Text("State: \(session.state.rawValue) · Created \(session.createdAt.formatted(.dateTime))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 4)
+                                .tag(SessionRef(serverId: group.serverId, sessionId: session.id))
+                            }
+                        } header: {
+                            if groups.count > 1 {
+                                Text(group.sessions.isEmpty ? "\(group.title) — no sessions" : group.title)
+                            }
                         }
-                        .padding(.vertical, 4)
-                        .tag(session.id)
                     }
                 }
                 .listStyle(.inset)
@@ -64,10 +77,11 @@ struct AttachRemoteSessionSheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Attach") {
-                    guard let id = selection else { return }
-                    let serverName = sessions.first { $0.id == id }?.name
+                    guard let ref = selection else { return }
+                    let serverName = groups.first { $0.serverId == ref.serverId }?
+                        .sessions.first { $0.id == ref.sessionId }?.name
                     Task {
-                        await coordinator.attachRemoteSession(id: id, serverName: serverName)
+                        await hub.attachRemote(on: ref.serverId, sessionId: ref.sessionId, serverName: serverName)
                         dismiss()
                     }
                 }
@@ -78,11 +92,13 @@ struct AttachRemoteSessionSheet: View {
         }
         .frame(width: 480, height: 400)
         .task {
-            sessions = await coordinator.fetchAttachableSessions()
+            groups = await hub.attachableSessions()
             isLoading = false
         }
         .sheet(isPresented: $showQRScanner) {
-            QRScannerSheet(coordinator: coordinator, onAttachSuccess: { dismiss() })
+            if let focus = hub.focusCoordinator {
+                QRScannerSheet(coordinator: focus, onAttachSuccess: { dismiss() })
+            }
         }
     }
 }

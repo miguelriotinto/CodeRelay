@@ -49,6 +49,8 @@ import relay.session.hub.orderedRefs
 import relay.session.hub.handleDeepLink
 import relay.session.hub.createSession
 import relay.session.hub.attachRemote
+import relay.session.hub.AttachableGroup
+import relay.session.hub.attachableSessions
 import relay.protocol.SessionRef
 import relay.protocol.SessionDeepLink
 import kotlinx.coroutines.flow.combine
@@ -72,7 +74,6 @@ import relay.platform.LinuxConnectivitySource
 import relay.platform.OmarchyTheme
 import relay.platform.OmarchyThemeWatcher
 import relay.protocol.PairingURL
-import relay.protocol.SessionInfo
 import relay.session.NetworkObserver
 import relay.storage.DeviceIdentifier
 import relay.storage.SavedConnectionStore
@@ -170,7 +171,7 @@ private fun runApp(
     var showSettings by remember { mutableStateOf(false) }
     var showServers by remember { mutableStateOf(initialLaunch.opensManagement) }
     var showPasteLink by remember { mutableStateOf(false) }
-    var attachable by remember { mutableStateOf<Pair<LinuxServerSlot, List<SessionInfo>>?>(null) }
+    var attachable by remember { mutableStateOf<List<AttachableGroup>?>(null) }
     var loadingAttachable by remember { mutableStateOf(false) }
     var shareRef by remember { mutableStateOf<SessionRef?>(null) }
 
@@ -231,14 +232,15 @@ private fun runApp(
     }
 
     /**
-     * Attach: fetch the server's attachable sessions, THEN present the sheet,
-     * so it opens populated. Gated so a double click fires one fetch.
+     * Attach: fetch every live server's attachable sessions, THEN present the
+     * sheet, so it opens populated. Whichever server's button was clicked, all
+     * servers are offered. Gated so a double click fires one fetch.
      */
-    fun fetchAttachable(slot: LinuxServerSlot) {
+    fun fetchAttachable() {
         if (loadingAttachable) return
         loadingAttachable = true
         uiScope.launch {
-            attachable = slot to runCatching { slot.coordinator.fetchAttachableSessions() }.getOrDefault(emptyList())
+            attachable = runCatching { hub.attachableSessions() }.getOrDefault(emptyList())
             loadingAttachable = false
         }
     }
@@ -427,10 +429,10 @@ private fun runApp(
                         uiScope.launch { hub.createSession(id) }
                     }
                 }
-                current?.let { slot ->
+                current?.let { _ ->
                     Item("Attach session…") {
                         raiseWindow()
-                        fetchAttachable(slot)
+                        fetchAttachable()
                     }
                 }
             }
@@ -504,7 +506,7 @@ private fun runApp(
                     WorkspaceScreen(
                         hub = hub,
                         onOpenServers = { showServers = true },
-                        onAttach = { slot -> fetchAttachable(slot) },
+                        onAttach = { _ -> fetchAttachable() },
                         onShareQr = { ref -> shareRef = ref },
                         // The device-side gate on sending the last 40 screen lines
                         // with optimize_prompt (spec §7.1); the relay has its own.
@@ -535,13 +537,13 @@ private fun runApp(
                         )
                     }
 
-                    attachable?.let { (slot, list) ->
+                    attachable?.let { groups ->
                         AttachSessionSheet(
-                            sessions = list,
-                            nameFor = { id -> slot.coordinator.name(id) },
-                            onAttachSession = { id, name ->
+                            groups = groups,
+                            nameFor = { serverId, id -> hub.slot(serverId)?.coordinator?.name(id) ?: id.toString().take(8) },
+                            onAttachSession = { serverId, id, name ->
                                 attachable = null
-                                uiScope.launch { hub.attachRemote(slot.config.id, id, name) }
+                                uiScope.launch { hub.attachRemote(serverId, id, name) }
                             },
                             // The QR scanner is CameraX + ML Kit, excluded from
                             // this build; the sheet's list is the only path in.

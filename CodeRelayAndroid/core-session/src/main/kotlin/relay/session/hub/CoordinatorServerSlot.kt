@@ -55,6 +55,7 @@ open class CoordinatorServerSlot(
     override suspend fun switchToSession(id: UUID) = coordinator.switchToSession(id)
     override suspend fun createNewSession() = coordinator.createNewSession()
     override suspend fun detachForHub(budgetMs: Long) = coordinator.detachForHub(budgetMs)
+    override suspend fun fetchAttachableSessions(): List<SessionInfo> = coordinator.fetchAttachableSessions()
     override suspend fun attachRemoteSession(id: UUID, serverName: String?) =
         coordinator.attachRemoteSession(id, serverName)
     override fun handleForegroundTransition() = coordinator.handleForegroundTransition()

@@ -66,6 +66,10 @@ class FakeServerSlot(override val config: ConnectionConfig) : ServerSlot {
         if (detachHangs) detachGate.await()
         changed()
     }
+    /** What this server's Attach query returns (other devices' sessions). */
+    var attachable: List<SessionInfo> = emptyList()
+    var attachableFetches = 0
+    override suspend fun fetchAttachableSessions(): List<SessionInfo> { attachableFetches += 1; return attachable }
     override suspend fun attachRemoteSession(id: UUID, serverName: String?) {
         remoteAttaches += id; activeSessionId.value = id; changed()
     }

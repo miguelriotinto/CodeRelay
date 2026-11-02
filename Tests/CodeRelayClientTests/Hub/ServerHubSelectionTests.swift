@@ -148,4 +148,41 @@ final class ServerHubSelectionTests: XCTestCase {
         await h.hub.start()
         XCTAssertNil(h.hub.activeRef)
     }
+
+    // MARK: - Attach across servers
+
+    func testAttachableSessionsCoverEveryLiveServerInSidebarOrder() async {
+        let (h, cfg) = await liveHub(["a", "b"])
+        let onA = makeSession(), onB = makeSession()
+        h.slot(cfg[0].id)!.attachable = [onA]
+        h.slot(cfg[1].id)!.attachable = [onB]
+        let groups = await h.hub.attachableSessions()
+        XCTAssertEqual(groups.map(\.serverId), [cfg[0].id, cfg[1].id])
+        XCTAssertEqual(groups.map(\.title), ["a", "b"])
+        XCTAssertEqual(groups.map { $0.sessions.map(\.id) }, [[onA.id], [onB.id]])
+    }
+
+    func testAttachableSessionsSkipOfflineServers() async {
+        let (h, cfg) = await liveHub(["a", "b"])
+        let b = h.slot(cfg[1].id)!
+        b.attachable = [makeSession()]
+        b.goOffline()
+        await hubSettle()
+        let groups = await h.hub.attachableSessions()
+        XCTAssertEqual(groups.map(\.serverId), [cfg[0].id])
+        XCTAssertEqual(b.attachableFetches, 0)
+    }
+
+    func testAttachRemoteOnAnotherServerDetachesTheCurrentOneFirst() async {
+        let (h, cfg) = await liveHub(["a", "b"])
+        await h.hub.select(SessionRef(serverId: cfg[0].id, sessionId: h.slot(cfg[0].id)!.sessions[0].id))
+        var log: [String] = []
+        h.slot(cfg[0].id)!.log = { log.append($0) }
+        h.slot(cfg[1].id)!.log = { log.append($0) }
+        let onB = makeSession()
+        await h.hub.attachRemote(on: cfg[1].id, sessionId: onB.id, serverName: nil)
+        XCTAssertEqual(log, ["detach:a", "attach:b"], "D9: one attachment across all servers")
+        XCTAssertEqual(h.slot(cfg[1].id)!.remoteAttaches, [onB.id])
+        XCTAssertEqual(h.hub.activeRef, SessionRef(serverId: cfg[1].id, sessionId: onB.id))
+    }
 }

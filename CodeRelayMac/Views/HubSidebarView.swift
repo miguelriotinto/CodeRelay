@@ -89,10 +89,8 @@ struct HubSidebarView: View {
             .padding(12)
         }
         .background(.black)
-        .sheet(item: $attachTarget) { item in
-            if let coordinator = hub.slot(for: item.id) {
-                AttachRemoteSessionSheet(coordinator: coordinator)
-            }
+        .sheet(item: $attachTarget) { _ in
+            AttachRemoteSessionSheet(hub: hub)
         }
     }
 }

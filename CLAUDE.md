@@ -157,7 +157,7 @@ selection path bumps `selectionGeneration` and re-checks it after each `await`,
 so an overlapping select can never re-attach a superseded choice, and the
 coordinator's own `attachEpoch` stops an attach that began before a
 `detachActive()` from publishing. The hub **mirrors** the coordinator: ⌘W,
-terminate, a stolen session, a failed resume, the Attach sheet and the QR
+terminate, a stolen session, a failed resume and the QR
 scanner move `activeSessionId` without the hub, and `reconcileSelection`
 follows them (otherwise the stale highlight made the row un-reselectable). An
 offline server keeps its cached rows; selecting one stores the single
@@ -202,7 +202,10 @@ process in `createLinuxHub` (`Main.kt`). The shared `WorkspaceScreen(hub)`
 tab keys are `SessionRef` strings (a non-Bundle key crashes Android's lazy
 layouts). `ServersScreen(viewModel, hub)` is management with Enabled switches;
 the Attach sheet goes through `hub.attachRemote` so another server is detached
-first. There is no Auto Connect setting any more.
+first. On every client the Attach sheet lists **every live server's** attachable
+sessions (`hub.attachableSessions()`, fetched concurrently, grouped under server
+headers when there is more than one) and attaches on the row's own server; it
+used to ask only the focus server, so a second server's sessions were never offered. There is no Auto Connect setting any more.
 
 **Session takeover notices** (spec `docs/superpowers/specs/2026-10-31-session-takeover-notices-design.md`; all four clients). Each coordinator diffs every session-list application against a per-server persisted baseline (token-stamped, discarded silently on token change; **diff-only, never renders**). The `.enable`/`ENABLE` reason is silent and clears the baseline before the dial. A steal reports only if the id was still in the baseline or still listed (no double reports); a local terminate removes the id from the baseline before the send. Losses go to the hub-level `SessionLossCollector`: dedupe per batch, 120 s repeat suppression, 1 s live debounce, nesting holds (epoch); the fan-out hold closes when every slot's `awaitPassFinished()` returns or after 10 s, never blocks callers, and `stop()` resets. Apple apps attach `sessionLossAlert(_:isTopmost:onOK:)` to the root and every sheet's content, enabled only on the topmost presenter; its binding setter ignores `false`, so an unread alert survives a presenter change and only OK (`hub.dismissTakenAlert()`) clears it; a batch landing while it is up merges into it (both platforms). Android/Linux show one root `AlertDialog` in `HubWorkspaceScreen` outside `key(slot)`. In Kotlin `LostSession`/`SessionBaseline` live in core-protocol (`relay.protocol`) to avoid a storage-session cycle, with typealiases in `relay.session.hub`.
 

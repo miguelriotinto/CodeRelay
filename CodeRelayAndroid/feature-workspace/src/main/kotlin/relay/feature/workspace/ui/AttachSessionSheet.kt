@@ -34,37 +34,38 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import relay.protocol.SessionInfo
+import relay.session.hub.AttachableGroup
 import java.util.UUID
 
 /**
  * The attach-session modal, ported from `SessionSidebarView.swift`'s
  * `AttachSessionSheet`. Presented when the user taps **Attach**.
  *
- * Mirrors the iOS hierarchy exactly:
- *  - a list of attachable sessions — sessions running on OTHER devices (the
- *    `coordinator.fetchAttachableSessions()` result, already filtered to
- *    non-terminal sessions this device does not own), each row showing the name,
- *    short id, and a state badge; tapping one dismisses the sheet and calls
- *    [onAttachSession] (→ `coordinator.attachRemoteSession`);
- *  - an empty state when there are none (iOS `ContentUnavailableView`);
+ * Lists every live server's attachable sessions — sessions running on OTHER
+ * devices ([relay.session.hub.attachableSessions], already filtered to
+ * non-terminal sessions this device does not own). With more than one server
+ * each group sits under its server's name; tapping a row dismisses the sheet
+ * and calls [onAttachSession] with that row's server, so a session is always
+ * attached on the relay it runs on. Then:
+ *  - an empty state when no server offers any (iOS `ContentUnavailableView`);
  *  - a divider, then a **Scan QR Code** row that opens the camera scanner
  *    ([QrScannerSheet] below) NESTED over this sheet (iOS `.sheet(showScanner)`).
  *
  * Dismissal: swipe-down or tapping outside (the `ModalBottomSheet` scrim) — the
  * iOS Cancel toolbar button analog. The nested scanner has its own Cancel.
  *
- * @param sessions attachable remote sessions (already fetched by the caller)
- * @param nameFor display-name lookup (falls back to short id), Swift `coordinator.name(for:)`
- * @param onAttachSession tap a session → attach to it `(id, name)`
+ * @param groups attachable sessions per live server, in sidebar order
+ * @param nameFor display-name lookup `(serverId, sessionId)` (falls back to short id)
+ * @param onAttachSession tap a session → attach to it `(serverId, sessionId, name)`
  * @param onScannedSession a QR scan resolved to a session id → attach to it
  * @param onDismiss close the whole attach flow
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AttachSessionSheet(
-    sessions: List<SessionInfo>,
-    nameFor: (UUID) -> String,
-    onAttachSession: (UUID, String?) -> Unit,
+    groups: List<AttachableGroup>,
+    nameFor: (UUID, UUID) -> String,
+    onAttachSession: (UUID, UUID, String?) -> Unit,
     onScannedSession: (UUID) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
@@ -90,9 +91,10 @@ fun AttachSessionSheet(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
             )
 
-            if (sessions.isEmpty()) {
+            if (groups.all { it.sessions.isEmpty() }) {
                 EmptyAttachState()
             } else {
+                val showHeaders = groups.size > 1
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -100,14 +102,21 @@ fun AttachSessionSheet(
                         // the list scrolls within the sheet (iOS List inside the sheet).
                         .heightIn(max = 360.dp),
                 ) {
-                    items(sessions, key = { it.id }) { session ->
-                        AttachSessionRow(
-                            session = session,
-                            name = session.name ?: nameFor(session.id),
-                            onClick = {
-                                onAttachSession(session.id, session.name)
-                            },
-                        )
+                    groups.forEach { group ->
+                        if (showHeaders) {
+                            item(key = "server-${group.serverId}") { AttachServerHeader(group) }
+                        }
+                        // String keys: a non-Bundle key crashes Android's lazy layouts,
+                        // and one session id can only collide across servers.
+                        items(group.sessions, key = { "${group.serverId}/${it.id}" }) { session ->
+                            AttachSessionRow(
+                                session = session,
+                                name = session.name ?: nameFor(group.serverId, session.id),
+                                onClick = {
+                                    onAttachSession(group.serverId, session.id, session.name)
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -204,6 +213,16 @@ private fun QrScannerSheet(
 }
 
 @Composable
+private fun AttachServerHeader(group: AttachableGroup) {
+    Text(
+        text = if (group.sessions.isEmpty()) "${group.title} — no sessions" else group.title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
+    )
+}
+
+@Composable
 private fun AttachSessionRow(
     session: SessionInfo,
     name: String,
@@ -281,7 +300,7 @@ private fun EmptyAttachState() {
             style = MaterialTheme.typography.titleSmall,
         )
         Text(
-            text = "There are no other sessions running on the server.",
+            text = "There are no other sessions running on your servers.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

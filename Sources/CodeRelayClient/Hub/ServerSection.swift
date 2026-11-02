@@ -77,3 +77,17 @@ public struct HubAggregate: Equatable {
     public var workingSessions = 0
     public init() {}
 }
+
+/// One server's offer in the Attach sheet: other devices' sessions on `serverId`.
+public struct AttachableGroup: Identifiable, Sendable {
+    public let serverId: UUID
+    public let title: String
+    public let sessions: [SessionInfo]
+    public var id: UUID { serverId }
+
+    public init(serverId: UUID, title: String, sessions: [SessionInfo]) {
+        self.serverId = serverId
+        self.title = title
+        self.sessions = sessions
+    }
+}

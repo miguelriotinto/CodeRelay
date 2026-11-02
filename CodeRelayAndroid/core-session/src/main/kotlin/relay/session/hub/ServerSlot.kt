@@ -42,6 +42,8 @@ interface ServerSlot {
     suspend fun createNewSession()
     /** Bounded detach that clears the selection first (D9). */
     suspend fun detachForHub(budgetMs: Long)
+    /** Other devices' live sessions on this server, for the Attach sheet. */
+    suspend fun fetchAttachableSessions(): List<SessionInfo>
     suspend fun attachRemoteSession(id: UUID, serverName: String?)
     fun handleForegroundTransition()
     fun triggerUserRecovery()

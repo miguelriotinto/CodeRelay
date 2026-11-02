@@ -1,11 +1,14 @@
 package relay.session.hub
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import relay.protocol.SessionDeepLink
+import relay.protocol.SessionInfo
 import relay.protocol.SessionRef
 import java.util.UUID
 
@@ -179,6 +182,25 @@ internal fun <S : ServerSlot> ServerHub<S>.applyPendingSelection(serverId: UUID)
             selectionsInFlight -= 1
         }
     }
+}
+
+/** One server's offer in the Attach sheet: other devices' sessions on [serverId]. */
+data class AttachableGroup(val serverId: UUID, val title: String, val sessions: List<SessionInfo>)
+
+/**
+ * Every live server's attachable sessions, in sidebar order, fetched
+ * concurrently so a slow relay delays the sheet by its own latency only. The
+ * Attach sheet used to ask the focus server alone, so a second server's
+ * sessions could never be offered. Offline and unbuilt servers are skipped.
+ */
+suspend fun <S : ServerSlot> ServerHub<S>.attachableSessions(): List<AttachableGroup> = coroutineScope {
+    sections.value
+        .filter { it.status.isLive }
+        .mapNotNull { section -> slots[section.id]?.let { section to it } }
+        .map { (section, slot) ->
+            async { AttachableGroup(section.id, section.title, slot.fetchAttachableSessions()) }
+        }
+        .awaitAll()
 }
 
 /**
