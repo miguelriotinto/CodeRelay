@@ -372,6 +372,7 @@ jobs:
     outputs:
       source_sha256: ${{ steps.sha.outputs.source_sha256 }}
       linux_sha256: ${{ steps.sha.outputs.linux_sha256 }}
+      server_sha256: ${{ steps.sha.outputs.server_sha256 }}
 
     steps:
       - uses: actions/checkout@v5
@@ -407,7 +408,15 @@ jobs:
             echo "Linux tarball SHA256: $LINUX_SHA"
             echo "linux_sha256=$LINUX_SHA" >> "$GITHUB_OUTPUT"
           else
-            echo "Linux tarball not found; the AUR job will skip."
+            echo "Linux tarball not found; the AUR job will skip coderelay-bin."
+          fi
+          SERVER_TARBALL="artifacts/claude-relay-${TAG_NAME}-linux-x86_64.tar.gz"
+          if [ -f "$SERVER_TARBALL" ]; then
+            SERVER_SHA=$(sha256sum "$SERVER_TARBALL" | awk '{print $1}')
+            echo "Linux server tarball SHA256: $SERVER_SHA"
+            echo "server_sha256=$SERVER_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "Linux server tarball not found; the AUR job will skip coderelay-server-bin."
           fi
 
       # The release body is one section per platform — what the asset is, how
@@ -650,29 +659,48 @@ jobs:
           # main may have moved since checkout; Formula/ is touched only here.
           git push origin HEAD:main || { git pull --rebase origin main && git push origin HEAD:main; }
 
-  # ── Push PKGBUILD update to the AUR ─────────────────────────────────────
-  # Needs two secrets:
+  # ── Push PKGBUILD updates to the AUR ────────────────────────────────────
+  # One leg per package: coderelay-bin (Linux client) and coderelay-server-bin
+  # (Linux server + CLI). Needs two secrets:
   #   AUR_SSH_KEY   — private key of an SSH keypair registered on the AUR
-  #                   account that owns `coderelay-bin`
+  #                   account that owns both packages
   #   AUR_USERNAME  — the AUR account name (for the commit author)
-  # If either is missing the job skips, so a dry-run tag push is harmless.
+  # Without AUR_SSH_KEY the job skips, so a dry-run tag push is harmless.
   #
   # Mirrors the homebrew job above. The AUR is a plain git remote, so this is
-  # a checkout, a sed of pkgver + sha256, and a push — .SRCINFO regenerated
-  # from the PKGBUILD, which the AUR requires to match.
+  # a clone, a sed of pkgver + sha256, and a push — .SRCINFO regenerated from
+  # the PKGBUILD, which the AUR requires to match. Cloning a package that does
+  # not exist yet gives an empty repo, and the first push creates it.
 
   aur:
     needs: [resolve-version, release]
     runs-on: ubuntu-latest
-    if: ${{ !cancelled() && needs.release.result == 'success' && needs.release.outputs.linux_sha256 != '' }}
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: coderelay-bin
+            dir: CodeRelayLinux/packaging
+            files: PKGBUILD
+            sha_output: linux_sha256
+          - package: coderelay-server-bin
+            dir: packaging
+            files: PKGBUILD coderelay-server.install
+            sha_output: server_sha256
+    name: aur (${{ matrix.package }})
     steps:
-      - name: Check AUR credentials are configured
+      - name: Check AUR credentials and tarball are available
         id: check_key
         env:
           KEY: ${{ secrets.AUR_SSH_KEY }}
+          SHA: ${{ needs.release.outputs[matrix.sha_output] }}
         run: |
           if [ -z "$KEY" ]; then
-            echo "AUR_SSH_KEY secret is not set; skipping AUR update."
+            echo "AUR_SSH_KEY secret is not set; skipping ${{ matrix.package }}."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$SHA" ]; then
+            echo "No tarball checksum from the release job; skipping ${{ matrix.package }}."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -698,36 +726,33 @@ jobs:
           cat >> ~/.ssh/config <<'EOF'
           Host aur.archlinux.org
             IdentityFile ~/.ssh/aur
+            IdentitiesOnly yes
             User aur
           EOF
 
       - name: Clone the AUR package
         if: steps.check_key.outputs.skip == 'false'
-        run: git clone ssh://aur@aur.archlinux.org/coderelay-bin.git aur
+        run: git clone "ssh://aur@aur.archlinux.org/${{ matrix.package }}.git" aur
 
       - name: Update pkgver + sha256
         if: steps.check_key.outputs.skip == 'false'
         env:
           TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
-          LINUX_SHA: ${{ needs.release.outputs.linux_sha256 }}
+          SHA: ${{ needs.release.outputs[matrix.sha_output] }}
         run: |
           # The AUR pkgver has no leading "v"; the release tag does.
           PKGVER="${TAG_NAME#v}"
 
-          cp CodeRelayLinux/packaging/PKGBUILD aur/PKGBUILD
+          for file in ${{ matrix.files }}; do cp "${{ matrix.dir }}/$file" aur/; done
           cd aur
 
           sed -i -E "s|^pkgver=.*|pkgver=${PKGVER}|" PKGBUILD
           sed -i -E "s|^pkgrel=.*|pkgrel=1|" PKGBUILD
-          sed -i -E "s|^sha256sums=\(.*\)$|sha256sums=('${LINUX_SHA}')|" PKGBUILD
+          sed -i -E "s|^sha256sums=\(.*\)$|sha256sums=('${SHA}')|" PKGBUILD
+          grep -q "^sha256sums=('${SHA}')$" PKGBUILD || { echo "sha256sums was not rewritten"; exit 1; }
 
           echo "=== PKGBUILD diff ==="
           git --no-pager diff PKGBUILD || true
-
-          if git diff --quiet PKGBUILD; then
-            echo "PKGBUILD unchanged (already at ${PKGVER}?). Nothing to push."
-            exit 0
-          fi
 
       # .SRCINFO is generated metadata the AUR validates against the PKGBUILD;
       # a mismatch is rejected on push. Generated in an Arch container because
@@ -746,12 +771,16 @@ jobs:
           AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
         run: |
           cd aur
-          if git diff --quiet; then
-            echo "No changes to commit."
+          git add PKGBUILD .SRCINFO ${{ matrix.files }}
+          # Staged, not `git diff`: on a first publish every file is new, and
+          # `git diff` ignores untracked files, so it reported "no changes".
+          if git diff --cached --quiet; then
+            echo "${{ matrix.package }} already at ${TAG_NAME#v}. Nothing to push."
             exit 0
           fi
           git config user.name "${AUR_USERNAME:-github-actions}"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add PKGBUILD .SRCINFO
-          git commit -m "coderelay-bin ${TAG_NAME#v}" -m "Automated bump from the CodeRelay release workflow."
-          git push
+          git commit -m "${{ matrix.package }} ${TAG_NAME#v}" -m "Automated bump from the CodeRelay release workflow."
+          # The AUR accepts only master; an empty clone's branch is the runner's
+          # init.defaultBranch, which need not be master.
+          git push origin HEAD:master
