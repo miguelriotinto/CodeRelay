@@ -60,6 +60,51 @@ extension ServerHub {
         publish()
     }
 
+    /// Every live server's attachable sessions, in sidebar order, fetched
+    /// concurrently so a slow relay delays the sheet by its own latency only.
+    /// The Attach sheet used to ask the focus server alone, so a second server's
+    /// sessions could never be offered. Offline and unbuilt servers are skipped.
+    public func attachableSessions() async -> [AttachableGroup] {
+        let live = sections.compactMap { section -> (ServerSection, Slot)? in
+            guard section.status.isLive, let slot = slots[section.id] else { return nil }
+            return (section, slot)
+        }
+        return await withTaskGroup(of: (Int, AttachableGroup).self) { group in
+            for (index, (section, slot)) in live.enumerated() {
+                group.addTask { @MainActor in
+                    (index, AttachableGroup(serverId: section.id, title: section.title,
+                                            sessions: await slot.fetchAttachableSessions()))
+                }
+            }
+            var found: [(Int, AttachableGroup)] = []
+            for await entry in group { found.append(entry) }
+            return found.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+    }
+
+    /// Attaches `sessionId` — a session another device owns — on `serverId`:
+    /// the Attach sheet, the QR scanner and the one-server deep-link fallback.
+    /// Detaches any other server first, like every selection path (D9).
+    public func attachRemote(on serverId: UUID, sessionId: UUID, serverName: String?) async {
+        guard let slot = slots[serverId] else {
+            notice = "That server is not connected."
+            return
+        }
+        selectionGeneration &+= 1
+        let generation = selectionGeneration
+        selectionsInFlight += 1
+        defer { selectionsInFlight -= 1 }
+        pendingRef = nil
+        if let previous = activeRef, previous.serverId != serverId, let from = slots[previous.serverId] {
+            await detachBounded(from)
+            guard generation == selectionGeneration else { return }
+        }
+        await slot.attachRemoteSession(id: sessionId, serverName: serverName)
+        guard generation == selectionGeneration else { return }
+        mirror(slot, serverId: serverId)
+        publish()
+    }
+
     /// New session on `serverId`; detaches on any other server first (§7.5).
     public func createSession(on serverId: UUID) async {
         guard let to = slots[serverId], sections.first(where: { $0.id == serverId })?.status.isLive == true else {

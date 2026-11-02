@@ -8,7 +8,7 @@ import CodeRelayKit
 struct SessionSidebarView: View {
     @ObservedObject var hub: IOSServerHub
     @State private var showAttachSheet = false
-    @State private var attachableSessions: [SessionInfo] = []
+    @State private var attachableGroups: [AttachableGroup] = []
     @State private var isLoadingAttachable = false
     @State private var showQRSheet = false
     @State private var qrRef: SessionRef?
@@ -48,11 +48,12 @@ struct SessionSidebarView: View {
     var body: some View {
         List {
             Section {
-                if let focus = hub.focusCoordinator {
+                if hub.focusCoordinator != nil {
                     Button {
                         isLoadingAttachable = true
                         Task {
-                            attachableSessions = await focus.fetchAttachableSessions()
+                            // Every live server, not just the focused one.
+                            attachableGroups = await hub.attachableSessions()
                             isLoadingAttachable = false
                             showAttachSheet = true
                         }
@@ -122,9 +123,7 @@ struct SessionSidebarView: View {
             }
         }
         .sheet(isPresented: $showAttachSheet) {
-            if let focus = hub.focusCoordinator {
-                AttachSessionSheet(sessions: attachableSessions, coordinator: focus, hub: hub, isPresented: $showAttachSheet)
-            }
+            AttachSessionSheet(groups: attachableGroups, hub: hub, isPresented: $showAttachSheet)
         }
     }
 }
@@ -266,8 +265,8 @@ private struct SessionRow: View {
 // MARK: - Attach Session Sheet
 
 private struct AttachSessionSheet: View {
-    let sessions: [SessionInfo]
-    let coordinator: SessionCoordinator
+    /// Attachable sessions per live server, in sidebar order.
+    let groups: [AttachableGroup]
     let hub: IOSServerHub
     @Binding var isPresented: Bool
     @State private var showScanner = false
@@ -276,41 +275,26 @@ private struct AttachSessionSheet: View {
         NavigationStack {
             VStack(spacing: 0) {
                 Group {
-                    if sessions.isEmpty {
+                    if groups.allSatisfy({ $0.sessions.isEmpty }) {
                         ContentUnavailableView(
                             "No Sessions Available",
                             systemImage: "terminal",
-                            description: Text("There are no other sessions running on the server.")
+                            description: Text("There are no other sessions running on your servers.")
                         )
                     } else {
-                        List(sessions, id: \.id) { session in
-                            Button {
-                                isPresented = false
-                                Task { await coordinator.attachRemoteSession(id: session.id, serverName: session.name) }
-                            } label: {
-                                HStack(spacing: 10) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(session.name ?? coordinator.name(for: session.id))
-                                            .font(.system(.subheadline, design: .rounded, weight: .medium))
-                                            .lineLimit(1)
-
-                                        Text(String(session.id.uuidString.prefix(8)))
-                                            .font(.system(.caption2, design: .monospaced))
-                                            .foregroundStyle(.tertiary)
+                        List {
+                            ForEach(groups) { group in
+                                Section {
+                                    ForEach(group.sessions, id: \.id) { session in
+                                        row(session, in: group)
                                     }
-
-                                    Spacer()
-
-                                    Text(session.state.rawValue)
-                                        .font(.caption2)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(attachBadgeColor(session.state).opacity(0.15))
-                                        .foregroundStyle(attachBadgeColor(session.state))
-                                        .clipShape(Capsule())
+                                } header: {
+                                    // One server needs no header, as before.
+                                    if groups.count > 1 {
+                                        Text(group.sessions.isEmpty ? "\(group.title) — no sessions" : group.title)
+                                    }
                                 }
                             }
-                            .tint(.primary)
                         }
                     }
                 }
@@ -339,6 +323,39 @@ private struct AttachSessionSheet: View {
             }
         }
         .presentationDetents([.medium])
+    }
+
+    private func row(_ session: SessionInfo, in group: AttachableGroup) -> some View {
+        Button {
+            isPresented = false
+            // Through the hub, on the row's own server: it detaches any other
+            // server's session first (one attachment across all servers).
+            Task { await hub.attachRemote(on: group.serverId, sessionId: session.id, serverName: session.name) }
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(session.name ?? hub.slot(for: group.serverId)?.name(for: session.id)
+                         ?? String(session.id.uuidString.prefix(8)))
+                        .font(.system(.subheadline, design: .rounded, weight: .medium))
+                        .lineLimit(1)
+
+                    Text(String(session.id.uuidString.prefix(8)))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+
+                Text(session.state.rawValue)
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(attachBadgeColor(session.state).opacity(0.15))
+                    .foregroundStyle(attachBadgeColor(session.state))
+                    .clipShape(Capsule())
+            }
+        }
+        .tint(.primary)
     }
 
     private func attachBadgeColor(_ state: SessionState) -> SwiftUI.Color {

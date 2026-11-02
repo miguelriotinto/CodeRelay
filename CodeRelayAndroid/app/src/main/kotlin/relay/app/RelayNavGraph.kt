@@ -38,7 +38,8 @@ import relay.feature.settings.AppSettings
 import relay.feature.workspace.QrShareSheet
 import relay.feature.workspace.WorkspaceScreen
 import relay.feature.workspace.ui.AttachSessionSheet
-import relay.protocol.SessionInfo
+import relay.session.hub.AttachableGroup
+import relay.session.hub.attachableSessions
 import relay.protocol.SessionRef
 import relay.session.NetworkObserver
 import relay.session.hub.attachRemote
@@ -212,18 +213,19 @@ private fun WorkspaceRoute(
     }
 
     var shareRef by remember { mutableStateOf<SessionRef?>(null) }
-    // Attach modal for one server: the slot and its fetched attachable list.
-    var attachable by remember { mutableStateOf<Pair<AppServerSlot, List<SessionInfo>>?>(null) }
+    // Attach modal: every live server's attachable sessions, fetched together.
+    var attachable by remember { mutableStateOf<List<AttachableGroup>?>(null) }
     var loadingAttachable by remember { mutableStateOf(false) }
 
     WorkspaceScreen(
         hub = hub,
         onOpenServers = onOpenServers,
-        onAttach = { slot ->
+        // Whichever server's button was tapped, offer every server's sessions.
+        onAttach = { _ ->
             if (!loadingAttachable) {
                 loadingAttachable = true
                 scope.launch {
-                    attachable = slot to slot.coordinator.fetchAttachableSessions()
+                    attachable = hub.attachableSessions()
                     loadingAttachable = false
                 }
             }
@@ -244,17 +246,20 @@ private fun WorkspaceRoute(
         )
     }
 
-    attachable?.let { (slot, list) ->
+    attachable?.let { groups ->
         AttachSessionSheet(
-            sessions = list,
-            nameFor = { id -> slot.coordinator.name(id) },
-            onAttachSession = { id, name ->
+            groups = groups,
+            nameFor = { serverId, id -> hub.slot(serverId)?.coordinator?.name(id) ?: id.toString().take(8) },
+            onAttachSession = { serverId, id, name ->
                 attachable = null
-                hubViewModel.launch { hub.attachRemote(slot.config.id, id, name) }
+                hubViewModel.launch { hub.attachRemote(serverId, id, name) }
             },
             onScannedSession = { id ->
                 attachable = null
-                hubViewModel.launch { hub.attachRemote(slot.config.id, id, null) }
+                // A QR carries no server: the server listing it wins, else the focus server.
+                val serverId = groups.firstOrNull { g -> g.sessions.any { it.id == id } }?.serverId
+                    ?: hub.focusServerId.value
+                if (serverId != null) hubViewModel.launch { hub.attachRemote(serverId, id, null) }
             },
             onDismiss = { attachable = null },
         )

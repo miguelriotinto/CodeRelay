@@ -46,6 +46,7 @@ class HubViewModelTest {
         override suspend fun switchToSession(id: UUID) { activeSessionId.value = id }
         override suspend fun createNewSession() {}
         override suspend fun detachForHub(budgetMs: Long) { activeSessionId.value = null }
+        override suspend fun fetchAttachableSessions(): List<SessionInfo> = emptyList()
         override suspend fun attachRemoteSession(id: UUID, serverName: String?) { remote += id; activeSessionId.value = id }
         override fun handleForegroundTransition() {}
         override fun triggerUserRecovery() {}

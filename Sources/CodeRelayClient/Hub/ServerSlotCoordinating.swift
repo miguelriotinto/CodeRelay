@@ -35,6 +35,8 @@ public protocol ServerSlotCoordinating: AnyObject, ObservableObject {
     func triggerUserRecovery()
     func tearDown()
     func syncPushRegistration(pushEnabled: Bool, notifyOnFinished: Bool) async
+    /// Other devices' live sessions on this server, for the Attach sheet.
+    func fetchAttachableSessions() async -> [SessionInfo]
     func attachRemoteSession(id: UUID, serverName: String?) async
     func fetchSessions(force: Bool) async
     /// Returns once no handshake, recovery or session fetch is in flight —

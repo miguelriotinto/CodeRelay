@@ -61,20 +61,8 @@ extension ServerHub {
         }
         // 3. One enabled server: the pre-hub cross-device attach.
         let enabled = bookmarks.filter(\.enabled)
-        if enabled.count == 1, let slot = slots[enabled[0].id] {
-            selectionGeneration &+= 1
-            let generation = selectionGeneration
-            selectionsInFlight += 1
-            defer { selectionsInFlight -= 1 }
-            pendingRef = nil
-            if let previous = activeRef, previous.serverId != enabled[0].id, let from = slots[previous.serverId] {
-                await detachBounded(from)
-                guard generation == selectionGeneration else { return .attachingRemote(serverId: enabled[0].id) }
-            }
-            await slot.attachRemoteSession(id: link.sessionId, serverName: nil)
-            guard generation == selectionGeneration else { return .attachingRemote(serverId: enabled[0].id) }
-            mirror(slot, serverId: enabled[0].id)
-            publish()
+        if enabled.count == 1, slots[enabled[0].id] != nil {
+            await attachRemote(on: enabled[0].id, sessionId: link.sessionId, serverName: nil)
             return .attachingRemote(serverId: enabled[0].id)
         }
         // 4. Nothing to route to.

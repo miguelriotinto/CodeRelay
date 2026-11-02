@@ -27,7 +27,9 @@ UI atoms both apps host (`Views/`).
   `attachRemoteSession` undo and stay silent when it moved under them.
 - **The hub mirrors the coordinator, never the reverse.** `reconcileSelection`
   (from `slotDidChange`) adopts `slot.activeSessionId` into `activeRef` when no
-  selection is in flight — ⌘W, terminate, steal, failed resume, Attach sheet, QR.
+  selection is in flight — ⌘W, terminate, steal, failed resume, QR. The Attach
+  sheet goes through `attachRemote(on:sessionId:serverName:)` (D9, like `select`)
+  and lists `attachableSessions()`: every live server's offer, not the focus one's.
   `mirror(_:serverId:)` does the same right after an attach returns.
 - **Offline servers keep cached rows** (`ServerSection.isCached`); so do
   disabled ones (spec §7), but those are not selectable and `orderedRefs` skips

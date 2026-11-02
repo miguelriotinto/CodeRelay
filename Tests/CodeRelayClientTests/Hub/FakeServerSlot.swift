@@ -78,7 +78,13 @@ final class FakeServerSlot: ServerSlotCoordinating {
     func syncPushRegistration(pushEnabled: Bool, notifyOnFinished: Bool) async {
         pushSyncs.append((pushEnabled, notifyOnFinished)); log?("push:\(pushEnabled)")
     }
-    func attachRemoteSession(id: UUID, serverName: String?) async { remoteAttaches.append(id); activeSessionId = id }
+    /// What this server's Attach query returns (other devices' sessions).
+    var attachable: [SessionInfo] = []
+    private(set) var attachableFetches = 0
+    func fetchAttachableSessions() async -> [SessionInfo] { attachableFetches += 1; return attachable }
+    func attachRemoteSession(id: UUID, serverName: String?) async {
+        log?("attach:\(config.name)"); remoteAttaches.append(id); activeSessionId = id
+    }
     func fetchSessions(force: Bool) async { fetchCount += 1 }
     var onSessionsLost: ((SessionLossReport) -> Void)?
     /// Runs inside `handleForegroundTransition`, before any hang (to report mid-pass).

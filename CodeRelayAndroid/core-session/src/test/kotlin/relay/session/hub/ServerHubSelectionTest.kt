@@ -233,6 +233,36 @@ class ServerHubSelectionTest {
         assertEquals("b has no token. Re-pair it in Servers.", h.hub.notice.value)
     }
 
+    @Test fun attachableSessionsCoverEveryLiveServerInSidebarOrder() = runTest {
+        val (h, c) = liveHub("a", "b")
+        val onA = session(); val onB = session()
+        h.slot(c[0].id)!!.attachable = listOf(onA)
+        h.slot(c[1].id)!!.attachable = listOf(onB)
+        val groups = h.hub.attachableSessions()
+        assertEquals(listOf(c[0].id, c[1].id), groups.map { it.serverId })
+        assertEquals(listOf("a", "b"), groups.map { it.title })
+        assertEquals(listOf(listOf(onA), listOf(onB)), groups.map { it.sessions })
+    }
+
+    @Test fun attachableSessionsSkipOfflineServers() = runTest {
+        val (h, c) = liveHub("a", "b")
+        h.slot(c[1].id)!!.attachable = listOf(session())
+        h.slot(c[1].id)!!.goOffline(); advanceUntilIdle()
+        assertEquals(listOf(c[0].id), h.hub.attachableSessions().map { it.serverId })
+        assertEquals(0, h.slot(c[1].id)!!.attachableFetches)
+    }
+
+    @Test fun attachingARowFromTheSecondServerAttachesThere() = runTest {
+        val (h, c) = liveHub("a", "b")
+        val onB = session()
+        h.slot(c[1].id)!!.attachable = listOf(onB)
+        val group = h.hub.attachableSessions().single { onB in it.sessions }
+        h.hub.attachRemote(group.serverId, onB.id, null); advanceUntilIdle()
+        assertEquals(listOf(onB.id), h.slot(c[1].id)!!.remoteAttaches)
+        assertTrue(h.slot(c[0].id)!!.remoteAttaches.isEmpty())
+        assertEquals(SessionRef(c[1].id, onB.id), h.hub.activeRef.value)
+    }
+
     @Test fun disabledServerKeepsCachedRowsButTheyAreNotSelectable() = runTest {
         val (h, c) = liveHub("a", "b")
         val cached = h.ref(c[1], 0)
