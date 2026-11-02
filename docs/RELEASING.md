@@ -68,8 +68,14 @@ Eight repository secrets (`gh secret list`). Rotate one with
 | `ANDROID_KEY_ALIAS` | Key alias | with the keystore |
 | `ANDROID_KEY_PASSWORD` | Key password | with the keystore |
 
-The keystore and its passwords live in the password manager. `AUR_SSH_KEY`
-(and `AUR_USERNAME`) predate this pipeline and are unchanged.
+The keystore and its passwords live in the password manager. `AUR_SSH_KEY` is
+the private half of `~/.ssh/aur` (`coderelay-aur`); its public half must be on
+the AUR account's *SSH Public Key* field, which owns both `coderelay-bin` and
+`coderelay-server-bin`. Check it with
+`ssh -i ~/.ssh/aur -o IdentitiesOnly=yes aur@aur.archlinux.org help`.
+`AUR_USERNAME` is only the commit author. Without `AUR_SSH_KEY` the `aur` legs
+skip and pass — nothing was published before v0.3.40 for exactly that reason —
+so a green `aur` job is not proof; `https://aur.archlinux.org/packages/<name>` is.
 
 The App Store Connect key "GitHub Actions" is a **Team Key** with **Admin**
 access (first CI uploads: iOS 202 and macOS 116, 2026-11-01). Automatic
