@@ -465,8 +465,8 @@ for a future source package.
 
 ### 11.2 CI
 
-A `linux-server` job in `ci.yml` on `ubuntu-latest` with `swift-actions/setup-swift`
-(Swift 6.2, so the pinned manifests load): `swift build`, then
+A `linux-server` job in `ci.yml` on `ubuntu-24.04` with Swift 6.4 installed by swiftly
+(the pinned manifests need tools-version 6.2): `swift build`, then
 `git diff --exit-code -- Package.resolved` — the AD-1 hazard now fails the build if
 the Linux resolve changes any pin — then `swift test`.
 `release.yml` gains `build-linux-server`, producing the §10.2 tarball.

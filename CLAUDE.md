@@ -35,8 +35,8 @@ outer display; built with the iOS 27.1 SDK it fills both displays and the
 system lays container toolbars out vertically beside the right-edge status
 bar. CI's iOS and macOS app builds and the TestFlight archive
 (`apple-release.yml`) all run on the `xcode-27` runner label (preview), so what
-CI compiles is what ships; the `swift build + test` job stays on `macos-26`
-(Xcode 26), whose image carries only 26.x. Xcode 27
+CI compiles is what ships; so does the `swift build + test` job, on the
+toolchain that builds the macOS server bottle. Xcode 27
 no longer bundles the Metal toolchain SwiftTerm's shader needs:
 `xcodebuild -downloadComponent MetalToolchain` once per machine, and
 `xcodebuild -downloadPlatform iOS` for the iOS 27.1 simulator runtime

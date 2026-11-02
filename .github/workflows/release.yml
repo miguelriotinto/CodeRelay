@@ -70,13 +70,13 @@ jobs:
           ref: ${{ needs.resolve-version.outputs.tag }}
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       # cmake + a C++17 compiler build libjni_cb_term.so from termlib's
       # upstream CMake. These are BUILD-time only; the shipped package depends
@@ -131,7 +131,7 @@ jobs:
             -C app/build/compose/binaries/main/app coderelay coderelay.desktop coderelay.svg
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coderelay-linux-x86_64
           path: CodeRelayLinux/dist/*.tar.gz
@@ -144,8 +144,8 @@ jobs:
 
   build-linux-server:
     needs: resolve-version
-    # Pinned: ubuntu-latest became 26.04 in Oct 2026 and swift-actions/setup-swift
-    # rejects it ("Version 26.04 of Ubuntu is not supported").
+    # Pinned to 24.04, not ubuntu-latest (26.04): the release tarball's glibc
+    # floor is the build host's, so this keeps it running on 24.04 hosts.
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -156,10 +156,20 @@ jobs:
       # Pinned so the Linux resolve is reproducible; see ci.yml. The diff step
       # below enforces the invariant: no job may rewrite the committed
       # Package.resolved.
+      # swiftly is swift.org's installer and checks the toolchain signature;
+      # swift-actions/setup-swift has no Node 24 release.
       - name: Install Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '6.2'
+        run: |
+          # swiftly exits 1 when the toolchain's system dependencies are missing.
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz"
+          tar zxf "swiftly-$(uname -m).tar.gz"
+          ./swiftly init --assume-yes --quiet-shell-followup --skip-install
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --assume-yes --use 6.4
+          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
 
       # Gate the release on the tests, so a broken server cannot be published.
       - name: Test
@@ -217,7 +227,7 @@ jobs:
         run: git diff --exit-code -- Package.resolved
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: claude-relay-linux-x86_64
           path: dist/out/*.tar.gz
@@ -257,13 +267,13 @@ jobs:
           ref: ${{ needs.resolve-version.outputs.tag }}
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           # The action's default is `tools platform-tools`, and `tools` no longer
           # exists in Google's repo — the step fails with "Failed to find package
@@ -271,7 +281,7 @@ jobs:
           packages: platform-tools
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: Read versionName / versionCode
         id: version
@@ -345,7 +355,7 @@ jobs:
           cp "$APK" "dist/coderelay-${TAG_NAME}-android.apk"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coderelay-android
           path: CodeRelayAndroid/dist/*.apk
@@ -364,11 +374,11 @@ jobs:
       linux_sha256: ${{ steps.sha.outputs.linux_sha256 }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.resolve-version.outputs.tag }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
@@ -476,7 +486,7 @@ jobs:
           cat release-notes.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.resolve-version.outputs.tag }}
           body_path: release-notes.md
@@ -558,7 +568,7 @@ jobs:
           echo "bottle: $ASSET"
           gh release upload "$TAG_NAME" "$ASSET" --clobber --repo "$GITHUB_REPOSITORY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: bottle-json
           path: bottle/*.json
@@ -603,7 +613,7 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: bottle-json
           path: bottle-json
