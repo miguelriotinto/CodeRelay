@@ -53,7 +53,7 @@ jobs:
             pacman -Q coderelay-bin coderelay-server-bin
             claude-relay --help >/dev/null
             test -x /usr/bin/claude-relay-server
-            ls -d /usr/bin/CodeRelay_CodeRelayServer.resources /usr/bin/CodeRelay_CodeRelayServer.bundle 2>/dev/null | grep -q .
+            [ -d /usr/bin/CodeRelay_CodeRelayServer.bundle ] || [ -d /usr/bin/CodeRelay_CodeRelayServer.resources ]
             test -f /usr/lib/systemd/user/claude-relay.service
             test -x /usr/bin/coderelay
             test -f /usr/share/applications/coderelay.desktop
