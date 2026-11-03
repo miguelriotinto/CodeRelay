@@ -11,11 +11,18 @@ verifies them (`/coderelay-deploy`); it does not build what ships. Design:
 | iOS app | `apple-release.yml` (runner `xcode-27`) | `gh workflow run apple-release.yml -f platform=ios` | TestFlight; tag `ios-build-<N>` |
 | macOS app | `apple-release.yml` | `-f platform=macos` (or `both`) | TestFlight; tag `mac-build-<N>` |
 | macOS server + CLI | `release.yml` job `bottle` (arm64, `xcode-27`) | `vX.Y.Z` tag | Homebrew bottle on the release; tap `miguelriotinto/homebrew-coderelay` + `Formula/` on `main` |
-| Linux server + CLI | `release.yml` | `vX.Y.Z` tag | GitHub Release; AUR `coderelay-server-bin` |
-| Linux client | `release.yml` | `vX.Y.Z` tag | GitHub Release; AUR `coderelay-bin` |
+| Linux server + CLI | `release.yml` | `vX.Y.Z` tag | GitHub Release: tarball + Arch package `coderelay-server-bin` (job `arch-packages`) |
+| Linux client | `release.yml` | `vX.Y.Z` tag | GitHub Release: tarball + Arch package `coderelay-bin` (job `arch-packages`) |
 | Android client | `release.yml` | `vX.Y.Z` tag | GitHub Release (APK, project-key signed) |
 
 Install the Mac server with `brew install miguelriotinto/coderelay/coderelay`.
+On Arch / Omarchy, `sudo pacman -U <release URL of the .pkg.tar.zst>` installs
+the client or the server straight from the release page. The `arch-packages`
+job builds both from the checked-in PKGBUILDs against the release's own
+tarballs, install-tests them in a clean Arch container, and uploads them (and
+their checksums) after the release exists — so a packaging failure never holds
+back the other assets, and re-running that job recovers it. There is no AUR
+package: publishing one needs an AUR account.
 
 ### Apple runs
 
@@ -70,14 +77,7 @@ Ten repository secrets (`gh secret list`). Rotate one with
 | `ANDROID_KEY_ALIAS` | Key alias | with the keystore |
 | `ANDROID_KEY_PASSWORD` | Key password | with the keystore |
 
-The keystore and its passwords live in the password manager. `AUR_SSH_KEY` is
-the private half of `~/.ssh/aur` (`coderelay-aur`); its public half must be on
-the AUR account's *SSH Public Key* field, which owns both `coderelay-bin` and
-`coderelay-server-bin`. Check it with
-`ssh -i ~/.ssh/aur -o IdentitiesOnly=yes aur@aur.archlinux.org help`.
-`AUR_USERNAME` is only the commit author. Without `AUR_SSH_KEY` the `aur` legs
-skip and pass — that is why nothing reached the AUR through v0.3.39 —
-so a green `aur` job is not proof; `https://aur.archlinux.org/packages/<name>` is.
+The keystore and its passwords live in the password manager.
 
 The App Store Connect key "GitHub Actions" is a **Team Key** with **Admin**
 access (first CI uploads: iOS 202 and macOS 116, 2026-11-01). Automatic

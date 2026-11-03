@@ -45,8 +45,9 @@ optdepends=(
 options=('!strip')  # The bundled JRE is already stripped; re-stripping breaks jlink images.
 
 source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$_pkgname-v$pkgver-linux-x86_64.tar.gz")
-# pkgver and this digest are rewritten by the release workflow (aur job) from
-# the tag and the tarball it built; the values here are the last release's.
+# pkgver and this digest are stamped by the release workflow (arch-packages
+# job) from the tag and the tarball it built; the values here are the last
+# release's.
 sha256sums=('SKIP')
 
 package() {

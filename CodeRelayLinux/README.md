@@ -27,12 +27,12 @@ Nothing under `CodeRelayAndroid/` is modified by this build.
 ## Install
 
 ```bash
-omarchy pkg aur add coderelay-bin
+sudo pacman -U https://github.com/miguelriotinto/CodeRelay/releases/download/vX.Y.Z/coderelay-bin-X.Y.Z-1-x86_64.pkg.tar.zst
 ```
 
-Or download `coderelay-<version>-linux-x86_64.tar.gz` from
-[Releases](https://github.com/miguelriotinto/CodeRelay/releases) and run
-`coderelay/bin/coderelay`.
+The package is attached to every [release](https://github.com/miguelriotinto/CodeRelay/releases).
+On a non-Arch distro, download `coderelay-vX.Y.Z-linux-x86_64.tar.gz` from the
+same page and run `coderelay/bin/coderelay`.
 
 The package bundles a trimmed JRE, so it needs no system Java. It does need
 `libsecret` (token storage — there is no plaintext fallback) and `libnotify`

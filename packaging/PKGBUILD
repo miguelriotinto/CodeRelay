@@ -45,8 +45,9 @@ options=('!strip')  # binaries are already release-built; keep debug info out bu
 install="$_pkgname.install"
 
 source=("$_pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/claude-relay-v$pkgver-linux-x86_64.tar.gz")
-# pkgver and this digest are rewritten by the release workflow (aur job) from
-# the tag and the tarball it built; the value here is the last release's.
+# pkgver and this digest are stamped by the release workflow (arch-packages
+# job) from the tag and the tarball it built; the value here is the last
+# release's.
 sha256sums=('SKIP')
 
 package() {
@@ -58,8 +59,16 @@ package() {
   # Agent-detection manifests, loaded at runtime via Bundle.module, which
   # resolves the resource bundle NEXT TO the executable. Without this the server
   # fatal-errors on the first session create (same requirement the Homebrew
-  # formula documents for the .bundle on macOS).
-  cp -a CodeRelay_CodeRelayServer.resources "$pkgdir/usr/bin/"
+  # formula documents for the .bundle on macOS). The name is whatever the
+  # toolchain that built the binary chose (`.resources` on older Linux SwiftPM,
+  # `.bundle` since), and Bundle.module looks up exactly that name, so copy
+  # whichever the tarball carries rather than hard-coding one.
+  local bundle
+  for bundle in CodeRelay_CodeRelayServer.resources CodeRelay_CodeRelayServer.bundle; do
+    [ -d "$bundle" ] && break
+  done
+  [ -d "$bundle" ] || { echo "server resource bundle missing from the tarball" >&2; return 1; }
+  cp -a "$bundle" "$pkgdir/usr/bin/"
 
   # systemd user unit. `claude-relay load` enables THIS file on a packaged
   # install rather than writing a shadowing copy into ~/.config.

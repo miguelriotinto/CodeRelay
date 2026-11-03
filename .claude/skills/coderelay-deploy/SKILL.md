@@ -25,7 +25,7 @@ last release tag and confirm the skip list with the user.
 |---|---|---|
 | iOS app → TestFlight | `apple-release.yml` | `gh workflow run … -f platform=ios` |
 | macOS app → TestFlight | `apple-release.yml` | `… -f platform=macos` (`both` for the two) |
-| Android APK, Linux client, Linux server, macOS server bottle, tap, AUR | `release.yml` | pushing a `vX.Y.Z` tag |
+| Android APK, Linux client, Linux server (tarballs + Arch packages), macOS server bottle, tap | `release.yml` | pushing a `vX.Y.Z` tag |
 
 ## 1. Preflight
 
@@ -78,11 +78,15 @@ gh run watch "$RUN" --exit-status
 ```
 
 VERIFY:
-- The run ends `success`, including the `bottle` and `homebrew` jobs.
+- The run ends `success`, including the `bottle`, `homebrew` and
+  `arch-packages` jobs.
 - `gh release view vX.Y.Z --json assets --jq '.assets[].name'` lists
   `coderelay-vX.Y.Z-linux-x86_64.tar.gz`, `claude-relay-vX.Y.Z-linux-x86_64.tar.gz`,
-  `coderelay-vX.Y.Z-android.apk`, `checksums.txt` and
-  `coderelay-X.Y.Z.<tag>.bottle.tar.gz` (single dash before the version).
+  `coderelay-vX.Y.Z-android.apk`, `checksums.txt`,
+  `coderelay-X.Y.Z.<tag>.bottle.tar.gz` (single dash before the version),
+  `coderelay-bin-X.Y.Z-1-x86_64.pkg.tar.zst` and
+  `coderelay-server-bin-X.Y.Z-1-x86_64.pkg.tar.zst` (no `v`), and
+  `checksums.txt` has a line for each `.pkg.tar.zst`.
 - `gh release view vX.Y.Z` prints the per-platform sections.
 - Android: `gh release download vX.Y.Z -p '*.apk' -D /tmp/cr-apk` and
   `aapt2 dump badging` shows the expected `versionCode`/`versionName`; byte
@@ -110,7 +114,7 @@ VERIFY:
   a HEAD install (see `docs/RELEASING.md`, one-time cut-over).
 - Full Disk Access may need re-granting after the upgrade (ad-hoc signed).
 
-On a Linux host: `yay -Syu coderelay-server-bin` once the AUR job has pushed.
+On a Linux host: `sudo pacman -U <release URL of coderelay-server-bin-X.Y.Z-1-x86_64.pkg.tar.zst>` once the `arch-packages` job has uploaded it.
 
 ## 5. Report
 
