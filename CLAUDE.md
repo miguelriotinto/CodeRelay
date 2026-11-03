@@ -60,7 +60,7 @@ under the camera. Every other view honours the inset.
 - **Mac server:** a CI-built arm64 Homebrew bottle, attached to the `vX.Y.Z` release; the `homebrew` job writes the bottle into the tap and into `Formula/coderelay.rb` on `main` — do not hand-edit its url/sha256/bottle.
 
 - **The user installs APKs by downloading from GitHub Releases on the phone — the Android device is NOT adb-connected to this machine.** Never assume `adb install` reaches the user's device.
-- **A `vX.Y.Z` tag is the release.** `release.yml` builds and publishes the Linux client tarball, the Linux server + CLI tarball and the Android APK together, with a release body sectioned per platform, then builds the macOS server bottle and bumps the Homebrew tap and the AUR. The APK is only signed with the project key when the `ANDROID_KEYSTORE_*` repo secrets exist (see `CodeRelayAndroid/RELEASE.md`); until then it is debug-signed and the body flags it.
+- **A `vX.Y.Z` tag is the release.** `release.yml` builds and publishes the Linux client tarball, the Linux server + CLI tarball and the Android APK together, with a release body sectioned per platform, then builds the macOS server bottle and bumps the Homebrew tap, and attaches Arch packages of the Linux client and server (`arch-packages`: built from the checked-in PKGBUILDs, install-tested in a clean Arch container) for `sudo pacman -U <url>` — there is no AUR package. The APK is only signed with the project key when the `ANDROID_KEYSTORE_*` repo secrets exist (see `CodeRelayAndroid/RELEASE.md`); until then it is debug-signed and the body flags it.
 
 ## Architecture
 

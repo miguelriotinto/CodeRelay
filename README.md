@@ -56,16 +56,17 @@ Install the prebuilt package (statically linked; depends only on `curl`, with
 `wl-clipboard`/`xclip` optional for image paste):
 
 ```bash
-# from the AUR
-yay -S coderelay-server-bin
+# the package is attached to every release
+sudo pacman -U https://github.com/miguelriotinto/CodeRelay/releases/download/vX.Y.Z/coderelay-server-bin-X.Y.Z-1-x86_64.pkg.tar.zst
 claude-relay setup                 # starts the service, prints a pairing QR
 ```
 
-Or download the tarballs straight from the [Releases](https://github.com/miguelriotinto/CodeRelay/releases)
-page — every release has a **Linux server + CLI** section
-(`claude-relay-vX.Y.Z-linux-x86_64.tar.gz`), a **Linux client** section
-(`coderelay-vX.Y.Z-linux-x86_64.tar.gz`, the Compose Desktop app; also
-`yay -S coderelay-bin`), and an **Android client** section with the APK.
+Every [release](https://github.com/miguelriotinto/CodeRelay/releases) has a
+**Linux server + CLI** section (the `coderelay-server-bin` package, or
+`claude-relay-vX.Y.Z-linux-x86_64.tar.gz` for other distros), a **Linux client**
+section (the Compose Desktop app: `coderelay-bin-X.Y.Z-1-x86_64.pkg.tar.zst`, or
+`coderelay-vX.Y.Z-linux-x86_64.tar.gz`), and an **Android client** section with
+the APK. Upgrade by running the same `pacman -U` with the next release's URL.
 
 `setup` installs and starts `claude-relay.service` for your user and prints the
 pairing QR. The service runs while you are logged in; for a headless host that
