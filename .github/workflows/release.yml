@@ -8,9 +8,11 @@ name: Release
 # Both paths produce identical artifacts: the Linux client tarball, the Linux
 # server + CLI tarball, the Android APK, a GitHub Release whose body has one
 # section per platform, an arm64 Homebrew bottle of the macOS server uploaded
-# to that release, and auto-pushed bumps to the homebrew-coderelay tap (with
-# the bottle) and the AUR so `brew upgrade` / `yay -Syu` pick the version up
-# immediately. The iOS and macOS apps ship separately (apple-release.yml).
+# to that release, an auto-pushed bump to the homebrew-coderelay tap (with
+# the bottle) so `brew upgrade` picks the version up immediately, and the two
+# Arch Linux packages (coderelay-bin, coderelay-server-bin) attached to the
+# release for `sudo pacman -U <url>`. The iOS and macOS apps ship separately
+# (apple-release.yml).
 
 on:
   push:
@@ -399,7 +401,7 @@ jobs:
           echo "Source tarball SHA256: $SOURCE_SHA"
           echo "source_sha256=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
-          # The Linux tarball's checksum goes into the AUR PKGBUILD. Taken from
+          # The Linux tarballs' checksums go into the Arch PKGBUILDs. Taken from
           # the artifact we just built rather than re-downloading the published
           # asset, so the value cannot drift from what is actually shipped.
           LINUX_TARBALL="artifacts/coderelay-${TAG_NAME}-linux-x86_64.tar.gz"
@@ -408,7 +410,7 @@ jobs:
             echo "Linux tarball SHA256: $LINUX_SHA"
             echo "linux_sha256=$LINUX_SHA" >> "$GITHUB_OUTPUT"
           else
-            echo "Linux tarball not found; the AUR job will skip coderelay-bin."
+            echo "Linux tarball not found; the arch-packages job will fail for coderelay-bin."
           fi
           SERVER_TARBALL="artifacts/claude-relay-${TAG_NAME}-linux-x86_64.tar.gz"
           if [ -f "$SERVER_TARBALL" ]; then
@@ -416,7 +418,7 @@ jobs:
             echo "Linux server tarball SHA256: $SERVER_SHA"
             echo "server_sha256=$SERVER_SHA" >> "$GITHUB_OUTPUT"
           else
-            echo "Linux server tarball not found; the AUR job will skip coderelay-server-bin."
+            echo "Linux server tarball not found; the arch-packages job will fail for coderelay-server-bin."
           fi
 
       # The release body is one section per platform — what the asset is, how
@@ -435,6 +437,11 @@ jobs:
           CLIENT="coderelay-${TAG_NAME}-linux-x86_64.tar.gz"
           SERVER="claude-relay-${TAG_NAME}-linux-x86_64.tar.gz"
           APK="coderelay-${TAG_NAME}-android.apk"
+          # Arch packages, attached by the arch-packages job after this release
+          # exists. pkgrel is always 1 (that job stamps it); makepkg names the
+          # file <pkgname>-<pkgver>-<pkgrel>-<arch>.pkg.tar.zst.
+          CLIENT_PKG="coderelay-bin-${TAG_NAME#v}-1-x86_64.pkg.tar.zst"
+          SERVER_PKG="coderelay-server-bin-${TAG_NAME#v}-1-x86_64.pkg.tar.zst"
           sha() { awk -v f="$1" '$2 == f { print $1 }' artifacts/checksums.txt; }
 
           {
@@ -442,8 +449,8 @@ jobs:
             echo
             echo "| Platform | Asset | Version |"
             echo "|---|---|---|"
-            echo "| Linux client (x86_64) | [\`${CLIENT}\`](${DL}/${CLIENT}) | ${TAG_NAME} |"
-            echo "| Linux server + CLI (x86_64) | [\`${SERVER}\`](${DL}/${SERVER}) | ${TAG_NAME} |"
+            echo "| Linux client (x86_64) | Arch: [\`${CLIENT_PKG}\`](${DL}/${CLIENT_PKG}) · any distro: [\`${CLIENT}\`](${DL}/${CLIENT}) | ${TAG_NAME} |"
+            echo "| Linux server + CLI (x86_64) | Arch: [\`${SERVER_PKG}\`](${DL}/${SERVER_PKG}) · any distro: [\`${SERVER}\`](${DL}/${SERVER}) | ${TAG_NAME} |"
             echo "| Android client | [\`${APK}\`](${DL}/${APK}) | ${ANDROID_VERSION_NAME} (versionCode ${ANDROID_VERSION_CODE}) |"
             echo "| macOS server + CLI (Apple silicon) | Homebrew: \`brew install miguelriotinto/coderelay/coderelay\` | ${TAG_NAME} |"
             echo "| iOS / macOS app | TestFlight | — |"
@@ -453,8 +460,8 @@ jobs:
             echo "Compose Desktop app for Arch / Omarchy and any x86_64 glibc host, with its own JRE and the libvterm terminal bundled. Runtime deps: \`libsecret\`, \`libnotify\`."
             echo
             echo '```bash'
-            echo "yay -S coderelay-bin                       # AUR"
-            echo "# or manually:"
+            echo "sudo pacman -U ${DL}/${CLIENT_PKG}   # Arch / Omarchy"
+            echo "# or on any x86_64 glibc host:"
             echo "curl -LO ${DL}/${CLIENT}"
             echo "tar xzf ${CLIENT} && ./coderelay/bin/coderelay"
             echo '```'
@@ -464,9 +471,9 @@ jobs:
             echo "\`claude-relay-server\` and the \`claude-relay\` CLI, statically linked against the Swift runtime, plus the systemd user unit and the agent state hook. Runs as \`claude-relay.service\` for your user."
             echo
             echo '```bash'
-            echo "yay -S coderelay-server-bin                # AUR"
+            echo "sudo pacman -U ${DL}/${SERVER_PKG}   # Arch / Omarchy"
             echo "claude-relay setup                         # starts the service, prints a pairing QR"
-            echo "# or manually:"
+            echo "# or on any x86_64 glibc host:"
             echo "curl -LO ${DL}/${SERVER}"
             echo "mkdir -p claude-relay && tar xzf ${SERVER} -C claude-relay"
             echo '```'
@@ -665,128 +672,83 @@ jobs:
           # main may have moved since checkout; Formula/ is touched only here.
           git push origin HEAD:main || { git pull --rebase origin main && git push origin HEAD:main; }
 
-  # ── Push PKGBUILD updates to the AUR ────────────────────────────────────
-  # One leg per package: coderelay-bin (Linux client) and coderelay-server-bin
-  # (Linux server + CLI). Needs two secrets:
-  #   AUR_SSH_KEY   — private key of an SSH keypair registered on the AUR
-  #                   account that owns both packages
-  #   AUR_USERNAME  — the AUR account name (for the commit author)
-  # Without AUR_SSH_KEY the job skips, so a dry-run tag push is harmless.
-  #
-  # Mirrors the homebrew job above. The AUR is a plain git remote, so this is
-  # a clone, a sed of pkgver + sha256, and a push — .SRCINFO regenerated from
-  # the PKGBUILD, which the AUR requires to match. Cloning a package that does
-  # not exist yet gives an empty repo, and the first push creates it.
-
-  aur:
+  # ── Arch Linux packages, attached to the release ────────────────────────
+  # Builds coderelay-bin and coderelay-server-bin from the checked-in PKGBUILDs
+  # against the tarballs the release job just published (makepkg downloads
+  # them and checks the stamped sha256), installs both into a clean Arch
+  # container as a user would, and uploads the .pkg.tar.zst files to the
+  # release so `sudo pacman -U <url>` installs straight from the Releases page.
+  # This replaces the AUR, which needed an account. One job rather than a
+  # matrix because both packages append to the same checksums.txt. Like the
+  # bottle it runs after the release exists, so a packaging failure never holds
+  # back the other assets; recover by re-running this job.
+  arch-packages:
     needs: [resolve-version, release]
     runs-on: ubuntu-latest
     if: ${{ !cancelled() && needs.release.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - package: coderelay-bin
-            dir: CodeRelayLinux/packaging
-            files: PKGBUILD
-            sha_output: linux_sha256
-          - package: coderelay-server-bin
-            dir: packaging
-            files: PKGBUILD coderelay-server.install
-            sha_output: server_sha256
-    name: aur (${{ matrix.package }})
     steps:
-      - name: Check AUR credentials and tarball are available
-        id: check_key
-        env:
-          KEY: ${{ secrets.AUR_SSH_KEY }}
-          SHA: ${{ needs.release.outputs[matrix.sha_output] }}
-        run: |
-          if [ -z "$KEY" ]; then
-            echo "AUR_SSH_KEY secret is not set; skipping ${{ matrix.package }}."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          elif [ -z "$SHA" ]; then
-            echo "No tarball checksum from the release job; skipping ${{ matrix.package }}."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: actions/checkout@v5
-        if: steps.check_key.outputs.skip == 'false'
         with:
           ref: ${{ needs.resolve-version.outputs.tag }}
 
-      - name: Configure SSH for aur.archlinux.org
-        if: steps.check_key.outputs.skip == 'false'
-        env:
-          KEY: ${{ secrets.AUR_SSH_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          # Pin the host key rather than disabling verification: this pushes a
-          # package thousands of people install, so an unverified host is not
-          # an acceptable shortcut.
-          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
-          cat >> ~/.ssh/config <<'EOF'
-          Host aur.archlinux.org
-            IdentityFile ~/.ssh/aur
-            IdentitiesOnly yes
-            User aur
-          EOF
-
-      - name: Clone the AUR package
-        if: steps.check_key.outputs.skip == 'false'
-        run: git clone "ssh://aur@aur.archlinux.org/${{ matrix.package }}.git" aur
-
-      - name: Update pkgver + sha256
-        if: steps.check_key.outputs.skip == 'false'
+      - name: Stamp pkgver + sha256 into the PKGBUILDs
         env:
           TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
-          SHA: ${{ needs.release.outputs[matrix.sha_output] }}
+          CLIENT_SHA: ${{ needs.release.outputs.linux_sha256 }}
+          SERVER_SHA: ${{ needs.release.outputs.server_sha256 }}
         run: |
-          # The AUR pkgver has no leading "v"; the release tag does.
+          # pkgver has no leading "v"; the release tag does.
           PKGVER="${TAG_NAME#v}"
+          mkdir -p pkg/coderelay-bin pkg/coderelay-server-bin
+          cp CodeRelayLinux/packaging/PKGBUILD pkg/coderelay-bin/
+          cp packaging/PKGBUILD packaging/coderelay-server.install pkg/coderelay-server-bin/
+          stamp() {
+            [ -n "$2" ] || { echo "No tarball checksum from the release job for $1"; exit 1; }
+            sed -i -E "s|^pkgver=.*|pkgver=${PKGVER}|; s|^pkgrel=.*|pkgrel=1|; s|^sha256sums=\(.*\)$|sha256sums=('$2')|" "$1/PKGBUILD"
+            grep -q "^sha256sums=('$2')$" "$1/PKGBUILD" || { echo "sha256sums was not rewritten in $1"; exit 1; }
+            grep -E '^(pkgname|pkgver|pkgrel|sha256sums)=' "$1/PKGBUILD"
+          }
+          stamp pkg/coderelay-bin "$CLIENT_SHA"
+          stamp pkg/coderelay-server-bin "$SERVER_SHA"
 
-          for file in ${{ matrix.files }}; do cp "${{ matrix.dir }}/$file" aur/; done
-          cd aur
-
-          sed -i -E "s|^pkgver=.*|pkgver=${PKGVER}|" PKGBUILD
-          sed -i -E "s|^pkgrel=.*|pkgrel=1|" PKGBUILD
-          sed -i -E "s|^sha256sums=\(.*\)$|sha256sums=('${SHA}')|" PKGBUILD
-          grep -q "^sha256sums=('${SHA}')$" PKGBUILD || { echo "sha256sums was not rewritten"; exit 1; }
-
-          echo "=== PKGBUILD diff ==="
-          git --no-pager diff PKGBUILD || true
-
-      # .SRCINFO is generated metadata the AUR validates against the PKGBUILD;
-      # a mismatch is rejected on push. Generated in an Arch container because
-      # makepkg is not available on the runner.
-      - name: Regenerate .SRCINFO
-        if: steps.check_key.outputs.skip == 'false'
+      # makepkg refuses to run as root, hence the build user. --nodeps because
+      # these are prebuilt packages: the runtime deps only matter at install,
+      # where pacman -U resolves them exactly as it will on a user's machine.
+      - name: Build and install-test in Arch
         run: |
-          docker run --rm -v "$PWD/aur:/pkg" -w /pkg archlinux:base-devel \
-            bash -c 'useradd -m build && chown -R build /pkg && su build -c "makepkg --printsrcinfo" > .SRCINFO'
-          head -20 aur/.SRCINFO
+          docker run --rm -v "$PWD/pkg:/pkg" archlinux:base-devel bash -euo pipefail -c '
+            pacman -Syu --noconfirm >/dev/null
+            useradd -m build && chown -R build /pkg
+            for p in coderelay-bin coderelay-server-bin; do
+              su build -c "cd /pkg/$p && makepkg --nodeps --noconfirm"
+            done
+            pacman -U --noconfirm /pkg/*/*.pkg.tar.zst
+            pacman -Q coderelay-bin coderelay-server-bin
+            claude-relay --help >/dev/null
+            test -x /usr/bin/claude-relay-server
+            test -d /usr/bin/CodeRelay_CodeRelayServer.resources
+            test -f /usr/lib/systemd/user/claude-relay.service
+            test -x /usr/bin/coderelay
+            test -f /usr/share/applications/coderelay.desktop
+          '
+          ls -l pkg/*/*.pkg.tar.zst
 
-      - name: Commit + push
-        if: steps.check_key.outputs.skip == 'false'
+      - name: Upload the packages to the release
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ needs.resolve-version.outputs.tag }}
-          AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
         run: |
-          cd aur
-          git add PKGBUILD .SRCINFO ${{ matrix.files }}
-          # Staged, not `git diff`: on a first publish every file is new, and
-          # `git diff` ignores untracked files, so it reported "no changes".
-          if git diff --cached --quiet; then
-            echo "${{ matrix.package }} already at ${TAG_NAME#v}. Nothing to push."
-            exit 0
-          fi
-          git config user.name "${AUR_USERNAME:-github-actions}"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "${{ matrix.package }} ${TAG_NAME#v}" -m "Automated bump from the CodeRelay release workflow."
-          # The AUR accepts only master; an empty clone's branch is the runner's
-          # init.defaultBranch, which need not be master.
-          git push origin HEAD:master
+          # pkg/ is owned by the container's build user; work in RUNNER_TEMP.
+          OUT="$RUNNER_TEMP/arch"
+          mkdir -p "$OUT"
+          cp pkg/*/*.pkg.tar.zst "$OUT/"
+          cd "$OUT"
+          gh release download "$TAG_NAME" -R "$GITHUB_REPOSITORY" -p checksums.txt
+          # Idempotent on a re-run: drop any earlier line for these files first.
+          for f in *.pkg.tar.zst; do
+            grep -v "  ${f}$" checksums.txt > checksums.new || true
+            mv checksums.new checksums.txt
+            sha256sum -- "$f" >> checksums.txt
+          done
+          cat checksums.txt
+          gh release upload "$TAG_NAME" -R "$GITHUB_REPOSITORY" --clobber -- *.pkg.tar.zst checksums.txt
