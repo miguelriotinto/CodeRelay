@@ -76,6 +76,22 @@ public actor TokenStore {
         return mutable[index]
     }
 
+    /// Record that `tokenId` authenticated from `deviceId` (see
+    /// `TokenDeviceSharing.record`). Deferred write, like `lastUsedAt`.
+    ///
+    /// - Returns: how many other devices are currently using this token, when
+    ///   this sighting is the one that makes it shared; otherwise 0.
+    public func recordDevice(tokenId: String, deviceId: String, now: Date = Date()) -> Int {
+        guard TokenDeviceSharing.isRecordable(deviceId),
+              var loaded = try? ensureLoaded(),
+              let index = loaded.firstIndex(where: { $0.id == tokenId }) else { return 0 }
+        let (devices, sharedWith) = TokenDeviceSharing.record(deviceId, at: now, in: loaded[index].devices)
+        loaded[index].devices = devices
+        tokens = loaded
+        scheduleDirtyFlush()
+        return sharedWith
+    }
+
     /// Return all stored token infos.
     public func list() -> [TokenInfo] {
         (try? ensureLoaded()) ?? []

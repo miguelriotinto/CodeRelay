@@ -37,6 +37,7 @@ object MessageEnvelope {
                 is ClientMessage.AuthRequest -> {
                     put("token", JsonPrimitive(message.token))
                     message.protocolVersion?.let { put("protocolVersion", JsonPrimitive(it)) }
+                    message.deviceId?.let { put("deviceId", JsonPrimitive(it)) }
                 }
                 is ClientMessage.SessionCreate -> {
                     message.name?.let { put("name", JsonPrimitive(it)) }

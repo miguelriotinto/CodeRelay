@@ -260,3 +260,35 @@ final class TokenStoreTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Device sharing
+
+extension TokenStoreTests {
+    func testRecordDeviceReportsSecondDeviceOnceAndPersists() async throws {
+        let store = TokenStore(directory: tempDir)
+        let (_, info) = try await store.create(label: "iPhone")
+
+        let first = await store.recordDevice(tokenId: info.id, deviceId: "phone")
+        let second = await store.recordDevice(tokenId: info.id, deviceId: "mac")
+        let again = await store.recordDevice(tokenId: info.id, deviceId: "mac")
+        XCTAssertEqual([first, second, again], [0, 1, 0])
+
+        await store.flushIfDirty()
+        let reloaded = try await TokenStore(directory: tempDir).inspect(id: info.id)
+        XCTAssertEqual(Set(reloaded.devices.map { Array($0.keys) } ?? []), ["phone", "mac"])
+    }
+
+    func testRotateForgetsDevices() async throws {
+        let store = TokenStore(directory: tempDir)
+        let (_, info) = try await store.create(label: nil)
+        _ = await store.recordDevice(tokenId: info.id, deviceId: "phone")
+        let (_, rotated) = try await store.rotate(id: info.id)
+        XCTAssertNil(rotated.devices)
+    }
+
+    func testRecordDeviceForUnknownTokenIsANoOp() async {
+        let store = TokenStore(directory: tempDir)
+        let result = await store.recordDevice(tokenId: "nope", deviceId: "phone")
+        XCTAssertEqual(result, 0)
+    }
+}

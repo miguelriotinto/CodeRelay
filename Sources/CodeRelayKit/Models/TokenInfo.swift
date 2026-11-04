@@ -20,6 +20,11 @@ public struct TokenInfo: Codable, Sendable, Identifiable {
     /// When the token expires. `nil` means the token never expires.
     public let expiresAt: Date?
 
+    /// Device id → last authentication from it (see `TokenDeviceSharing`).
+    /// `nil` until a client that sends a device id authenticates; cleared by
+    /// rotation, since a rotated token is a new credential.
+    public var devices: [String: Date]?
+
     /// Whether the token has expired.
     public var isExpired: Bool {
         guard let expiresAt else { return false }
@@ -32,7 +37,8 @@ public struct TokenInfo: Codable, Sendable, Identifiable {
         label: String? = nil,
         createdAt: Date = Date(),
         lastUsedAt: Date? = nil,
-        expiresAt: Date? = nil
+        expiresAt: Date? = nil,
+        devices: [String: Date]? = nil
     ) {
         self.id = id
         self.tokenHash = tokenHash
@@ -40,5 +46,6 @@ public struct TokenInfo: Codable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
         self.expiresAt = expiresAt
+        self.devices = devices
     }
 }

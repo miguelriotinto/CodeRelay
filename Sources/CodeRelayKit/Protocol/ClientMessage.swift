@@ -2,7 +2,10 @@ import Foundation
 
 /// Messages sent from the client to the server.
 public enum ClientMessage: Equatable, Sendable {
-    case authRequest(token: String, protocolVersion: Int? = nil)
+    /// `deviceId`: a stable per-device id (the one push registration sends).
+    /// Optional and omitted when nil; the relay uses it only to notice one
+    /// token in use on several devices (`TokenDeviceSharing`).
+    case authRequest(token: String, protocolVersion: Int? = nil, deviceId: String? = nil)
     case sessionCreate(name: String? = nil, cols: UInt16? = nil, rows: UInt16? = nil)
     case sessionAttach(sessionId: UUID, cols: UInt16? = nil, rows: UInt16? = nil)
     /// Resume a detached session. `skipReplay` (defaults to false) lets the
@@ -92,9 +95,10 @@ extension ClientMessage: Codable {
     public func encodePayload(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: PayloadCodingKeys.self)
         switch self {
-        case .authRequest(let token, let protocolVersion):
+        case .authRequest(let token, let protocolVersion, let deviceId):
             try container.encode(token, forKey: .token)
             try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
+            try container.encodeIfPresent(deviceId, forKey: .deviceId)
         case .sessionCreate(let name, let cols, let rows):
             try container.encodeIfPresent(name, forKey: .name)
             try container.encodeIfPresent(cols, forKey: .cols)
@@ -156,7 +160,8 @@ extension ClientMessage: Codable {
         case "auth_request":
             let token = try container.decode(String.self, forKey: .token)
             let protocolVersion = try container.decodeIfPresent(Int.self, forKey: .protocolVersion)
-            return .authRequest(token: token, protocolVersion: protocolVersion)
+            let deviceId = try container.decodeIfPresent(String.self, forKey: .deviceId)
+            return .authRequest(token: token, protocolVersion: protocolVersion, deviceId: deviceId)
         case "session_create":
             let name = try container.decodeIfPresent(String.self, forKey: .name)
             let cols = try container.decodeIfPresent(UInt16.self, forKey: .cols)

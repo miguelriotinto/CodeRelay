@@ -213,11 +213,20 @@ public final class SessionController: ObservableObject {
         serverCapabilities = []
     }
 
+    /// The device id sent in `auth_request`: the same id push registration
+    /// uses, or nil when the platform refuses one. The relay only uses it to
+    /// notice one token in use on several devices.
+    static var authDeviceId: String? {
+        let id = DeviceIdentifier().currentID
+        return TokenDeviceSharing.isRecordable(id) ? id : nil
+    }
+
     /// Sends an authentication request and waits for the server response.
     /// Includes the client's protocol version; checks the server's version on success.
     public func authenticate(token: String) async throws {
         let response = try await sendAndWaitForResponse(
-            .authRequest(token: token, protocolVersion: CodeRelayKit.protocolVersion),
+            .authRequest(token: token, protocolVersion: CodeRelayKit.protocolVersion,
+                         deviceId: Self.authDeviceId),
             expected: ["auth_success", "auth_failure"]
         )
 

@@ -30,6 +30,14 @@ class MessageEnvelopeTest {
         )
     }
 
+    @Test fun `encode auth_request with device id`() {
+        val msg = ClientMessage.AuthRequest(token = "tok", protocolVersion = 4, deviceId = "dev-1")
+        assertEquals(
+            """{"type":"auth_request","payload":{"token":"tok","protocolVersion":4,"deviceId":"dev-1"}}""",
+            MessageEnvelope.encodeClient(msg),
+        )
+    }
+
     @Test fun `encode ping carries empty payload`() {
         assertEquals(
             """{"type":"ping","payload":{}}""",

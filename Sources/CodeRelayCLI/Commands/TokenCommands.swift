@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import CodeRelayKit
 
 struct TokenGroup: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -81,15 +82,34 @@ struct TokenListCommand: AsyncParsableCommand {
             if globals.json {
                 print(OutputFormatter.formatJSON(tokens))
             } else {
-                let headers = ["ID", "LABEL", "PREFIX", "CREATED", "EXPIRES", "LAST USED"]
+                let headers = ["ID", "LABEL", "PREFIX", "CREATED", "EXPIRES", "LAST USED", "DEVICES"]
+                let now = Date()
                 let rows = tokens.map { t in
-                    [t.id, t.label ?? "-", t.prefix ?? "-", t.createdAt, t.expiresAt ?? "never", t.lastUsedAt ?? "never"]
+                    [t.id, t.label ?? "-", t.prefix ?? "-", t.createdAt, t.expiresAt ?? "never", t.lastUsedAt ?? "never",
+                     Self.devicesCell(t.devices, now: now)]
                 }
                 print(OutputFormatter.formatTable(headers: headers, rows: rows))
+                if rows.contains(where: { $0.last?.hasSuffix("(shared)") == true }) {
+                    print("\nA shared token gives its devices one session pane: each sees the others' sessions.")
+                    print("Give each device its own token: claude-relay token create --label <device>")
+                }
             }
         } catch {
             print(OutputFormatter.formatError(error, json: globals.json))
             throw ExitCode.failure
+        }
+    }
+
+    /// Devices that authenticated within `TokenDeviceSharing.window`; "-" when
+    /// none reported one (older clients, or a relay that predates device ids).
+    static func devicesCell(_ devices: [String: String]?, now: Date) -> String {
+        let parser = ISO8601DateFormatter()
+        let seen = (devices ?? [:]).compactMapValues { parser.date(from: $0) }
+        let count = TokenDeviceSharing.recentCount(seen, now: now)
+        switch count {
+        case 0: return "-"
+        case 1: return "1"
+        default: return "\(count) (shared)"
         }
     }
 }
@@ -253,4 +273,6 @@ struct TokenInfo: Codable {
     let createdAt: String
     let expiresAt: String?
     let lastUsedAt: String?
+    /// Device id → ISO-8601 last authentication (relay ≥ the device-id change).
+    let devices: [String: String]?
 }
