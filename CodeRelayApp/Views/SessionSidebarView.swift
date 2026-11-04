@@ -292,6 +292,7 @@ private struct AttachSessionSheet: View {
                                     // One server needs no header, as before.
                                     if groups.count > 1 {
                                         Text(group.sessions.isEmpty ? "\(group.title) — no sessions" : group.title)
+                                            .textCase(.uppercase)
                                     }
                                 }
                             }

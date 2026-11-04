@@ -56,6 +56,7 @@ struct AttachRemoteSessionSheet: View {
                         } header: {
                             if groups.count > 1 {
                                 Text(group.sessions.isEmpty ? "\(group.title) — no sessions" : group.title)
+                                    .textCase(.uppercase)
                             }
                         }
                     }
