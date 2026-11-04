@@ -101,14 +101,23 @@ VERIFY:
 ## 4. Mac server (after a tag release)
 
 ```bash
-brew update && brew upgrade coderelay && brew services restart coderelay
+Scripts/mac-server-upgrade.sh    # starts a one-shot launchd job; log: ~/.claude-relay/upgrade/upgrade.log
 ```
 
-`brew upgrade` must pour the bottle (no `swift build` in its output). Never
-run the server binary directly or `pkill` it.
+**Never run `brew upgrade coderelay` / `brew services restart coderelay`
+inline.** The upgrade stops the relay, and the relay kills every process in
+its PTY sessions — so from a relay-hosted shell (`$CLAUDE_RELAY_SESSION_ID`
+set) brew is killed after pouring the bottle and before linking and
+restarting, leaving the server down with dangling `bin/` links (v0.3.42). The
+script runs the upgrade from launchd, outside any PTY session, and always
+relinks and restarts. If this session is relay-hosted it ends when the relay
+restarts: tell the user first, and verify from the next session. Never run the
+server binary directly or `pkill` it.
 
 VERIFY:
-- `claude-relay status` reports the new version; `curl -s http://127.0.0.1:9100/health` is ok.
+- The log's last line is `end: OK`, and `brew upgrade` poured the bottle (no
+  `swift build` in the log).
+- `claude-relay status` reports the new version; `claude-relay health` is OK.
 - `ls -l /opt/homebrew/bin/claude-relay-server` points at
   `Cellar/coderelay/X.Y.Z/…` — a `HEAD-<sha>` path means the Mac is still on
   a HEAD install (see `docs/RELEASING.md`, one-time cut-over).

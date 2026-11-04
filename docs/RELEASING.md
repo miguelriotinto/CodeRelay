@@ -114,6 +114,22 @@ Then re-grant Full Disk Access. From then on the Mac server updates only on
 the first APK signed with the release key (saved servers and tokens are lost;
 re-pair).
 
+## Upgrading the Mac server
+
+```bash
+Scripts/mac-server-upgrade.sh    # log: ~/.claude-relay/upgrade/upgrade.log, last line `end: OK`
+```
+
+Not `brew upgrade coderelay` by hand from a session the relay hosts: the
+upgrade stops the relay, the relay kills its PTY sessions, and brew dies
+between pouring the bottle and linking `bin/` — the server stays down with
+`claude-relay*` pointing at a deleted keg. The script runs from launchd, so it
+survives. If that has already happened:
+
+```bash
+brew unlink coderelay && brew link coderelay && brew services start coderelay
+```
+
 ## Break glass — manual TestFlight upload
 
 **By hand only, when GitHub Actions or the `xcode-27` runner is down. Never
