@@ -81,6 +81,34 @@ final class PairRequestHandlerTests: XCTestCase {
         return out
     }
 
+    /// The handler answers from a detached `Task` (rate-limit check, redeem,
+    /// `TokenStore.create` and its file write), so no fixed sleep after `send`
+    /// is long enough on a loaded CI runner. Accumulates replies until `done`
+    /// holds (by default: the first one arrived) or the deadline passes.
+    private func replies(
+        _ channel: NIOAsyncTestingChannel,
+        timeout: Duration = .seconds(5),
+        until done: ([ServerMessage]) -> Bool = { !$0.isEmpty }
+    ) async throws -> [ServerMessage] {
+        let deadline = ContinuousClock.now + timeout
+        var out = try await serverMessages(channel)
+        while !done(out) && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+            out += try await serverMessages(channel)
+        }
+        return out
+    }
+
+    /// Polls `condition` instead of sleeping a fixed amount.
+    private func poll(timeout: Duration = .seconds(5), until condition: () async -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return await condition()
+    }
+
     private func pairFrame(code: String) -> WebSocketFrame {
         textFrame("""
         {"type":"pair_request","payload":{"code":"\(code)","deviceName":"Test iPhone","platform":"ios"}}
@@ -97,7 +125,7 @@ final class PairRequestHandlerTests: XCTestCase {
         let grant = await store.mint(label: "Test iPhone")
         try await send(pairFrame(code: grant.code), on: fixture)
 
-        let messages = try await serverMessages(fixture.channel)
+        let messages = try await replies(fixture.channel)
         guard let success = messages.compactMap({ msg -> (String, String, String)? in
             if case .pairSuccess(let token, let tokenId, let label, _) = msg { return (token, tokenId, label) }
             return nil
@@ -122,6 +150,9 @@ final class PairRequestHandlerTests: XCTestCase {
 
         let grant = await store.mint(label: nil)
         try await send(pairFrame(code: grant.code), on: fixture)
+        let messages = try await replies(fixture.channel)
+        XCTAssertTrue(messages.contains { if case .pairSuccess = $0 { return true } else { return false } },
+                      "expected pair_success, got \(messages)")
         XCTAssertFalse(fixture.handler.isAuthenticated,
                        "pair_success must not authenticate; the client still sends auth_request")
     }
@@ -133,16 +164,18 @@ final class PairRequestHandlerTests: XCTestCase {
 
         let grant = await store.mint(label: "iPhone")
         try await send(pairFrame(code: grant.code), on: fixture)
-        let paired = try await serverMessages(fixture.channel)
+        let paired = try await replies(fixture.channel)
         guard case .pairSuccess(let token, _, _, _)? = paired.first(where: {
             if case .pairSuccess = $0 { return true } else { return false }
-        }) else { return XCTFail("expected pair_success") }
+        }) else { return XCTFail("expected pair_success, got \(paired)") }
 
         try await send(textFrame("""
         {"type":"auth_request","payload":{"token":"\(token)","protocolVersion":1}}
         """), on: fixture)
 
-        XCTAssertTrue(fixture.handler.isAuthenticated, "the minted token must authenticate")
+        let handler = fixture.handler
+        let authenticated = await poll { handler.isAuthenticated }
+        XCTAssertTrue(authenticated, "the minted token must authenticate")
     }
 
     // MARK: - Failure paths
@@ -152,7 +185,7 @@ final class PairRequestHandlerTests: XCTestCase {
         defer { Task { await cleanup(fixture) } }
 
         try await send(pairFrame(code: "00000000"), on: fixture)
-        let messages = try await serverMessages(fixture.channel)
+        let messages = try await replies(fixture.channel)
         guard let error = messages.compactMap({ msg -> (Int, String)? in
             if case .error(let code, let message) = msg { return (code, message) }
             return nil
@@ -172,7 +205,7 @@ final class PairRequestHandlerTests: XCTestCase {
 
         let grant = await store.mint(label: nil)
         try await send(pairFrame(code: grant.code), on: fixture)
-        let messages = try await serverMessages(fixture.channel)
+        let messages = try await replies(fixture.channel)
         guard let error = messages.compactMap({ msg -> (Int, String)? in
             if case .error(let code, let message) = msg { return (code, message) }
             return nil
@@ -188,13 +221,13 @@ final class PairRequestHandlerTests: XCTestCase {
         let first = try await makeFixture(pairingStore: store)
         let grant = await store.mint(label: nil)
         try await send(pairFrame(code: grant.code), on: first)
-        _ = try await serverMessages(first.channel)
+        _ = try await replies(first.channel)
         await cleanup(first)
 
         let second = try await makeFixture(pairingStore: store)
         defer { Task { await cleanup(second) } }
         try await send(pairFrame(code: grant.code), on: second)
-        let messages = try await serverMessages(second.channel)
+        let messages = try await replies(second.channel)
         guard let error = messages.compactMap({ msg -> (Int, String)? in
             if case .error(let code, let message) = msg { return (code, message) }
             return nil
@@ -212,11 +245,9 @@ final class PairRequestHandlerTests: XCTestCase {
 
         try await send(pairFrame(code: "00000000"), on: fixture)
         try await send(pairFrame(code: "00000001"), on: fixture)
-        try await Task.sleep(for: .milliseconds(50))
-
         // The handler's remoteIP is the sentinel address it connected to.
         let ip = fixture.handler.remoteIP
-        let blocked = await limiter.isBlocked(ip: ip)
+        let blocked = await poll { await limiter.isBlocked(ip: ip) }
         XCTAssertTrue(blocked, "repeated bad codes must feed the shared rate limiter")
     }
 
@@ -225,8 +256,8 @@ final class PairRequestHandlerTests: XCTestCase {
         try await send(pairFrame(code: "00000000"), on: fixture)
         try await send(pairFrame(code: "00000001"), on: fixture)
         try await send(pairFrame(code: "00000002"), on: fixture)
-        try await Task.sleep(for: .milliseconds(60))
-        let active = fixture.channel.isActive
+        let channel = fixture.channel
+        let active = !(await poll { !channel.isActive })
         try? FileManager.default.removeItem(at: fixture.tempDir)
         XCTAssertFalse(active, "the per-connection attempt cap should close the socket")
     }
@@ -240,13 +271,16 @@ final class PairRequestHandlerTests: XCTestCase {
         try await send(textFrame("""
         {"type":"auth_request","payload":{"token":"\(token)","protocolVersion":1}}
         """), on: fixture)
-        XCTAssertTrue(fixture.handler.isAuthenticated)
-        _ = try await serverMessages(fixture.channel)
+        _ = try await replies(fixture.channel)
+        let handler = fixture.handler
+        let authenticated = await poll { handler.isAuthenticated }
+        XCTAssertTrue(authenticated)
 
         let grant = await store.mint(label: nil)
         try await send(pairFrame(code: grant.code), on: fixture)
-        let messages = try await serverMessages(fixture.channel)
-        XCTAssertTrue(messages.contains { if case .error(400, _) = $0 { return true } else { return false } },
+        let is400: (ServerMessage) -> Bool = { if case .error(400, _) = $0 { return true } else { return false } }
+        let messages = try await replies(fixture.channel) { $0.contains(where: is400) }
+        XCTAssertTrue(messages.contains(where: is400),
                       "pairing on an already-authenticated connection is a 400, got \(messages)")
 
         // The rejected request must not consume the code.
@@ -348,7 +382,7 @@ final class PairRequestHandlerTests: XCTestCase {
         // A VALID code — the rejection must come from the rate limit.
         try await send(pairFrame(code: grant.code), on: fixture)
 
-        let messages = try await serverMessages(fixture.channel)
+        let messages = try await replies(fixture.channel)
         let codes = messages.compactMap { msg -> Int? in
             if case .error(let code, _) = msg { return code }
             return nil
