@@ -250,8 +250,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
 
     private func handleUnauthenticatedMessage(_ message: ClientMessage, context: ChannelHandlerContext) {
         switch message {
-        case .authRequest(let token, let protocolVersion):
-            handleAuth(token: token, clientProtocolVersion: protocolVersion, context: context)
+        case .authRequest(let token, let protocolVersion, let deviceId):
+            handleAuth(token: token, clientProtocolVersion: protocolVersion, deviceId: deviceId, context: context)
         case .pairRequest(let code, let deviceName, let platform):
             handlePairRequest(code: code, deviceName: deviceName, platform: platform, context: context)
         case .ping:
@@ -417,7 +417,8 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
         let renameObserverId: UUID
     }
 
-    private func handleAuth(token: String, clientProtocolVersion: Int?, context: ChannelHandlerContext) {
+    private func handleAuth(token: String, clientProtocolVersion: Int?, deviceId: String?,
+                            context: ChannelHandlerContext) {
         let tokenStore = self.tokenStore
         let manager = self.sessionManager
         let gateLimiter = self.rateLimiter
@@ -502,6 +503,20 @@ final class RelayMessageHandler: ChannelInboundHandler, @unchecked Sendable {
                 let renameId = await manager.addRenameObserver(tokenId: info.id) { [weak self] sessionId, name in
                     observerCtx.value.eventLoop.execute {
                         self?.sendServerMessage(.sessionRenamed(sessionId: sessionId, name: name), context: observerCtx.value)
+                    }
+                }
+                // Ownership is per token, so a token shared by two devices gives
+                // them one session pane: each sees the other's sessions as its
+                // own. Nothing else can tell the devices apart, so say so once,
+                // when a device joins a token another device is using.
+                if let deviceId {
+                    let others = await tokenStore.recordDevice(tokenId: info.id, deviceId: deviceId)
+                    if others > 0 {
+                        let label = info.label.map { " (\($0))" } ?? ""
+                        RelayLogger.log(.error, category: "auth",
+                            "Token \(info.id)\(label) is now in use on \(others + 1) devices. Sessions are owned "
+                            + "per token, so these devices share one session pane. Give each device its own "
+                            + "token: claude-relay token create --label <device>")
                     }
                 }
                 return AuthSuccessPayload(

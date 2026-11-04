@@ -182,10 +182,12 @@ class SessionCoordinator(
         config: ConnectionConfig,
         theme: SessionNamingTheme = SessionNamingTheme.DEFAULT,
         nowMs: () -> Long = { System.currentTimeMillis() },
+        /** Sent in `auth_request`; see [SessionController]. */
+        deviceId: String? = null,
     ) : this(
         scope = scope,
         connection = RelayConnectionGateway(connection),
-        sessionController = SessionController(connection),
+        sessionController = SessionController(connection, deviceId),
         token = token,
         ownershipStore = ownershipStore,
         config = config,

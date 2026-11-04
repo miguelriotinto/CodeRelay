@@ -57,7 +57,14 @@ class SessionException(
  * stamps carry no `@Volatile`; cross-thread visibility is provided by that
  * confinement, not by the fields themselves.
  */
-class SessionController(private val connection: ConnectionSurface) {
+/**
+ * [deviceId] is sent in `auth_request` so the relay can notice one token in use
+ * on several devices; null sends none (connection tests, older call sites).
+ */
+class SessionController(
+    private val connection: ConnectionSurface,
+    private val deviceId: String? = null,
+) {
 
     var sessionId: UUID? = null
         private set
@@ -201,7 +208,11 @@ class SessionController(private val connection: ConnectionSurface) {
      */
     suspend fun authenticate(token: String) {
         val response = sendAndWaitForResponse(
-            ClientMessage.AuthRequest(token = token, protocolVersion = ProtocolVersions.CURRENT),
+            ClientMessage.AuthRequest(
+                token = token,
+                protocolVersion = ProtocolVersions.CURRENT,
+                deviceId = deviceId?.takeIf { it.isNotEmpty() && it != "unknown" && it.length <= 128 },
+            ),
             expected = setOf("auth_success", "auth_failure"),
         )
         when (response) {

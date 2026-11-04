@@ -124,11 +124,25 @@ final class ClientMessageTests: ProtocolTestCase {
     func testAuthRequestFieldVerification() throws {
         let json = #"{"type":"auth_request","payload":{"token":"secret-token-123"}}"#
         let envelope = try decoder.decode(MessageEnvelope.self, from: Data(json.utf8))
-        guard case .client(.authRequest(let token, let protocolVersion)) = envelope else {
+        guard case .client(.authRequest(let token, let protocolVersion, let deviceId)) = envelope else {
             XCTFail("Expected authRequest"); return
         }
         XCTAssertEqual(token, "secret-token-123")
         XCTAssertNil(protocolVersion)
+        XCTAssertNil(deviceId)
+    }
+
+    func testAuthRequestDeviceIdRoundTripsAndIsOmittedWhenNil() throws {
+        let original = ClientMessage.authRequest(token: "tok", protocolVersion: 4, deviceId: "dev-1")
+        let data = try encoder.encode(MessageEnvelope.client(original))
+        XCTAssertEqual((try jsonObject(data)["payload"] as? [String: Any])?["deviceId"] as? String, "dev-1")
+        guard case .client(let decoded) = try decoder.decode(MessageEnvelope.self, from: data) else {
+            XCTFail("Expected .client envelope"); return
+        }
+        XCTAssertEqual(decoded, original)
+
+        let bare = try encoder.encode(MessageEnvelope.client(.authRequest(token: "tok")))
+        XCTAssertNil((try jsonObject(bare)["payload"] as? [String: Any])?["deviceId"])
     }
 
     func testResizeFieldVerification() throws {

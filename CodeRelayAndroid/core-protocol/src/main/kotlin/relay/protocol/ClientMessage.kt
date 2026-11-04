@@ -13,7 +13,16 @@ import java.util.UUID
 sealed interface ClientMessage {
     val typeString: String
 
-    data class AuthRequest(val token: String, val protocolVersion: Int? = null) : ClientMessage {
+    /**
+     * [deviceId]: a stable per-device id (the one push registration sends).
+     * Omitted when null; the relay uses it only to notice one token in use on
+     * several devices — ownership is per token, so those devices share a pane.
+     */
+    data class AuthRequest(
+        val token: String,
+        val protocolVersion: Int? = null,
+        val deviceId: String? = null,
+    ) : ClientMessage {
         override val typeString get() = "auth_request"
     }
 

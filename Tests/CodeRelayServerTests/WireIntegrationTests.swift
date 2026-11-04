@@ -28,6 +28,24 @@ final class WireIntegrationTests: XCTestCase {
         await client.close()
     }
 
+    /// The device id in `auth_request` reaches the token store, so two devices
+    /// on one token show up as shared (`claude-relay token list`, auth warning).
+    func testAuthRecordsEachDeviceOnTheToken() async throws {
+        let fixture = try WireTestServer()
+        try await fixture.start()
+        defer { Task { await fixture.stop() } }
+        let (token, info) = try await fixture.mintToken(label: "shared")
+
+        for device in ["phone", "mac"] {
+            let client = try await fixture.connect()
+            try await client.send(.authRequest(token: token, protocolVersion: 4, deviceId: device))
+            _ = try await client.waitFor(["auth_success"])
+            await client.close()
+        }
+        let stored = try await fixture.tokenStore.inspect(id: info.id)
+        XCTAssertEqual(TokenDeviceSharing.recentCount(stored.devices, now: Date()), 2)
+    }
+
     /// A redundant `auth_request` on a socket the server already considers
     /// authenticated must be idempotent: the server replies
     /// `.error(400, "Already authenticated")` and the socket stays usable —

@@ -99,6 +99,7 @@ class ConnectionSession private constructor(
                 config = config,
                 theme = settings.sessionNamingTheme.value,
                 nowMs = nowMs,
+                deviceId = environment.deviceId,
             )
 
             val workspaceViewModel = WorkspaceViewModel(
