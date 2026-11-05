@@ -66,7 +66,6 @@ struct WorkspaceView: View {
             "pendingPairing: \(pendingPairing != nil)",
             "loading.isPresented: \(loading.isPresented)",
             "takenAlert: \(hub.takenAlert != nil)",
-            "topmostSheet: \(topmostSheet.map { "\($0)" } ?? "none")",
         ]
         if let focus = hub.focusCoordinator {
             lines.append("focus alerts: timedOut=\(focus.connectionTimedOut) error=\(focus.showError) attachFailed=\(focus.sessionAttachFailed)")
@@ -99,18 +98,6 @@ struct WorkspaceView: View {
         await hub.syncPushRegistration(
             pushEnabled: settings.pushNotificationsEnabled,
             notifyOnFinished: settings.pushNotifyOnFinished)
-    }
-
-    private enum PresentedSheet { case management, sidebar, pairing, loading }
-
-    /// The sheet the user is looking at, if any. The sidebar steps aside for
-    /// management and loading; a pairing link queues behind the sidebar.
-    private var topmostSheet: PresentedSheet? {
-        if hub.isShowingServerList { return .management }
-        if showSidebarSheet && sizeClass == .compact { return .sidebar }
-        if pendingPairing != nil { return .pairing }
-        if loading.isPresented { return .loading }
-        return nil
     }
 
     private func showPresentationDump() { presentationDump = dumpPresentations() }
@@ -148,7 +135,6 @@ struct WorkspaceView: View {
                                 }
                         }
                         .presentationDetents([.medium, .large])
-                        .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .sidebar, onOK: { hub.dismissTakenAlert() })
                     }
             } else {
                 // iPad: full split view
@@ -204,13 +190,12 @@ struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: NetworkMonitor.connectivityRestored)) { _ in
             Task { await hub.handleForegroundTransition(userInitiated: true) }
         }
-        // The alerts that belong to one coordinator live on a child view that
-        // exists only while the focus coordinator does (the active server, else
-        // the only / first live one — G8); it also FEEDS the loading model.
+        // The focus coordinator (the active server, else the only / first live
+        // one — G8) FEEDS the loading model from a child keyed by its identity;
+        // its alerts are in `WorkspaceAlerts`.
         .background {
             if let focus = hub.focusCoordinator {
-                FocusCoordinatorModifiers(coordinator: focus, loading: loading,
-                                          serverName: hub.sections.first { $0.id == hub.focusServerId }?.title)
+                FocusLoadingFeed(coordinator: focus, loading: loading, serverName: hub.focusServerName)
                     .id(ObjectIdentifier(focus))
             }
         }
@@ -226,7 +211,6 @@ struct WorkspaceView: View {
         }
         .sheet(isPresented: $hub.isShowingServerList) {
             ServerListView(hub: hub, externalPairing: $managementPairing)
-                .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .management, onOK: { hub.dismissTakenAlert() })
         }
         .sheet(item: Binding(get: { hub.isShowingServerList ? nil : pendingPairing },
                              set: { pendingPairing = $0 })) { pairing in
@@ -235,7 +219,6 @@ struct WorkspaceView: View {
                 // coordinator (the cap is enforced by the hub).
                 hub.reloadBookmarks()
             }, prefill: pairing)
-            .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .pairing, onOK: { hub.dismissTakenAlert() })
         }
         // The one loading sheet: switch, session-name refresh and reconnect all
         // rise from the bottom with the step and the bytes loaded, while the
@@ -258,7 +241,6 @@ struct WorkspaceView: View {
                     // bar column is carved out of a sheet's safe area, which
                     // put a safe-area-centred stack ~85 pt off centre.
                     .ignoresSafeArea(.container, edges: .horizontal)
-                    .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == .loading, onOK: { hub.dismissTakenAlert() })
             }
         }
         .overlay(alignment: .top) {
@@ -280,15 +262,20 @@ struct WorkspaceView: View {
             }
         }
         .overlay { presentationDumpOverlay }
-        // Session loss belongs to the hub, never to the focus coordinator. The
-        // root copy is live only with no sheet up; each sheet carries its own.
-        .sessionLossAlert(hub.takenAlert, isTopmost: topmostSheet == nil, onOK: { hub.dismissTakenAlert() })
+        // Every alert lives in its own window above the app, so this view's
+        // presenter only ever presents sheets: an alert animating in on the
+        // same presenter as a sheet request wedged every later sheet (the dead
+        // sidebar button). See `AlertOverlayWindow`.
+        .alertOverlayWindow { WorkspaceAlerts(hub: hub) }
     }
 }
 
-/// Sheets and alerts bound to one coordinator's published flags, rendered as an
-/// invisible background child so each binding is non-optional.
-private struct FocusCoordinatorModifiers: View {
+private extension IOSServerHub {
+    var focusServerName: String? { sections.first { $0.id == focusServerId }?.title }
+}
+
+/// Turns the focus coordinator's published load state into the loading sheet.
+private struct FocusLoadingFeed: View {
     @ObservedObject var coordinator: SessionCoordinator
     @ObservedObject var loading: SessionLoadingSheetModel
     let serverName: String?
@@ -310,6 +297,38 @@ private struct FocusCoordinatorModifiers: View {
     var body: some View {
         Color.clear
             .onChange(of: presentation, initial: true) { _, current in loading.update(current) }
+    }
+}
+
+/// The workspace's alerts, hosted in the alert overlay window (never on the
+/// root that presents the sheets). One presenter, so no topmost bookkeeping:
+/// the session-loss alert shows over any sheet.
+struct WorkspaceAlerts: View {
+    @ObservedObject var hub: IOSServerHub
+
+    var body: some View {
+        Color.clear
+            .background {
+                if let focus = hub.focusCoordinator {
+                    FocusCoordinatorAlerts(coordinator: focus, serverName: hub.focusServerName)
+                        .id(ObjectIdentifier(focus))
+                }
+            }
+            // Session loss belongs to the hub, never to the focus coordinator.
+            .sessionLossAlert(hub.takenAlert, isTopmost: true, onOK: { hub.dismissTakenAlert() })
+            // Its own window inherits nothing from ActiveTerminalView's.
+            .preferredColorScheme(.dark)
+    }
+}
+
+/// Alerts bound to one coordinator's published flags, rendered as a child so
+/// each binding is non-optional.
+private struct FocusCoordinatorAlerts: View {
+    @ObservedObject var coordinator: SessionCoordinator
+    let serverName: String?
+
+    var body: some View {
+        Color.clear
             .alert("Connection Lost", isPresented: $coordinator.connectionTimedOut) {
                 Button("OK", role: .cancel) {}
             } message: {

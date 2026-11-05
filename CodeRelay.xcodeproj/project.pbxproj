@@ -39,12 +39,14 @@
 		594B82B95E32F0529AC9A258 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 032B2629F2A1D548EB620340 /* QRScannerView.swift */; };
 		5FA79A317583249F9A7D5750 /* ScrollbackClearScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */; };
 		61B865F9D79CFC959FC07A8B /* TerminalContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF37B18586BBB7B511433716 /* TerminalContainerView.swift */; };
+		6310254E5FA7AEBA708F7E2E /* AlertOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75B91EB23736CD5BD6551772 /* AlertOverlayWindow.swift */; };
 		675E01D193B0C8FA1D6AAE34 /* HubSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 048DF89741F08E0FAFA2250C /* HubSidebarView.swift */; };
 		6CF76DB5A91180967B19A9B7 /* AddEditServerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200D7FB7016273E202A9EE6A /* AddEditServerViewModel.swift */; };
 		6E9B9D3C005CE5D0E17E34FB /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82AA3DF58773D4439629F50D /* SessionSidebarView.swift */; };
 		737A97F8F5248D8FB46D8342 /* TerminalSwipeScrollTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF97F6314474452F10F2F8D1 /* TerminalSwipeScrollTests.swift */; };
 		75BB5A192BBB2F405FE8BE49 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB701804D2F0C75E2A6E124F /* AppSettings.swift */; };
 		78DA9C0EAF191998F507A7E1 /* StatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40D60334B831231F0CC7991 /* StatusBarView.swift */; };
+		79272401067C16E57C809572 /* AlertOverlayWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF9B94C1561AD623837857C0 /* AlertOverlayWindowTests.swift */; };
 		7BBBBB2576B608895E662A8A /* SidebarSectionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CFC7BC5339DF345BFEBDDE /* SidebarSectionsTests.swift */; };
 		81236181959BA642708E2E5B /* SessionNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5AC490671735ED0BB142CA /* SessionNavigationTests.swift */; };
 		813C237D6B07C1509C0F058C /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9AEC8A26328D8935405B414 /* PairingViewModel.swift */; };
@@ -148,6 +150,7 @@
 		6DE559F478FDF029A84AE064 /* MacServerHubTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerHubTests.swift; sourceTree = "<group>"; };
 		707F2EFA3E2B2F9ADBAEB98F /* SplashScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashScreenView.swift; sourceTree = "<group>"; };
 		7596942A365DC1BC26A481E2 /* CodeRelayMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodeRelayMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		75B91EB23736CD5BD6551772 /* AlertOverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertOverlayWindow.swift; sourceTree = "<group>"; };
 		81DB257E1E21CA0D82D01A3B /* AttachRemoteSessionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachRemoteSessionSheet.swift; sourceTree = "<group>"; };
 		822211CDC993EFDD413DDB0E /* ServerListWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListWindow.swift; sourceTree = "<group>"; };
 		82AA3DF58773D4439629F50D /* SessionSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSidebarView.swift; sourceTree = "<group>"; };
@@ -177,6 +180,7 @@
 		D9AEC8A26328D8935405B414 /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		DA2E1F5AF84C6C21754F2B59 /* SleepWakeObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepWakeObserver.swift; sourceTree = "<group>"; };
 		DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertFieldSelectionTests.swift; sourceTree = "<group>"; };
+		DF9B94C1561AD623837857C0 /* AlertOverlayWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertOverlayWindowTests.swift; sourceTree = "<group>"; };
 		E46CD949787B69852ABD4480 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		E6C08F3358A1896291225B83 /* KeyCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyCaptureView.swift; sourceTree = "<group>"; };
 		EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectAllOnBeginEditing.swift; sourceTree = "<group>"; };
@@ -233,6 +237,7 @@
 			isa = PBXGroup;
 			children = (
 				DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */,
+				DF9B94C1561AD623837857C0 /* AlertOverlayWindowTests.swift */,
 				FFC5B4D48BD29AC9E2BE00E0 /* AppSettingsSpeechRemovalTests.swift */,
 				D6BB3A1D6049D2EA0735FD80 /* IOSServerHubTests.swift */,
 				1A6C9CCFEA72C0C565BAE0A9 /* SessionTabStripTests.swift */,
@@ -285,6 +290,7 @@
 		73AEA81833E834F9A7C173DA /* Components */ = {
 			isa = PBXGroup;
 			children = (
+				75B91EB23736CD5BD6551772 /* AlertOverlayWindow.swift */,
 				FA3B4510FFFD5755BE62CE4D /* KeyboardAccessory.swift */,
 				E6C08F3358A1896291225B83 /* KeyCaptureView.swift */,
 				FD79B7A885914DFF752D2179 /* QRCodeComponents.swift */,
@@ -614,6 +620,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8B822D63AEEF3769114EF05D /* AlertFieldSelectionTests.swift in Sources */,
+				79272401067C16E57C809572 /* AlertOverlayWindowTests.swift in Sources */,
 				8607DE4CBC28666FC17F4F9A /* AppSettingsSpeechRemovalTests.swift in Sources */,
 				0C0A0EE581AC69F36F504CAD /* IOSServerHubTests.swift in Sources */,
 				8C567E78550EE11000CF1B27 /* SessionTabStripTests.swift in Sources */,
@@ -668,6 +675,7 @@
 				9B8FCED16295ABFC21084712 /* ActiveTerminalView.swift in Sources */,
 				3C01AF545C145E1F47E2E571 /* AddEditServerView.swift in Sources */,
 				BD22B1489C449A3C4DC16E70 /* AddEditServerViewModel.swift in Sources */,
+				6310254E5FA7AEBA708F7E2E /* AlertOverlayWindow.swift in Sources */,
 				B560E8B503C7CD244BF9B997 /* AppSettings.swift in Sources */,
 				1B42A2DD6655114FD59C359D /* CodeRelayApp.swift in Sources */,
 				D3E1A15266C22B64CE30A2A8 /* HubPreviewSeed.swift in Sources */,
