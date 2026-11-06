@@ -165,6 +165,12 @@ final class SessionSwitchLatencyTests: XCTestCase {
 
         await coordinator.switchToSession(id: second)
 
+        // The re-click returns at once; the first switch may still be awaiting
+        // its detach reply, so its own resume can go out after this point.
+        // Counting before it does read 0 on a slow runner.
+        await waitUntil("the first switch to send its resume") {
+            conn.sentTypes.contains("session_resume")
+        }
         XCTAssertEqual(conn.sentTypes.filter { $0 == "session_resume" }.count, 1,
                        "an impatient re-click must not enqueue a second resume")
         _ = await switching.value
