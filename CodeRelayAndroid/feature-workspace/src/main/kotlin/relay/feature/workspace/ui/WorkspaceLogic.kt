@@ -34,6 +34,22 @@ object WorkspaceLogic {
     }
 
     /**
+     * Whether the top bar shows the session uptime: only when it fits on ONE
+     * line beside the WHOLE tab strip. The tabs come first; the uptime takes
+     * only room they do not need. On a narrow display (a closed iPhone Duo, a
+     * phone's cover screen) there is no such room and the uptime used to wrap
+     * onto two lines. Twin of `UptimeRule.shows` in `ActiveTerminalView.swift`.
+     *
+     * @param slotWidth the width shared by the uptime and the tab strip
+     * @param uptimeWidth the uptime's single-line width, as currently formatted
+     * @param tabsWidth the tab strip's content width (capped at [slotWidth])
+     * @param spacing the gap between the uptime and the tabs
+     * @param minTabsWidth the least the tabs keep (one chip), even when empty
+     */
+    fun showsUptime(slotWidth: Int, uptimeWidth: Int, tabsWidth: Int, spacing: Int, minTabsWidth: Int): Boolean =
+        uptimeWidth + spacing + maxOf(tabsWidth, minTabsWidth) <= slotWidth
+
+    /**
      * The three state-badge buckets used by the sidebar row, ported from
      * `SessionSidebarView.swift:174-180`:
      *  - green for `active-attached` / `active-detached`

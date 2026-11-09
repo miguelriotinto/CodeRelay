@@ -61,6 +61,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -106,6 +108,8 @@ private const val RELOAD_COVER_MAX_HOLD_MS = 8_000L
 // with the tab: 26x22dp min, 6dp corners, ~14dp icon. (The default IconButton 48dp
 // was far larger than the tab.)
 private val TOOLBAR_CHIP_MIN_WIDTH = 26.dp
+/** The top bar Row's `Arrangement.spacedBy`. */
+private val TOP_BAR_SPACING = 6.dp
 private val TOOLBAR_CHIP_MIN_HEIGHT = 22.dp
 private val TOOLBAR_ICON = 14.dp
 private val TOOLBAR_CHIP_SHAPE = RoundedCornerShape(6.dp)
@@ -606,7 +610,7 @@ private fun TerminalColumn(
                 .background(Color.Black)
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(TOP_BAR_SPACING),
         ) {
             // All top-bar controls share the SessionTab "1" chip footprint (26×22dp,
             // 6dp corners) so they're visually uniform with the tab.
@@ -639,16 +643,22 @@ private fun TerminalColumn(
 
             ConnectionQualityDot(quality = quality)
 
-            if (activeSessionId != null) {
-                Text(
-                    text = WorkspaceLogic.formatUptime(uptimeSeconds),
-                    color = Color.White.copy(alpha = 0.5f),
-                    fontSize = 11.sp,
-                )
-            }
-
-            // Tabs take the remaining width.
-            Box(modifier = Modifier.weight(1f)) {
+            // The uptime and the tabs share the remaining width; the uptime
+            // shows only while it fits on one line beside all the tabs.
+            UptimeBesideTabs(
+                modifier = Modifier.weight(1f),
+                uptime = if (activeSessionId != null) {
+                    {
+                        Text(
+                            text = WorkspaceLogic.formatUptime(uptimeSeconds),
+                            color = Color.White.copy(alpha = 0.5f),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
+                } else null,
+            ) {
                 if (tabsContent != null) tabsContent() else SessionTabs(
                     sessions = sessions,
                     activeSessionId = activeSessionId,
@@ -872,4 +882,48 @@ private fun WorkspaceRenameDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/**
+ * The top bar's uptime followed by the session tabs. The tabs come first: they
+ * are measured against the whole slot (a LazyRow wraps its content, capped at
+ * the slot), and the uptime is placed only when it fits on one line beside all
+ * of them ([WorkspaceLogic.showsUptime]); otherwise it is left out. A Row could
+ * not do this: it measures unweighted children first, so on a narrow display
+ * (a phone's cover screen) the uptime took what little was left and wrapped
+ * onto two lines.
+ */
+@Composable
+private fun UptimeBesideTabs(
+    modifier: Modifier,
+    uptime: (@Composable () -> Unit)?,
+    tabs: @Composable () -> Unit,
+) {
+    Layout(
+        contents = listOf(uptime ?: {}, tabs),
+        modifier = modifier,
+    ) { (uptimeMeasurables, tabMeasurables), constraints ->
+        val spacing = TOP_BAR_SPACING.roundToPx()
+        val slot = constraints.maxWidth
+        val tabPlaceables = tabMeasurables.map { it.measure(constraints.copy(minWidth = 0)) }
+        val tabsWidth = tabPlaceables.maxOfOrNull { it.width } ?: 0
+        val uptimePlaceable = uptimeMeasurables.firstOrNull()
+            ?.measure(Constraints(maxHeight = constraints.maxHeight))
+        val shows = uptimePlaceable != null && WorkspaceLogic.showsUptime(
+            slotWidth = slot,
+            uptimeWidth = uptimePlaceable.width,
+            tabsWidth = tabsWidth,
+            spacing = spacing,
+            minTabsWidth = TOOLBAR_CHIP_MIN_WIDTH.roundToPx(),
+        )
+        val tabsX = if (shows) uptimePlaceable!!.width + spacing else 0
+        val height = maxOf(
+            if (shows) uptimePlaceable!!.height else 0,
+            tabPlaceables.maxOfOrNull { it.height } ?: 0,
+        ).coerceIn(constraints.minHeight, constraints.maxHeight)
+        layout(slot, height) {
+            if (shows) uptimePlaceable!!.place(0, (height - uptimePlaceable.height) / 2)
+            tabPlaceables.forEach { it.place(tabsX, (height - it.height) / 2) }
+        }
+    }
 }

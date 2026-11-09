@@ -42,6 +42,8 @@ struct ActiveTerminalView: View {
     @State private var hasHardwareKeyboard = GCKeyboard.coalesced != nil
     @State private var showQROverlay = false
     @State private var showRenameAlert = false
+    /// The session tab strip's content width (every chip), for `UptimeBesideTabs`.
+    @State private var tabsContentWidth: CGFloat = 0
     @State private var renameText = ""
     @ObservedObject private var settings = AppSettings.shared
 
@@ -204,18 +206,18 @@ struct ActiveTerminalView: View {
                     ConnectionQualityDot(quality: coordinator.connection.connectionQuality, size: 8)
                 }
 
-                if let coordinator, let id = coordinator.activeSessionId,
-                   let createdAt = coordinator.createdAt(for: id) {
-                    SessionUptimeView(since: createdAt)
-                }
-
-                if anyTabNeedsFlash {
-                    TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                        let flashOn = Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0
-                        sessionTabBar(flashOn: flashOn)
+                // The uptime and the tabs share the leftover width; the uptime
+                // shows only while it fits on one line beside all the tabs.
+                UptimeBesideTabs(since: coordinator?.activeSessionId.flatMap { coordinator?.createdAt(for: $0) },
+                                 tabsWidth: tabsContentWidth) {
+                    if anyTabNeedsFlash {
+                        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                            let flashOn = Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0
+                            sessionTabBar(flashOn: flashOn)
+                        }
+                    } else {
+                        sessionTabBar(flashOn: false)
                     }
-                } else {
-                    sessionTabBar(flashOn: false)
                 }
 
                 if coordinator?.activeSessionId != nil {
@@ -348,6 +350,9 @@ struct ActiveTerminalView: View {
                         .id(tab.ref)
                     }
                 }
+                // All chips, not the viewport: the uptime only takes room
+                // the tabs do not need (UptimeBesideTabs).
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { tabsContentWidth = $0 }
             }
             .background(
                 GeometryReader { geo in
@@ -482,6 +487,57 @@ extension Notification.Name {
 
 // MARK: - Session Uptime
 
+/// Whether the top bar shows the session uptime: only when it fits on ONE line
+/// beside the WHOLE tab strip. The tabs come first; the uptime takes only room
+/// they do not need. On iPhone Duo's closed outer display there is no such room
+/// and the uptime used to wrap onto two lines; on the open inner display there
+/// is. Twin of Kotlin `WorkspaceLogic.showsUptime`.
+enum UptimeRule {
+    /// The least the tabs keep (one `SessionTab` chip), even when unmeasured.
+    static let minTabsWidth: CGFloat = 26
+    /// The top bar's HStack spacing.
+    static let spacing: CGFloat = 6
+
+    static func shows(slotWidth: CGFloat, uptimeWidth: CGFloat, tabsWidth: CGFloat) -> Bool {
+        uptimeWidth + spacing + max(tabsWidth, minTabsWidth) <= slotWidth
+    }
+}
+
+/// The uptime followed by the tab strip, which takes the rest. The slot and the
+/// uptime's single-line width come from geometry (the tabs' content width from
+/// the caller), so the uptime appears and disappears as the display, the tab
+/// count or the text (a day prefix) changes. None of the three depends on
+/// whether the uptime shows — the tab strip's scroll view is greedy — so the
+/// decision cannot oscillate.
+struct UptimeBesideTabs<Tabs: View>: View {
+    let since: Date?
+    /// The tab strip's content width (all chips), not its scroll view's.
+    let tabsWidth: CGFloat
+    @ViewBuilder let tabs: Tabs
+    @State private var slotWidth: CGFloat = 0
+    @State private var uptimeWidth: CGFloat = .infinity
+
+    var body: some View {
+        HStack(spacing: UptimeRule.spacing) {
+            if let since, UptimeRule.shows(slotWidth: slotWidth, uptimeWidth: uptimeWidth, tabsWidth: tabsWidth) {
+                SessionUptimeView(since: since).fixedSize()
+            }
+            tabs
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { slotWidth = $0 }
+        .background(alignment: .leading) {
+            // An invisible single-line copy, measured whether or not it shows.
+            if let since {
+                SessionUptimeView(since: since)
+                    .fixedSize()
+                    .hidden()
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { uptimeWidth = $0 }
+            }
+        }
+    }
+}
+
 private struct SessionUptimeView: View {
     let since: Date
 
@@ -490,6 +546,7 @@ private struct SessionUptimeView: View {
             Text(formatUptime(from: since, to: context.date))
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(SwiftUI.Color.white.opacity(0.5))
+                .lineLimit(1)
         }
     }
 

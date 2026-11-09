@@ -77,6 +77,7 @@
 		D3E1A15266C22B64CE30A2A8 /* HubPreviewSeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46A8F378448F84CCF2F22152 /* HubPreviewSeed.swift */; };
 		D9CEA37AF583C181BADFF2BE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AA229F172065DCCAABD4EE1 /* AppDelegate.swift */; };
 		DC3CC606AD220E28964BE57C /* QRCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C08E1E10ABEC111CA605BE4 /* QRCodeSheet.swift */; };
+		DDBD4C29C54835F8E4DDD4FA /* UptimeRuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B452CB15EAFFD6C7EAF8272B /* UptimeRuleTests.swift */; };
 		E14796A9326B97964792E6F9 /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 994105C8A15882C51A1E9D63 /* TerminalPalette.swift */; };
 		E4B007465A6886711AE4ECA6 /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C01CE54946F1BF877D94BFE /* PairWithHostSheet.swift */; };
 		E4D5925EEA80E36AD808183A /* ServerListWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 822211CDC993EFDD413DDB0E /* ServerListWindow.swift */; };
@@ -169,6 +170,7 @@
 		B0D4C52C7CDC280F5BB6257C /* IOSServerHub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSServerHub.swift; sourceTree = "<group>"; };
 		B2D38AF522487CD65B4178AC /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		B40D60334B831231F0CC7991 /* StatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarView.swift; sourceTree = "<group>"; };
+		B452CB15EAFFD6C7EAF8272B /* UptimeRuleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UptimeRuleTests.swift; sourceTree = "<group>"; };
 		B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollbackClearScanner.swift; sourceTree = "<group>"; };
 		BFDE7B6F21D0081D0855981A /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
 		CB701804D2F0C75E2A6E124F /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
@@ -244,6 +246,7 @@
 				A2CFC7BC5339DF345BFEBDDE /* SidebarSectionsTests.swift */,
 				134E10178F9FFB931A0DF690 /* TerminalScrollSyncTests.swift */,
 				FF97F6314474452F10F2F8D1 /* TerminalSwipeScrollTests.swift */,
+				B452CB15EAFFD6C7EAF8272B /* UptimeRuleTests.swift */,
 				CEF84086BF6F5841A2DC7CC4 /* WorkspaceRootTests.swift */,
 			);
 			path = CodeRelayAppTests;
@@ -627,6 +630,7 @@
 				7BBBBB2576B608895E662A8A /* SidebarSectionsTests.swift in Sources */,
 				4F29A94546C0E93C9F4B41E4 /* TerminalScrollSyncTests.swift in Sources */,
 				737A97F8F5248D8FB46D8342 /* TerminalSwipeScrollTests.swift in Sources */,
+				DDBD4C29C54835F8E4DDD4FA /* UptimeRuleTests.swift in Sources */,
 				82EF8FFAA3B83953FF6A35A7 /* WorkspaceRootTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

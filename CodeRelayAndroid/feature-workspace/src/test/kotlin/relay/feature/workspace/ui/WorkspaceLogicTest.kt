@@ -1,6 +1,8 @@
 package relay.feature.workspace.ui
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import relay.protocol.SessionState
 
@@ -10,6 +12,35 @@ import relay.protocol.SessionState
  * `%02d:%02d:%02d`), and the sidebar state-badge bucketing.
  */
 class WorkspaceLogicTest {
+
+    private fun shows(slot: Int, uptime: Int, tabs: Int) =
+        WorkspaceLogic.showsUptime(slotWidth = slot, uptimeWidth = uptime, tabsWidth = tabs, spacing = 6, minTabsWidth = 26)
+
+    @Test
+    fun `uptime shows when it fits beside every tab`() {
+        // Open iPhone Duo / unfolded: plenty of room beside two tabs.
+        assertTrue(shows(slot = 400, uptime = 56, tabs = 58))
+        // Exactly enough room.
+        assertTrue(shows(slot = 120, uptime = 56, tabs = 58))
+    }
+
+    @Test
+    fun `uptime hides rather than squeeze the tabs or wrap`() {
+        // Closed iPhone Duo: ~95 of slot, two tabs need 58.
+        assertFalse(shows(slot = 95, uptime = 56, tabs = 58))
+        assertFalse(shows(slot = 119, uptime = 56, tabs = 58))
+        // Tabs already overflow the slot (their width is capped at it).
+        assertFalse(shows(slot = 300, uptime = 56, tabs = 300))
+        // A day prefix widens the text: the same slot can stop fitting.
+        assertTrue(shows(slot = 150, uptime = 56, tabs = 58))
+        assertFalse(shows(slot = 150, uptime = 90, tabs = 58))
+    }
+
+    @Test
+    fun `uptime keeps one chip of room even with no tabs measured`() {
+        assertFalse(shows(slot = 80, uptime = 56, tabs = 0))
+        assertTrue(shows(slot = 88, uptime = 56, tabs = 0))
+    }
 
     @Test
     fun `formatUptime zero`() {
