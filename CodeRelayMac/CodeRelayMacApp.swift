@@ -54,7 +54,9 @@ struct CodeRelayMacApp: App {
         MenuBarExtra {
             MenuBarDropdown()
         } label: {
-            Image(systemName: "terminal")
+            // The app icon's CR mark, as a template image so the bar tints it.
+            Image("MenuBarIcon")
+                .renderingMode(.template)
         }
         .menuBarExtraStyle(.window)
 

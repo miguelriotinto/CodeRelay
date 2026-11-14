@@ -1,10 +1,15 @@
 package relay.app
 
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.PathParser
 
 /**
  * The tray icon, drawn rather than loaded from a file.
@@ -14,7 +19,8 @@ import androidx.compose.ui.geometry.Size
  * active Omarchy palette, so it sits correctly in a light or dark bar instead of
  * being a fixed-contrast PNG that disappears in one of them.
  *
- * The mark is a terminal prompt: a chevron and a caret.
+ * The mark is the app icon's "CR" glyph without its tile — the same mark the
+ * macOS menu bar shows (`MenuBarIcon`), traced from the Apple AppIcon.
  */
 class TrayIconPainter(
     private val foreground: Color,
@@ -23,30 +29,26 @@ class TrayIconPainter(
     override val intrinsicSize: Size = Size(32f, 32f)
 
     override fun DrawScope.onDraw() {
-        val s = size.minDimension
-        val stroke = (s * 0.09f).coerceAtLeast(1f)
-        val left = (size.width - s) / 2f
-        val top = (size.height - s) / 2f
+        // Fit the glyph's box into the tray square with a little margin, centred.
+        val k = minOf(size.width, size.height) * 0.84f / GLYPH_HEIGHT
+        val dx = (size.width - GLYPH_WIDTH * k) / 2f
+        val dy = (size.height - GLYPH_HEIGHT * k) / 2f
+        translate(dx, dy) {
+            scale(k, k, pivot = Offset.Zero) {
+                drawPath(glyph, foreground)
+            }
+        }
+    }
 
-        // Chevron: ">"
-        drawLine(
-            color = foreground,
-            start = Offset(left + s * 0.22f, top + s * 0.28f),
-            end = Offset(left + s * 0.48f, top + s * 0.50f),
-            strokeWidth = stroke,
-        )
-        drawLine(
-            color = foreground,
-            start = Offset(left + s * 0.48f, top + s * 0.50f),
-            end = Offset(left + s * 0.22f, top + s * 0.72f),
-            strokeWidth = stroke,
-        )
-        // Caret: the underscore after the prompt.
-        drawLine(
-            color = foreground,
-            start = Offset(left + s * 0.56f, top + s * 0.72f),
-            end = Offset(left + s * 0.80f, top + s * 0.72f),
-            strokeWidth = stroke,
-        )
+    private companion object {
+        const val GLYPH_WIDTH = 87.2f
+        const val GLYPH_HEIGHT = 100f
+
+        /** The CR mark, in a 87.2 × 100 box (shared with MenuBarIcon.svg). */
+        const val GLYPH_PATH =
+            "M28.8 99.8C28.5 99.7 27.8 99.6 27 99.5C23.4 99.1 18.5 97.5 15.2 95.6C6.8 90.6 1.6 82.3 0.3 71.7C-0.2 67.2 0 60.2 0.8 56.9C2.6 49.6 5.1 44.9 9.9 39.7C13.8 35.5 20.6 31.8 26.8 30.4C27.7 30.2 28.7 30 29.1 29.9C31.3 29.3 42.7 29.5 46.5 30.2C48.9 30.6 52.6 31.6 52.9 31.9C53.1 32.1 53 46.2 52.8 46.5C52.7 46.5 52.5 46.5 52.3 46.3C51.7 45.7 48.7 44.6 44 43.2C43.5 43.1 41.4 43 37.9 43C32.4 43 32.2 43 29.3 44.1C23.4 46.2 18.6 51.5 17.1 57.6C16.4 60.5 16.3 61.6 16.3 65.1C16.3 69.7 16.8 72.5 18.4 75.7C21.2 81.7 26.3 85.3 32.9 86.3C35.2 86.6 35.5 86.6 39.5 86.3C44.5 85.9 46.3 85.5 49.9 83.8C50.2 83.7 51 83.3 51.7 83C52.3 82.8 52.9 82.5 52.9 82.5C53 82.5 53 85.7 53 89.5L53 96.5L52.1 96.8C51.6 97 50.5 97.4 49.8 97.7C48.6 98.1 46.7 98.6 43.9 99.2C41.7 99.7 29.6 100.2 28.8 99.8ZM70.2 99.3C70.8 95.7 70.9 92.4 70.5 89.1C70.3 87.2 69.8 84.9 69.5 84.3C69.4 84.1 69.3 83.8 69.3 83.7C69.3 83.1 67.5 79.8 66.4 78.5C63.2 74.6 59.8 72.3 55.5 71.3C53.4 70.8 49 70.5 41.3 70.5L34.1 70.5L34.1 63.8L34.1 57.1L42.8 57.1C51.2 57.1 54.3 57 56.4 56.5C57.6 56.3 57.6 56.3 60.2 55C64 53.1 67.4 49.5 69 45.4C69.8 43.4 70.1 42.2 70.6 38.8C71 36 71 35.8 70.6 32.8C70.3 30 69.8 27.2 69.4 26.9C69.4 26.8 69.3 26.6 69.3 26.5C69.3 26.3 69 25.5 68.6 24.7C65.9 19 61.2 15.3 54.5 13.7C51.4 13 44.4 13.3 41.7 14.2C41.4 14.3 40.5 14.6 39.6 14.8C38.8 15.1 38 15.4 37.9 15.5C37.8 15.6 37.6 15.7 37.5 15.7C37.3 15.7 36.5 16 35.7 16.4C34.4 17 34.1 17.1 33.9 16.8C33.7 16.5 33.7 3.9 33.9 3C34.1 2.3 34.6 2 37.5 1.4C38.6 1.2 39.9 0.9 40.4 0.8C42.8 0.3 45.4 0.1 49.4 0.1C55.7 0.1 58.6 0.4 62.9 1.7C69.1 3.5 75.3 7.7 79.7 13.3C82.1 16.2 83.9 19.9 85.2 24C86.1 27 86.3 27.9 86.6 30.4C86.7 31.3 86.9 32.7 87 33.5C87.3 35.5 87.3 37.9 87 39.8C86.9 40.7 86.7 42.1 86.6 43C86 47.9 84.6 51.8 81.9 56.2C80.1 59.2 77.7 62 75.5 63.7C74.9 64.1 74.4 64.6 74.4 64.7C74.4 64.8 75.4 66 76.7 67.3C81.5 72.3 83.9 76.5 85.8 83.3C86.1 84.5 86.5 86.9 87 91C87.2 92.9 87.2 95.5 86.9 98.7L86.7 100L78.4 100L70.1 100L70.2 99.3Z"
+
+        val glyph: Path = PathParser().parsePathString(GLYPH_PATH).toPath()
+            .apply { fillType = PathFillType.EvenOdd }
     }
 }
