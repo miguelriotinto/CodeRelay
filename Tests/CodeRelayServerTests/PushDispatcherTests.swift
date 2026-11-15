@@ -70,11 +70,11 @@ final class PushDispatcherTests: XCTestCase {
         let sender = FakeSender()
         let d = makeDispatcher(sender: sender,
                                sessions: { _ in [self.session(sid, .blocked, dir: "/repo/a")] },
-                               tokens: { _ in [self.reg("dev1", "d1", topic: "com.claude.relay.mac")] })
+                               tokens: { _ in [self.reg("dev1", "d1", topic: "com.singular.coderelay.mac")] })
         await d.process(ActivityEvent(sessionId: sid, tokenId: "R", agentState: .blocked, revision: 1))
         let sent = await sender.snapshot()
         XCTAssertEqual(sent.count, 1)
-        XCTAssertEqual(sent[0].topic, "com.claude.relay.mac")
+        XCTAssertEqual(sent[0].topic, "com.singular.coderelay.mac")
     }
 
     func testEnqueuePreservesOrderForBurst() async {

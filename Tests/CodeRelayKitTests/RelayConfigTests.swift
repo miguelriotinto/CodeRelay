@@ -140,7 +140,7 @@ final class RelayConfigTests: XCTestCase {
     func testPushKeysRoundTripThroughCustomDecoder() throws {
         let json = """
         {"pushEnabled":true,"pushNotifyOnFinished":true,"apnsKeyPath":"/k.p8",\
-        "apnsKeyId":"KID","apnsTeamId":"TEAM","apnsBundleId":"com.claude.relay",\
+        "apnsKeyId":"KID","apnsTeamId":"TEAM","apnsBundleId":"com.singular.coderelay",\
         "apnsUseSandbox":true,"fcmServiceAccountPath":"/sa.json","fcmProjectId":"proj"}
         """
         let config = try decoder.decode(RelayConfig.self, from: Data(json.utf8))
@@ -149,7 +149,7 @@ final class RelayConfigTests: XCTestCase {
         XCTAssertEqual(config.apnsKeyPath, "/k.p8")
         XCTAssertEqual(config.apnsKeyId, "KID")
         XCTAssertEqual(config.apnsTeamId, "TEAM")
-        XCTAssertEqual(config.apnsBundleId, "com.claude.relay")
+        XCTAssertEqual(config.apnsBundleId, "com.singular.coderelay")
         XCTAssertTrue(config.apnsUseSandbox)
         XCTAssertEqual(config.fcmServiceAccountPath, "/sa.json")
         XCTAssertEqual(config.fcmProjectId, "proj")

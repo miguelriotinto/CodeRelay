@@ -78,8 +78,8 @@ def _request(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> D
 
 
 def app_id_for(apps: List[Dict[str, Any]], bundle_id: str) -> Optional[str]:
-    """filter[bundleId] is not guaranteed exact: com.claude.relay can also list
-    com.claude.relay.mac, so re-check before trusting the first entry."""
+    """filter[bundleId] is not guaranteed exact: com.singular.coderelay can also list
+    com.singular.coderelay.mac, so re-check before trusting the first entry."""
     for app in apps:
         if app["attributes"]["bundleId"] == bundle_id:
             return app["id"]

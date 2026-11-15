@@ -1,6 +1,6 @@
 name: CodeRelay
 options:
-  bundleIdPrefix: com.claude
+  bundleIdPrefix: com.singular
   deploymentTarget:
     iOS: "17.0"
     macOS: "14.0"
@@ -28,7 +28,7 @@ targets:
       - package: SwiftTerm
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.claude.relay
+        PRODUCT_BUNDLE_IDENTIFIER: com.singular.coderelay
         INFOPLIST_FILE: CodeRelayApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: "Code[Relay]"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
@@ -60,7 +60,7 @@ targets:
           # TLS on the server (see `bindAll` + `tlsCert`/`tlsKey`).
           NSAllowsLocalNetworking: true
         CFBundleURLTypes:
-          - CFBundleURLName: "com.claude.relay"
+          - CFBundleURLName: "com.singular.coderelay"
             CFBundleURLSchemes:
               - coderelay
   CodeRelayAppTests:
@@ -78,7 +78,7 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/CodeRelayApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CodeRelayApp"
         BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.claude.relay.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.singular.coderelay.tests
   CodeRelayMac:
     type: application
     platform: macOS
@@ -94,7 +94,7 @@ targets:
       - package: SwiftTerm
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.claude.relay.mac
+        PRODUCT_BUNDLE_IDENTIFIER: com.singular.coderelay.mac
         PRODUCT_NAME: "Code[Relay]"
         # Do NOT let actool own the app icon. Its generated AppIcon.icns is
         # truncated at 256px and it force-sets CFBundleIconFile=AppIcon, which
@@ -138,7 +138,7 @@ targets:
           # See iOS app note — same scoping applies to the Mac app.
           NSAllowsLocalNetworking: true
         CFBundleURLTypes:
-          - CFBundleURLName: "com.claude.relay.mac"
+          - CFBundleURLName: "com.singular.coderelay.mac"
             CFBundleURLSchemes:
               - coderelay
   CodeRelayMacTests:
@@ -155,4 +155,4 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Code[Relay].app/Contents/MacOS/Code[Relay]"
         BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.claude.relay.mac.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.singular.coderelay.mac.tests

@@ -84,7 +84,7 @@ private final class QRScannerViewController: NSViewController, AVCaptureVideoDat
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var hasScanned = false
-    private let videoOutputQueue = DispatchQueue(label: "com.claude.relay.qrscanner")
+    private let videoOutputQueue = DispatchQueue(label: "com.singular.coderelay.qrscanner")
 
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 360))

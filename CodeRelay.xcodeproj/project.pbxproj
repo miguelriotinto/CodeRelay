@@ -739,7 +739,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.claude.relay.mac;
+				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay.mac;
 				PRODUCT_NAME = "Code[Relay]";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
@@ -813,7 +813,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.claude.relay.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CodeRelayApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CodeRelayApp";
@@ -831,7 +831,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.claude.relay.mac.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay.mac.tests;
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Code[Relay].app/Contents/MacOS/Code[Relay]";
 			};
@@ -922,7 +922,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.4.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.claude.relay;
+				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
 				SUPPORTS_MACCATALYST = NO;
@@ -949,7 +949,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.claude.relay.mac;
+				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay.mac;
 				PRODUCT_NAME = "Code[Relay]";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
@@ -979,7 +979,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.4.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.claude.relay;
+				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
 				SUPPORTS_MACCATALYST = NO;
@@ -998,7 +998,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.claude.relay.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CodeRelayApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CodeRelayApp";
@@ -1016,7 +1016,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.claude.relay.mac.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay.mac.tests;
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Code[Relay].app/Contents/MacOS/Code[Relay]";
 			};

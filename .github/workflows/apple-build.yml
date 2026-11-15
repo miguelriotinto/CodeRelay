@@ -32,9 +32,9 @@ jobs:
           # altool finds the key as $API_PRIVATE_KEYS_DIR/AuthKey_<KEYID>.p8.
           echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8" >> "$GITHUB_ENV"
           case "${{ inputs.platform }}" in
-            ios)   echo "SCHEME=CodeRelayApp" ; echo "BUNDLE_ID=com.claude.relay" ;
+            ios)   echo "SCHEME=CodeRelayApp" ; echo "BUNDLE_ID=com.singular.coderelay" ;
                    echo "DESTINATION=generic/platform=iOS" ; echo "TAG_PREFIX=ios-build" ;;
-            macos) echo "SCHEME=CodeRelayMac" ; echo "BUNDLE_ID=com.claude.relay.mac" ;
+            macos) echo "SCHEME=CodeRelayMac" ; echo "BUNDLE_ID=com.singular.coderelay.mac" ;
                    echo "DESTINATION=generic/platform=macOS" ; echo "TAG_PREFIX=mac-build" ;;
             *) echo "unknown platform ${{ inputs.platform }}"; exit 1 ;;
           esac >> "$GITHUB_ENV"
@@ -246,7 +246,7 @@ jobs:
           printf '%s\n' "$ASC_API_KEY_P8" > "$ASC_KEY_PATH"
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --quiet 'pyjwt[crypto]'
-          case "${{ inputs.platform }}" in ios) BUNDLE_ID=com.claude.relay ;; macos) BUNDLE_ID=com.claude.relay.mac ;; esac
+          case "${{ inputs.platform }}" in ios) BUNDLE_ID=com.singular.coderelay ;; macos) BUNDLE_ID=com.singular.coderelay.mac ;; esac
           "$RUNNER_TEMP/venv/bin/python" Scripts/ci/asc.py what-to-test \
             --bundle-id "$BUNDLE_ID" --build "${{ needs.build.outputs.build }}" --notes-file notes.txt
       - name: Report failure

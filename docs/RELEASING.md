@@ -137,7 +137,7 @@ from `/coderelay-deploy`.** A manual build bypasses the CI gate, so build only
 a commit that already has a green `CI` run, with Xcode 27.1 or later (the
 iPhone Duo layout is gated on the iOS 27.1 SDK), and pick the build number
 yourself: App Store Connect's highest + 1
-(`python3 Scripts/ci/asc.py next-build --bundle-id com.claude.relay --floor 1`
+(`python3 Scripts/ci/asc.py next-build --bundle-id com.singular.coderelay --floor 1`
 with the env below, PyJWT installed).
 
 ```bash

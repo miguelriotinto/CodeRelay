@@ -5,7 +5,7 @@ final class PushMessageTests: ProtocolTestCase {
     func testRegisterPushTokenRoundTrips() throws {
         let original = ClientMessage.registerPushToken(
             platform: .apns, token: "abc123", deviceId: "dev-1",
-            enabled: true, notifyOnFinished: false, topic: "com.claude.relay.mac")
+            enabled: true, notifyOnFinished: false, topic: "com.singular.coderelay.mac")
         let data = try encoder.encode(MessageEnvelope.client(original))
         guard case .client(.registerPushToken(let p, let t, let d, let en, let nf, let topic)) =
                 try decoder.decode(MessageEnvelope.self, from: data) else {
@@ -16,7 +16,7 @@ final class PushMessageTests: ProtocolTestCase {
         XCTAssertEqual(d, "dev-1")
         XCTAssertTrue(en)
         XCTAssertFalse(nf)
-        XCTAssertEqual(topic, "com.claude.relay.mac")
+        XCTAssertEqual(topic, "com.singular.coderelay.mac")
     }
 
     func testRegisterPushTokenDecodesWithoutTopic() throws {

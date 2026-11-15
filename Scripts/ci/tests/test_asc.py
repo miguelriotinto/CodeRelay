@@ -35,11 +35,11 @@ class AscTests(unittest.TestCase):
         self.assertTrue(text.splitlines()[-1].startswith("- … and "))
 
     def test_app_lookup_requires_exact_bundle_id(self):
-        apps = [{"id": "mac", "attributes": {"bundleId": "com.claude.relay.mac"}},
-                {"id": "ios", "attributes": {"bundleId": "com.claude.relay"}}]
-        self.assertEqual(app_id_for(apps, "com.claude.relay"), "ios")
-        self.assertEqual(app_id_for(apps, "com.claude.relay.mac"), "mac")
-        self.assertIsNone(app_id_for(apps[:1], "com.claude.relay"))
+        apps = [{"id": "mac", "attributes": {"bundleId": "com.singular.coderelay.mac"}},
+                {"id": "ios", "attributes": {"bundleId": "com.singular.coderelay"}}]
+        self.assertEqual(app_id_for(apps, "com.singular.coderelay"), "ios")
+        self.assertEqual(app_id_for(apps, "com.singular.coderelay.mac"), "mac")
+        self.assertIsNone(app_id_for(apps[:1], "com.singular.coderelay"))
 
 
 if __name__ == "__main__":

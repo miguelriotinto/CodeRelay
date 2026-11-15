@@ -36,7 +36,7 @@ private actor MockHTTP: PushHTTPExecuting {
 final class APNsClientTests: XCTestCase {
     private func config(sandbox: Bool = true) -> APNsConfig {
         APNsConfig(keyPEM: testKeyPEM, keyId: "KID123", teamId: "TEAM1",
-                   bundleId: "com.claude.relay", useSandbox: sandbox)
+                   bundleId: "com.singular.coderelay", useSandbox: sandbox)
     }
 
     func testJWTHasES256HeaderAndVerifiableSignature() async throws {
@@ -75,7 +75,7 @@ final class APNsClientTests: XCTestCase {
         let url = await http.url()
         XCTAssertEqual(url, "https://api.sandbox.push.apple.com/3/device/abc123")
         let headers = await http.headers()
-        XCTAssertTrue(headers.contains { $0.0 == "apns-topic" && $0.1 == "com.claude.relay" },
+        XCTAssertTrue(headers.contains { $0.0 == "apns-topic" && $0.1 == "com.singular.coderelay" },
                       "nil topic falls back to the configured bundle id")
         XCTAssertTrue(headers.contains { $0.0 == "apns-push-type" && $0.1 == "alert" })
         XCTAssertTrue(headers.contains { $0.0 == "apns-collapse-id" && $0.1 == "ws_hash" })
@@ -117,10 +117,10 @@ final class APNsClientTests: XCTestCase {
         let http = MockHTTP()
         await http.configure(status: 200)
         let client = try APNsClient(config: config(sandbox: true), http: http)
-        _ = await client.send(deviceToken: "abc123", platform: .apns, topic: "com.claude.relay.mac",
+        _ = await client.send(deviceToken: "abc123", platform: .apns, topic: "com.singular.coderelay.mac",
                               title: "t", body: "b", deepLink: "d", collapseKey: "k", serverId: "srv-1")
         let headers = await http.headers()
-        XCTAssertTrue(headers.contains { $0.0 == "apns-topic" && $0.1 == "com.claude.relay.mac" },
+        XCTAssertTrue(headers.contains { $0.0 == "apns-topic" && $0.1 == "com.singular.coderelay.mac" },
                       "a per-device topic must override the configured bundle id")
     }
 }
