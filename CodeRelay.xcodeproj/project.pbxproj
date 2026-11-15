@@ -61,6 +61,7 @@
 		9B8FCED16295ABFC21084712 /* ActiveTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E9DA3201E71F50165B91F5 /* ActiveTerminalView.swift */; };
 		9EAE3BDE8C9AE361EF9F3D71 /* MenuBarDropdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = D130F01F66F52B7E7E56E837 /* MenuBarDropdown.swift */; };
 		A52BDEE2BDFB2BA67CA64288 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE76025239CFE171AEC352E2 /* AppCommands.swift */; };
+		AC766383D329B581F7213BAE /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 257C3C0F301DC6FDC8FBE404 /* AppIcon.icon */; };
 		B1E5AF4AD4DF9F246EFC5C05 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F070B78556144927C4A84E00 /* SettingsView.swift */; };
 		B255A26627FADB404566CD01 /* RelayTerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 932D11B48F0BE56805CBE758 /* RelayTerminalView.swift */; };
 		B36A3BC57F4A163A4D4A7325 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 94E14A8D8A42F96B0E2E0701 /* SwiftTerm */; };
@@ -124,6 +125,7 @@
 		1A6C9CCFEA72C0C565BAE0A9 /* SessionTabStripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTabStripTests.swift; sourceTree = "<group>"; };
 		1C01CE54946F1BF877D94BFE /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		200D7FB7016273E202A9EE6A /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
+		257C3C0F301DC6FDC8FBE404 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		2D40B83590E3F91399DC24BD /* AddEditServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerView.swift; sourceTree = "<group>"; };
 		2F3077C18D3A47EDCAB73EEF /* CodeRelayApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodeRelayApp.entitlements; sourceTree = "<group>"; };
 		31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CodeRelayIcon.icns; sourceTree = "<group>"; };
@@ -422,6 +424,7 @@
 		ECF6C237AEBE600EC226A2D1 /* CodeRelayApp */ = {
 			isa = PBXGroup;
 			children = (
+				257C3C0F301DC6FDC8FBE404 /* AppIcon.icon */,
 				4A5A11FFBA6C50A66206D19C /* Assets.xcassets */,
 				2F3077C18D3A47EDCAB73EEF /* CodeRelayApp.entitlements */,
 				182C005C24C6294954821730 /* CodeRelayApp.swift */,
@@ -587,6 +590,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AC766383D329B581F7213BAE /* AppIcon.icon in Resources */,
 				0C6B11DBFA2D605D05506B93 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
