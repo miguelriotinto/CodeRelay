@@ -1,7 +1,8 @@
 # Server-Side Prompt Optimizer and Speech-Stack Removal
 
 **Date:** 2026-09-13
-**Status:** Draft for review
+**Status:** Shipped 2026-09, **removed 2026-11-16** (server 0.3.45) — the prompt
+optimizer moved to a separate voice/dictation app; this spec is history.
 **Supersedes:** `2026-04-10-on-device-speech-engine-design.md`,
 `2026-05-08-continuous-voice-input-design.md`,
 `2026-05-08-continuous-voice-v2-design.md` (all three describe functionality this

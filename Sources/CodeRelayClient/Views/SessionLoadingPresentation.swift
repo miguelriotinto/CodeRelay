@@ -104,7 +104,7 @@ public struct SessionLoadingPresentation: Equatable {
 /// presentation has not changed for `stallTimeout` (no new phase, no new
 /// bytes) the sheet lowers so the pane is usable again, and comes back the
 /// moment progress resumes. A replay that never delivers, or an RPC chain
-/// parked behind a 20 s optimize, is otherwise indistinguishable from a hang.
+/// parked behind a slow reply, is otherwise indistinguishable from a hang.
 @MainActor
 public final class SessionLoadingSheetModel: ObservableObject {
     public static let minimumVisible: Duration = .milliseconds(600)

@@ -94,4 +94,29 @@ final class AppSettingsSpeechRemovalTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: hubDir.path))
         XCTAssertTrue(defaults.bool(forKey: AppSettings.speechRemovalMigrationKey))
     }
+
+    // MARK: - Prompt-optimizer removal
+
+    func testOptimizerKeyListCoversTheToggleAndTheShortcut() {
+        XCTAssertEqual(
+            Set(AppSettings.legacyOptimizerDefaultsKeys),
+            ["shareScreenWithOptimizer", "recordingShortcutEnabled", "recordingShortcutFlags",
+             "recordingShortcutKey", "recordingShortcutModifier"]
+        )
+    }
+
+    /// Every launch scrubs, so a second run must be a harmless no-op and an
+    /// unrelated setting must survive both.
+    func testOptimizerScrubRemovesOnlyItsKeysAndIsIdempotent() {
+        for key in AppSettings.legacyOptimizerDefaultsKeys { defaults.set(true, forKey: key) }
+        defaults.set(14, forKey: "hapticFeedbackEnabled")
+
+        AppSettings.removeOptimizerSettings(defaults: defaults)
+        AppSettings.removeOptimizerSettings(defaults: defaults)
+
+        for key in AppSettings.legacyOptimizerDefaultsKeys {
+            XCTAssertNil(defaults.object(forKey: key), key)
+        }
+        XCTAssertEqual(defaults.integer(forKey: "hapticFeedbackEnabled"), 14)
+    }
 }

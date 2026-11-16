@@ -61,7 +61,6 @@ import relay.feature.servers.ServersViewModel
 import relay.feature.settings.AppSettings
 import relay.feature.settings.PreferenceStore
 import relay.feature.settings.SettingsScreen
-import relay.feature.settings.SettingsSection
 import relay.feature.workspace.QrShareSheet
 import relay.feature.workspace.WorkspaceScreen
 import relay.feature.workspace.ui.AttachSessionSheet
@@ -201,7 +200,6 @@ private fun runApp(
     val fontSizeIsSet by settings.terminalFontSizeIsSet.collectAsState()
     val fontSize by settings.terminalFontSize.collectAsState()
     val scrollbackLines by settings.terminalScrollbackLines.collectAsState()
-    val shareScreen by settings.shareScreenWithOptimizer.collectAsState()
 
     fun raiseWindow() {
         windowVisible = true
@@ -261,7 +259,6 @@ private fun runApp(
     /** Window-level accelerators; see [AppShortcut] for the Ctrl+Shift/Ctrl+Alt rule. */
     fun handleShortcut(event: KeyEvent): Boolean {
         if (event.type != KeyEventType.KeyDown) return false
-        val active = current
         AppShortcut.sessionIndex(event)?.let { index ->
             // Ctrl+Alt+N numbers sessions across servers, like the tabs.
             val target = hub.orderedRefs.getOrNull(index) ?: return true
@@ -285,20 +282,6 @@ private fun runApp(
             AppShortcut.PREVIOUS_SESSION -> uiScope.launch { hub.selectPrevious() }
             AppShortcut.COPY -> if (activeSlot?.coordinator?.activeSessionId?.value != null) copyRequest++ else return false
             AppShortcut.PASTE -> if (activeSlot?.coordinator?.activeSessionId?.value != null) pasteRequest++ else return false
-            // The wand's accelerator (spec §7.4) — the same entry point as a tap
-            // on the WandButton, on purpose. PromptOptimizerController owns the
-            // gate and shows the "update / enable the relay" hint itself, so the
-            // chord and the tap cannot drift apart.
-            AppShortcut.OPTIMIZE_PROMPT -> {
-                // Optimize rewrites text the user is composing and its feedback
-                // lives on the workspace, so it must not fire while that is
-                // covered. Swallowed rather than forwarded — an unhandled
-                // Ctrl+Shift+O reaches the terminal as Ctrl+O (zsh accept-line).
-                if (showSettings || showServers) return true
-                active?.let { s ->
-                    uiScope.launch { s.coordinator.optimizePrompt(shareScreen) }
-                } ?: return false
-            }
         }
         return true
     }
@@ -508,9 +491,6 @@ private fun runApp(
                         onOpenServers = { showServers = true },
                         onAttach = { _ -> fetchAttachable() },
                         onShareQr = { ref -> shareRef = ref },
-                        // The device-side gate on sending the last 40 screen lines
-                        // with optimize_prompt (spec §7.1); the relay has its own.
-                        shareScreen = shareScreen,
                         // Haptics are a no-op on desktop; passed for API parity.
                         hapticsEnabled = false,
                         sidebarToggleRequests = sidebarToggles,
@@ -559,15 +539,7 @@ private fun runApp(
                             buildNumber = BuildInfo.BUILD,
                             onDone = { showSettings = false },
                             modifier = Modifier.fillMaxSize(),
-                            // No hardware-shortcut capture on this platform; its
-                            // toggle would persist a value nothing reads. Haptics
-                            // likewise. The optimizer section stays: the desktop
-                            // renders the same magic-wand button.
-                            visibleSections = setOf(
-                                SettingsSection.PROMPT_OPTIMIZER,
-                                SettingsSection.GENERAL,
-                                SettingsSection.ABOUT,
-                            ),
+                            // A desktop has no vibrator, so no haptics toggle.
                             hapticFeedbackAvailable = false,
                         )
                     }
@@ -675,8 +647,8 @@ class AppEnvironment private constructor(
             val deviceId = DeviceIdentifier.get()
             val tokens = TokenStore()
             // Builds before 2026-09 kept an AWS Bedrock key for the on-device
-            // prompt enhancer under TokenStore.BEDROCK_ACCOUNT. The optimizer is
-            // a relay feature now, so the secret is deleted on every launch —
+            // prompt enhancer under TokenStore.BEDROCK_ACCOUNT. That feature is
+            // gone and nothing reads the secret, so it is deleted on every launch —
             // idempotent, no completion flag, the same rule as Android's speech
             // scrub. Dispatchers.IO because the runner bounds secret-tool at
             // 30 s wall clock, and the coordinators run on Main.immediate.

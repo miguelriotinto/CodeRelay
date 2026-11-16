@@ -55,8 +55,7 @@ final class RelayMessageHandlerTests: XCTestCase {
             clipboardService: NoopClipboardService(),
             pushStore: pushStore,
             pairingStore: PairingCodeStore(),
-            identity: ServerIdentity(id: UUID(), name: "test-relay"),
-            optimizerBudget: OptimizerBudget()
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
 
         let channel = await NIOAsyncTestingChannel(handler: handler)

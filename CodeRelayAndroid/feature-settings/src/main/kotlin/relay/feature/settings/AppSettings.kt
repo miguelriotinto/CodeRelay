@@ -34,29 +34,27 @@ fun interface BedrockSecretDeleter {
  * App-wide user settings, ported from `AppSettings.swift`.
  *
  * iOS persists these via SwiftUI `@AppStorage` (UserDefaults). The Android analog
- * is a single Preferences [DataStore] (`app_settings`) holding **the 10 keys this
- * client persists** — a subset of iOS's twelve, which additionally carries the two
+ * is a single Preferences [DataStore] (`app_settings`) holding **the 6 keys this
+ * client persists** — a subset of iOS's, which additionally carries the two
  * push prefs (`pushNotificationsEnabled`, `pushNotifyOnFinished`; Android hardcodes
  * those in `PushSync`). Key *names* match iOS verbatim. Each is surfaced here as a
  * [StateFlow] plus a `set…` mutator.
  *
- * ## The 10 DataStore keys (defaults match AppSettings.swift)
+ * ## The 6 DataStore keys (defaults match AppSettings.swift)
  *  1. `hapticFeedbackEnabled`      = true
  *  2. `autoConnectEnabled`         = false
  *  3. `lastConnectedServerId`      = ""
  *  4. `sessionNamingTheme`         = gameOfThrones
  *  5. `terminalFontSize`           = 12.0
  *  6. `terminalScrollbackLines`    = 5000
- *  7. `recordingShortcutEnabled`   = true
- *  8. `recordingShortcutFlags`     = Meta+Alt ([ShortcutFlags.DEFAULT])
- *  9. `recordingShortcutKey`       = ""
- * 10. `shareScreenWithOptimizer`   = true   (spec §7.1 — sent as `shareScreen` on every `optimize_prompt`)
  *
  * The speech stack's six keys (`smartCleanupEnabled`, `promptEnhancementEnabled`,
  * `bedrockRegion`, `continuousListeningEnabled`, `wakeWord`, and the legacy
  * plaintext `bedrockBearerToken`) plus the Bedrock credential in the secure
  * [TokenStore] are **scrubbed on every launch** by [removeSpeechSettings]
- * (spec §10) — every shipped build before the speech removal wrote them.
+ * (spec §10) — every shipped build before the speech removal wrote them. The
+ * prompt optimizer's keys (`shareScreenWithOptimizer` and the
+ * `recordingShortcut*` keys) are scrubbed the same way by [removeOptimizerSettings].
  *
  * @param scope a long-lived scope (the host injects an application-scoped one);
  *   owns the StateFlow hot mirrors and the startup migrations.
@@ -74,38 +72,19 @@ class AppSettings(
     }
 
     /**
-     * Best-effort forward migrations, in launch order: the speech scrub first, then
-     * the shortcut one (a no-op on any real Android install — see
-     * [AppSettingsMigrations]).
+     * Removed-feature scrubs, in launch order: the speech scrub first (it owns the
+     * Bedrock secret), then the prompt-optimizer one.
      *
-     * The order and the guard are both load-bearing. `app_settings` is created with
+     * The order and the guards are both load-bearing. `app_settings` is created with
      * no `corruptionHandler`, so a malformed file makes **every** DataStore read
-     * throw for the life of the install. Running the shortcut migration first, and
-     * unguarded, would then (a) skip the Bedrock secret delete forever — on exactly
-     * the devices whose DataStore is broken, which is what "secret first" exists to
-     * survive — and (b) let the exception escape this `scope.launch` into the
-     * default uncaught handler, killing the process during `MainActivity.onCreate`.
+     * throw for the life of the install. The secret delete must therefore come
+     * first and never wait on DataStore health, and every DataStore step is guarded
+     * so the exception cannot escape this `scope.launch` into the default uncaught
+     * handler and kill the process during `MainActivity.onCreate`.
      */
     private suspend fun runMigrations() {
         removeSpeechSettings()
-        runCatching { migrateShortcutIfNeeded() }
-            .onFailure { if (it is CancellationException) throw it }
-    }
-
-    /**
-     * Migrate the legacy `recordingShortcutModifier` String → `recordingShortcutFlags`
-     * Int. Mirrors AppSettings.swift:31-48: only migrate when the legacy key is
-     * present and the new flags key has not been set, then delete the legacy key.
-     */
-    private suspend fun migrateShortcutIfNeeded() {
-        val prefs = dataStore.data.first()
-        val legacy = prefs[LEGACY_SHORTCUT_MODIFIER_KEY] ?: return
-        if (prefs.contains(RECORDING_SHORTCUT_FLAGS)) return
-        val flags = AppSettingsMigrations.shortcutFlagsForLegacyModifier(legacy)
-        dataStore.edit {
-            it[RECORDING_SHORTCUT_FLAGS] = flags
-            it.remove(LEGACY_SHORTCUT_MODIFIER_KEY)
-        }
+        removeOptimizerSettings()
     }
 
     /**
@@ -129,7 +108,22 @@ class AppSettings(
         }.onFailure { if (it is CancellationException) throw it }
     }
 
-    // MARK: - StateFlow mirrors + setters (the 10 keys)
+    /**
+     * Prompt-optimizer-removal scrub, the sibling of [removeSpeechSettings]. Runs
+     * every launch for the same reasons: idempotent, cheap, and no "done" flag that
+     * could be set before the deletion landed. The read is guarded like the speech
+     * scrub's, so an unreadable DataStore cannot escape.
+     */
+    private suspend fun removeOptimizerSettings() {
+        runCatching {
+            val prefs = dataStore.data.first()
+            if (AppSettingsMigrations.REMOVED_OPTIMIZER_KEYS.any { prefs.contains(it) }) {
+                dataStore.edit { AppSettingsMigrations.scrubOptimizerKeys(it) }
+            }
+        }.onFailure { if (it is CancellationException) throw it }
+    }
+
+    // MARK: - StateFlow mirrors + setters (the 6 keys)
 
     val hapticFeedbackEnabled: StateFlow<Boolean> = boolFlow(HAPTIC_FEEDBACK, true)
     fun setHapticFeedbackEnabled(value: Boolean) = put(HAPTIC_FEEDBACK, value)
@@ -165,24 +159,6 @@ class AppSettings(
     val terminalScrollbackLines: StateFlow<Int> = intFlow(TERMINAL_SCROLLBACK_LINES, 5_000)
     fun setTerminalScrollbackLines(value: Int) = put(TERMINAL_SCROLLBACK_LINES, value)
 
-    val recordingShortcutEnabled: StateFlow<Boolean> = boolFlow(RECORDING_SHORTCUT_ENABLED, true)
-    fun setRecordingShortcutEnabled(value: Boolean) = put(RECORDING_SHORTCUT_ENABLED, value)
-
-    val recordingShortcutFlags: StateFlow<Int> = intFlow(RECORDING_SHORTCUT_FLAGS, ShortcutFlags.DEFAULT)
-    fun setRecordingShortcutFlags(value: Int) = put(RECORDING_SHORTCUT_FLAGS, value)
-
-    val recordingShortcutKey: StateFlow<String> = stringFlow(RECORDING_SHORTCUT_KEY, "")
-    fun setRecordingShortcutKey(value: String) = put(RECORDING_SHORTCUT_KEY, value)
-
-    /**
-     * Whether `optimize_prompt` may carry the last 40 screen lines (spec §7.1).
-     * The device-side gate; the relay has its own (`promptOptimizerShareScreen`).
-     * Eagerly seeded with the default until the first DataStore emission; the wand
-     * needs an attached session, which takes longer than hydration.
-     */
-    val shareScreenWithOptimizer: StateFlow<Boolean> = boolFlow(SHARE_SCREEN_WITH_OPTIMIZER, true)
-    fun setShareScreenWithOptimizer(value: Boolean) = put(SHARE_SCREEN_WITH_OPTIMIZER, value)
-
     // MARK: - DataStore plumbing
 
     private fun boolFlow(key: Preferences.Key<Boolean>, default: Boolean): StateFlow<Boolean> =
@@ -202,7 +178,7 @@ class AppSettings(
     }
 
     companion object {
-        // The 10 DataStore keys (names match the iOS @AppStorage keys verbatim so
+        // The 6 DataStore keys (names match the iOS @AppStorage keys verbatim so
         // a cross-platform import round-trips).
         private val HAPTIC_FEEDBACK = booleanPreferencesKey("hapticFeedbackEnabled")
         private val AUTO_CONNECT = booleanPreferencesKey("autoConnectEnabled")
@@ -210,14 +186,6 @@ class AppSettings(
         private val SESSION_NAMING_THEME = stringPreferencesKey("sessionNamingTheme")
         private val TERMINAL_FONT_SIZE = doublePreferencesKey("terminalFontSize")
         private val TERMINAL_SCROLLBACK_LINES = intPreferencesKey("terminalScrollbackLines")
-        private val RECORDING_SHORTCUT_ENABLED = booleanPreferencesKey("recordingShortcutEnabled")
-        private val RECORDING_SHORTCUT_FLAGS = intPreferencesKey("recordingShortcutFlags")
-        private val RECORDING_SHORTCUT_KEY = stringPreferencesKey("recordingShortcutKey")
-        private val SHARE_SCREEN_WITH_OPTIMIZER = booleanPreferencesKey("shareScreenWithOptimizer")
-
-        // Legacy key read by the shortcut migration only (never written on Android today).
-        private val LEGACY_SHORTCUT_MODIFIER_KEY =
-            stringPreferencesKey(AppSettingsMigrations.LEGACY_SHORTCUT_MODIFIER_KEY)
 
         /**
          * Builds the production [AppSettings] from a [Context] + a long-lived

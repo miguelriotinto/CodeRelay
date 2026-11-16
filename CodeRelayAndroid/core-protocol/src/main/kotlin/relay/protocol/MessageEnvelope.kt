@@ -86,14 +86,6 @@ object MessageEnvelope {
                     put("deviceName", JsonPrimitive(message.deviceName))
                     put("platform", JsonPrimitive(message.platform))
                 }
-                is ClientMessage.OptimizePrompt -> {
-                    put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
-                    put("shareScreen", JsonPrimitive(message.shareScreen))
-                }
-                is ClientMessage.ReplacePrompt -> {
-                    put("sessionId", JsonPrimitive(message.sessionId.toWireString()))
-                    put("text", JsonPrimitive(message.text))
-                }
             }
         }
         val envelope = buildJsonObject {
@@ -166,16 +158,6 @@ object MessageEnvelope {
             "pair_success" -> ServerMessage.PairSuccess(
                 payload.string("token"), payload.string("tokenId"), payload.string("label"),
                 payload.stringOrNull("serverId"), payload.stringOrNull("serverName"),
-            )
-            "optimize_prompt_result" -> ServerMessage.OptimizePromptResult(
-                status = payload.string("status"),
-                original = payload.stringOrNull("original"),
-                prompt = payload.stringOrNull("prompt"),
-                message = payload.stringOrNull("message"),
-            )
-            "replace_prompt_result" -> ServerMessage.ReplacePromptResult(
-                status = payload.string("status"),
-                message = payload.stringOrNull("message"),
             )
             else -> throw IllegalArgumentException("Unknown server message type: $type")
         }

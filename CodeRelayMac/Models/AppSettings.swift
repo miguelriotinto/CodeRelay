@@ -6,6 +6,7 @@ final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     private init() {
+        AppSettings.removeOptimizerSettings(defaults: .standard)
         AppSettings.migrateSpeechRemoval(
             defaults: .standard,
             directories: AppSettings.legacySpeechDirectories,
@@ -38,15 +39,23 @@ final class AppSettings: ObservableObject {
     /// replays anything that fell off this edge on next attach.
     @AppStorage("com.clauderelay.mac.terminalScrollbackLines") var terminalScrollbackLines: Int = 5_000
 
-    @AppStorage("com.clauderelay.mac.recordingShortcutEnabled") var recordingShortcutEnabled = true
-    @AppStorage("com.clauderelay.mac.recordingShortcutModifiers")
-    var recordingShortcutModifiers: Int = Int(NSEvent.ModifierFlags([.command, .option]).rawValue)
-    @AppStorage("com.clauderelay.mac.recordingShortcutKey") var recordingShortcutKey = ""
+    // MARK: - Prompt-optimizer removal
 
-    // MARK: - Prompt optimizer (spec §7.1)
+    /// Every key the removed prompt optimizer wrote on macOS: its
+    /// screen-sharing toggle and its keyboard shortcut (which kept the older
+    /// `recordingShortcut*` names from the speech feature before it).
+    static let legacyOptimizerDefaultsKeys = [
+        "com.clauderelay.mac.shareScreenWithOptimizer",
+        "com.clauderelay.mac.recordingShortcutEnabled",
+        "com.clauderelay.mac.recordingShortcutModifiers",
+        "com.clauderelay.mac.recordingShortcutKey",
+    ]
 
-    /// Sent as `shareScreen` on every `optimize_prompt`. Per device, default on.
-    @AppStorage("com.clauderelay.mac.shareScreenWithOptimizer") var shareScreenWithOptimizer = true
+    /// Drops the optimizer's stored settings. Runs on every launch: removing an
+    /// absent key is a no-op, so there is nothing to retry and no done flag.
+    static func removeOptimizerSettings(defaults: UserDefaults) {
+        for key in legacyOptimizerDefaultsKeys { defaults.removeObject(forKey: key) }
+    }
 
     // MARK: - Speech-removal migration (spec §7.2)
 
@@ -105,29 +114,5 @@ final class AppSettings: ObservableObject {
             directories: directories,
             deleteBedrockToken: deleteBedrockToken
         )
-    }
-}
-
-extension NSEvent.ModifierFlags {
-    var symbolString: String {
-        var parts: [String] = []
-        if contains(.control) { parts.append("⌃") }
-        if contains(.option) { parts.append("⌥") }
-        if contains(.shift) { parts.append("⇧") }
-        if contains(.command) { parts.append("⌘") }
-        return parts.joined()
-    }
-}
-
-extension AppSettings {
-    var shortcutModifierFlags: NSEvent.ModifierFlags {
-        get { NSEvent.ModifierFlags(rawValue: UInt(recordingShortcutModifiers)) }
-        set { recordingShortcutModifiers = Int(newValue.rawValue) }
-    }
-
-    var shortcutDisplayString: String {
-        let mods = shortcutModifierFlags.symbolString
-        let key = recordingShortcutKey.uppercased()
-        return mods + key
     }
 }

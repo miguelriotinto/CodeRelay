@@ -2,7 +2,7 @@ import XCTest
 @testable import CodeRelayCLI
 
 /// `serverName` is read once at startup by ServerIdentityStore, so `config set`
-/// must tell the operator a restart is needed — exactly like promptOptimizer*.
+/// must tell the operator a restart is needed.
 final class ConfigSetServerNameTests: XCTestCase {
     func testServerNameGetsTheRestartHint() {
         XCTAssertEqual(ConfigSetCommand.restartHint(forKey: "serverName"),
@@ -11,8 +11,8 @@ final class ConfigSetServerNameTests: XCTestCase {
 
     func testOtherKeysAreUnchanged() {
         XCTAssertNil(ConfigSetCommand.restartHint(forKey: "wsPort"))
-        XCTAssertEqual(ConfigSetCommand.restartHint(forKey: "promptOptimizerEnabled"),
-                       "Note: optimizer settings are read at startup — run 'claude-relay restart' to apply.")
+        XCTAssertNil(ConfigSetCommand.restartHint(forKey: "promptOptimizerEnabled"))
+        XCTAssertFalse(ConfigSetCommand.validKeys.contains("promptOptimizerEnabled"))
     }
 
     func testServerNameIsShippedAsTheRawStringNotInferred() {

@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.StateFlow
 import relay.protocol.SessionNamingTheme
 
 /**
- * The 10 shared preferences, plus 2 desktop-only ones (window geometry).
+ * The 6 shared preferences, plus 2 desktop-only ones (window geometry).
  *
  * Linux counterpart of the Android `AppSettings`. **The public API is identical
  * on purpose** — the same `StateFlow` properties and `setX` methods — so the
@@ -13,32 +13,33 @@ import relay.protocol.SessionNamingTheme
  * Multiplatform provides under the same package name) compiles against this
  * unchanged.
  *
- * ### Why there are no migrations here
+ * ### Startup scrubs
  *
- * The Android class runs two startup steps: a legacy
- * `recordingShortcutModifier` String → flags Int migration, and a scrub of the
- * settings the removed speech stack wrote. Both exist because *older builds of
- * that app* wrote those keys.
+ * The Android class runs two startup scrubs of settings written by removed
+ * features; both exist because *older builds of that app* wrote those keys.
  *
- * Linux never shipped the shortcut-modifier String key (the persisted format was
- * always Int), so that migration is not needed. However, older Linux builds
- * (≤ v0.3.25) DID write the speech preferences: `smartCleanupEnabled`,
- * `promptEnhancementEnabled`, `bedrockRegion`, `continuousListeningEnabled`,
- * and `wakeWord`. Those five keys are pruned at construction, idempotent, with
- * no completion flag — the same rule as Android's `removeSpeechSettings` and
- * this PR's keyring scrub (`TokenStore.deleteBedrockToken()` at launch in
- * `Main.kt`).
+ * Older Linux builds (≤ v0.3.25) DID write the speech preferences:
+ * `smartCleanupEnabled`, `promptEnhancementEnabled`, `bedrockRegion`,
+ * `continuousListeningEnabled`, and `wakeWord`. Builds up to the prompt
+ * optimizer's removal also wrote `shareScreenWithOptimizer` and the three
+ * `recordingShortcut*` keys (Linux never wrote the legacy
+ * `recordingShortcutModifier` String key). All of them are pruned at
+ * construction, idempotent, with no completion flag — the same rule as
+ * Android's `removeSpeechSettings` / `removeOptimizerSettings` and the keyring
+ * scrub (`TokenStore.deleteBedrockToken()` at launch in `Main.kt`).
  */
 class AppSettings(
     private val prefs: PreferenceStore,
 ) {
 
     init {
-        // Prune legacy speech preferences written by builds ≤ v0.3.25.
+        // Prune preferences written by builds that still had the speech stack
+        // (≤ v0.3.25) or the prompt optimizer.
         LEGACY_SPEECH_KEYS.forEach { if (prefs.contains(it)) prefs.remove(it) }
+        REMOVED_OPTIMIZER_KEYS.forEach { if (prefs.contains(it)) prefs.remove(it) }
     }
 
-    // ---- the 10 persisted preferences ----
+    // ---- the 6 shared persisted preferences ----
 
     /**
      * Retained for API parity with Android so the shared settings screen
@@ -88,22 +89,6 @@ class AppSettings(
     val terminalScrollbackLines: StateFlow<Int> = prefs.intFlow(TERMINAL_SCROLLBACK_LINES, 5_000)
     fun setTerminalScrollbackLines(value: Int) = prefs.put(TERMINAL_SCROLLBACK_LINES, value)
 
-    val recordingShortcutEnabled: StateFlow<Boolean> = prefs.boolFlow(RECORDING_SHORTCUT_ENABLED, true)
-    fun setRecordingShortcutEnabled(value: Boolean) = prefs.put(RECORDING_SHORTCUT_ENABLED, value)
-
-    val recordingShortcutFlags: StateFlow<Int> = prefs.intFlow(RECORDING_SHORTCUT_FLAGS, ShortcutFlags.DEFAULT)
-    fun setRecordingShortcutFlags(value: Int) = prefs.put(RECORDING_SHORTCUT_FLAGS, value)
-
-    val recordingShortcutKey: StateFlow<String> = prefs.stringFlow(RECORDING_SHORTCUT_KEY, "")
-    fun setRecordingShortcutKey(value: String) = prefs.put(RECORDING_SHORTCUT_KEY, value)
-
-    /**
-     * Whether `optimize_prompt` may carry the last 40 screen lines (spec §7.1).
-     * The device-side gate; the relay has its own (`promptOptimizerShareScreen`).
-     */
-    val shareScreenWithOptimizer: StateFlow<Boolean> = prefs.boolFlow(SHARE_SCREEN_WITH_OPTIMIZER, true)
-    fun setShareScreenWithOptimizer(value: Boolean) = prefs.put(SHARE_SCREEN_WITH_OPTIMIZER, value)
-
     companion object {
         // Key names match the Android store's exactly, so a settings file moved
         // between platforms is intelligible and a future import path is trivial.
@@ -113,10 +98,6 @@ class AppSettings(
         const val SESSION_NAMING_THEME = "sessionNamingTheme"
         const val TERMINAL_FONT_SIZE = "terminalFontSize"
         const val TERMINAL_SCROLLBACK_LINES = "terminalScrollbackLines"
-        const val RECORDING_SHORTCUT_ENABLED = "recordingShortcutEnabled"
-        const val RECORDING_SHORTCUT_FLAGS = "recordingShortcutFlags"
-        const val RECORDING_SHORTCUT_KEY = "recordingShortcutKey"
-        const val SHARE_SCREEN_WITH_OPTIMIZER = "shareScreenWithOptimizer"
 
         // Desktop-only keys; no Android counterpart.
         const val WINDOW_WIDTH = "windowWidth"
@@ -129,6 +110,14 @@ class AppSettings(
             "bedrockRegion",
             "continuousListeningEnabled",
             "wakeWord"
+        )
+
+        /** Prompt-optimizer preferences (share-screen gate, optimizer shortcut), pruned at construction. */
+        private val REMOVED_OPTIMIZER_KEYS = listOf(
+            "shareScreenWithOptimizer",
+            "recordingShortcutEnabled",
+            "recordingShortcutFlags",
+            "recordingShortcutKey",
         )
     }
 }

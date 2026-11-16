@@ -29,7 +29,7 @@ final class MacServerHubTests: XCTestCase {
         let p = SessionLoadingPresentation(loadPhase: .attaching, isRecovering: false, recoveryPhase: .reconnecting,
                                            sessionName: "Arya", serverName: "studio")
         XCTAssertEqual(p.subtitle, "Arya · studio")
-        XCTAssertEqual(SessionLoadingSheetLayout.macWidth, 320, "width fixed; the height follows the content")
+        XCTAssertEqual(SessionLoadingSheetLayout.fixedWidth, 340, "width fixed; the height follows the content")
     }
 
     func testEditingALiveServerDoesNotRebuildItsCoordinator() {

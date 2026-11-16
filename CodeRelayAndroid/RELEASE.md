@@ -165,15 +165,10 @@ Declare:
 - **On-device processing** for the camera (no off-device transmission).
 - Data is **not** required to be collected (the app's core is a terminal relay;
   QR scanning is an optional convenience).
-- The **prompt optimizer** sends the draft you typed at the agent's input line —
-  and, if "Share terminal screen with the optimizer" is on (the default), the
-  last 40 lines of the terminal screen — to *your own relay*, which forwards them
-  to the model provider the relay operator configured. Nothing goes to a
-  third party the user did not set up; the setting is per device.
 
 > Note: unlike iOS, Play has **no** `ITSAppUsesNonExemptEncryption` /
 > export-compliance toggle in the AAB metadata. The privacy story is captured
-> entirely by the Data Safety form above (camera on-device, optimizer traffic goes only to the user's relay, no
+> entirely by the Data Safety form above (camera on-device, no
 > sharing/selling). TLS (`wss://`) usage needs no special encryption export
 > declaration for Play.
 

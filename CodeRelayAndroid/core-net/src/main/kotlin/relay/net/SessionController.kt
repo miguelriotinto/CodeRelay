@@ -13,8 +13,7 @@ import java.util.UUID
  * Protocol version constants. Ports `CodeRelayKit.protocolVersion` /
  * `minProtocolVersion`. The client sends [CURRENT] in `auth_request`; the server
  * echoes its version in `auth_success` and the controller rejects anything below
- * [MIN]. Version 2 adds `capabilities` to `auth_success` and the `optimize_prompt` /
- * `replace_prompt` RPCs. Version 3 adds the relay's `serverId`/`serverName`
+ * [MIN]. Version 2 adds `capabilities` to `auth_success`. Version 3 adds the relay's `serverId`/`serverName`
  * (multi-server spec §6.2). Version 4 adds the `session_ended` push.
  */
 object ProtocolVersions {
@@ -84,19 +83,9 @@ class SessionController(
 
     /**
      * The protocol version the server reported in `auth_success` (0 before
-     * authentication, and again after [resetAuth]). Together with
-     * [serverCapabilities] this decides whether the prompt-optimizer wand is
-     * available (spec §7.1) — see `PromptOptimizerController`.
+     * authentication, and again after [resetAuth]).
      */
     var serverProtocolVersion: Int = 0
-        private set
-
-    /**
-     * The optional capability list from `auth_success`, as a set (empty when the
-     * server sent none, and again after [resetAuth]). Today's only member is
-     * [PromptOptimizerProtocol.CAPABILITY].
-     */
-    var serverCapabilities: Set<String> = emptySet()
         private set
 
     /** The relay's identity from `auth_success` (protocol v3); null for a v2 relay and after [resetAuth]. */
@@ -197,7 +186,6 @@ class SessionController(
         serverIdentity = null
         sessionId = null
         serverProtocolVersion = 0
-        serverCapabilities = emptySet()
     }
 
     // MARK: - Authentication
@@ -226,7 +214,6 @@ class SessionController(
                 }
                 isAuthenticated = true
                 serverProtocolVersion = serverVersion
-                serverCapabilities = response.capabilities?.toSet() ?: emptySet()
                 authenticatedGeneration = connection.generation
                 // Null against older servers; the coordinator's reconcile falls
                 // back to a safe "retain if still on the server" rule when unknown.
@@ -354,53 +341,6 @@ class SessionController(
         }
     }
 
-    // MARK: - Prompt optimizer (spec §6, §7.1)
-
-    /**
-     * Asks the relay to rewrite the draft at the agent's input line for the
-     * attached [sessionId]. Waits [OPTIMIZER_TIMEOUT_MS] — the model call is the
-     * slow part — while every other RPC keeps [RESPONSE_TIMEOUT_MS]. Never logs
-     * any payload (spec §10).
-     */
-    suspend fun optimizePrompt(sessionId: UUID, shareScreen: Boolean): OptimizeOutcome {
-        val response = sendAndWaitForResponse(
-            ClientMessage.OptimizePrompt(sessionId, shareScreen),
-            expected = setOf("optimize_prompt_result"),
-            timeoutMs = OPTIMIZER_TIMEOUT_MS,
-        )
-        return when (response) {
-            is ServerMessage.OptimizePromptResult -> when (response.status) {
-                "ok" -> OptimizeOutcome.Ok(response.original)
-                "no_draft" -> OptimizeOutcome.NoDraft
-                "passthrough" -> OptimizeOutcome.Passthrough
-                "unconfigured" -> OptimizeOutcome.Unconfigured
-                else -> OptimizeOutcome.Failed(failureMessage(response.message))
-            }
-            is ServerMessage.Error -> throw unexpected(response.message)
-            else -> throw unexpected(response)
-        }
-    }
-
-    /** Undo: types [text] (the pre-optimize original) back over the input line. */
-    suspend fun replacePrompt(sessionId: UUID, text: String): ReplaceOutcome {
-        val response = sendAndWaitForResponse(
-            ClientMessage.ReplacePrompt(sessionId, text),
-            expected = setOf("replace_prompt_result"),
-            timeoutMs = OPTIMIZER_TIMEOUT_MS,
-        )
-        return when (response) {
-            is ServerMessage.ReplacePromptResult ->
-                if (response.status == "ok") ReplaceOutcome.Ok
-                else ReplaceOutcome.Failed(failureMessage(response.message))
-            is ServerMessage.Error -> throw unexpected(response.message)
-            else -> throw unexpected(response)
-        }
-    }
-
-    /** The server's message when it sent a non-empty one, else the spec §9 fallback. */
-    private fun failureMessage(message: String?): String =
-        message?.takeIf { it.isNotEmpty() } ?: OptimizerStrings.COULD_NOT_REWRITE
-
     // MARK: - Internal helpers
 
     /** Stamps a successful create/attach/resume against the current connection. */
@@ -452,8 +392,7 @@ class SessionController(
 
     /**
      * Installs a response subscription, sends [message], and waits up to
-     * [timeoutMs] (default [RESPONSE_TIMEOUT_MS]; the optimizer RPCs pass
-     * [OPTIMIZER_TIMEOUT_MS]) for a reply whose type is in [expected] (or `error`).
+     * [timeoutMs] (default [RESPONSE_TIMEOUT_MS]) for a reply whose type is in [expected] (or `error`).
      * The subscriber is installed **before** the send so a response that arrives
      * during/just after the send is held by the [ResumeGuard]'s deferred rather
      * than lost.
@@ -549,13 +488,6 @@ class SessionController(
 
     companion object {
         const val RESPONSE_TIMEOUT_MS = 10_000L
-
-        /**
-         * Waiter for `optimize_prompt` / `replace_prompt` only: the relay's model
-         * call takes seconds, so the ordinary 10 s would time out spuriously and
-         * poison the socket (spec §7.1).
-         */
-        const val OPTIMIZER_TIMEOUT_MS = 20_000L
 
         /** User-facing text for the desynchronized-socket refusal. */
         const val DESYNC_MESSAGE = "The connection to the server needs to be re-established."

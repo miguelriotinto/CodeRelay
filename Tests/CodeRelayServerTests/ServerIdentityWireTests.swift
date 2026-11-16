@@ -21,8 +21,7 @@ final class ServerIdentityWireTests: SessionManagerTestCase {
             clipboardService: IdentityTestClipboard(),
             pushStore: PushRegistrationStore(directory: tempDir),
             pairingStore: pairingStore,
-            identity: identity,
-            optimizerBudget: OptimizerBudget())
+            identity: identity)
         let channel = await NIOAsyncTestingChannel(handler: handler)
         try await channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 9999)).get()
         try await Task.sleep(for: .milliseconds(30))

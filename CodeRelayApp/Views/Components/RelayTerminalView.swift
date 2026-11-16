@@ -82,28 +82,7 @@ class RelayTerminalView: TerminalView {
             UIKeyCommand(input: "x", modifierFlags: .command, action: #selector(handleCut(_:)))
         ])
 
-        let enabled = UserDefaults.standard.object(forKey: "recordingShortcutEnabled") as? Bool ?? true
-        if enabled {
-            let key = UserDefaults.standard.string(forKey: "recordingShortcutKey") ?? ""
-            if !key.isEmpty {
-                let flagsRaw = UserDefaults.standard.integer(forKey: "recordingShortcutFlags")
-                let flags: UIKeyModifierFlags = flagsRaw != 0
-                    ? UIKeyModifierFlags(rawValue: flagsRaw)
-                    : [.command, .alternate]
-                let cmd = UIKeyCommand(input: key, modifierFlags: flags,
-                                       action: #selector(handleOptimizeShortcut))
-                cmd.discoverabilityTitle = OptimizerStrings.wandLabel
-                commands.append(cmd)
-            }
-        }
-
         return commands
-    }
-
-    /// Hardware-keyboard shortcut → the wand (spec §7.2). The storage keys keep
-    /// their `recordingShortcut*` names so users' existing bindings survive.
-    @objc private func handleOptimizeShortcut() {
-        NotificationCenter.default.post(name: .optimizePromptShortcut, object: nil)
     }
 
     // MARK: - Output

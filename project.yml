@@ -41,7 +41,7 @@ targets:
         DEVELOPMENT_TEAM: T9WF95GC9T
         SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
         SUPPORTS_MACCATALYST: NO
-        MARKETING_VERSION: "1.4.1"
+        MARKETING_VERSION: "1.5.0"
         CURRENT_PROJECT_VERSION: "208"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: CodeRelayApp/CodeRelayApp.entitlements
@@ -110,7 +110,7 @@ targets:
         SWIFT_VERSION: "5.9"
         DEVELOPMENT_TEAM: T9WF95GC9T
         SUPPORTED_PLATFORMS: "macosx"
-        MARKETING_VERSION: "1.1.1"
+        MARKETING_VERSION: "1.2.0"
         CURRENT_PROJECT_VERSION: "121"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_ENTITLEMENTS: CodeRelayMac/CodeRelayMac.entitlements

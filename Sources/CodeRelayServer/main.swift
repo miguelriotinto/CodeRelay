@@ -100,22 +100,13 @@ if config.pushEnabled, let sender = PushSenderFactory.make(config: config, group
     RelayLogger.log(category: "server", "Push notifications enabled")
 }
 
-// Prompt optimizer (spec §8): decided once here; nil ⇒ no capability advertised.
-var optimizerHTTPClient: HTTPClient?
-let optimizer = PromptOptimizerFactory.make(config: config, group: group, out: &optimizerHTTPClient)
-// One budget for the whole process, like the rate limiter above: the bound is
-// per relay token, and a token may hold many connections (review B-3).
-let optimizerBudget = OptimizerBudget()
-
 let wsServer = WebSocketServer(
     group: group, config: config,
     sessionManager: sessionManager, tokenStore: tokenStore,
     rateLimiter: rateLimiter,
     pushStore: pushStore,
     pairingStore: pairingStore,
-    identity: identity,
-    optimizer: optimizer,
-    optimizerBudget: optimizerBudget
+    identity: identity
 )
 let adminServer = AdminHTTPServer(
     group: group, port: config.adminPort,
@@ -123,8 +114,7 @@ let adminServer = AdminHTTPServer(
     pairingStore: pairingStore,
     identity: identity,
     config: config,
-    rateLimiter: rateLimiter,
-    optimizer: optimizer
+    rateLimiter: rateLimiter
 )
 
 do {
@@ -195,7 +185,6 @@ let shutdownSucceeded: Bool = await withTaskGroup(of: Bool.self) { group in
     group.addTask {
         await sessionManager.shutdown()
         await tokenStore.flushIfDirty()
-        if let optimizerHTTPClient { try? await optimizerHTTPClient.shutdown() }
         return true
     }
     group.addTask {

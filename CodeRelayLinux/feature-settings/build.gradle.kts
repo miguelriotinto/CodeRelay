@@ -1,15 +1,13 @@
 // Settings UI.
 //
-// `SettingsScreen.kt` (376 lines) is compiled straight from the Android source:
+// `SettingsScreen.kt` is compiled straight from the Android source:
 // its only non-portable import is
 // `androidx.lifecycle.compose.collectAsStateWithLifecycle`, and Compose
 // Multiplatform republishes that under the identical package name.
 //
 // Replaced locally (not shared):
 //   AppSettings.kt          — DataStore-backed on Android; ours is file-backed
-//   ShortcutFlags.kt        — android.view.KeyEvent constants (values preserved)
-//   KeyCapture.kt           — android.view.KeyEvent capture; desktop equivalent TODO
-//   AppSettingsMigrations   — migrates legacy ANDROID keys; no legacy exists here
+//   AppSettingsMigrations   — scrubs removed-feature ANDROID DataStore keys; ours are in AppSettings
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -29,7 +27,7 @@ sourceSets {
         // `**/AppSettings.kt` pattern would also drop our own replacement, since
         // both live at the same package-relative path.
         kotlin.exclude { it.file.absolutePath.startsWith(androidRoot.absolutePath) &&
-            it.name in setOf("AppSettings.kt", "ShortcutFlags.kt", "KeyCapture.kt", "AppSettingsMigrations.kt") }
+            it.name in setOf("AppSettings.kt", "AppSettingsMigrations.kt") }
     }
     test { kotlin.srcDirs("src/test/kotlin") }
 }
@@ -37,8 +35,6 @@ sourceSets {
 dependencies {
     api(project(":shared-protocol"))
     api(project(":linux-storage"))
-    // OptimizerStrings for the share-screen toggle; same reason as the Android module.
-    implementation(project(":shared-net"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
 

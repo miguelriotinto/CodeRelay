@@ -17,7 +17,7 @@ final class WireTestServer {
     let rateLimiter: RateLimiter
     private let tempDir: URL
 
-    init(rateLimiter: RateLimiter = RateLimiter(maxAttempts: 10, windowSeconds: 60), optimizer: (any PromptOptimizing)? = nil) throws {
+    init(rateLimiter: RateLimiter = RateLimiter(maxAttempts: 10, windowSeconds: 60)) throws {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("WireIntegration-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -44,8 +44,7 @@ final class WireTestServer {
             sessionManager: sessionManager, tokenStore: tokenStore,
             rateLimiter: rateLimiter,
             pairingStore: PairingCodeStore(),
-            identity: ServerIdentity(id: UUID(), name: "test-relay"),
-            optimizer: optimizer
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
     }
 

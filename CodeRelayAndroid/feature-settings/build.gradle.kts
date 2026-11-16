@@ -23,7 +23,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // Pure-logic helpers (AppSettings migrations: shortcut mapping + speech scrub)
+    // Pure-logic helpers (AppSettings migrations: speech + optimizer scrubs)
     // are covered by JVM unit tests (src/test). The DataStore round-trip +
     // Compose UI are verified by COMPILE only — runtime is DEVICE-DEFERRED. Run on JUnit5.
     testOptions {
@@ -43,10 +43,7 @@ dependencies {
     api(project(":core-protocol"))
     implementation(project(":core-storage"))
 
-    // :core-net — OptimizerStrings, so the share-screen toggle's copy is defined once.
-    implementation(project(":core-net"))
-
-    // DataStore backs the 10 typed settings keys.
+    // DataStore backs the 6 typed settings keys.
     implementation(libs.datastore.preferences)
 
     implementation(platform(libs.androidx.compose.bom))
