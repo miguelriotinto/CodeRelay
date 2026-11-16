@@ -20,8 +20,7 @@ struct CodeRelay: AsyncParsableCommand {
             SessionGroup.self,
             ConfigGroup.self,
             LogGroup.self,
-            HookGroup.self,
-            OptimizerGroup.self
+            HookGroup.self
         ]
     )
 }

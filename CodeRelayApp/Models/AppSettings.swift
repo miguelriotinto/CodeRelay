@@ -7,31 +7,12 @@ final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
     private init() {
-        migrateShortcutIfNeeded()
+        AppSettings.removeOptimizerSettings(defaults: .standard)
         AppSettings.migrateSpeechRemoval(
             defaults: .standard,
             directories: AppSettings.legacySpeechDirectories,
             deleteBedrockToken: { try AuthManager.shared.deleteBedrockToken() }
         )
-    }
-
-    private func migrateShortcutIfNeeded() {
-        let defaults = UserDefaults.standard
-        // Only migrate if old format exists and new format hasn't been set
-        guard defaults.string(forKey: "recordingShortcutModifier") != nil,
-              defaults.object(forKey: "recordingShortcutFlags") == nil else { return }
-
-        let oldRaw = defaults.string(forKey: "recordingShortcutModifier") ?? "commandShift"
-        let flags: UIKeyModifierFlags
-        switch oldRaw {
-        case "commandShift": flags = [.command, .shift]
-        case "commandOption": flags = [.command, .alternate]
-        case "commandControl": flags = [.command, .control]
-        default: flags = [.command, .shift]
-        }
-
-        recordingShortcutFlags = Int(flags.rawValue)
-        defaults.removeObject(forKey: "recordingShortcutModifier")
     }
 
     @AppStorage("hapticFeedbackEnabled") var hapticFeedbackEnabled = true
@@ -49,14 +30,25 @@ final class AppSettings: ObservableObject {
     /// replays anything that fell off this edge on next attach.
     @AppStorage("terminalScrollbackLines") var terminalScrollbackLines: Int = 5_000
 
-    @AppStorage("recordingShortcutEnabled") var recordingShortcutEnabled = true
-    @AppStorage("recordingShortcutFlags") var recordingShortcutFlags: Int = Int(UIKeyModifierFlags([.command, .alternate]).rawValue)
-    @AppStorage("recordingShortcutKey") var recordingShortcutKey = ""
+    // MARK: - Prompt-optimizer removal
 
-    // MARK: - Prompt optimizer (spec §7.1)
+    /// Every key the removed prompt optimizer wrote on iOS: its screen-sharing
+    /// toggle and its hardware-keyboard shortcut (which kept the older
+    /// `recordingShortcut*` names from the speech feature before it, including
+    /// the pre-flags `recordingShortcutModifier`).
+    static let legacyOptimizerDefaultsKeys = [
+        "shareScreenWithOptimizer",
+        "recordingShortcutEnabled",
+        "recordingShortcutFlags",
+        "recordingShortcutKey",
+        "recordingShortcutModifier",
+    ]
 
-    /// Sent as `shareScreen` on every `optimize_prompt`. Per device, default on.
-    @AppStorage("shareScreenWithOptimizer") var shareScreenWithOptimizer = true
+    /// Drops the optimizer's stored settings. Runs on every launch: removing an
+    /// absent key is a no-op, so there is nothing to retry and no done flag.
+    static func removeOptimizerSettings(defaults: UserDefaults) {
+        for key in legacyOptimizerDefaultsKeys { defaults.removeObject(forKey: key) }
+    }
 
     // MARK: - Speech-removal migration (spec §7.2)
 
@@ -110,35 +102,6 @@ final class AppSettings: ObservableObject {
             directories: directories,
             deleteBedrockToken: deleteBedrockToken
         )
-    }
-}
-
-// MARK: - Keyboard Shortcut Helpers
-
-extension UIKeyModifierFlags {
-    /// Human-readable symbol string, e.g. "⌃⌥⇧⌘"
-    /// Order follows Apple HIG: Control, Option, Shift, Command
-    var symbolString: String {
-        var parts: [String] = []
-        if contains(.control) { parts.append("⌃") }
-        if contains(.alternate) { parts.append("⌥") }
-        if contains(.shift) { parts.append("⇧") }
-        if contains(.command) { parts.append("⌘") }
-        return parts.joined()
-    }
-}
-
-extension AppSettings {
-    var shortcutModifierFlags: UIKeyModifierFlags {
-        get { UIKeyModifierFlags(rawValue: Int(recordingShortcutFlags)) }
-        set { recordingShortcutFlags = Int(newValue.rawValue) }
-    }
-
-    /// Display string for the current shortcut, e.g. "⌘⌥" or "⌘⌥R"
-    var shortcutDisplayString: String {
-        let mods = shortcutModifierFlags.symbolString
-        let key = recordingShortcutKey.uppercased()
-        return mods + key
     }
 }
 

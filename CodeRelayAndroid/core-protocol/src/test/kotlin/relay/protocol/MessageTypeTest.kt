@@ -11,22 +11,18 @@ class MessageTypeTest {
         assertEquals("ping", ClientMessage.Ping.typeString)
     }
 
-    @Test fun `all 18 client type strings present`() {
-        assertEquals(18, ClientMessage.ALL_TYPE_STRINGS.size)
+    @Test fun `all 16 client type strings present`() {
+        assertEquals(16, ClientMessage.ALL_TYPE_STRINGS.size)
         assertTrue("refresh" in ClientMessage.ALL_TYPE_STRINGS)
         assertTrue("register_push_token" in ClientMessage.ALL_TYPE_STRINGS)
         assertTrue("unregister_push_token" in ClientMessage.ALL_TYPE_STRINGS)
         assertTrue("pair_request" in ClientMessage.ALL_TYPE_STRINGS)
-        assertTrue("optimize_prompt" in ClientMessage.ALL_TYPE_STRINGS)
-        assertTrue("replace_prompt" in ClientMessage.ALL_TYPE_STRINGS)
     }
 
-    @Test fun `all 23 server type strings present`() {
-        assertEquals(23, ServerMessage.ALL_TYPE_STRINGS.size)
+    @Test fun `all 21 server type strings present`() {
+        assertEquals(21, ServerMessage.ALL_TYPE_STRINGS.size)
         assertTrue("session_list_result" in ServerMessage.ALL_TYPE_STRINGS)
         assertTrue("pair_success" in ServerMessage.ALL_TYPE_STRINGS)
-        assertTrue("optimize_prompt_result" in ServerMessage.ALL_TYPE_STRINGS)
-        assertTrue("replace_prompt_result" in ServerMessage.ALL_TYPE_STRINGS)
     }
 
     @Test fun `client and server type strings are disjoint`() {

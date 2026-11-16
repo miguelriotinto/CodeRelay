@@ -162,13 +162,6 @@ internal fun WorkspacePane(
     onAttach: () -> Unit = {},
     onShareQr: (UUID) -> Unit = {},
     /**
-     * `AppSettings.shareScreenWithOptimizer` — sent as `shareScreen` on every
-     * `optimize_prompt` the magic-wand button fires (spec §7.1). Defaults to the
-     * setting's own default (on) so previews and hosts without the setting behave
-     * like a fresh install.
-     */
-    shareScreen: Boolean = true,
-    /**
      * `AppSettings.hapticFeedbackEnabled` — gates the `.light`-impact tap haptics
      * the iOS status bar / session tabs / key bar fire (`ActiveTerminalView.swift`
      * + `KeyboardAccessory.swift`). Defaults to false so previews stay silent.
@@ -215,20 +208,6 @@ internal fun WorkspacePane(
     val isHandshaking by coordinator.isPerformingHandshake.collectAsStateWithLifecycle()
 
     val isRecovering by coordinator.isRecovering.collectAsStateWithLifecycle()
-    // Magic-wand prompt optimizer (spec §7.1). Four StateFlows from the
-    // coordinator's PromptOptimizerController, rendered by OptimizerOverlay in the
-    // bottom-right slot the mic button used to own.
-    val optimizerAvailability by coordinator.optimizerAvailability.collectAsStateWithLifecycle()
-    val optimizerState by coordinator.optimizerState.collectAsStateWithLifecycle()
-    val optimizerUndo by coordinator.optimizerUndo.collectAsStateWithLifecycle()
-    val optimizerNotice by coordinator.optimizerNotice.collectAsStateWithLifecycle()
-    val wandVisual = WandButtonLogic.visual(
-        availability = optimizerAvailability,
-        state = optimizerState,
-        hasActiveSession = activeSessionId != null,
-        isRecovering = isRecovering,
-    )
-    val undoVisible = WandButtonLogic.undoChipVisible(optimizerUndo, activeSessionId)
     val recoveryPhase by coordinator.recoveryPhase.collectAsStateWithLifecycle()
     val loadPhase by coordinator.sessionLoadPhase.collectAsStateWithLifecycle()
     val lastLoadFailed by coordinator.lastLoadFailed.collectAsStateWithLifecycle()
@@ -376,21 +355,6 @@ internal fun WorkspacePane(
                 nameFor = ::nameFor,
                 loadingCovered = loadingCovered,
                 tabsContent = tabsContent,
-                wandOverlay = {
-                    OptimizerOverlay(
-                        visual = wandVisual,
-                        undoVisible = undoVisible,
-                        notice = optimizerNotice,
-                        // Same `.light` tap haptic as every other toolbar action.
-                        // Gating (unavailable → hint, no session → no-op) lives in
-                        // the coordinator; the button only refuses DISABLED/OPTIMIZING.
-                        onWandTap = { haptics.lightTap(); scope.launch { coordinator.optimizePrompt(shareScreen) } },
-                        onUndoTap = { haptics.lightTap(); scope.launch { coordinator.undoOptimize() } },
-                        // Tap-to-dismiss the toast, as on iOS/macOS: a notice must
-                        // never be the reason an Undo chip goes unseen.
-                        onNoticeDismiss = { coordinator.dismissOptimizerNotice() },
-                    )
-                },
                 redrawToken = redrawToken,
             )
         }
@@ -590,7 +554,6 @@ private fun TerminalColumn(
     nameFor: (UUID) -> String,
     loadingCovered: Boolean,
     tabsContent: (@Composable () -> Unit)?,
-    wandOverlay: @Composable () -> Unit,
     redrawToken: Int,
 ) {
     Column(
@@ -668,9 +631,6 @@ private fun TerminalColumn(
                     agentStateForSession = agentStateFor,
                 )
             }
-
-            // (The magic-wand button is NOT here — iOS floats it bottom-right over
-            // the terminal; see the floating Box in the terminal body below.)
 
             if (activeSessionId != null) {
                 ToolbarChip(onClick = { onShareQr(activeSessionId) }) {
@@ -775,18 +735,6 @@ private fun TerminalColumn(
 
             // Black under the loading sheet; lifts with it on the first frame.
             Box(modifier = Modifier.fillMaxSize().terminalLoadingCover(loadingCovered))
-
-            // Floating magic-wand button + its Undo chip / notice, bottom-right over
-            // the terminal (iOS ActiveTerminalView floating buttons: 16dp end /
-            // 12dp bottom). Always present: with no session it renders DISABLED,
-            // and an unavailable optimizer renders DIMMED so a tap can explain why.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 12.dp),
-            ) {
-                wandOverlay()
-            }
 
         }
 

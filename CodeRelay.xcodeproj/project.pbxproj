@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		012F50F6760E057E309FB327 /* ModifierFlagsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2915E91C1DA4FC72AF6EBA3 /* ModifierFlagsTests.swift */; };
 		051438AA3CED441B1CA8CEA3 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A32DE56B50F45FC20E0EAD49 /* QRScannerView.swift */; };
 		06C55262523D7C9EAFB3312D /* CodeRelayMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9811DD833847D309CB69C378 /* CodeRelayMacApp.swift */; };
 		094FAA33489448E5C94C5A46 /* HubPreviewSeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55719C3D9366D323E70ADB6D /* HubPreviewSeed.swift */; };
@@ -15,12 +14,10 @@
 		0A304EC22DA76BD8B298A963 /* ImagePasteHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67B090224A2F32FF6AA6DCAD /* ImagePasteHandler.swift */; };
 		0C0A0EE581AC69F36F504CAD /* IOSServerHubTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6BB3A1D6049D2EA0735FD80 /* IOSServerHubTests.swift */; };
 		0C6B11DBFA2D605D05506B93 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4A5A11FFBA6C50A66206D19C /* Assets.xcassets */; };
-		19510D829FEA25DDFA9F2157 /* KeyCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6C08F3358A1896291225B83 /* KeyCaptureView.swift */; };
 		1A6B6636A991BA53161D901B /* AddEditServerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7F4D875CD3FF65E067E646D /* AddEditServerView.swift */; };
 		1B42A2DD6655114FD59C359D /* CodeRelayApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 182C005C24C6294954821730 /* CodeRelayApp.swift */; };
 		1D19D8B964094914141377E5 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917DBD18EA67BBD605CA1766 /* SettingsView.swift */; };
 		1EB6A9EDD3096D6DFF7992CA /* QRCodeComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD79B7A885914DFF752D2179 /* QRCodeComponents.swift */; };
-		22809ECBA2EC7298B6F062E6 /* KeyCaptureInterceptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C05C1B0CCB8EFB46D499F4A /* KeyCaptureInterceptor.swift */; };
 		22E9C3DC9FB07A2985640660 /* SelectAllOnBeginEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */; };
 		29E42E9BE2B5383AA5137A26 /* AppSettingsSpeechRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA2B78194726A22344FEB41 /* AppSettingsSpeechRemovalTests.swift */; };
 		377425D89A5D4F801F053F88 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 91C67EB7E180478C971D296B /* SwiftTerm */; };
@@ -55,6 +52,7 @@
 		8607DE4CBC28666FC17F4F9A /* AppSettingsSpeechRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC5B4D48BD29AC9E2BE00E0 /* AppSettingsSpeechRemovalTests.swift */; };
 		8B822D63AEEF3769114EF05D /* AlertFieldSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */; };
 		8C567E78550EE11000CF1B27 /* SessionTabStripTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A6C9CCFEA72C0C565BAE0A9 /* SessionTabStripTests.swift */; };
+		8CDA68CB8D5703A03C63BE62 /* AppNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A38CE4FB74E6043E82263E /* AppNotifications.swift */; };
 		8FB9F1150D3FE9629A1E0DB6 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = C0BA279E101C46CD4C9E8DA0 /* SwiftTerm */; };
 		948A803581BF09D54A82AF35 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC6DB3C97F9D884F7FA21ED /* PairingViewModel.swift */; };
 		9948AD2E248DEF5CD323C4F3 /* MenuBarGroupingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A426CD664A31774ED1A6A27 /* MenuBarGroupingTests.swift */; };
@@ -68,7 +66,6 @@
 		B560E8B503C7CD244BF9B997 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38421A166AFF766050FDADC2 /* AppSettings.swift */; };
 		B730C7991753987697101B78 /* CodeRelayIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */; };
 		BD22B1489C449A3C4DC16E70 /* AddEditServerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B33AE8EE6C033A2403B7BF3 /* AddEditServerViewModel.swift */; };
-		C1FA5FD912E80166B21BD571 /* RecordingShortcutMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37919AA6CC39F799BBAF73DB /* RecordingShortcutMonitor.swift */; };
 		C5DD1A1FBD979234C8F1AFF8 /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C3AABD0A1EDCDF3D99C2813 /* TerminalPalette.swift */; };
 		C9DD34A70DE6928A07B69807 /* SleepWakeObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2E1F5AF84C6C21754F2B59 /* SleepWakeObserver.swift */; };
 		CA0083BA8B5FD10C3726C545 /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3694216ED2375FD2BA6D9CD7 /* PairWithHostSheet.swift */; };
@@ -125,12 +122,12 @@
 		1A6C9CCFEA72C0C565BAE0A9 /* SessionTabStripTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTabStripTests.swift; sourceTree = "<group>"; };
 		1C01CE54946F1BF877D94BFE /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		200D7FB7016273E202A9EE6A /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
+		21A38CE4FB74E6043E82263E /* AppNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNotifications.swift; sourceTree = "<group>"; };
 		257C3C0F301DC6FDC8FBE404 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		2D40B83590E3F91399DC24BD /* AddEditServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerView.swift; sourceTree = "<group>"; };
 		2F3077C18D3A47EDCAB73EEF /* CodeRelayApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodeRelayApp.entitlements; sourceTree = "<group>"; };
 		31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CodeRelayIcon.icns; sourceTree = "<group>"; };
 		3694216ED2375FD2BA6D9CD7 /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
-		37919AA6CC39F799BBAF73DB /* RecordingShortcutMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingShortcutMonitor.swift; sourceTree = "<group>"; };
 		38421A166AFF766050FDADC2 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		4362FA67F25B8ABD904774A9 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		46A8F378448F84CCF2F22152 /* HubPreviewSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubPreviewSeed.swift; sourceTree = "<group>"; };
@@ -148,7 +145,6 @@
 		67B090224A2F32FF6AA6DCAD /* ImagePasteHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePasteHandler.swift; sourceTree = "<group>"; };
 		6A426CD664A31774ED1A6A27 /* MenuBarGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarGroupingTests.swift; sourceTree = "<group>"; };
 		6AA229F172065DCCAABD4EE1 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		6C05C1B0CCB8EFB46D499F4A /* KeyCaptureInterceptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyCaptureInterceptor.swift; sourceTree = "<group>"; };
 		6C7E5669588AC911A4AB5E38 /* MacServerHub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerHub.swift; sourceTree = "<group>"; };
 		6DE559F478FDF029A84AE064 /* MacServerHubTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerHubTests.swift; sourceTree = "<group>"; };
 		707F2EFA3E2B2F9ADBAEB98F /* SplashScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashScreenView.swift; sourceTree = "<group>"; };
@@ -186,11 +182,9 @@
 		DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertFieldSelectionTests.swift; sourceTree = "<group>"; };
 		DF9B94C1561AD623837857C0 /* AlertOverlayWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertOverlayWindowTests.swift; sourceTree = "<group>"; };
 		E46CD949787B69852ABD4480 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
-		E6C08F3358A1896291225B83 /* KeyCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyCaptureView.swift; sourceTree = "<group>"; };
 		EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectAllOnBeginEditing.swift; sourceTree = "<group>"; };
 		EF2A47966BF7049A7B54EE51 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F070B78556144927C4A84E00 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		F2915E91C1DA4FC72AF6EBA3 /* ModifierFlagsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModifierFlagsTests.swift; sourceTree = "<group>"; };
 		F7EE17741C04A3558512D65A /* SessionSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSidebarView.swift; sourceTree = "<group>"; };
 		F7F4D875CD3FF65E067E646D /* AddEditServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerView.swift; sourceTree = "<group>"; };
 		FA3B4510FFFD5755BE62CE4D /* KeyboardAccessory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardAccessory.swift; sourceTree = "<group>"; };
@@ -297,7 +291,6 @@
 			children = (
 				75B91EB23736CD5BD6551772 /* AlertOverlayWindow.swift */,
 				FA3B4510FFFD5755BE62CE4D /* KeyboardAccessory.swift */,
-				E6C08F3358A1896291225B83 /* KeyCaptureView.swift */,
 				FD79B7A885914DFF752D2179 /* QRCodeComponents.swift */,
 				932D11B48F0BE56805CBE758 /* RelayTerminalView.swift */,
 				B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */,
@@ -324,7 +317,6 @@
 				6DE559F478FDF029A84AE064 /* MacServerHubTests.swift */,
 				5A9C224C001A6A792F9D58C8 /* MenuBarActivityTests.swift */,
 				6A426CD664A31774ED1A6A27 /* MenuBarGroupingTests.swift */,
-				F2915E91C1DA4FC72AF6EBA3 /* ModifierFlagsTests.swift */,
 				AE5AC490671735ED0BB142CA /* SessionNavigationTests.swift */,
 			);
 			path = CodeRelayMacTests;
@@ -404,10 +396,9 @@
 			isa = PBXGroup;
 			children = (
 				CE76025239CFE171AEC352E2 /* AppCommands.swift */,
+				21A38CE4FB74E6043E82263E /* AppNotifications.swift */,
 				67B090224A2F32FF6AA6DCAD /* ImagePasteHandler.swift */,
-				6C05C1B0CCB8EFB46D499F4A /* KeyCaptureInterceptor.swift */,
 				B2D38AF522487CD65B4178AC /* LaunchAtLogin.swift */,
-				37919AA6CC39F799BBAF73DB /* RecordingShortcutMonitor.swift */,
 				DA2E1F5AF84C6C21754F2B59 /* SleepWakeObserver.swift */,
 			);
 			path = Helpers;
@@ -617,7 +608,6 @@
 				457F5A52C7525DF87825A241 /* MacServerHubTests.swift in Sources */,
 				F6D838BE9B9BC00A46A2F11C /* MenuBarActivityTests.swift in Sources */,
 				9948AD2E248DEF5CD323C4F3 /* MenuBarGroupingTests.swift in Sources */,
-				012F50F6760E057E309FB327 /* ModifierFlagsTests.swift in Sources */,
 				81236181959BA642708E2E5B /* SessionNavigationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -647,13 +637,13 @@
 				6CF76DB5A91180967B19A9B7 /* AddEditServerViewModel.swift in Sources */,
 				A52BDEE2BDFB2BA67CA64288 /* AppCommands.swift in Sources */,
 				D9CEA37AF583C181BADFF2BE /* AppDelegate.swift in Sources */,
+				8CDA68CB8D5703A03C63BE62 /* AppNotifications.swift in Sources */,
 				75BB5A192BBB2F405FE8BE49 /* AppSettings.swift in Sources */,
 				4FC3D0363147468C7CCA6BE8 /* AttachRemoteSessionSheet.swift in Sources */,
 				06C55262523D7C9EAFB3312D /* CodeRelayMacApp.swift in Sources */,
 				094FAA33489448E5C94C5A46 /* HubPreviewSeed.swift in Sources */,
 				675E01D193B0C8FA1D6AAE34 /* HubSidebarView.swift in Sources */,
 				0A304EC22DA76BD8B298A963 /* ImagePasteHandler.swift in Sources */,
-				22809ECBA2EC7298B6F062E6 /* KeyCaptureInterceptor.swift in Sources */,
 				4D5757BCC40B0EB7F2CBEEAB /* LaunchAtLogin.swift in Sources */,
 				CDE9C1D1D1F51DC956FBDC2A /* MacServerHub.swift in Sources */,
 				F48556B90993213A81FE4C77 /* MainWindow.swift in Sources */,
@@ -663,7 +653,6 @@
 				813C237D6B07C1509C0F058C /* PairingViewModel.swift in Sources */,
 				EB565C334D2ACAB14C719B32 /* QRCodePopover.swift in Sources */,
 				594B82B95E32F0529AC9A258 /* QRScannerView.swift in Sources */,
-				C1FA5FD912E80166B21BD571 /* RecordingShortcutMonitor.swift in Sources */,
 				49AF18631DCC4666D098FDE5 /* ServerListViewModel.swift in Sources */,
 				E4D5925EEA80E36AD808183A /* ServerListWindow.swift in Sources */,
 				42B24E1D08E4489ACD7B3202 /* SessionCoordinator.swift in Sources */,
@@ -688,7 +677,6 @@
 				1B42A2DD6655114FD59C359D /* CodeRelayApp.swift in Sources */,
 				D3E1A15266C22B64CE30A2A8 /* HubPreviewSeed.swift in Sources */,
 				49D9000B2474EEAA1F8AC7CB /* IOSServerHub.swift in Sources */,
-				19510D829FEA25DDFA9F2157 /* KeyCaptureView.swift in Sources */,
 				8528C7880F07B1CAE00D37AA /* KeyboardAccessory.swift in Sources */,
 				E4B007465A6886711AE4ECA6 /* PairWithHostSheet.swift in Sources */,
 				948A803581BF09D54A82AF35 /* PairingViewModel.swift in Sources */,
@@ -742,7 +730,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay.mac;
 				PRODUCT_NAME = "Code[Relay]";
 				SDKROOT = macosx;
@@ -925,7 +913,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.4.1;
+				MARKETING_VERSION = 1.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
@@ -952,7 +940,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay.mac;
 				PRODUCT_NAME = "Code[Relay]";
 				SDKROOT = macosx;
@@ -982,7 +970,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.4.1;
+				MARKETING_VERSION = 1.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.singular.coderelay;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";

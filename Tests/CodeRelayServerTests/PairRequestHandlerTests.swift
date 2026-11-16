@@ -42,8 +42,7 @@ final class PairRequestHandlerTests: XCTestCase {
             clipboardService: NoopClipboardService(),
             pushStore: PushRegistrationStore(directory: tempDir),
             pairingStore: pairingStore,
-            identity: ServerIdentity(id: UUID(), name: "test-relay"),
-            optimizerBudget: OptimizerBudget()
+            identity: ServerIdentity(id: UUID(), name: "test-relay")
         )
         let channel = await NIOAsyncTestingChannel(handler: handler)
         let sentinel = try SocketAddress(ipAddress: "127.0.0.1", port: 9999)

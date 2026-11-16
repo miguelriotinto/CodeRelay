@@ -10,9 +10,10 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 /**
- * Linux builds ≤ v0.3.25 wrote five speech preferences that must be pruned.
- * The scrub runs at construction (idempotent, no flag) so older settings files
- * are cleaned on first launch after upgrade.
+ * Linux builds ≤ v0.3.25 wrote five speech preferences, and builds before the
+ * prompt optimizer's removal wrote its share-screen gate and shortcut settings;
+ * all must be pruned. The scrub runs at construction (idempotent, no flag) so
+ * older settings files are cleaned on first launch after upgrade.
  */
 class AppSettingsLegacyScrubTest {
 
@@ -58,5 +59,24 @@ class AppSettingsLegacyScrubTest {
         // Second construction: no legacy keys to scrub, no crash.
         AppSettings(prefs)
         assertTrue(prefs.contains("autoConnectEnabled"))
+    }
+
+    /** The prompt optimizer's four keys are pruned; live keys survive. */
+    @Test
+    fun `removed optimizer preferences are pruned at construction`(@TempDir tmp: File) = runTest {
+        val prefs = store(tmp, this)
+        prefs.put("shareScreenWithOptimizer", false)
+        prefs.put("recordingShortcutEnabled", true)
+        prefs.put("recordingShortcutFlags", 123)
+        prefs.put("recordingShortcutKey", "r")
+        prefs.put("hapticFeedbackEnabled", false)  // live key, must survive
+
+        AppSettings(prefs)
+
+        assertFalse(prefs.contains("shareScreenWithOptimizer"))
+        assertFalse(prefs.contains("recordingShortcutEnabled"))
+        assertFalse(prefs.contains("recordingShortcutFlags"))
+        assertFalse(prefs.contains("recordingShortcutKey"))
+        assertTrue(prefs.contains("hapticFeedbackEnabled"))
     }
 }

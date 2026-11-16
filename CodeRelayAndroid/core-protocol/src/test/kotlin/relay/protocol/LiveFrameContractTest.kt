@@ -12,9 +12,7 @@ import java.util.UUID
  * The fixture `captured_session_list_result.json` is a verbatim `session_list_result`
  * text frame captured from the running Claude Relay server (ws://127.0.0.1:9200) on
  * 2026-06-08. It is the single most important fidelity test in M1: it proves the
- * Kotlin decoder accepts genuine server output, not just synthetic fixtures. The fixture
- * `shared_optimize_prompt_result.json` is a hand-authored contract fixture whose bytes
- * are pinned identical to the Swift literal in `OptimizerProtocolMessageTests.swift`.
+ * Kotlin decoder accepts genuine server output, not just synthetic fixtures.
  *
  * Salient real-world properties the captured session_list_result frame locks in:
  *  - `createdAt` is a floating-point NUMBER (802628495.194415 — seconds since the 2001
@@ -76,21 +74,5 @@ class LiveFrameContractTest {
         // integer-truncated value would not equal it.
         assertFalse(session.createdAt == 0.0, "createdAt must not collapse to 0.0 (would indicate a failed/string parse)")
         assertTrue(session.createdAt > 802628495.0 && session.createdAt < 802628496.0, "createdAt must retain its sub-second fraction")
-    }
-
-    @Test fun `decodes the shared optimize_prompt_result contract fixture`() {
-        val frame = javaClass.classLoader!!
-            .getResource("shared_optimize_prompt_result.json")!!
-            .readText()
-        val decoded = MessageEnvelope.decodeServer(frame)
-        assertEquals(
-            ServerMessage.OptimizePromptResult(
-                status = "ok",
-                original = "get status and fix the failing test",
-                prompt = "Run `git status`, then fix the failing test.",
-                message = null,
-            ),
-            decoded,
-        )
     }
 }

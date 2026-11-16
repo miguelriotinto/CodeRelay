@@ -35,10 +35,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import relay.net.OptimizerStrings
 import relay.protocol.SessionNamingTheme
 
 /**
@@ -46,24 +44,15 @@ import relay.protocol.SessionNamingTheme
  *
  * Reads/writes through [AppSettings] (DataStore). Each toggle/picker collects its
  * backing [kotlinx.coroutines.flow.StateFlow] and calls the matching `set…`
- * mutator. The five sections are the ones iOS has minus **Notifications**
- * (Android hardcodes those prefs in `PushSync`), reordered to put Prompt Optimizer
- * first — iOS's order is Connection → Notifications → General → Prompt Optimizer →
- * Optimizer Shortcut → About:
- *  1. **Prompt Optimizer** — "Share terminal screen with the optimizer" (spec §7.1).
- *  2. **Connection** — Auto Connect.
- *  3. **General** — Haptic Feedback, Session-Names theme, Terminal Font Size
+ * mutator. The sections are the ones iOS has minus **Notifications** (Android
+ * hardcodes those prefs in `PushSync`):
+ *  1. **General** — Haptic Feedback, Session-Names theme, Terminal Font Size
  *     stepper (8–16), Scrollback picker.
- *  4. **Keyboard Shortcuts** — Optimizer Shortcut toggle + key-capture control.
- *  5. **About** — version/build.
+ *  2. **About** — version/build.
  *
  * @param appVersion app version name (host passes `BuildConfig.VERSION_NAME`)
  * @param buildNumber app version code (host passes `BuildConfig.VERSION_CODE`)
- * @param visibleSections which sections to render. Defaults to all five; a host
- *   without the underlying capability (the Linux desktop client has no hardware
- *   shortcut capture) hides the sections whose toggles would otherwise persist a
- *   value nothing reads. Android hides **Keyboard Shortcuts** for exactly that
- *   reason: no Android host reads `recordingShortcut*`.
+ * @param visibleSections which sections to render. Defaults to all of them.
  * @param hapticFeedbackAvailable whether to show the Haptic Feedback toggle; a
  *   desktop has no vibrator.
  */
@@ -78,14 +67,10 @@ fun SettingsScreen(
     visibleSections: Set<SettingsSection> = SettingsSection.entries.toSet(),
     hapticFeedbackAvailable: Boolean = true,
 ) {
-    val shareScreen by settings.shareScreenWithOptimizer.collectAsStateWithLifecycle()
     val haptics by settings.hapticFeedbackEnabled.collectAsStateWithLifecycle()
     val theme by settings.sessionNamingTheme.collectAsStateWithLifecycle()
     val fontSize by settings.terminalFontSize.collectAsStateWithLifecycle()
     val scrollback by settings.terminalScrollbackLines.collectAsStateWithLifecycle()
-    val shortcutEnabled by settings.recordingShortcutEnabled.collectAsStateWithLifecycle()
-    val shortcutFlags by settings.recordingShortcutFlags.collectAsStateWithLifecycle()
-    val shortcutKey by settings.recordingShortcutKey.collectAsStateWithLifecycle()
 
     // No validation gate any more: the Bedrock "Bearer Key is Required" alert went
     // with the speech stack. Done simply dismisses.
@@ -115,14 +100,7 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            // 1) Prompt Optimizer (spec §7.1) — the one device-side optimizer setting.
-            if (SettingsSection.PROMPT_OPTIMIZER in visibleSections) {
-                SectionHeader("Prompt Optimizer")
-                ToggleRow(OptimizerStrings.SHARE_SCREEN_TOGGLE, shareScreen, settings::setShareScreenWithOptimizer)
-                CaptionText(OptimizerStrings.SHARE_SCREEN_FOOTER)
-            }
-
-            // 3) General
+            // 1) General
             if (SettingsSection.GENERAL in visibleSections) {
                 SectionHeader("General")
                 if (hapticFeedbackAvailable) {
@@ -133,23 +111,7 @@ fun SettingsScreen(
                 ScrollbackPickerRow(scrollback, settings::setTerminalScrollbackLines)
             }
 
-            // 4) Keyboard Shortcuts
-            if (SettingsSection.KEYBOARD_SHORTCUTS in visibleSections) {
-                SectionHeader("Keyboard Shortcuts")
-                ToggleRow("Optimizer Shortcut", shortcutEnabled, settings::setRecordingShortcutEnabled)
-                if (shortcutEnabled) {
-                    ShortcutCaptureRow(
-                        flags = shortcutFlags,
-                        key = shortcutKey,
-                        onCommit = { newFlags, newKey ->
-                            settings.setRecordingShortcutFlags(newFlags)
-                            settings.setRecordingShortcutKey(newKey)
-                        },
-                    )
-                }
-            }
-
-            // 5) About
+            // 2) About
             if (SettingsSection.ABOUT in visibleSections) {
                 SectionHeader("About")
                 ValueRow(label = "Version", value = appVersion)
@@ -170,7 +132,7 @@ fun SettingsScreen(
  * is live in the multi-server workspace, so "auto-connect to the last server"
  * has nothing left to mean (spec §8.4).
  */
-enum class SettingsSection { PROMPT_OPTIMIZER, GENERAL, KEYBOARD_SHORTCUTS, ABOUT }
+enum class SettingsSection { GENERAL, ABOUT }
 
 // MARK: - Section building blocks
 
@@ -214,16 +176,6 @@ private fun ValueRow(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-}
-
-@Composable
-private fun CaptionText(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(bottom = 4.dp),
-    )
 }
 
 // MARK: - General-section controls
@@ -313,64 +265,6 @@ private fun ScrollbackPickerRow(scrollback: Int, onSelect: (Int) -> Unit) {
 }
 
 private fun scrollbackLabel(lines: Int): String = "%,d lines".format(lines)
-
-// MARK: - Keyboard-shortcut capture row
-
-@Composable
-private fun ShortcutCaptureRow(
-    flags: Int,
-    key: String,
-    onCommit: (flags: Int, key: String) -> Unit,
-) {
-    var capturing by remember { mutableStateOf(false) }
-    var previewFlags by remember { mutableStateOf(0) }
-    var previewKey by remember { mutableStateOf("") }
-
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("Key Combination", style = MaterialTheme.typography.bodyLarge)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            val display = if (capturing) {
-                (ShortcutFlags.symbolString(previewFlags) + previewKey.uppercase())
-                    .ifEmpty { "Press shortcut…" }
-            } else {
-                shortcutDisplayString(flags, key).ifEmpty { "Not set" }
-            }
-            Text(
-                display,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TextButton(onClick = {
-                if (capturing) {
-                    capturing = false
-                } else {
-                    previewFlags = 0
-                    previewKey = ""
-                    capturing = true
-                }
-            }) { Text(if (capturing) "Cancel" else "Set") }
-        }
-    }
-
-    // The zero-size focusable capture control; only intercepts keys while capturing.
-    KeyCapture(
-        isCapturing = capturing,
-        onKeysChanged = { f, k -> previewFlags = f; previewKey = k },
-        onCommit = { f, k ->
-            onCommit(f, k)
-            capturing = false
-        },
-        onCancel = { capturing = false },
-    )
-}
-
-/** "⌘⌥" / "⌘⌥R" display string, ported from `AppSettings.shortcutDisplayString`. */
-private fun shortcutDisplayString(flags: Int, key: String): String =
-    ShortcutFlags.symbolString(flags) + key.uppercase()
 
 private const val FONT_MIN = 8.0
 private const val FONT_MAX = 16.0

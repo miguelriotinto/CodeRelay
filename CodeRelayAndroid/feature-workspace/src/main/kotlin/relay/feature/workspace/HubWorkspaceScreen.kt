@@ -65,7 +65,6 @@ fun <S : WorkspaceSlot> WorkspaceScreen(
     onOpenServers: () -> Unit,
     onAttach: (S) -> Unit,
     onShareQr: (SessionRef) -> Unit,
-    shareScreen: Boolean = true,
     hapticsEnabled: Boolean = false,
     sidebarToggleRequests: Flow<Unit> = emptyFlow(),
     modifier: Modifier = Modifier,
@@ -101,7 +100,6 @@ fun <S : WorkspaceSlot> WorkspaceScreen(
                     onDisconnect = onOpenServers,
                     onAttach = { onAttach(slot) },
                     onShareQr = { id -> onShareQr(SessionRef(slot.config.id, id)) },
-                    shareScreen = shareScreen,
                     hapticsEnabled = hapticsEnabled,
                     sidebarToggleRequests = sidebarToggleRequests,
                     serverName = sections.takeIf { s -> s.count { it.config.enabled } > 1 }

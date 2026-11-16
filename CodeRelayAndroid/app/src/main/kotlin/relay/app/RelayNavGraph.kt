@@ -204,7 +204,6 @@ private fun WorkspaceRoute(
 ) {
     val hub = hubViewModel.hub
     val hapticsEnabled by settings.hapticFeedbackEnabled.collectAsStateWithLifecycle()
-    val shareScreen by settings.shareScreenWithOptimizer.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { hubViewModel.onForeground() }
@@ -231,7 +230,6 @@ private fun WorkspaceRoute(
             }
         },
         onShareQr = { ref -> shareRef = ref },
-        shareScreen = shareScreen,
         hapticsEnabled = hapticsEnabled,
         modifier = Modifier.fillMaxSize(),
     )
@@ -279,9 +277,5 @@ private fun SettingsRoute(
         buildNumber = buildNumber,
         onDone = onDone,
         modifier = Modifier.fillMaxSize(),
-        // No Android host reads `recordingShortcut*` (the Apple clients do), so
-        // rendering the section would advertise a shortcut that does nothing.
-        visibleSections = relay.feature.settings.SettingsSection.entries.toSet() -
-            relay.feature.settings.SettingsSection.KEYBOARD_SHORTCUTS,
     )
 }

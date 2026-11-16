@@ -16,7 +16,7 @@ sealed interface ServerMessage {
     data class AuthSuccess(
         val protocolVersion: Int? = null,
         val tokenId: String? = null,
-        /** protocolVersion ≥ 2: optional relay features, e.g. `prompt_optimizer`. Null from older relays. */
+        /** protocolVersion ≥ 2: optional relay feature flags. Null from older relays. */
         val capabilities: List<String>? = null,
         /** protocolVersion ≥ 3: the relay's persisted instance id and display name (multi-server spec §6.2). */
         val serverId: String? = null,
@@ -121,20 +121,6 @@ sealed interface ServerMessage {
         val server: ServerIdentity? get() = ServerIdentity.from(serverId, serverName)
     }
 
-    /** Reply to optimize_prompt: status ok|passthrough|no_draft|failed|unconfigured. */
-    data class OptimizePromptResult(
-        val status: String,
-        val original: String? = null,
-        val prompt: String? = null,
-        val message: String? = null,
-    ) : ServerMessage {
-        override val typeString get() = "optimize_prompt_result"
-    }
-    /** Reply to replace_prompt: status ok|failed. */
-    data class ReplacePromptResult(val status: String, val message: String? = null) : ServerMessage {
-        override val typeString get() = "replace_prompt_result"
-    }
-
     companion object {
         val ALL_TYPE_STRINGS: Set<String> = setOf(
             "auth_success", "auth_failure",
@@ -143,7 +129,7 @@ sealed interface ServerMessage {
             "session_activity", "session_stolen", "session_renamed",
             "session_list_result", "session_list_all_result",
             "resize_ack", "paste_image_result", "pong", "error",
-            "pair_success", "optimize_prompt_result", "replace_prompt_result",
+            "pair_success",
         )
     }
 }

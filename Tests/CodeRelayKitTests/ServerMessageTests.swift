@@ -193,9 +193,7 @@ final class ServerMessageTests: ProtocolTestCase {
             .pong,
             .pushTokenAck(accepted: true),
             .clipboardUpdate(sessionId: id, text: "copied from terminal"),
-            .error(code: 500, message: "internal"),
-            .optimizePromptResult(status: "ok", original: "o", prompt: "p"),
-            .replacePromptResult(status: "ok")
+            .error(code: 500, message: "internal")
         ]
 
         for original in messages {

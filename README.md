@@ -13,13 +13,13 @@ A remote terminal relay server and CLI over WebSocket, enabling secure terminal 
 - **Service management** - Run as a background service with launchd/brew services (macOS) or a systemd user unit (Linux)
 - **iOS client** - Native iOS app with terminal emulation, session tabs, and coding agent detection
 - **macOS client** - Native macOS app with menu-bar persistence, full keyboard shortcuts, and iOS feature parity
-- **Android client** - Native Android app (Jetpack Compose) with a real VT100 terminal, session tabs, recovery, and the prompt-optimizer wand (in test-build distribution; see [CodeRelayAndroid](CodeRelayAndroid/))
+- **Android client** - Native Android app (Jetpack Compose) with a real VT100 terminal, session tabs and recovery (in test-build distribution; see [CodeRelayAndroid](CodeRelayAndroid/))
 - **Multi-agent detection** - Pluggable coding agent registry (Claude Code, Codex, opencode, Copilot CLI, Cursor Agent, Droid) with per-agent tab colors
 - **Device pairing** - `claude-relay setup` prints a QR carrying a single-use, 5-minute pairing code; the app redeems it for its own revocable per-device token
 - **Push notifications** - Optional APNs/FCM alerts when an agent finishes or needs input, coalesced per workspace (off by default)
 - **Clipboard bridging** - Two-way: device→host image paste, and host→device via OSC 52, so tmux/vim/kitty copies land on the device clipboard
 - **Workspace rollups** - Sessions group by git root in the sidebar with an aggregate status badge
-- **Prompt optimizer** - The wand button (or the keyboard shortcut you used for recording) asks the relay to rewrite whatever you have typed at the agent's input line into a well-structured coding-agent prompt. The relay types the rewrite for you and never presses Enter; a 10-second Undo puts your original back. Enable it on the relay with `claude-relay config set promptOptimizerEnabled true` plus an API key file (see Configuration). To dictate, use your device's own dictation into the terminal — the apps no longer ship a speech engine.
+- **Voice input** - Use your device's own dictation (or a dictation app) into the terminal; the apps ship no speech engine.
 - **Admin API** - Localhost-only HTTP API for service management and monitoring (64 KB request body cap)
 - **Config validation** - Two-layer validation: CLI client-side (fails fast on typos/bad values) + server-side (authoritative)
 - **Per-token session cap** - Configurable `maxSessionsPerToken` (default 50) prevents runaway clients from exhausting server resources
@@ -39,7 +39,7 @@ The macOS server/CLI and the two Apple clients are built from one Swift package;
 
 **Android client (separate Gradle project, `CodeRelayAndroid/`):**
 
-- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, a real VT100 terminal via ConnectBot `termlib`, and the same prompt-optimizer wand as the Apple clients). It speaks the identical wire protocol to the same server. The APK is published with every [release](https://github.com/miguelriotinto/CodeRelay/releases) (`vX.Y.Z` tags, under its own **Android client** section) next to the Linux client and server; interim test builds also appear as `android-v*` pre-releases — see [`CodeRelayAndroid/RELEASE.md`](CodeRelayAndroid/RELEASE.md).
+- A native Jetpack Compose app that re-implements the client stack in Kotlin (protocol, WebSocket transport via OkHttp, session coordinator + recovery, and a real VT100 terminal via ConnectBot `termlib`). It speaks the identical wire protocol to the same server. The APK is published with every [release](https://github.com/miguelriotinto/CodeRelay/releases) (`vX.Y.Z` tags, under its own **Android client** section) next to the Linux client and server; interim test builds also appear as `android-v*` pre-releases — see [`CodeRelayAndroid/RELEASE.md`](CodeRelayAndroid/RELEASE.md).
 
 ## Installation
 
@@ -239,24 +239,6 @@ Configuration is stored at `~/.claude-relay/config.json`:
 - `apnsUseSandbox` - Target the APNs sandbox host, for development builds (default: `false`)
 - `fcmServiceAccountPath` / `fcmProjectId` - Firebase service-account JSON path and project id for Android delivery
 
-**Prompt optimizer options** (off by default):
-- `promptOptimizerEnabled` - Master switch for the wand (default: `false`)
-- `promptOptimizerProvider` - `anthropic` | `bedrock` (default: `anthropic`)
-- `promptOptimizerModel` - default `claude-sonnet-5` on Anthropic, `anthropic.claude-sonnet-5` on Bedrock
-- `promptOptimizerRegion` - Bedrock only (default: `us-east-1`)
-- `promptOptimizerKeyPath` - File holding the API key, `chmod 600`; the key is read once at startup and never logged
-- `promptOptimizerShareScreen` - The server-side gate on sending the last 40 screen lines to the model (default: `true`); the device has its own toggle
-
-`promptOptimizer*` changes take effect only after a relay restart — the key is read once at startup, so `config set promptOptimizerEnabled true` alone leaves the capability absent:
-
-```bash
-claude-relay config set promptOptimizerEnabled true
-claude-relay config set promptOptimizerKeyPath ~/.claude-relay/optimizer.key   # chmod 600
-claude-relay restart                                 # the key is read once, at startup
-```
-
-**What leaves the host when you use the optimizer:** the draft you typed and its working directory are always sent to the configured model provider — that is the point of the feature. When the per-device toggle "Share terminal screen with the optimizer" *and* the server-side `promptOptimizerShareScreen` kill switch are both on, up to the last 40 lines of the terminal screen are sent as well; turning either one off stops that. Nothing about the draft, the working directory or the screen is logged, at any log level, and the API key is never sent to clients.
-
 A corrupt `config.json` is tolerated: the server logs to stderr and falls back to `RelayConfig.default` so launchd-managed services stay up. App-side, `terminalScrollbackLines` (iOS + macOS Settings, default 5000, max 25000) controls the client's in-memory terminal history independent of the server's ring buffer.
 
 ### TLS Configuration
@@ -364,7 +346,7 @@ CodeRelay/
 │   │   ├── Protocols/          # SessionCoordinating protocol
 │   │   ├── Helpers/            # SessionNaming, SavedConnectionStore, NetworkMonitor, DeviceIdentifier
 │   │   ├── ViewModels/         # SharedSessionCoordinator, TerminalViewModel, ServerStatusChecker
-│   │   └── Views/              # Shared UI atoms: ConnectionQualityDot, ActivityDot, AgentColorPalette, WandButton
+│   │   └── Views/              # Shared UI atoms: ConnectionQualityDot, ActivityDot, AgentColorPalette
 ├── CodeRelayApp/             # iOS application (SwiftUI, XcodeGen-managed)
 │   ├── Views/                  # SwiftUI views + components
 │   ├── ViewModels/             # Observable view models

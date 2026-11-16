@@ -245,27 +245,6 @@ class MessageEnvelopeTest {
         assertEquals(24, msg.rows.toInt())
     }
 
-    private val optimizerSessionId = UUID.fromString("12345678-1234-1234-1234-123456789abc")
-
-    @Test fun `encode optimize_prompt carries sessionId and an explicit shareScreen`() {
-        val root = Json.parseToJsonElement(
-            MessageEnvelope.encodeClient(ClientMessage.OptimizePrompt(optimizerSessionId, shareScreen = false)),
-        ).jsonObject
-        assertEquals("optimize_prompt", root["type"]!!.jsonPrimitive.content)
-        val payload = root["payload"]!!.jsonObject
-        assertEquals(optimizerSessionId, UUID.fromString(payload["sessionId"]!!.jsonPrimitive.content))
-        assertEquals(false, payload["shareScreen"]!!.jsonPrimitive.boolean)
-    }
-
-    @Test fun `encode replace_prompt keeps multi-line text intact`() {
-        val text = "line one\nline two\n  indented"
-        val root = Json.parseToJsonElement(
-            MessageEnvelope.encodeClient(ClientMessage.ReplacePrompt(optimizerSessionId, text)),
-        ).jsonObject
-        assertEquals("replace_prompt", root["type"]!!.jsonPrimitive.content)
-        assertEquals(text, root["payload"]!!.jsonObject["text"]!!.jsonPrimitive.content)
-    }
-
     @Test fun `decode auth_success without capabilities yields null (older relay)`() {
         val decoded = MessageEnvelope.decodeServer("""{"type":"auth_success","payload":{"protocolVersion":1,"tokenId":"tok"}}""")
         assertEquals(ServerMessage.AuthSuccess(1, "tok", capabilities = null), decoded)
@@ -273,27 +252,9 @@ class MessageEnvelopeTest {
 
     @Test fun `decode auth_success with capabilities`() {
         val decoded = MessageEnvelope.decodeServer(
-            """{"type":"auth_success","payload":{"protocolVersion":2,"tokenId":"tok","capabilities":["prompt_optimizer"]}}""",
+            """{"type":"auth_success","payload":{"protocolVersion":2,"tokenId":"tok","capabilities":["some_feature"]}}""",
         )
-        assertEquals(ServerMessage.AuthSuccess(2, "tok", listOf("prompt_optimizer")), decoded)
-    }
-
-    @Test fun `decode optimize_prompt_result failed carries message only`() {
-        val decoded = MessageEnvelope.decodeServer(
-            """{"type":"optimize_prompt_result","payload":{"status":"failed","message":"Session not attached"}}""",
-        )
-        assertEquals(ServerMessage.OptimizePromptResult("failed", message = "Session not attached"), decoded)
-    }
-
-    @Test fun `decode replace_prompt_result ok`() {
-        val decoded = MessageEnvelope.decodeServer("""{"type":"replace_prompt_result","payload":{"status":"ok"}}""")
-        assertEquals(ServerMessage.ReplacePromptResult("ok"), decoded)
-    }
-
-    @Test fun `optimizer type strings are registered on the right side and disjoint`() {
-        assertTrue(ClientMessage.ALL_TYPE_STRINGS.containsAll(setOf("optimize_prompt", "replace_prompt")))
-        assertTrue(ServerMessage.ALL_TYPE_STRINGS.containsAll(setOf("optimize_prompt_result", "replace_prompt_result")))
-        assertTrue(ClientMessage.ALL_TYPE_STRINGS.intersect(ServerMessage.ALL_TYPE_STRINGS).isEmpty())
+        assertEquals(ServerMessage.AuthSuccess(2, "tok", listOf("some_feature")), decoded)
     }
 
     @Test fun decodesSessionEnded() {

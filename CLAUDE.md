@@ -20,7 +20,6 @@ swift run claude-relay status                  # Check service status
 swift run claude-relay health                  # Health check
 swift run claude-relay logs show               # View logs
 swift run claude-relay token create --port 9100 --label "dev"  # Create auth token
-swift run claude-relay optimizer try "<draft>" [--session <uuid>] [--no-screen]   # Exercise the optimizer without typing into a PTY
 ```
 
 Note: Service commands are top-level (`claude-relay stop`), while token/session/config/log commands are grouped (`claude-relay token create`, `claude-relay session list`, etc.).
@@ -235,7 +234,7 @@ the sheet only while a session is attached or pending restore
 (`expectsSession`), never for a bare launch against a slow host. The model is
 also the one enforcer of "never stays up": a presentation unchanged for 15 s
 (`stallTimeout`) lowers the sheet until progress resumes, covering a replay that
-never delivers and an RPC chain parked behind a 20 s optimize; the view model's
+never delivers and an RPC chain parked behind a slow reply; the view model's
 5 s backstop covers the reload path only. The sheet is hosted on the workspace
 view, NOT on the per-coordinator child (which is re-keyed on a cross-server
 switch), and on iPhone the sidebar sheet steps aside before it or the
@@ -364,7 +363,6 @@ Named caps across the stack:
 - `PushDispatcher` — `previousSessionState`/`lastRevision` capped at 4 k sessions, debounce map at 2 k groups (age-reaped)
 - `PushHTTP` — 64 KB response-body cap, 10 s request timeout, ≤2 retries; APNs/FCM provider-token caches ~50/55 min
 - `RelayMessageHandler.maxPushMutations` — 20 registration mutations per connection (abuse bound)
-- `RelayMessageHandler.maxOptimizesPerMinutePerToken` — 20 `optimize_prompt` calls per relay token per rolling minute, in the process-wide `OptimizerBudget` (LRU-capped at 10 k tokens). A **cost** bound, not a memory one: `optimizeInFlight` is per connection and cleared before the reply, so nothing else stands between one token and an unbounded provider bill
 - `KeyDecoder` text run / `DraftTracker.maxScalars` — 16 384 scalars; overflow clears the mirror (a 10 MB client frame is decoded and applied inline on `PTYSession.write`). `KeyDecoder.maxCSIParameterBytes` (64) and `maxStringSequenceBytes` (1 024) bound a single escape sequence
 
 ### Push Notifications
@@ -403,55 +401,48 @@ the socket (`desyncedGeneration`) **and now tears it down**
 (`markConnectionDead()`, generation-guarded — see "Connection Health"), which is
 worse than surfacing a wrong error.
 
-### Prompt Optimizer (client side)
+### Removed features: speech input and the prompt optimizer
 
-The magic-wand button (`WandButton` in CodeRelayClient, hosted by both apps
-where the mic used to be) is a thin renderer over `SharedSessionCoordinator`'s
-optimizer state: `optimizerAvailability` (derived from `auth_success`'s
-`protocolVersion` and `capabilities` — the wand is dimmed and a tap shows the
-config hint unless the relay advertises `prompt_optimizer` on protocol v2),
-`optimizerState` (`optimizing` only for one RPC), `optimizerUndo` (10 s,
-one-shot `replace_prompt` of the original) and `optimizerNotice` (4 s toast).
-`optimize_prompt` / `replace_prompt` use a 20 s waiter
-(`SessionController.optimizerTimeout`); everything else keeps 10 s. Because
-replies carry no request ids, `sendAndWaitForResponse` chains RPCs through
-`previousRPC`, so a 12–20 s optimize **serialises every other RPC behind it**
-by design — a session-tab tap during an optimize appears to hang for the
-model's full latency. Nothing times out spuriously (each waiter's timer starts
-after its `send`); it is a latency artefact, not a bug. All copy is
-in `OptimizerStrings`. The hardware shortcut (`recordingShortcut*` settings,
-`RecordingShortcutMonitor` on macOS) now posts `.optimizePromptShortcut`.
-Voice input is the OS's own dictation into the terminal; the apps no longer
-ship a speech stack, and `SpeechRemovalMigration` scrubs the old settings,
-the Bedrock keychain item and **both** model directories once per install — the
-old `SpeechModelStore` folder *and* WhisperKit's `Documents/huggingface`
-download base, which is where the Whisper weights actually landed (it was
-called with no `downloadBase`).
-The Android and Linux clients share the same shape in Kotlin: `WandButton` /
-`OptimizerOverlay` in `feature-workspace`, the four optimizer StateFlows on
-`relay.session.SessionCoordinator`, `relay.net.OptimizerStrings`, and a
-`shareScreenWithOptimizer` DataStore/preference key. On Linux the wand's
-accelerator is `Ctrl+Shift+O`, dispatched at the `Window` like every other
-chord and routed to `SessionCoordinator.optimizePrompt` — the same call a tap
-makes, so the controller's gate and hint apply unchanged. Linux's `AppSettings`
-prunes the five speech preferences
-(`smartCleanupEnabled`/`promptEnhancementEnabled`/`bedrockRegion`/`continuousListeningEnabled`/`wakeWord`)
-written by builds ≤ v0.3.25 at construction, with no completion flag; the
-Bedrock keyring entry is scrubbed at launch (`TokenStore.deleteBedrockToken()`,
-off the AWT thread). Android's `:speech` module, `ml/` tooling and
-`RECORD_AUDIO` permission are gone; `AppSettings.removeSpeechSettings()` runs
-on every launch (idempotent, no completion flag): the Bedrock secret is deleted
-first and off-main, then the six DataStore keys, each half independently
-guarded — and it is literally the first thing `runMigrations()` does, ahead of
-the shortcut migration, so a corrupt DataStore cannot hold the secret hostage.
+Neither ships any more; what is left is the one-launch-at-a-time cleanup of
+what they stored on devices.
+
+- **Prompt optimizer** (the "magic wand", removed in server 0.3.45 / iOS 1.5 /
+  Mac 1.2): gone from the wire protocol (`optimize_prompt`, `replace_prompt` and
+  their results), the relay (`Prompt/`, the `promptOptimizer*` config keys,
+  `POST /optimizer/try`, `claude-relay optimizer try`) and every client.
+  `auth_success.capabilities` stays as an optional extension point; no relay
+  sends one. A `config.json` that still holds `promptOptimizer*` keys loads
+  normally and loses them on the next save. Each client scrubs the optimizer's
+  device settings (`shareScreenWithOptimizer` and the optimizer shortcut's
+  `recordingShortcut*` keys) on **every** launch — removing an absent key is a
+  no-op, so there is no done flag: `AppSettings.removeOptimizerSettings` (iOS,
+  macOS), `AppSettings.removeOptimizerSettings()` second in `runMigrations()`
+  (Android), the construction-time prune (Linux). On iOS the floating control
+  over the terminal is now the keyboard show/hide button alone; Android has no
+  floating control; Mac and Linux lost the toolbar button and the shortcut.
+- **Speech input**: voice is the OS's own dictation into the terminal.
+  `SpeechRemovalMigration` scrubs the old settings, the Bedrock keychain item
+  and **both** model directories once per install — the old `SpeechModelStore`
+  folder *and* WhisperKit's `Documents/huggingface` download base, which is
+  where the Whisper weights actually landed (it was called with no
+  `downloadBase`). Linux's `AppSettings` prunes the five speech preferences
+  (`smartCleanupEnabled`/`promptEnhancementEnabled`/`bedrockRegion`/`continuousListeningEnabled`/`wakeWord`)
+  written by builds ≤ v0.3.25 at construction, with no completion flag; the
+  Bedrock keyring entry is scrubbed at launch (`TokenStore.deleteBedrockToken()`,
+  off the AWT thread). Android's `:speech` module, `ml/` tooling and
+  `RECORD_AUDIO` permission are gone; `AppSettings.removeSpeechSettings()` runs
+  on every launch (idempotent, no completion flag): the Bedrock secret is
+  deleted first and off-main, then the six DataStore keys, each half
+  independently guarded — and it is literally the first thing `runMigrations()`
+  does, so a corrupt DataStore cannot hold the secret hostage.
 
 ## Configuration
 
 Config stored in `~/.claude-relay/config.json`. Default ports: WS=9200, Admin=9100. On this dev machine, admin port is configured as 9100.
 
-**Config keys**: `wsPort`, `adminPort`, `detachTimeout`, `scrollbackSize`, `tlsCert`, `tlsKey`, `logLevel`, `maxSessionsPerToken` (default 50, 0 = unlimited), `bindAll` (default `true` — WebSocket server binds `0.0.0.0` and accepts connections from any interface. Set `false` to restrict to `127.0.0.1`. When `true` without TLS, startup logs a warning because tokens travel in the clear). `serverName` (optional; the relay's display name sent in `auth_success`/`pair_success` and shown by `claude-relay status`; sanitised like a pairing label — control characters stripped, 60 scalars; default is the host name without `.local`; **read once at startup**, so `config set serverName` needs a restart). **Push (all off/nil by default):** `pushEnabled`, `pushNotifyOnFinished` (server-wide default; per-device pref overrides), `apnsKeyPath`/`apnsKeyId`/`apnsTeamId`/`apnsBundleId`/`apnsUseSandbox`, `fcmServiceAccountPath`/`fcmProjectId`. See "Push Notifications" above. **Prompt optimizer (off by default):** `promptOptimizerEnabled`, `promptOptimizerProvider` (`anthropic` | `bedrock`, default `anthropic`), `promptOptimizerModel` (default `claude-sonnet-5` on Anthropic, `anthropic.claude-sonnet-5` on Bedrock), `promptOptimizerRegion` (Bedrock only, default `us-east-1`), `promptOptimizerKeyPath` (file holding the API key, `chmod 600`; the key is read once at startup and never logged), `promptOptimizerShareScreen` (default `true`; the server-side gate on sending the last 40 screen lines to the model — the device has its own). `promptOptimizer*` changes take effect only after a relay restart — the key is read once at startup, so `config set promptOptimizerEnabled true` alone leaves the capability absent. The `prompt_optimizer` capability appears in `auth_success.capabilities` only when the optimizer is enabled **and** the key was readable at startup. See `Sources/CodeRelayServer/CLAUDE.md` "Prompt Optimizer".
+**Config keys**: `wsPort`, `adminPort`, `detachTimeout`, `scrollbackSize`, `tlsCert`, `tlsKey`, `logLevel`, `maxSessionsPerToken` (default 50, 0 = unlimited), `bindAll` (default `true` — WebSocket server binds `0.0.0.0` and accepts connections from any interface. Set `false` to restrict to `127.0.0.1`. When `true` without TLS, startup logs a warning because tokens travel in the clear). `serverName` (optional; the relay's display name sent in `auth_success`/`pair_success` and shown by `claude-relay status`; sanitised like a pairing label — control characters stripped, 60 scalars; default is the host name without `.local`; **read once at startup**, so `config set serverName` needs a restart). **Push (all off/nil by default):** `pushEnabled`, `pushNotifyOnFinished` (server-wide default; per-device pref overrides), `apnsKeyPath`/`apnsKeyId`/`apnsTeamId`/`apnsBundleId`/`apnsUseSandbox`, `fcmServiceAccountPath`/`fcmProjectId`. See "Push Notifications" above.
 
-App-side (not in `config.json`, stored via `@AppStorage`): `terminalScrollbackLines` (per-app, default 5000, max 25000). The server's `RingBuffer` still replays anything that falls off this edge on reattach. `shareScreenWithOptimizer` (per device, default on) is sent as `shareScreen` on every `optimize_prompt`.
+App-side (not in `config.json`, stored via `@AppStorage`): `terminalScrollbackLines` (per-app, default 5000, max 25000). The server's `RingBuffer` still replays anything that falls off this edge on reattach.
 
 ## Device Pairing (F11, second half)
 

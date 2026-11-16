@@ -19,7 +19,6 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
             // no suppression flag needed.
             guard activeSessionId != oldValue else { return }
             ownershipStore.saveActiveSession(activeSessionId)
-            clearOptimizerUndo()
             // No pane, nothing to wait for: a terminate, a steal or a
             // disconnect must never leave the loading veil up over "No Session".
             if activeSessionId == nil { sessionLoadPhase = nil }
@@ -131,24 +130,6 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
     /// surface this as a recoverable error instead of dismissing the workspace.
     @Published public var sessionAttachFailed = false
     @Published public var sessionAttachError: String?
-
-    // MARK: - Prompt optimizer (behaviour in SharedSessionCoordinator+Optimizer.swift)
-
-    /// What the wand may do, derived from `auth_success` (spec §7.1).
-    @Published public internal(set) var optimizerAvailability: OptimizerAvailability = .unknown
-    /// `.optimizing` only for the duration of one `optimize_prompt` /
-    /// `replace_prompt` round trip.
-    @Published public internal(set) var optimizerState: OptimizerState = .idle
-    /// Non-nil for `optimizerUndoWindow` after a successful rewrite.
-    @Published public internal(set) var optimizerUndo: OptimizerUndo?
-    /// Transient toast text; auto-cleared after `optimizerNoticeDuration`.
-    @Published public internal(set) var optimizerNotice: String?
-    public var optimizerUndoWindow: Duration = .seconds(10)
-    public var optimizerNoticeDuration: Duration = .seconds(4)
-    var optimizerUndoTask: Task<Void, Never>?
-    var optimizerNoticeTask: Task<Void, Never>?
-    /// Test seam: how many times the undo window has been (re)armed this coordinator lifetime.
-    var optimizerUndoArmCount = 0
 
     /// Subscription that republishes `activityCoordinator.objectWillChange`
     /// onto this parent so SwiftUI views observing the parent `@ObservedObject`
@@ -301,7 +282,6 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         authCoordinator.onAuthenticated = { [weak self] in
             guard let self else { return }
             self.serverIdentity = self.sessionController?.serverIdentity
-            self.refreshOptimizerAvailability()
             self.didAuthenticate()
         }
 
@@ -1440,8 +1420,6 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
         recoveryTask?.cancel()
         recoveryTask = nil
         authCoordinator.invalidate()
-        clearOptimizerUndo()
-        dismissOptimizerNotice()
         if activeSessionId != nil {
             Task {
                 do {

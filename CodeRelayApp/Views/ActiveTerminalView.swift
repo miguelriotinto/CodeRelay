@@ -59,47 +59,33 @@ struct ActiveTerminalView: View {
         SessionTabStripModel.tabs(sections: hub.sections, activeRef: hub.activeRef)
     }
 
-    /// Wand + keyboard toggle, floated over the terminal's bottom-trailing corner.
-    private func floatingButtons(_ coordinator: SessionCoordinator) -> some View {
-        HStack(spacing: 10) {
-            WandButton(
-                coordinator: coordinator,
-                shareScreen: settings.shareScreenWithOptimizer,
-                size: 44,
-                fill: Color.gray.opacity(0.5),
-                onTap: {
-                    if settings.hapticFeedbackEnabled {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    }
-                }
-            )
-
-            Button {
-                if settings.hapticFeedbackEnabled {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                }
-                if isKeyboardVisible {
-                    NotificationCenter.default.post(
-                        name: .terminalResignFocus, object: nil
-                    )
-                } else {
-                    NotificationCenter.default.post(
-                        name: .terminalRequestFocus, object: nil
-                    )
-                }
-            } label: {
-                Image(systemName: isKeyboardVisible
-                      ? "keyboard.chevron.compact.down"
-                      : "keyboard")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(Color.gray.opacity(0.5))
-                    .clipShape(Circle())
+    /// Keyboard show/hide toggle, floated over the terminal's bottom-trailing corner.
+    private var keyboardToggleButton: some View {
+        Button {
+            if settings.hapticFeedbackEnabled {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
-            .disabled(hasHardwareKeyboard)
-            .opacity(hasHardwareKeyboard ? 0.35 : 1.0)
+            if isKeyboardVisible {
+                NotificationCenter.default.post(
+                    name: .terminalResignFocus, object: nil
+                )
+            } else {
+                NotificationCenter.default.post(
+                    name: .terminalRequestFocus, object: nil
+                )
+            }
+        } label: {
+            Image(systemName: isKeyboardVisible
+                  ? "keyboard.chevron.compact.down"
+                  : "keyboard")
+                .font(.system(size: 16))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(Color.gray.opacity(0.5))
+                .clipShape(Circle())
         }
+        .disabled(hasHardwareKeyboard)
+        .opacity(hasHardwareKeyboard ? 0.35 : 1.0)
     }
 
     /// The top-left button's action; the left-edge swipe calls it too.
@@ -135,8 +121,8 @@ struct ActiveTerminalView: View {
         VStack(spacing: 0) {
             if let coordinator, let id = coordinator.activeSessionId,
                let vm = coordinator.viewModel(for: id) {
-                // The floating buttons overlay the TERMINAL only. Overlaying the
-                // whole column put them on top of the key bar's trailing keys
+                // The floating button overlays the TERMINAL only. Overlaying the
+                // whole column put it on top of the key bar's trailing keys
                 // whenever the bar fit on one line — every wide layout, and the
                 // iPhone Duo in either posture.
                 ZStack(alignment: .bottomTrailing) {
@@ -154,7 +140,7 @@ struct ActiveTerminalView: View {
                     // toolbar or the key bar, so the session name stays visible.
                     .terminalLoadingCover(loading.isPresented)
 
-                    floatingButtons(coordinator)
+                    keyboardToggleButton
                         .padding(.trailing, 16)
                         .padding(.bottom, 12)
                 }

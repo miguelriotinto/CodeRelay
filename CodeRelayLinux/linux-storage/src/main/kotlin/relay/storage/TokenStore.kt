@@ -55,7 +55,7 @@ class TokenStore(
 
     /**
      * Deletes the AWS Bedrock API key that builds before 2026-09 stored for the
-     * on-device prompt enhancer. The optimizer is a relay feature now, so the
+     * on-device prompt enhancer. That feature is gone, so the
      * key has no reader; `AppEnvironment` calls this on every launch, off the
      * AWT thread, with no completion flag. On a locked keyring that still holds
      * the entry, libsecret's clear raises the unlock prompt; if the user

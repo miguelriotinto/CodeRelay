@@ -94,9 +94,6 @@ public final class SessionController: ObservableObject {
     /// none — a pre-versioning relay). Reset on re-auth.
     @Published public private(set) var serverProtocolVersion: Int = 0
 
-    /// `capabilities` the server reported in `auth_success` (empty when none).
-    /// `CodeRelayKit.promptOptimizerCapability` here means the wand may be used.
-    @Published public private(set) var serverCapabilities: Set<String> = []
     /// The relay's self-identification from a v3 `auth_success` (multi-server
     /// spec §5.2). nil against v2 servers. Mirrored onto the bookmark by the hub
     /// and used only to route deep links and flag duplicate bookmarks.
@@ -163,20 +160,15 @@ public final class SessionController: ObservableObject {
     /// path without a 10-second wall-clock wait — production always takes the
     /// default.
     private let responseTimeout: Duration
-    /// Waiter for `optimize_prompt` / `replace_prompt` — the relay is calling a
-    /// model, so these get 20 s (spec §7.1) while every other RPC keeps 10 s.
-    private let optimizerTimeout: Duration
 
     // MARK: - Init
 
     public init(
         connection: any ConnectionSurface,
-        responseTimeout: Duration = .seconds(10),
-        optimizerTimeout: Duration = .seconds(20)
+        responseTimeout: Duration = .seconds(10)
     ) {
         self.connection = connection
         self.responseTimeout = responseTimeout
-        self.optimizerTimeout = optimizerTimeout
     }
 
     // MARK: - Authentication
@@ -206,11 +198,9 @@ public final class SessionController: ObservableObject {
     public func resetAuth() {
         isAuthenticated = false
         sessionId = nil
-        // The next relay may be a different one (or the same one with its
-        // optimizer key removed), so what the previous `auth_success` reported
-        // must not be readable while unauthenticated.
+        // The next relay may be a different one, so what the previous
+        // `auth_success` reported must not be readable while unauthenticated.
         serverProtocolVersion = 0
-        serverCapabilities = []
     }
 
     /// The device id sent in `auth_request`: the same id push registration
@@ -231,7 +221,7 @@ public final class SessionController: ObservableObject {
         )
 
         switch response {
-        case .authSuccess(let serverProtocolVersion, let serverTokenId, let capabilities, let server):
+        case .authSuccess(let serverProtocolVersion, let serverTokenId, _, let server):
             let serverVersion = serverProtocolVersion ?? 0
             if serverVersion < CodeRelayKit.minProtocolVersion {
                 isAuthenticated = false
@@ -241,7 +231,6 @@ public final class SessionController: ObservableObject {
                 )
             }
             self.serverProtocolVersion = serverProtocolVersion ?? 0
-            self.serverCapabilities = Set(capabilities ?? [])
             self.serverIdentity = server
             isAuthenticated = true
             authenticatedGeneration = connection.generation
@@ -405,57 +394,6 @@ public final class SessionController: ObservableObject {
         }
     }
 
-    // MARK: - Prompt optimizer (spec §6)
-
-    /// The toast text for a `failed` status. An **empty** `message` is treated
-    /// exactly like an absent one: it is non-nil, so it would set
-    /// `optimizerNotice = ""` and draw an empty toast capsule.
-    private static func optimizerFailureMessage(_ message: String?) -> String {
-        guard let message, !message.isEmpty else { return OptimizerStrings.couldNotRewrite }
-        return message
-    }
-
-    /// Ask the relay to rewrite the draft at the agent's input line. The relay
-    /// types the rewrite itself; the reply only tells us how it went.
-    public func optimizePrompt(sessionId: UUID, shareScreen: Bool) async throws -> OptimizeOutcome {
-        let response = try await sendAndWaitForResponse(
-            .optimizePrompt(sessionId: sessionId, shareScreen: shareScreen),
-            expected: ["optimize_prompt_result"],
-            timeout: optimizerTimeout
-        )
-        switch response {
-        case .optimizePromptResult(let status, let original, _, let message):
-            switch status {
-            case "ok": return .ok(original: original)
-            case "no_draft": return .noDraft
-            case "passthrough": return .passthrough
-            case "unconfigured": return .unconfigured
-            default: return .failed(message: Self.optimizerFailureMessage(message))
-            }
-        case .error(_, let message):
-            throw SessionError.unexpectedResponse(message)
-        default:
-            throw SessionError.unexpectedResponse(response.typeString)
-        }
-    }
-
-    /// Put `text` back at the input line (Undo). Same waiter as optimize.
-    public func replacePrompt(sessionId: UUID, text: String) async throws -> ReplaceOutcome {
-        let response = try await sendAndWaitForResponse(
-            .replacePrompt(sessionId: sessionId, text: text),
-            expected: ["replace_prompt_result"],
-            timeout: optimizerTimeout
-        )
-        switch response {
-        case .replacePromptResult(let status, let message):
-            return status == "ok" ? .ok : .failed(message: Self.optimizerFailureMessage(message))
-        case .error(_, let message):
-            throw SessionError.unexpectedResponse(message)
-        default:
-            throw SessionError.unexpectedResponse(response.typeString)
-        }
-    }
-
     // MARK: - Internal Helpers
 
     /// Serializes request-response RPCs: **at most one may be outstanding on a
@@ -494,13 +432,12 @@ public final class SessionController: ObservableObject {
     /// back in.
     private func sendAndWaitForResponse(
         _ message: ClientMessage,
-        expected: Set<String>,
-        timeout: Duration? = nil
+        expected: Set<String>
     ) async throws -> ServerMessage {
         let predecessor = previousRPC
         let rpc = Task { @MainActor [self] in
             _ = await predecessor?.result
-            return try await awaitResponse(message, expected: expected, timeout: timeout)
+            return try await awaitResponse(message, expected: expected)
         }
         previousRPC = rpc
         defer {
@@ -535,8 +472,7 @@ public final class SessionController: ObservableObject {
     /// inherit the hazard.
     private func awaitResponse(
         _ message: ClientMessage,
-        expected: Set<String>,
-        timeout: Duration? = nil
+        expected: Set<String>
     ) async throws -> ServerMessage {
         // A previous RPC on this socket timed out, so it still owes a reply that
         // this waiter would happily accept. Refuse until the socket is replaced.
@@ -592,7 +528,7 @@ public final class SessionController: ObservableObject {
                 return
             }
 
-            let timeout = timeout ?? self.responseTimeout
+            let timeout = self.responseTimeout
             guard_.timeoutTask = Task { @MainActor [weak self, guard_] in
                 // `try await`, NOT `try?`: `ResumeGuard.resume` cancels this task
                 // when the reply lands, and a cancelled `Task.sleep` throws

@@ -20,10 +20,9 @@ Android carries a documented deferral that Linux can trivially clear (mouse repo
 ### 1.1 Non-goals
 
 - **On-device speech.** None, by design — not a deferral. The Android speech stack
-  was removed in 2026-09 in favour of the relay-side prompt optimizer (the wand in
-  the shared `WorkspaceScreen`, `Ctrl+Shift+O` on the desktop), so there is nothing
-  to inherit. The optimizer is a server feature; the client only sends
-  `optimize_prompt` / `replace_prompt`. Voice input is the desktop's own dictation
+  was removed in 2026-09, so there is nothing to inherit (the relay-side prompt
+  optimizer that briefly replaced it, with its `Ctrl+Shift+O` accelerator, was
+  removed in 2026-11). Voice input is the desktop's own dictation
   into the terminal. The Bedrock key older Linux builds kept in the keyring is
   deleted on every launch (§4, `TokenStore.deleteBedrockToken`).
 - **Push notifications.** Deliberately replaced, not ported — see §6.5.
@@ -199,7 +198,6 @@ Ported from `CodeRelayMac/Helpers/AppCommands.swift`, `Ctrl` replacing `Cmd`:
 | Next / previous session | ⌘⇧] / ⌘⇧[ | `Ctrl+Shift+]` / `Ctrl+Shift+[` |
 | Session *n* | ⌘1–9 | `Ctrl+Alt+1`–`9` |
 | Toggle sidebar | ⌘0 | `Ctrl+Shift+B` |
-| Optimize prompt (wand) | configurable `recordingShortcut*` chord | `Ctrl+Shift+O` (ignored while Settings or Servers overlay is open) |
 
 All shortcuts use `Ctrl+Shift` or `Ctrl+Alt` because a bare `Ctrl+<key>` **must reach
 the terminal** — `Ctrl+C`, `Ctrl+D`, `Ctrl+W` are shell/agent input, not app commands.
@@ -420,12 +418,12 @@ cleanly when their secrets are absent, so a dry-run tag push is harmless.
 | Notifications on agent finished / needs input | **Full**, different transport | D-Bus, not FCM (AD-4) |
 | Clipboard bridging (OSC 52 host→device) | **Exceeds** | Decoded locally from the byte stream (the server passes OSC 52 writes through); active session only |
 | Image paste (device→host) | **Exceeds** | Ctrl+Shift+V with an image on the clipboard sends `paste_image`, as macOS Cmd+V does |
-| Settings: the 10 shared keys (incl. `shareScreenWithOptimizer`) | **Full** | Bedrock token gone with the speech stack (§1.1); Secret Service still holds relay tokens |
+| Settings: the shared keys | **Full** | Bedrock token gone with the speech stack (§1.1); Secret Service still holds relay tokens |
 | Scrollback / font size / naming theme | **Full** | |
 | TLS / cleartext scoping | **Full** | AD-5 |
 | Auto-connect | **Full** | |
 | Haptics | **N/A** | No desktop equivalent |
-| On-device speech / wake word | **N/A** | Removed everywhere; the wand replaces it (§1.1) |
+| On-device speech / wake word | **N/A** | Removed everywhere (§1.1) |
 | Keyboard shortcuts, tray rollup, close-to-tray, single instance | **Exceeds** | §5 — from the macOS client; tray mirrors `MenuBarDropdown` |
 | Local scrollback, selection, paste, mouse clicks, cursor shapes | **Exceeds** | Desktop terminal table stakes; real-libvterm tests in `linux-terminal` |
 | Desktop notifications with click-to-focus | **Exceeds** | AD-4; `notify-send --action` |

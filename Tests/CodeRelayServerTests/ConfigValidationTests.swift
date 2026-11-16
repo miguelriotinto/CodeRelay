@@ -160,59 +160,16 @@ final class ConfigValidationTests: XCTestCase {
         XCTAssertThrowsError(try AdminRoutes.applyConfigValue(42, forKey: "logLevel", to: &config))
     }
 
-    // MARK: - Prompt optimizer keys
+    // MARK: - Removed prompt-optimizer keys
 
-    func testOptimizerBoolsMustBeBool() {
+    func testRemovedOptimizerKeysAreUnknown() {
         var config = RelayConfig.default
-        XCTAssertThrowsError(try AdminRoutes.applyConfigValue("yes", forKey: "promptOptimizerEnabled", to: &config))
-        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(1, forKey: "promptOptimizerShareScreen", to: &config))
-        XCTAssertNoThrow(try AdminRoutes.applyConfigValue(true, forKey: "promptOptimizerEnabled", to: &config))
-        XCTAssertNoThrow(try AdminRoutes.applyConfigValue(false, forKey: "promptOptimizerShareScreen", to: &config))
-        XCTAssertTrue(config.promptOptimizerEnabled)
-        XCTAssertFalse(config.promptOptimizerShareScreen)
-    }
-
-    func testOptimizerProviderIsAnEnum() throws {
-        var config = RelayConfig.default
-        try AdminRoutes.applyConfigValue("bedrock", forKey: "promptOptimizerProvider", to: &config)
-        XCTAssertEqual(config.promptOptimizerProvider, "bedrock")
-        XCTAssertThrowsError(try AdminRoutes.applyConfigValue("openai", forKey: "promptOptimizerProvider", to: &config)) {
-            XCTAssertEqual(($0 as? ConfigError)?.message, "promptOptimizerProvider must be one of: anthropic, bedrock")
+        for key in ["promptOptimizerEnabled", "promptOptimizerProvider", "promptOptimizerModel",
+                    "promptOptimizerRegion", "promptOptimizerKeyPath", "promptOptimizerShareScreen"] {
+            XCTAssertThrowsError(try AdminRoutes.applyConfigValue(true, forKey: key, to: &config)) {
+                XCTAssertEqual(($0 as? ConfigError)?.message, "Unknown config key: \(key)")
+            }
         }
-    }
-
-    func testOptimizerRegionIsHostnameSafe() throws {
-        var config = RelayConfig.default
-        try AdminRoutes.applyConfigValue("eu-central-1", forKey: "promptOptimizerRegion", to: &config)
-        XCTAssertEqual(config.promptOptimizerRegion, "eu-central-1")
-        XCTAssertThrowsError(try AdminRoutes.applyConfigValue("eu.central", forKey: "promptOptimizerRegion", to: &config)) {
-            XCTAssertEqual(($0 as? ConfigError)?.message, "promptOptimizerRegion must match [a-z0-9-]+")
-        }
-    }
-
-    func testOptimizerModelEmptyClears() throws {
-        var config = RelayConfig.default
-        try AdminRoutes.applyConfigValue("claude-opus-5", forKey: "promptOptimizerModel", to: &config)
-        XCTAssertEqual(config.promptOptimizerModel, "claude-opus-5")
-        try AdminRoutes.applyConfigValue("", forKey: "promptOptimizerModel", to: &config)
-        XCTAssertNil(config.promptOptimizerModel)
-    }
-
-    func testOptimizerKeyPathMustBeReadableFile() throws {
-        var config = RelayConfig.default
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let key = dir.appendingPathComponent("key.txt")
-        try "sk-ant-test".write(to: key, atomically: true, encoding: .utf8)
-
-        try AdminRoutes.applyConfigValue(key.path, forKey: "promptOptimizerKeyPath", to: &config)
-        XCTAssertEqual(config.promptOptimizerKeyPath, key.path)
-        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(dir.path, forKey: "promptOptimizerKeyPath", to: &config))
-        XCTAssertThrowsError(try AdminRoutes.applyConfigValue(dir.appendingPathComponent("missing").path,
-                                                              forKey: "promptOptimizerKeyPath", to: &config))
-        try AdminRoutes.applyConfigValue("", forKey: "promptOptimizerKeyPath", to: &config)
-        XCTAssertNil(config.promptOptimizerKeyPath)
     }
 
     // MARK: - serverName Validation

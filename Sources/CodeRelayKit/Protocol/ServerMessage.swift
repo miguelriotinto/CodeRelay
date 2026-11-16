@@ -3,7 +3,8 @@ import Foundation
 /// Messages sent from the server to the client.
 public enum ServerMessage: Equatable, Sendable {
     /// `capabilities` (protocolVersion ≥ 2) lists optional relay features the
-    /// client may use; today only `CodeRelayKit.promptOptimizerCapability`.
+    /// client may use. No relay advertises any today (the prompt optimizer, the
+    /// only one so far, was removed); the field stays as the extension point.
     /// Absent (not empty) when the server predates it or has none.
     case authSuccess(protocolVersion: Int? = nil, tokenId: String? = nil, capabilities: [String]? = nil,
                      server: ServerIdentity? = nil)
@@ -36,12 +37,6 @@ public enum ServerMessage: Equatable, Sendable {
     case error(code: Int, message: String)
     /// A pairing code was redeemed: here is the newly minted device token.
     case pairSuccess(token: String, tokenId: String, label: String, server: ServerIdentity? = nil)
-    /// Reply to `optimize_prompt`. `status`: `ok` (draft replaced; `original`
-    /// + `prompt` present), `passthrough`, `no_draft`, `failed` (`message`),
-    /// `unconfigured` (`message`). Spec §5.1.
-    case optimizePromptResult(status: String, original: String? = nil, prompt: String? = nil, message: String? = nil)
-    /// Reply to `replace_prompt`. `status`: `ok` or `failed` (`message`).
-    case replacePromptResult(status: String, message: String? = nil)
 
     // MARK: - Wire type strings
 
@@ -70,8 +65,6 @@ public enum ServerMessage: Equatable, Sendable {
         case .clipboardUpdate:     return "clipboard_update"
         case .error:               return "error"
         case .pairSuccess:         return "pair_success"
-        case .optimizePromptResult: return "optimize_prompt_result"
-        case .replacePromptResult:  return "replace_prompt_result"
         }
     }
 
@@ -84,7 +77,7 @@ public enum ServerMessage: Equatable, Sendable {
         "session_stolen", "session_ended", "session_renamed",
         "session_list_result", "session_list_all_result",
         "resize_ack", "paste_image_result", "pong", "push_token_ack", "clipboard_update", "error",
-        "pair_success", "optimize_prompt_result", "replace_prompt_result"
+        "pair_success"
     ]
 }
 
@@ -94,7 +87,7 @@ extension ServerMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case reason, sessionId, cols, rows, state, code, message, sessions, activity, agent, name, success, protocolVersion
         case agentState, title, workingDir, accepted, text, tokenId
-        case token, label, capabilities, status, original, prompt, serverId, serverName
+        case token, label, capabilities, serverId, serverName
     }
 
     public func encodePayload(to encoder: Encoder) throws {
@@ -169,14 +162,6 @@ extension ServerMessage: Codable {
             try container.encode(label, forKey: .label)
             try container.encodeIfPresent(server?.id.uuidString, forKey: .serverId)
             try container.encodeIfPresent(server?.name, forKey: .serverName)
-        case .optimizePromptResult(let status, let original, let prompt, let message):
-            try container.encode(status, forKey: .status)
-            try container.encodeIfPresent(original, forKey: .original)
-            try container.encodeIfPresent(prompt, forKey: .prompt)
-            try container.encodeIfPresent(message, forKey: .message)
-        case .replacePromptResult(let status, let message):
-            try container.encode(status, forKey: .status)
-            try container.encodeIfPresent(message, forKey: .message)
         }
     }
 
@@ -276,16 +261,6 @@ extension ServerMessage: Codable {
                 server: ServerIdentity.fromWire(
                     serverId: try container.decodeIfPresent(String.self, forKey: .serverId),
                     serverName: try container.decodeIfPresent(String.self, forKey: .serverName)))
-        case "optimize_prompt_result":
-            return .optimizePromptResult(
-                status: try container.decode(String.self, forKey: .status),
-                original: try container.decodeIfPresent(String.self, forKey: .original),
-                prompt: try container.decodeIfPresent(String.self, forKey: .prompt),
-                message: try container.decodeIfPresent(String.self, forKey: .message))
-        case "replace_prompt_result":
-            return .replacePromptResult(
-                status: try container.decode(String.self, forKey: .status),
-                message: try container.decodeIfPresent(String.self, forKey: .message))
         default:
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(

@@ -1,5 +1,4 @@
 import SwiftUI
-import Combine
 import CodeRelayClient
 
 struct SettingsView: View {
@@ -99,10 +98,6 @@ private struct SettingsGroupRow<Content: View>: View {
 
 private struct GeneralSettingsTab: View {
     @StateObject private var settings = AppSettings.shared
-    @State private var isCapturing = false
-    @State private var capturedModifiers: NSEvent.ModifierFlags = []
-    @State private var capturedKey: String = ""
-    @State private var windowObserver: AnyCancellable?
 
     var body: some View {
         ScrollView {
@@ -142,72 +137,6 @@ private struct GeneralSettingsTab: View {
                         .labelsHidden()
                         .fixedSize()
                     }
-                }
-
-                SettingsSectionHeader(title: "Prompt Optimizer")
-                SettingsGroup {
-                    SettingsGroupRow(showDivider: false) {
-                        Text(OptimizerStrings.shareScreenToggle)
-                        Spacer()
-                        Toggle("", isOn: $settings.shareScreenWithOptimizer)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                }
-                SettingsSectionFooter(text: OptimizerStrings.shareScreenFooter)
-
-                SettingsSectionHeader(title: "Optimizer Shortcut")
-                SettingsGroup {
-                    SettingsGroupRow {
-                        Text("Enable shortcut")
-                        Spacer()
-                        Toggle("", isOn: $settings.recordingShortcutEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                    if settings.recordingShortcutEnabled {
-                        SettingsGroupRow(showDivider: false) {
-                            Text("Key Combination")
-                            Spacer()
-                            if isCapturing {
-                                Text(capturedDisplayString)
-                                    .font(.system(.body, design: .rounded))
-                                    .foregroundStyle(.primary)
-                                Button("Set") {
-                                    settings.shortcutModifierFlags = capturedModifiers
-                                    settings.recordingShortcutKey = capturedKey
-                                    isCapturing = false
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .disabled(capturedKey.isEmpty)
-                                Button("Cancel") {
-                                    isCapturing = false
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                            } else {
-                                Text(savedDisplayString)
-                                    .font(.system(.body, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                                Button("Change") {
-                                    NSLog("[KeyCapture] Change button tapped")
-                                    capturedModifiers = []
-                                    capturedKey = ""
-                                    isCapturing = true
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                            }
-                        }
-                    }
-                }
-                if settings.recordingShortcutEnabled {
-                    SettingsSectionFooter(text: isCapturing
-                        ? "Press a modifier + letter combination (e.g. ⌘⌥R), then click Set."
-                        : settings.recordingShortcutKey.isEmpty
-                            ? "Click Change to assign a shortcut."
-                            : "Press \(settings.shortcutDisplayString) to optimize the prompt.")
                 }
 
                 SettingsSectionHeader(title: "Notifications")
@@ -264,62 +193,6 @@ private struct GeneralSettingsTab: View {
             .padding(.bottom, 20)
         }
         .background(.black)
-        .onChange(of: isCapturing) { _, capturing in
-            if capturing {
-                installKeyMonitor()
-            } else {
-                removeKeyMonitor()
-            }
-        }
-        .onAppear {
-            windowObserver = NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)
-                .sink { _ in
-                    if isCapturing {
-                        NSLog("[KeyCapture] window resigned key — cancelling capture")
-                        isCapturing = false
-                    }
-                }
-        }
-        .onDisappear {
-            removeKeyMonitor()
-            isCapturing = false
-            windowObserver?.cancel()
-            windowObserver = nil
-        }
-    }
-
-    private func installKeyMonitor() {
-        KeyCaptureInterceptor.shared.begin { mods, key in
-            DispatchQueue.main.async {
-                if !key.isEmpty {
-                    // keyDown — freeze the full combo (modifiers + letter).
-                    capturedModifiers = mods
-                    capturedKey = key
-                } else if capturedKey.isEmpty {
-                    // flagsChanged with no letter yet — track live modifier state
-                    // so the user sees what they're pressing.
-                    capturedModifiers = mods
-                }
-                // If capturedKey is set, ignore further flagsChanged (don't erase
-                // the frozen combo when the user releases modifier keys).
-            }
-        }
-    }
-
-    private func removeKeyMonitor() {
-        KeyCaptureInterceptor.shared.end()
-    }
-
-    private var savedDisplayString: String {
-        settings.recordingShortcutKey.isEmpty ? "None" : settings.shortcutDisplayString
-    }
-
-    private var capturedDisplayString: String {
-        let mods = capturedModifiers.intersection([.command, .option, .shift, .control]).symbolString
-        if capturedKey.isEmpty {
-            return mods.isEmpty ? "Press keys..." : mods + "..."
-        }
-        return mods + capturedKey.uppercased()
     }
 }
 

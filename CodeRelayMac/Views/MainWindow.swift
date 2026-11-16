@@ -96,13 +96,6 @@ private struct WorkspaceView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) { serversToolbarButton }
-            if let coordinator {
-                ToolbarItem(placement: .primaryAction) {
-                    WandButton(coordinator: coordinator,
-                               shareScreen: settings.shareScreenWithOptimizer,
-                               size: 26, fill: Color.gray.opacity(0.5))
-                }
-            }
             if #available(macOS 26.0, *) {
                 ToolbarSpacer(.fixed, placement: .primaryAction)
                 ToolbarItem(placement: .primaryAction) { qrToolbarButton }

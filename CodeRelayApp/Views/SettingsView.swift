@@ -5,9 +5,6 @@ import CodeRelayClient
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
-    @State private var isCapturing = false
-    @State private var capturedFlags: UIKeyModifierFlags = []
-    @State private var capturedKey: String = ""
 
     var body: some View {
         NavigationStack {
@@ -46,77 +43,6 @@ struct SettingsView: View {
                         Text("5,000 lines").tag(5_000)
                         Text("10,000 lines").tag(10_000)
                         Text("25,000 lines").tag(25_000)
-                    }
-                }
-
-                // Its own section, as on macOS: the footer describes what the
-                // optimizer sends off the host, and must not read as a note on
-                // Haptic Feedback or the terminal font.
-                Section {
-                    Toggle(OptimizerStrings.shareScreenToggle, isOn: $settings.shareScreenWithOptimizer)
-                } header: {
-                    Text("Prompt Optimizer")
-                } footer: {
-                    Text(OptimizerStrings.shareScreenFooter)
-                }
-
-                Section {
-                    Toggle("Optimizer Shortcut", isOn: $settings.recordingShortcutEnabled)
-                    if settings.recordingShortcutEnabled {
-                        if isCapturing {
-                            VStack(spacing: 8) {
-                                Text("Press your shortcut...")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                Text(capturedFlags.isEmpty && capturedKey.isEmpty
-                                     ? "Waiting..."
-                                     : capturedFlags.symbolString + capturedKey.uppercased())
-                                    .font(.system(.title, design: .rounded, weight: .medium))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                    .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 10))
-                                KeyCaptureView(
-                                    capturedFlags: $capturedFlags,
-                                    capturedKey: $capturedKey,
-                                    isCapturing: $isCapturing,
-                                    onCommit: { flags, key in
-                                        settings.shortcutModifierFlags = flags
-                                        settings.recordingShortcutKey = key
-                                    }
-                                )
-                                .frame(width: 0, height: 0)
-                                Button("Cancel") {
-                                    isCapturing = false
-                                }
-                                .font(.subheadline)
-                            }
-                            .padding(.vertical, 4)
-                        } else {
-                            HStack {
-                                Text("Key Combination")
-                                Spacer()
-                                Text(settings.shortcutDisplayString)
-                                    .foregroundStyle(.secondary)
-                                    .font(.system(.body, design: .rounded))
-                                Button("Set") {
-                                    capturedFlags = []
-                                    capturedKey = ""
-                                    isCapturing = true
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Keyboard Shortcuts")
-                } footer: {
-                    if settings.recordingShortcutEnabled && !isCapturing {
-                        if settings.recordingShortcutKey.isEmpty {
-                            Text("Tap Set and press a modifier + letter key combination (e.g. ⌘⌥R).")
-                        } else {
-                            Text("Press \(settings.shortcutDisplayString) to optimize the prompt when a hardware keyboard is connected.")
-                        }
                     }
                 }
 

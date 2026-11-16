@@ -13,6 +13,11 @@ in the actual code with file citations — not optimism.
 > wand, matching the Apple clients (`docs/superpowers/plans/2026-09-15-server-prompt-optimizer-plan3-android.md`).
 > §2's Speech/Bedrock rows are now "removed on both sides", §3 describes deleted
 > code, and the speech items in §5–§7 are moot. The rest of the audit stands.
+>
+> **Status update 2026-11-16.** The prompt optimizer (wand, Undo chip, share-screen
+> toggle, Optimizer Shortcut) has since been removed from every client and the
+> relay. Its rows below are history too; Android scrubs the old keys on launch
+> (`AppSettings.removeOptimizerSettings()`), as the Apple clients do.
 
 ## Verdict
 
@@ -54,18 +59,18 @@ All present in `feature-settings/.../AppSettings.kt` (DataStore) + `SettingsScre
 
 | Section | Controls | Status | iOS/macOS Status |
 |---|---|---|---|
-| Speech-to-Text | Smart Cleanup, Prompt Enhancement, Continuous Listening, wake-word edit | **Removed** (2026-09, Plan 3) | Removed — replaced by the server-side prompt optimizer (wand) |
-| AWS Bedrock | masked bearer token (TokenStore, 500ms-debounced `.dropFirst()` write), region, "token required" validation alert | **Removed** (2026-09, Plan 3) | Removed — replaced by the server-side prompt optimizer (wand) |
+| Speech-to-Text | Smart Cleanup, Prompt Enhancement, Continuous Listening, wake-word edit | **Removed** (2026-09, Plan 3) | Removed |
+| AWS Bedrock | masked bearer token (TokenStore, 500ms-debounced `.dropFirst()` write), region, "token required" validation alert | **Removed** (2026-09, Plan 3) | Removed |
 | Connection | Auto-Connect | **PASS** | — |
 | General | Haptic Feedback, Naming-theme picker (6 themes), Font Size stepper (8–16), Scrollback picker (1k/5k/10k/25k) | **PASS** | — |
-| Keyboard Shortcuts | "Optimizer Shortcut" toggle + KeyEvent.META_* key capture | **PASS** | Optimizer Shortcut |
+| Keyboard Shortcuts | "Optimizer Shortcut" toggle + KeyEvent.META_* key capture | **Removed** (2026-11, with the optimizer) | Removed |
 | About | version/build from BuildConfig | **PASS** | — |
 
-The shortcut-modifier string→flags migration is still ported. The Bedrock→secure-store
+The shortcut-modifier string→flags migration went with the optimizer shortcut. The Bedrock→secure-store
 migration is gone on both platforms: the Apple clients' `SpeechRemovalMigration` and
 Android's `AppSettings.removeSpeechSettings()` (every launch, idempotent) *delete* the
-Bedrock secret and the six speech settings instead. Android adds one key,
-`shareScreenWithOptimizer` (default on), byte-identical to the iOS `@AppStorage` key.
+Bedrock secret and the six speech settings instead; `removeOptimizerSettings()`
+deletes `shareScreenWithOptimizer` and the shortcut keys the same way.
 
 ## 3. Speech feature inventory (M3)
 
@@ -118,7 +123,7 @@ code and was an explicit, accepted deferral during M1–M3.
 
 ### Needs human credentials (M4 Task 9)
 - **Play Store release:** generate the upload keystore + `keystore.properties` (template +
-  `RELEASE.md` ready), `bundleRelease` AAB, Play Console listing + data-safety form (camera = on-device only; optimizer traffic goes to the user's own relay) + internal→closed→open tracks. Release buildType + R8 keep rules are scaffolded
+  `RELEASE.md` ready), `bundleRelease` AAB, Play Console listing + data-safety form (camera = on-device only) + internal→closed→open tracks. Release buildType + R8 keep rules are scaffolded
   and `assembleRelease` builds green; **R8-keep runtime correctness must be verified on a minified
   build on a device** before promoting any track.
 

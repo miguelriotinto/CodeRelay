@@ -150,8 +150,8 @@ class TokenStoreTest {
 
     /**
      * Builds before 2026-09 stored the AWS Bedrock key for the on-device prompt
-     * enhancer under the reserved account. The optimizer is a relay feature now,
-     * so the launch-time scrub must address exactly the attributes those builds
+     * enhancer under the reserved account. That feature is gone, so the
+     * launch-time scrub must address exactly the attributes those builds
      * wrote — same service, literal `bedrock` account — and nothing else.
      */
     @Test
