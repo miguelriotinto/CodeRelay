@@ -3,7 +3,7 @@ import SwiftUI
 import CodeRelayClient
 
 @MainActor
-final class AddEditServerViewModel: ObservableObject {
+final class AddEditServerViewModel: ObservableObject, TLSPortForm {
 
     // MARK: - Form State
 

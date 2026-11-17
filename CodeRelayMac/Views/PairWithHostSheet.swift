@@ -19,7 +19,7 @@ struct PairWithHostSheet: View {
                 TextField("Host", text: $viewModel.host)
                     .autocorrectionDisabled()
                 TextField("Port", text: $viewModel.port)
-                Toggle("Use TLS (wss://)", isOn: $viewModel.useTLS)
+                Toggle("Use TLS (wss://)", isOn: viewModel.useTLSToggle)
                 TextField("Code (K7QP-2M4X)", text: $viewModel.code)
             }
             .formStyle(.grouped)

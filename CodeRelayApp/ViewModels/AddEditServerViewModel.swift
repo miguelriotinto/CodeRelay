@@ -4,7 +4,7 @@ import CodeRelayClient
 
 /// Drives the Add/Edit Server form. Configuration only — no connection logic.
 @MainActor
-final class AddEditServerViewModel: ObservableObject {
+final class AddEditServerViewModel: ObservableObject, TLSPortForm {
 
     enum Mode {
         case add

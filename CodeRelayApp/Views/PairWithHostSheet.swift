@@ -17,7 +17,7 @@ struct PairWithHostSheet: View {
                     TextField("silverwing.local", text: $viewModel.host)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                     TextField("Port", text: $viewModel.port).keyboardType(.numberPad)
-                    Toggle("Use TLS (wss://)", isOn: $viewModel.useTLS)
+                    Toggle("Use TLS (wss://)", isOn: viewModel.useTLSToggle)
                 }
                 Section("Pairing code") {
                     TextField("K7QP-2M4X", text: $viewModel.code)

@@ -41,7 +41,7 @@ struct AddEditServerView: View {
 
                     SecureField("Auth Token", text: $viewModel.token)
 
-                    Toggle("Use TLS", isOn: $viewModel.useTLS)
+                    Toggle("Use TLS", isOn: viewModel.useTLSToggle)
                 }
 
                 Section {

@@ -4,7 +4,7 @@ import CodeRelayClient
 import CodeRelayKit
 
 @MainActor
-final class PairingViewModel: ObservableObject {
+final class PairingViewModel: ObservableObject, TLSPortForm {
     @Published var host: String = ""
     @Published var port: String = "9200"
     @Published var useTLS: Bool = false
