@@ -174,8 +174,13 @@ struct TerminalContainerView: NSViewRepresentable {
         let delegate = TerminalCoordinator(viewModel: viewModel)
         let terminal = PasteAwareTerminalView(frame: host.bounds)
         terminal.terminalDelegate = delegate
-        terminal.onImagePaste = { [weak viewModel] data in
-            viewModel?.sendPasteImage(data)
+        // Go through the delegate, never a captured view model: a cached terminal
+        // outlives its session's view model (switching away via new/attach drops it,
+        // switching back makes a fresh one), and `updateNSView` re-points only
+        // `delegate.viewModel`. A captured weak view model went nil there, so
+        // image paste silently did nothing while typing still worked.
+        terminal.onImagePaste = { [weak delegate] data in
+            delegate?.viewModel?.sendPasteImage(data)
         }
         terminal.nativeBackgroundColor = .black
         terminal.nativeForegroundColor = .white

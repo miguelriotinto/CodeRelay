@@ -444,8 +444,13 @@ struct TerminalHostView: UIViewRepresentable {
         terminal.font = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         terminal.installColors(TerminalPalette.colors)
         terminal.changeScrollback(AppSettings.shared.terminalScrollbackLines)
-        terminal.onPasteImage = { [weak viewModel] imageData in
-            viewModel?.sendPasteImage(imageData)
+        // Go through the delegate, never a captured view model: a cached terminal
+        // outlives its session's view model (switching away via new/attach drops it,
+        // switching back makes a fresh one), and `updateUIView` re-points only
+        // `delegate.viewModel`. A captured weak view model went nil there, so
+        // image paste silently did nothing while typing still worked.
+        terminal.onPasteImage = { [weak delegate] imageData in
+            delegate?.viewModel?.sendPasteImage(imageData)
         }
 
         let cached = CachedIOSTerminal(view: terminal, delegate: delegate)
