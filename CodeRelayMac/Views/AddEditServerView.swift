@@ -25,7 +25,7 @@ struct AddEditServerView: View {
                     TextField("Host", text: $viewModel.host)
                         .autocorrectionDisabled()
                     TextField("Port", text: $viewModel.port)
-                    Toggle("Use TLS (wss://)", isOn: $viewModel.useTLS)
+                    Toggle("Use TLS (wss://)", isOn: viewModel.useTLSToggle)
                 }
                 Section("Authentication") {
                     SecureField("Token", text: $viewModel.token)
