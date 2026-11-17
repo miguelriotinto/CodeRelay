@@ -145,7 +145,7 @@ final class SessionLoadingPresentationTests: XCTestCase {
         XCTAssertEqual(p.title, "Loading session")
         XCTAssertEqual(p.status, "Loading session history…")
         XCTAssertEqual(p.detail, SessionLoadPhase.formatBytes(212_000))
-        XCTAssertEqual(p.subtitle, "Arya · studio")
+        XCTAssertEqual(p.subtitle, "Arya · STUDIO")
         XCTAssertFalse(p.allowsCancel)
         XCTAssertEqual(make(.authenticating).status, "Authenticating…")
         XCTAssertEqual(make(.attaching).detail, "0 KB",

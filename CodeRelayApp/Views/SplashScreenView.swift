@@ -8,8 +8,8 @@ struct SplashScreenView: View {
 
     let onComplete: () -> Void
 
-    // Black: the dark end of the app icon's tile, so the folder stack reads
-    // the same here as on the home screen.
+    // Black: the app icon's lower half, so the logo's black panel meets the
+    // background and the silver grid reads as on the home screen.
     private let brandColor = Color.black
 
     var body: some View {
@@ -17,8 +17,8 @@ struct SplashScreenView: View {
             brandColor.ignoresSafeArea()
 
             VStack(spacing: 20) {
-                // SplashLogo is the icon's folder stack on a transparent
-                // background (no opaque box), so nothing dark is revealed as the splash fades out
+                // SplashLogo is the app icon tile on a transparent background
+                // (no opaque box around it), so nothing dark is revealed as the splash fades out
                 // over the lighter ServerListView beneath it.
                 Image("SplashLogo")
                     .resizable()

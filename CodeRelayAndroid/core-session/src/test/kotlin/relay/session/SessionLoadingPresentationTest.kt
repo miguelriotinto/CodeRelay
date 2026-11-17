@@ -76,7 +76,7 @@ class SessionLoadingPresentationTest {
         assertEquals("Loading session", p.title)
         assertEquals("Loading session history…", p.status)
         assertEquals(SessionLoadPhase.formatBytes(212_000), p.detail)
-        assertEquals("Arya · studio", p.subtitle)
+        assertEquals("Arya · STUDIO", p.subtitle)
         assertFalse(p.allowsCancel)
         assertEquals("Authenticating…", make(SessionLoadPhase.Authenticating).status)
         assertNull(make(null).detail)

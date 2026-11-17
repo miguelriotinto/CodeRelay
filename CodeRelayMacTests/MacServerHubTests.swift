@@ -28,7 +28,7 @@ final class MacServerHubTests: XCTestCase {
         // the section title of the focus server.
         let p = SessionLoadingPresentation(loadPhase: .attaching, isRecovering: false, recoveryPhase: .reconnecting,
                                            sessionName: "Arya", serverName: "studio")
-        XCTAssertEqual(p.subtitle, "Arya · studio")
+        XCTAssertEqual(p.subtitle, "Arya · STUDIO")
         XCTAssertEqual(SessionLoadingSheetLayout.fixedWidth, 340, "width fixed; the height follows the content")
     }
 

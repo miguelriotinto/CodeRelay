@@ -8,11 +8,17 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ### New app icon
 
-Every client has a new icon: three stacked folders on a dark tile, the front
-folder's tab in orange. It replaces the CR mark in the iOS, macOS, Android
-and Linux app icons, both splash screens, the macOS menu bar and the Linux
-tray. All of them are generated from one vector master,
-`Scripts/icons/make-icons.py`.
+Every client has a new icon: a brushed-silver over black tile with a 3 x 2
+grid of panes (the active one hollow), an orange status dot and the "relay"
+wordmark. It replaces the CR mark in the iOS, macOS, Android and Linux app
+icons, both splash screens, the macOS menu bar and the Linux tray. All of
+them are generated from one vector master, `Scripts/icons/make-icons.py`.
+
+### Server names in uppercase everywhere
+
+The Reconnecting sheet, the iOS "Connection Lost" alert and the "attached
+from another device" / "ended while you were away" alerts now show server
+names in uppercase, like the sidebar and server list.
 
 ### Session takeover notices
 

@@ -54,7 +54,7 @@ struct CodeRelayMacApp: App {
         MenuBarExtra {
             MenuBarDropdown()
         } label: {
-            // The app icon's folder stack, as a template image so the bar tints it.
+            // The app icon's pane grid, as a template image so the bar tints it.
             Image("MenuBarIcon")
                 .renderingMode(.template)
         }

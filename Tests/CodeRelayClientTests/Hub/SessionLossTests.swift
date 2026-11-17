@@ -80,6 +80,6 @@ final class SessionLossTests: XCTestCase {
             SessionLossItem(serverId: UUID(), serverName: "studio", session: LostSession(id: UUID(), name: "Stannis")),
         ]
         XCTAssertEqual(SessionLossCopy.takenBody(mixed),
-                       "Renly (on mac-mini) and Stannis (on studio) were attached from another device.")
+                       "Renly (on MAC-MINI) and Stannis (on STUDIO) were attached from another device.")
     }
 }

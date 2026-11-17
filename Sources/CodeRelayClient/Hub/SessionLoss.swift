@@ -83,7 +83,7 @@ public enum SessionLossCopy {
 
     private static func body(_ items: [SessionLossItem], one: String, many: String) -> String {
         let multiServer = Set(items.map(\.serverId)).count > 1
-        let names = items.map { multiServer ? "\($0.session.name) (on \($0.serverName))" : $0.session.name }
+        let names = items.map { multiServer ? "\($0.session.name) (on \($0.serverName.uppercased()))" : $0.session.name }
         switch names.count {
         case 0: return ""
         case 1: return "\(names[0]) \(one)"
