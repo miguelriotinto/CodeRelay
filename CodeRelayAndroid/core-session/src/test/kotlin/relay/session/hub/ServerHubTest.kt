@@ -371,7 +371,7 @@ class ServerHubTest {
         h.slot(b.id)!!.reportLost(taken = listOf(lost("web")))
         pass.complete(Unit)
         hold.join(); runCurrent()
-        assertEquals("api (on Studio) and web (on b) were attached from another device.", h.hub.takenAlert.value?.message)
+        assertEquals("api (on STUDIO) and web (on B) were attached from another device.", h.hub.takenAlert.value?.message)
     }
 
     /** A batch landing while the dialog is unread joins it, under the same id; OK forgets it. */
@@ -410,9 +410,9 @@ class ServerHubTest {
         h.slot(a.id)!!.reportLost(taken = listOf(lost("zed"), lost("api")), ended = listOf(lost("gone")))
         pass.complete(Unit)
         hold.join(); runCurrent()
-        assertEquals("zed (on a), api (on a) and 1 other were attached from another device.",
+        assertEquals("zed (on A), api (on A) and 1 other were attached from another device.",
             h.hub.takenAlert.value?.message, "server a first, its own order kept, b's web last")
-        assertEquals("gone (on a) and old (on b) ended while you were away.", h.hub.notice.value)
+        assertEquals("gone (on A) and old (on B) ended while you were away.", h.hub.notice.value)
     }
 
     @Test fun enableBuildsWithEnableReason() = runTest {

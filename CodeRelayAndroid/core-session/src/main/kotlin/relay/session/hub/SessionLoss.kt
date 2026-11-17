@@ -60,7 +60,7 @@ object SessionLossCopy {
 
     private fun body(items: List<SessionLossItem>, one: String, many: String): String {
         val multiServer = items.map { it.serverId }.toSet().size > 1
-        val names = items.map { if (multiServer) "${it.session.name} (on ${it.serverName})" else it.session.name }
+        val names = items.map { if (multiServer) "${it.session.name} (on ${it.serverName.uppercase()})" else it.session.name }
         return when (names.size) {
             0 -> ""
             1 -> "${names[0]} $one"

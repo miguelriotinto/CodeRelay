@@ -58,7 +58,9 @@ public struct SessionLoadingPresentation: Equatable {
             return "0 KB"
         }()
         detail = isActive ? bytes : nil
-        let parts = [sessionName, serverName].compactMap { $0 }.filter { !$0.isEmpty }
+        // Server names display uppercased everywhere, as in the sidebar and
+        // server list headers.
+        let parts = [sessionName, serverName?.uppercased()].compactMap { $0 }.filter { !$0.isEmpty }
         subtitle = parts.isEmpty ? nil : parts.joined(separator: " · ")
         allowsCancel = isRecovering
         isReady = false

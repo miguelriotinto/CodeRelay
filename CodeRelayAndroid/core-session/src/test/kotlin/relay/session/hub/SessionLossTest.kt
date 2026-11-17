@@ -91,7 +91,7 @@ class SessionLossTest {
             SessionLossItem(UUID.randomUUID(), "studio", LostSession(UUID.randomUUID(), "Stannis")),
         )
         assertEquals(
-            "Renly (on mac-mini) and Stannis (on studio) were attached from another device.",
+            "Renly (on MAC-MINI) and Stannis (on STUDIO) were attached from another device.",
             SessionLossCopy.takenBody(mixed))
     }
 }

@@ -51,7 +51,8 @@ data class SessionLoadingPresentation private constructor(
         // The replay phase is the more specific status once it starts, even mid-recovery.
         status = loadPhase?.label ?: if (isRecovering) recoveryPhase.label else "",
         detail = if (sessionBound(loadPhase, expectsSession) || isRecovering) bytes(loadPhase) else null,
-        subtitle = listOfNotNull(sessionName, serverName).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { null },
+        // Server names display uppercased everywhere, as in the sidebar headers.
+        subtitle = listOfNotNull(sessionName, serverName?.uppercase()).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { null },
         allowsCancel = isRecovering,
         isReady = false,
         sessionAttached = sessionAttached,

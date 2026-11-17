@@ -19,8 +19,8 @@ import androidx.compose.ui.graphics.vector.PathParser
  * active Omarchy palette, so it sits correctly in a light or dark bar instead of
  * being a fixed-contrast PNG that disappears in one of them.
  *
- * The mark is the app icon's folder stack without its tile, as one even-odd
- * path — the same mark the macOS menu bar shows (`MenuBarIcon`). Both come
+ * The mark is the app icon's pane grid (top-middle pane hollow) without its
+ * tile, as one even-odd path — the same mark the macOS menu bar shows (`MenuBarIcon`). Both come
  * from `Scripts/icons/make-icons.py`.
  */
 class TrayIconPainter(
@@ -42,12 +42,12 @@ class TrayIconPainter(
     }
 
     private companion object {
-        const val GLYPH_WIDTH = 88f
-        const val GLYPH_HEIGHT = 84f
+        const val GLYPH_WIDTH = 84f
+        const val GLYPH_HEIGHT = 50.5f
 
-        /** The folder stack, in an 88 × 84 box (shared with MenuBarIcon.svg). */
+        /** The pane grid, in an 84 × 50.5 box (shared with MenuBarIcon.svg). */
         const val GLYPH_PATH =
-            "M0,74 L0,32 A6,6 0 0 1 6,26 L34,26 C38.95,26 38.05,38 43,38 L82,38 A6,6 0 0 1 88,44 L88,74 A10,10 0 0 1 78,84 L10,84 A10,10 0 0 1 0,74 Z M10.25,29.5 L22.75,29.5 A3.25,3.25 0 0 1 22.75,36 L10.25,36 A3.25,3.25 0 0 1 10.25,29.5 Z M6,22 L6,19 A6,6 0 0 1 12,13 L40,13 C44.95,13 44.05,25 49,25 L79,25 A6,6 0 0 1 85,31 L85,34 L43,34 C38.05,34 38.95,22 34,22 Z M12,9 L12,6 A6,6 0 0 1 18,0 L46,0 C50.95,0 50.05,12 55,12 L76,12 A6,6 0 0 1 82,18 L82,21 L49,21 C44.05,21 44.95,9 40,9 Z"
+            "M5,0 L19,0 A5,5 0 0 1 24,5 L24,18 A5,5 0 0 1 19,23 L5,23 A5,5 0 0 1 0,18 L0,5 A5,5 0 0 1 5,0 Z M35,0 L49,0 A5,5 0 0 1 54,5 L54,18 A5,5 0 0 1 49,23 L35,23 A5,5 0 0 1 30,18 L30,5 A5,5 0 0 1 35,0 Z M37.25,4.5 L46.75,4.5 A2.75,2.75 0 0 1 49.5,7.25 L49.5,15.75 A2.75,2.75 0 0 1 46.75,18.5 L37.25,18.5 A2.75,2.75 0 0 1 34.5,15.75 L34.5,7.25 A2.75,2.75 0 0 1 37.25,4.5 Z M65,0 L79,0 A5,5 0 0 1 84,5 L84,18 A5,5 0 0 1 79,23 L65,23 A5,5 0 0 1 60,18 L60,5 A5,5 0 0 1 65,0 Z M5,27.5 L19,27.5 A5,5 0 0 1 24,32.5 L24,45.5 A5,5 0 0 1 19,50.5 L5,50.5 A5,5 0 0 1 0,45.5 L0,32.5 A5,5 0 0 1 5,27.5 Z M35,27.5 L49,27.5 A5,5 0 0 1 54,32.5 L54,45.5 A5,5 0 0 1 49,50.5 L35,50.5 A5,5 0 0 1 30,45.5 L30,32.5 A5,5 0 0 1 35,27.5 Z M65,27.5 L79,27.5 A5,5 0 0 1 84,32.5 L84,45.5 A5,5 0 0 1 79,50.5 L65,50.5 A5,5 0 0 1 60,45.5 L60,32.5 A5,5 0 0 1 65,27.5 Z"
 
         val glyph: Path = PathParser().parsePathString(GLYPH_PATH).toPath()
             .apply { fillType = PathFillType.EvenOdd }

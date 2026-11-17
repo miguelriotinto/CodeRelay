@@ -332,7 +332,7 @@ private struct FocusCoordinatorAlerts: View {
             .alert("Connection Lost", isPresented: $coordinator.connectionTimedOut) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text("Unable to reconnect to \(serverName ?? "the server"). Check your network, then pull to refresh.")
+                Text("Unable to reconnect to \(serverName?.uppercased() ?? "the server"). Check your network, then pull to refresh.")
             }
             .alert("Error", isPresented: $coordinator.showError) {
                 Button("OK", role: .cancel) {}

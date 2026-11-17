@@ -303,9 +303,9 @@ final class ServerHubTests: XCTestCase {
         h.slot(a.id)!.releasePass()
         await hold?.value
         XCTAssertEqual(h.hub.takenAlert?.message,
-                       "zed (on a), api (on a) and 1 other were attached from another device.",
+                       "zed (on A), api (on A) and 1 other were attached from another device.",
                        "server a first (sidebar order), its own order kept, b's web last")
-        XCTAssertEqual(h.hub.notice, "gone (on a) and old (on b) ended while you were away.")
+        XCTAssertEqual(h.hub.notice, "gone (on A) and old (on B) ended while you were away.")
     }
 
     func testMultiServerBatchUsesDisplayNames() async {
@@ -321,7 +321,7 @@ final class ServerHubTests: XCTestCase {
         h.slot(b.id)!.reportLost(taken: [LostSession(id: UUID(), name: "web")])
         h.slot(b.id)!.releasePass()
         await hold?.value
-        XCTAssertEqual(h.hub.takenAlert?.message, "api (on Studio) and web (on b) were attached from another device.")
+        XCTAssertEqual(h.hub.takenAlert?.message, "api (on STUDIO) and web (on B) were attached from another device.")
     }
 
     func testEnableBuildsWithEnableReason() async {

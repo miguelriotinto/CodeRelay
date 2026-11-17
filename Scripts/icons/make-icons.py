@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Generate every Code[Relay] icon from one vector master.
 
-The mark is three stacked metallic folders on a dark tile, the front folder's
-tab carrying an orange pill, with "mux" set on the front folder. Each surface
+The mark is a two-tone tile: brushed silver over black, a 3 x 2 grid of dark
+rounded squares in the silver (the top-middle one hollow, the active pane),
+an orange status dot and the "relay" wordmark in the black. Each surface
 gets the right variant:
 
   tile   full-bleed square        iOS app icon, Android legacy, store images
   mac    824 px tile on the 1024 grid, transparent margin   macOS, Linux
   fg     opaque square, art inside the 66/108 safe zone      Android adaptive
-  stack  folders only, transparent                          splash logos
+  logo   the macOS tile with a faint rim, no wordmark        splash logos
   glyph  one even-odd path, single colour                   menu bar, tray
 
-Sizes of 64 px and below drop the "mux" lettering (a smudge at that size),
-and so do the splash logos, which print the app name under the mark.
-Everything is plain SVG paths and linear gradients, so NSImage renders it and
-no font is involved. Run from the repo root on macOS:
+Sizes of 64 px and below drop the wordmark (a smudge at that size), and so
+do the splash logos, which print the app name under the mark. The wordmark
+is Inter Regular (SIL Open Font License) baked into outlines, so rendering
+needs no font. Everything is plain paths and linear gradients, which NSImage
+renders. Run from the repo root on macOS:
 
     python3 Scripts/icons/make-icons.py
 """
@@ -22,66 +24,70 @@ import os, json, shutil, subprocess, tempfile
 
 def f(v): return f"{v:.2f}".rstrip("0").rstrip(".")
 
-def folder(x0, x1, top, step, sw, tabw, rt, rtr, rb, bottom):
-    """Folder silhouette: tab at top-left, S-shoulder down `step` to the body."""
-    xs = x0 + tabw
-    return (f"M{f(x0)},{f(bottom-rb)} L{f(x0)},{f(top+rt)} "
-            f"A{f(rt)},{f(rt)} 0 0 1 {f(x0+rt)},{f(top)} L{f(xs)},{f(top)} "
-            f"C{f(xs+sw*.55)},{f(top)} {f(xs+sw*.45)},{f(top+step)} {f(xs+sw)},{f(top+step)} "
-            f"L{f(x1-rtr)},{f(top+step)} A{f(rtr)},{f(rtr)} 0 0 1 {f(x1)},{f(top+step+rtr)} "
-            f"L{f(x1)},{f(bottom-rb)} A{f(rb)},{f(rb)} 0 0 1 {f(x1-rb)},{f(bottom)} "
-            f"L{f(x0+rb)},{f(bottom)} A{f(rb)},{f(rb)} 0 0 1 {f(x0)},{f(bottom-rb)} Z")
+def rrect(x, y, w, h, r):
+    if r <= 0:
+        return f"M{f(x)},{f(y)} L{f(x+w)},{f(y)} L{f(x+w)},{f(y+h)} L{f(x)},{f(y+h)} Z"
+    return (f"M{f(x+r)},{f(y)} L{f(x+w-r)},{f(y)} A{f(r)},{f(r)} 0 0 1 {f(x+w)},{f(y+r)} "
+            f"L{f(x+w)},{f(y+h-r)} A{f(r)},{f(r)} 0 0 1 {f(x+w-r)},{f(y+h)} L{f(x+r)},{f(y+h)} "
+            f"A{f(r)},{f(r)} 0 0 1 {f(x)},{f(y+h-r)} L{f(x)},{f(y+r)} A{f(r)},{f(r)} 0 0 1 {f(x+r)},{f(y)} Z")
 
-def pill(x, y, w, h):
-    r = h / 2
-    return (f"M{f(x+r)},{f(y)} L{f(x+w-r)},{f(y)} A{f(r)},{f(r)} 0 0 1 {f(x+w-r)},{f(y+h)} "
-            f"L{f(x+r)},{f(y+h)} A{f(r)},{f(r)} 0 0 1 {f(x+r)},{f(y)} Z")
+def half(top, s, split, r):
+    """Top (silver) or bottom (black) part of an s x s tile with corner radius r."""
+    if r <= 0:
+        return (f"M0,0 L{f(s)},0 L{f(s)},{f(split)} L0,{f(split)} Z" if top else
+                f"M0,{f(split)} L{f(s)},{f(split)} L{f(s)},{f(s)} L0,{f(s)} Z")
+    if top:
+        return (f"M0,{f(split)} L0,{f(r)} A{f(r)},{f(r)} 0 0 1 {f(r)},0 L{f(s-r)},0 "
+                f"A{f(r)},{f(r)} 0 0 1 {f(s)},{f(r)} L{f(s)},{f(split)} Z")
+    return (f"M0,{f(split)} L{f(s)},{f(split)} L{f(s)},{f(s-r)} A{f(r)},{f(r)} 0 0 1 {f(s-r)},{f(s)} "
+            f"L{f(r)},{f(s)} A{f(r)},{f(r)} 0 0 1 0,{f(s-r)} Z")
 
-# --- colour mark (stack units: front folder x 82..495, tab tops 78/119/160) ---
-TABW, E = 165, 5
-def layer(i): return dict(x0=82 + 18*i, x1=495 - 8*i, top=160 - 41*i, bottom=455 - 41*i)
-
-MUX = ("M369,415 L369,393 M369,400 C369,395.5 372,393 376,393 C380,393 383,395.5 383,400 L383,415 "
-       "M383,400 C383,395.5 386,393 390,393 C394,393 397,395.5 397,400 L397,415 "
-       "M405,393 L405,408 C405,412.5 408,415 412,415 C416,415 419,412.5 419,408 M419,393 L419,415 "
-       "M427,393 L442.5,415 M442.5,393 L427,415")
+# --- colour mark, in a 1024 tile (measured from the reference render) ---
+SPLIT = 521
+SQ_W, SQ_H, SQ_R, RING = 167, 160, 24, 13
+COLS, ROWS = (220, 430, 639), (110, 299)
+DOT = (170, 866, 35.5)
+# "relay", Inter Regular outlines in font units (2048/em), left edge at 0, baseline 0.
+RELAY = "M0 0V-1118H174V-946H186Q217 -1031 296 -1082Q376 -1134 476 -1134Q496 -1134 524 -1133Q551 -1132 567 -1131V-950Q559 -952 527 -956Q495 -960 459 -960Q338 -960 259 -886Q180 -813 180 -700V0ZM1241 24Q1079 24 962 -48Q844 -120 780 -249Q717 -378 717 -550Q717 -722 779 -853Q841 -984 954 -1058Q1068 -1132 1220 -1132Q1309 -1132 1396 -1102Q1482 -1073 1552 -1008Q1623 -942 1665 -835Q1707 -728 1707 -573V-498H899Q906 -323 1000 -230Q1093 -136 1242 -136Q1341 -136 1412 -180Q1484 -223 1515 -308L1689 -260Q1650 -133 1532 -54Q1413 24 1241 24ZM900 -650H1524Q1511 -793 1434 -882Q1358 -972 1220 -972Q1124 -972 1054 -927Q985 -882 945 -809Q905 -736 900 -650ZM2145 -1490V0H1965V-1490ZM2774 26Q2668 26 2582 -14Q2495 -54 2444 -131Q2393 -208 2393 -318Q2393 -414 2431 -474Q2469 -534 2532 -568Q2596 -603 2673 -620Q2750 -637 2828 -647Q2928 -660 2991 -667Q3054 -674 3084 -691Q3115 -708 3115 -749V-755Q3115 -859 3056 -916Q2997 -974 2881 -974Q2760 -974 2692 -922Q2624 -869 2598 -810L2425 -867Q2468 -969 2541 -1026Q2614 -1084 2702 -1108Q2790 -1132 2876 -1132Q2932 -1132 3004 -1118Q3075 -1105 3142 -1065Q3208 -1025 3252 -946Q3295 -868 3295 -737V0H3118V-152H3106Q3087 -113 3045 -72Q3003 -30 2936 -2Q2869 26 2774 26ZM2805 -133Q2905 -133 2974 -172Q3043 -211 3079 -274Q3115 -336 3115 -404V-559Q3104 -546 3067 -536Q3030 -525 2982 -517Q2935 -509 2890 -504Q2846 -498 2820 -495Q2755 -487 2698 -468Q2642 -448 2608 -410Q2574 -373 2574 -309Q2574 -222 2640 -178Q2705 -133 2805 -133ZM3593 405 3639 249 3658 254Q3741 276 3801 248Q3861 219 3902 99L3934 6L3507 -1118H3704L3942 -455Q3968 -382 3988 -310Q4009 -238 4028 -168Q4047 -238 4068 -310Q4088 -382 4114 -455L4354 -1118H4550L4059 167Q4008 300 3926 363Q3844 426 3725 426Q3677 426 3642 419Q3607 412 3593 405Z"
+RELAY_X, RELAY_BASE, RELAY_K = 768.5, 885, 0.03115
 
 DEFS = """<defs>
-  <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#424245"/><stop offset="1" stop-color="#121213"/></linearGradient>
-  <linearGradient id="card0" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#e2e2e4"/><stop offset="1" stop-color="#b9b9bc"/></linearGradient>
-  <linearGradient id="card1" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#d6d6d8"/><stop offset="1" stop-color="#adadb0"/></linearGradient>
-  <linearGradient id="card2" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#cacacc"/><stop offset="1" stop-color="#a2a2a5"/></linearGradient>
-  <linearGradient id="slot" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#101011"/><stop offset="1" stop-color="#2a2a2c"/></linearGradient>
-  <linearGradient id="orange" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7a30"/><stop offset="1" stop-color="#e85812"/></linearGradient>
+  <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e9eaed"/><stop offset="1" stop-color="#c3c5c9"/></linearGradient>
+  <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/><stop offset="0.12" stop-color="#ffffff" stop-opacity="0"/><stop offset="0.82" stop-color="#000000" stop-opacity="0"/><stop offset="1" stop-color="#000000" stop-opacity="0.16"/></linearGradient>
+  <linearGradient id="black" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#282828"/><stop offset="1" stop-color="#171717"/></linearGradient>
+  <linearGradient id="well" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#141414"/><stop offset="1" stop-color="#232323"/></linearGradient>
 </defs>"""
 
-def stack(text):
+def tile_body(r, text, rim=False, bleed=None):
+    """The mark in 1024 tile space. r: corner radius (0 = square). bleed: extend
+    the two halves to cover this many units beyond each edge (adaptive icons)."""
     out = []
-    for i in (2, 1, 0):
-        L = layer(i)
-        back = folder(L["x0"], L["x1"], L["top"], 18, 22, TABW, 22, 18, 40, L["bottom"])
-        slot = folder(L["x0"]+E, L["x1"]-E, L["top"]+E, 18, 22, TABW-E, 17, 13, 35, L["bottom"]-E)
-        front = folder(L["x0"], L["x1"], L["top"], 45, 30, TABW, 22, 22, 40, L["bottom"])
-        for w, o in ((16, .05), (10, .07), (5, .10)):  # soft shadow without filters
-            out.append(f'<path d="{back}" transform="translate(0 4)" fill="#000" fill-opacity="{o}" '
-                       f'stroke="#000" stroke-opacity="{o}" stroke-width="{w}" stroke-linejoin="round"/>')
-        out += [f'<path d="{back}" fill="url(#card{i})"/>', f'<path d="{slot}" fill="url(#slot)"/>',
-                f'<path d="{front}" fill="url(#card{i})"/>']
-        px, py = L["x0"] + 60, L["top"] + 12
-        if i == 0:
-            out.append(f'<path d="{pill(px, py, 80, 26)}" fill="url(#orange)"/>')
-        else:
-            out.append(f'<path d="{pill(px-1.5, py-1.5, 83, 29)}" fill="#9a9a9d"/>')
-            out.append(f'<path d="{pill(px, py, 80, 26)}" fill="url(#slot)"/>')
+    if bleed:
+        b = bleed
+        out += [f'<rect x="{-b}" y="{-b}" width="{1024+2*b}" height="{SPLIT+b}" fill="url(#silver)"/>',
+                f'<rect x="{-b}" y="{SPLIT}" width="{1024+2*b}" height="{1024-SPLIT+b}" fill="url(#black)"/>']
+    else:
+        top, bottom = half(True, 1024, SPLIT, r), half(False, 1024, SPLIT, r)
+        out += [f'<path d="{top}" fill="url(#silver)"/>', f'<path d="{top}" fill="url(#edge)"/>',
+                f'<path d="{bottom}" fill="url(#black)"/>',
+                f'<path d="M0,1.5 L1024,1.5" stroke="#ffffff" stroke-opacity="0.55" stroke-width="3"/>' if r == 0 else
+                f'<path d="M{r},1.5 L{1024-r},1.5" stroke="#ffffff" stroke-opacity="0.55" stroke-width="3"/>']
+    out.append(f'<rect x="0" y="{SPLIT-3}" width="1024" height="3" fill="#000000" fill-opacity="0.22"/>')
+    for row, y in enumerate(ROWS):
+        for col, x in enumerate(COLS):
+            outer = rrect(x, y, SQ_W, SQ_H, SQ_R)
+            if (row, col) == (0, 1):   # the hollow, active pane
+                inner = rrect(x + RING, y + RING, SQ_W - 2*RING, SQ_H - 2*RING, SQ_R - RING)
+                out.append(f'<path d="{outer} {inner}" fill-rule="evenodd" fill="#151515"/>')
+            else:
+                out.append(f'<path d="{outer}" fill="url(#well)"/>')
+    cx, cy, cr = DOT
+    out.append(f'<circle cx="{cx}" cy="{cy}" r="{cr}" fill="#ff8800"/>')
     if text:
-        out.append(f'<path d="{MUX}" fill="none" stroke="#2c2c2e" stroke-width="3.8"/>')
+        out.append(f'<path d="{RELAY}" fill="#a8a9ad" transform="translate({RELAY_X} {RELAY_BASE}) scale({RELAY_K})"/>')
+    if rim:
+        out.append(f'<path d="{rrect(1.5, 1.5, 1021, 1021, max(r - 1.5, 0))}" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="3"/>')
     return "\n".join(out)
-
-CX, CY, STACK_W = 288.5, 270, 413
-
-def placed(cx, cy, width, text):
-    k = width / STACK_W
-    return f'<g transform="translate({f(cx - CX*k)} {f(cy - CY*k)}) scale({f(k)})">\n{stack(text)}\n</g>'
 
 def svg(body, comment, size=1024):
     return (f'<?xml version="1.0" encoding="UTF-8"?>\n<!-- {comment} Generated by '
@@ -89,36 +95,32 @@ def svg(body, comment, size=1024):
             f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">\n'
             f'{DEFS}\n{body}\n</svg>\n')
 
-FULL = '<rect width="1024" height="1024" fill="url(#tile)"/>\n'
+def at(x, y, k, body): return f'<g transform="translate({f(x)} {f(y)}) scale({f(k)})">\n{body}\n</g>'
+
+MAC_K = 824 / 1024          # macOS grid: 824 px tile at (100, 100); 185 px corners
+MAC_R = 185 / MAC_K
+FG_K = 60 / 108             # Android: mark inside 60 of the 108 dp (safe circle is 66)
 VARIANTS = {
-    "tile":  lambda t: svg(FULL + placed(512, 520, 660, t), "Full-bleed app icon tile."),
-    "mac":   lambda t: svg('<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>\n'
-                           + placed(512, 518, 560, t), "Code[Relay] app icon on the macOS 824px grid."),
-    "fg":    lambda t: svg(FULL + placed(512, 518, 450, t), "Android adaptive foreground."),
-    "stack": lambda t: svg(placed(512, 512, 900, t), "Splash logo: the folder stack."),
+    "tile": lambda t: svg(tile_body(0, t), "Full-bleed app icon tile."),
+    "mac":  lambda t: svg(at(100, 100, MAC_K, tile_body(MAC_R, t)), "Code[Relay] app icon on the macOS 824px grid."),
+    "fg":   lambda t: svg(at(512 - 512*FG_K, 512 - 512*FG_K, FG_K, tile_body(0, t, bleed=512/FG_K)),
+                          "Android adaptive foreground (opaque)."),
+    "logo": lambda t: svg(at(100, 100, MAC_K, tile_body(MAC_R, t, rim=True)), "Splash logo."),
 }
 
-# --- single-colour glyph (88 x 84 box) ---
-G_TABW, G_SW, G_STEP, G_RT, G_RB, G_GAP = 34, 9, 12, 6, 10, 4
-GLYPH_W, GLYPH_H = 88, 84
-def g_layer(k): return dict(x0=6*k, x1=88 - 3*k, top=26 - 13*k)
-
-def g_strip(k):
-    """The part of back folder k left visible above folder k-1, minus a gap."""
-    a, b = g_layer(k), g_layer(k - 1)
-    ya, yb = b["top"] - G_GAP, b["top"] + G_STEP - G_GAP
-    xs, sx = b["x0"] + G_TABW, b["x0"] + G_TABW + G_SW
-    x0, x1, t = a["x0"], a["x1"], a["top"]
-    return (f"M{f(x0)},{f(ya)} L{f(x0)},{f(t+G_RT)} A{G_RT},{G_RT} 0 0 1 {f(x0+G_RT)},{f(t)} "
-            f"L{f(x0+G_TABW)},{f(t)} C{f(x0+G_TABW+G_SW*.55)},{f(t)} {f(x0+G_TABW+G_SW*.45)},{f(t+G_STEP)} "
-            f"{f(x0+G_TABW+G_SW)},{f(t+G_STEP)} L{f(x1-G_RT)},{f(t+G_STEP)} "
-            f"A{G_RT},{G_RT} 0 0 1 {f(x1)},{f(t+G_STEP+G_RT)} L{f(x1)},{f(yb)} L{f(sx)},{f(yb)} "
-            f"C{f(xs+G_SW*.45)},{f(yb)} {f(xs+G_SW*.55)},{f(ya)} {f(xs)},{f(ya)} Z")
+# --- single-colour glyph: the 3 x 2 grid, top-middle hollow (84 x 50.5 box) ---
+G_W, G_H, G_GX, G_GY, G_R, G_RING = 24, 23, 6, 4.5, 5, 4.5
+GLYPH_W, GLYPH_H = 3*G_W + 2*G_GX, 2*G_H + G_GY
 
 def glyph_path():
-    a = g_layer(0)
-    return " ".join([folder(a["x0"], a["x1"], a["top"], G_STEP, G_SW, G_TABW, G_RT, G_RT, G_RB, GLYPH_H),
-                     pill(a["x0"] + 7, a["top"] + 3.5, 19, 6.5), g_strip(1), g_strip(2)])
+    parts = []
+    for row in range(2):
+        for col in range(3):
+            x, y = col * (G_W + G_GX), row * (G_H + G_GY)
+            parts.append(rrect(x, y, G_W, G_H, G_R))
+            if (row, col) == (0, 1):
+                parts.append(rrect(x + G_RING, y + G_RING, G_W - 2*G_RING, G_H - 2*G_RING, G_R - G_RING/2))
+    return " ".join(parts)
 
 # --- outputs ---
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -136,7 +138,7 @@ def main():
 
     def render(variant, out, px, opaque=False):
         os.makedirs(os.path.dirname(out), exist_ok=True)
-        text = px > 64 and variant != "stack"
+        text = px > 64 and variant != "logo"
         subprocess.run([renderer, srcs[(variant, text)], out, str(px)] + (["opaque"] if opaque else []), check=True)
 
     # iOS: every file in the asset catalog, opaque full-bleed; Icon Composer layer for iOS 26+.
@@ -147,7 +149,7 @@ def main():
     shutil.rmtree(os.path.join(icon, "Assets"), ignore_errors=True)
     render("tile", os.path.join(icon, "Assets", "icon.png"), 1024, opaque=True)
     for s, sfx in ((240, ""), (480, "@2x"), (720, "@3x")):
-        render("stack", p(f"CodeRelayApp/Assets.xcassets/SplashLogo.imageset/SplashLogo{sfx}.png"), s)
+        render("logo", p(f"CodeRelayApp/Assets.xcassets/SplashLogo.imageset/SplashLogo{sfx}.png"), s)
 
     # macOS: asset catalog + the prebuilt .icns the app actually ships + menu bar template.
     mac = p("CodeRelayMac/Assets.xcassets/AppIcon.appiconset")
@@ -158,11 +160,11 @@ def main():
         render("mac", os.path.join(iconset, f"icon_{s}x{s}.png"), s)
         render("mac", os.path.join(iconset, f"icon_{s}x{s}@2x.png"), s * 2)
     subprocess.run(["iconutil", "-c", "icns", iconset, "-o", p("CodeRelayMac/CodeRelayIcon.icns")], check=True)
-    h = 16; w = round(h * GLYPH_W / GLYPH_H)
+    h = 13; w = round(h * GLYPH_W / GLYPH_H)
     open(p("CodeRelayMac/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.svg"), "w").write(
-        '<?xml version="1.0" encoding="UTF-8"?>\n<!-- The app icon\'s folder stack as a menu bar template '
+        '<?xml version="1.0" encoding="UTF-8"?>\n<!-- The app icon\'s pane grid as a menu bar template '
         'image: macOS tints it for light/dark bars. Generated by Scripts/icons/make-icons.py. -->\n'
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {GLYPH_W} {GLYPH_H}">\n'
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {f(GLYPH_W)} {f(GLYPH_H)}">\n'
         f'  <path fill="#000000" fill-rule="evenodd" d="{glyph_path()}"/>\n</svg>\n')
 
     # Android: legacy + round fallbacks, adaptive foreground, Compose splash, store sources.
@@ -172,7 +174,7 @@ def main():
             render("tile", os.path.join(res, f"mipmap-{d}", fn), s, opaque=True)
         render("fg", os.path.join(res, f"mipmap-{d}", "ic_launcher_foreground.png"), s * 9 // 4, opaque=True)
         render("tile", p(f"AppIcons/android/mipmap-{d}/ic_launcher.png"), s, opaque=True)
-    render("stack", os.path.join(res, "drawable-nodpi", "splash_logo.png"), 512)
+    render("logo", os.path.join(res, "drawable-nodpi", "splash_logo.png"), 512)
     render("tile", p("AppIcons/appstore.png"), 1024, opaque=True)
     render("tile", p("AppIcons/playstore.png"), 512, opaque=True)
 
@@ -180,7 +182,7 @@ def main():
     open(p("CodeRelayLinux/packaging/coderelay.svg"), "w").write(VARIANTS["mac"](True))
     render("mac", p("CodeRelayLinux/packaging/coderelay.png"), 512)
 
-    print("glyph path (TrayIcon.kt GLYPH_PATH, 88 x 84):\n" + glyph_path())
+    print(f"glyph path (TrayIcon.kt GLYPH_PATH, {f(GLYPH_W)} x {f(GLYPH_H)}):\n" + glyph_path())
     shutil.rmtree(tmp)
 
 if __name__ == "__main__":
