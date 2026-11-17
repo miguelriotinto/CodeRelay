@@ -255,7 +255,11 @@ final class TerminalViewModelTests: XCTestCase {
         vm.receiveOutput(Data([0x42]))            // full-width frame
         XCTAssertTrue(received.isEmpty, "Output must be held while coalescing")
 
-        try await waitFor(timeout: .milliseconds(600)) { !received.isEmpty }
+        // The flush is due ~220 ms (`refreshQuietWindow`) after the last chunk;
+        // the wait polls, so a generous ceiling costs nothing when it passes
+        // and absorbs a loaded CI runner starving the main-actor timer task
+        // (600 ms timed out with zero deliveries on a hosted macOS runner).
+        try await waitFor(timeout: .seconds(3)) { !received.isEmpty }
         XCTAssertEqual(received.count, 1, "Coalesced burst must deliver exactly once")
         XCTAssertEqual(received[0], Data([0x41, 0x42]))
     }
