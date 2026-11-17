@@ -8,8 +8,8 @@ struct SplashScreenView: View {
 
     let onComplete: () -> Void
 
-    // Matches the sRGB background of AppIcon/SplashLogo (black). Keep in sync
-    // with the icon PNG — if the icon ever changes, resample and update here.
+    // Black: the dark end of the app icon's tile, so the folder stack reads
+    // the same here as on the home screen.
     private let brandColor = Color.black
 
     var body: some View {
@@ -17,8 +17,8 @@ struct SplashScreenView: View {
             brandColor.ignoresSafeArea()
 
             VStack(spacing: 20) {
-                // SplashLogo is a white CR glyph on a transparent background (no
-                // opaque box), so nothing dark is revealed as the splash fades out
+                // SplashLogo is the icon's folder stack on a transparent
+                // background (no opaque box), so nothing dark is revealed as the splash fades out
                 // over the lighter ServerListView beneath it.
                 Image("SplashLogo")
                     .resizable()

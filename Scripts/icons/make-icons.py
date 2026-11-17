@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""Generate every Code[Relay] icon from one vector master.
+
+The mark is three stacked metallic folders on a dark tile, the front folder's
+tab carrying an orange pill, with "mux" set on the front folder. Each surface
+gets the right variant:
+
+  tile   full-bleed square        iOS app icon, Android legacy, store images
+  mac    824 px tile on the 1024 grid, transparent margin   macOS, Linux
+  fg     opaque square, art inside the 66/108 safe zone      Android adaptive
+  stack  folders only, transparent                          splash logos
+  glyph  one even-odd path, single colour                   menu bar, tray
+
+Sizes of 64 px and below drop the "mux" lettering (a smudge at that size),
+and so do the splash logos, which print the app name under the mark.
+Everything is plain SVG paths and linear gradients, so NSImage renders it and
+no font is involved. Run from the repo root on macOS:
+
+    python3 Scripts/icons/make-icons.py
+"""
+import os, json, shutil, subprocess, tempfile
+
+def f(v): return f"{v:.2f}".rstrip("0").rstrip(".")
+
+def folder(x0, x1, top, step, sw, tabw, rt, rtr, rb, bottom):
+    """Folder silhouette: tab at top-left, S-shoulder down `step` to the body."""
+    xs = x0 + tabw
+    return (f"M{f(x0)},{f(bottom-rb)} L{f(x0)},{f(top+rt)} "
+            f"A{f(rt)},{f(rt)} 0 0 1 {f(x0+rt)},{f(top)} L{f(xs)},{f(top)} "
+            f"C{f(xs+sw*.55)},{f(top)} {f(xs+sw*.45)},{f(top+step)} {f(xs+sw)},{f(top+step)} "
+            f"L{f(x1-rtr)},{f(top+step)} A{f(rtr)},{f(rtr)} 0 0 1 {f(x1)},{f(top+step+rtr)} "
+            f"L{f(x1)},{f(bottom-rb)} A{f(rb)},{f(rb)} 0 0 1 {f(x1-rb)},{f(bottom)} "
+            f"L{f(x0+rb)},{f(bottom)} A{f(rb)},{f(rb)} 0 0 1 {f(x0)},{f(bottom-rb)} Z")
+
+def pill(x, y, w, h):
+    r = h / 2
+    return (f"M{f(x+r)},{f(y)} L{f(x+w-r)},{f(y)} A{f(r)},{f(r)} 0 0 1 {f(x+w-r)},{f(y+h)} "
+            f"L{f(x+r)},{f(y+h)} A{f(r)},{f(r)} 0 0 1 {f(x+r)},{f(y)} Z")
+
+# --- colour mark (stack units: front folder x 82..495, tab tops 78/119/160) ---
+TABW, E = 165, 5
+def layer(i): return dict(x0=82 + 18*i, x1=495 - 8*i, top=160 - 41*i, bottom=455 - 41*i)
+
+MUX = ("M369,415 L369,393 M369,400 C369,395.5 372,393 376,393 C380,393 383,395.5 383,400 L383,415 "
+       "M383,400 C383,395.5 386,393 390,393 C394,393 397,395.5 397,400 L397,415 "
+       "M405,393 L405,408 C405,412.5 408,415 412,415 C416,415 419,412.5 419,408 M419,393 L419,415 "
+       "M427,393 L442.5,415 M442.5,393 L427,415")
+
+DEFS = """<defs>
+  <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#424245"/><stop offset="1" stop-color="#121213"/></linearGradient>
+  <linearGradient id="card0" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#e2e2e4"/><stop offset="1" stop-color="#b9b9bc"/></linearGradient>
+  <linearGradient id="card1" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#d6d6d8"/><stop offset="1" stop-color="#adadb0"/></linearGradient>
+  <linearGradient id="card2" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#cacacc"/><stop offset="1" stop-color="#a2a2a5"/></linearGradient>
+  <linearGradient id="slot" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#101011"/><stop offset="1" stop-color="#2a2a2c"/></linearGradient>
+  <linearGradient id="orange" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7a30"/><stop offset="1" stop-color="#e85812"/></linearGradient>
+</defs>"""
+
+def stack(text):
+    out = []
+    for i in (2, 1, 0):
+        L = layer(i)
+        back = folder(L["x0"], L["x1"], L["top"], 18, 22, TABW, 22, 18, 40, L["bottom"])
+        slot = folder(L["x0"]+E, L["x1"]-E, L["top"]+E, 18, 22, TABW-E, 17, 13, 35, L["bottom"]-E)
+        front = folder(L["x0"], L["x1"], L["top"], 45, 30, TABW, 22, 22, 40, L["bottom"])
+        for w, o in ((16, .05), (10, .07), (5, .10)):  # soft shadow without filters
+            out.append(f'<path d="{back}" transform="translate(0 4)" fill="#000" fill-opacity="{o}" '
+                       f'stroke="#000" stroke-opacity="{o}" stroke-width="{w}" stroke-linejoin="round"/>')
+        out += [f'<path d="{back}" fill="url(#card{i})"/>', f'<path d="{slot}" fill="url(#slot)"/>',
+                f'<path d="{front}" fill="url(#card{i})"/>']
+        px, py = L["x0"] + 60, L["top"] + 12
+        if i == 0:
+            out.append(f'<path d="{pill(px, py, 80, 26)}" fill="url(#orange)"/>')
+        else:
+            out.append(f'<path d="{pill(px-1.5, py-1.5, 83, 29)}" fill="#9a9a9d"/>')
+            out.append(f'<path d="{pill(px, py, 80, 26)}" fill="url(#slot)"/>')
+    if text:
+        out.append(f'<path d="{MUX}" fill="none" stroke="#2c2c2e" stroke-width="3.8"/>')
+    return "\n".join(out)
+
+CX, CY, STACK_W = 288.5, 270, 413
+
+def placed(cx, cy, width, text):
+    k = width / STACK_W
+    return f'<g transform="translate({f(cx - CX*k)} {f(cy - CY*k)}) scale({f(k)})">\n{stack(text)}\n</g>'
+
+def svg(body, comment, size=1024):
+    return (f'<?xml version="1.0" encoding="UTF-8"?>\n<!-- {comment} Generated by '
+            f'Scripts/icons/make-icons.py; edit that, not this file. -->\n'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">\n'
+            f'{DEFS}\n{body}\n</svg>\n')
+
+FULL = '<rect width="1024" height="1024" fill="url(#tile)"/>\n'
+VARIANTS = {
+    "tile":  lambda t: svg(FULL + placed(512, 520, 660, t), "Full-bleed app icon tile."),
+    "mac":   lambda t: svg('<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>\n'
+                           + placed(512, 518, 560, t), "Code[Relay] app icon on the macOS 824px grid."),
+    "fg":    lambda t: svg(FULL + placed(512, 518, 450, t), "Android adaptive foreground."),
+    "stack": lambda t: svg(placed(512, 512, 900, t), "Splash logo: the folder stack."),
+}
+
+# --- single-colour glyph (88 x 84 box) ---
+G_TABW, G_SW, G_STEP, G_RT, G_RB, G_GAP = 34, 9, 12, 6, 10, 4
+GLYPH_W, GLYPH_H = 88, 84
+def g_layer(k): return dict(x0=6*k, x1=88 - 3*k, top=26 - 13*k)
+
+def g_strip(k):
+    """The part of back folder k left visible above folder k-1, minus a gap."""
+    a, b = g_layer(k), g_layer(k - 1)
+    ya, yb = b["top"] - G_GAP, b["top"] + G_STEP - G_GAP
+    xs, sx = b["x0"] + G_TABW, b["x0"] + G_TABW + G_SW
+    x0, x1, t = a["x0"], a["x1"], a["top"]
+    return (f"M{f(x0)},{f(ya)} L{f(x0)},{f(t+G_RT)} A{G_RT},{G_RT} 0 0 1 {f(x0+G_RT)},{f(t)} "
+            f"L{f(x0+G_TABW)},{f(t)} C{f(x0+G_TABW+G_SW*.55)},{f(t)} {f(x0+G_TABW+G_SW*.45)},{f(t+G_STEP)} "
+            f"{f(x0+G_TABW+G_SW)},{f(t+G_STEP)} L{f(x1-G_RT)},{f(t+G_STEP)} "
+            f"A{G_RT},{G_RT} 0 0 1 {f(x1)},{f(t+G_STEP+G_RT)} L{f(x1)},{f(yb)} L{f(sx)},{f(yb)} "
+            f"C{f(xs+G_SW*.45)},{f(yb)} {f(xs+G_SW*.55)},{f(ya)} {f(xs)},{f(ya)} Z")
+
+def glyph_path():
+    a = g_layer(0)
+    return " ".join([folder(a["x0"], a["x1"], a["top"], G_STEP, G_SW, G_TABW, G_RT, G_RT, G_RB, GLYPH_H),
+                     pill(a["x0"] + 7, a["top"] + 3.5, 19, 6.5), g_strip(1), g_strip(2)])
+
+# --- outputs ---
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+def p(*parts): return os.path.join(ROOT, *parts)
+
+def main():
+    tmp = tempfile.mkdtemp()
+    renderer = os.path.join(tmp, "render")
+    subprocess.run(["swiftc", "-O", p("Scripts/icons/render.swift"), "-o", renderer], check=True)
+    srcs = {}
+    for name, make in VARIANTS.items():
+        for text in (True, False):
+            path = os.path.join(tmp, f"{name}{'' if text else '-notext'}.svg")
+            open(path, "w").write(make(text)); srcs[(name, text)] = path
+
+    def render(variant, out, px, opaque=False):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        text = px > 64 and variant != "stack"
+        subprocess.run([renderer, srcs[(variant, text)], out, str(px)] + (["opaque"] if opaque else []), check=True)
+
+    # iOS: every file in the asset catalog, opaque full-bleed; Icon Composer layer for iOS 26+.
+    ios = p("CodeRelayApp/Assets.xcassets/AppIcon.appiconset")
+    for fn in os.listdir(ios):
+        if fn.endswith(".png"): render("tile", os.path.join(ios, fn), int(fn[:-4]), opaque=True)
+    icon = p("CodeRelayApp/AppIcon.icon")
+    shutil.rmtree(os.path.join(icon, "Assets"), ignore_errors=True)
+    render("tile", os.path.join(icon, "Assets", "icon.png"), 1024, opaque=True)
+    for s, sfx in ((240, ""), (480, "@2x"), (720, "@3x")):
+        render("stack", p(f"CodeRelayApp/Assets.xcassets/SplashLogo.imageset/SplashLogo{sfx}.png"), s)
+
+    # macOS: asset catalog + the prebuilt .icns the app actually ships + menu bar template.
+    mac = p("CodeRelayMac/Assets.xcassets/AppIcon.appiconset")
+    for fn in os.listdir(mac):
+        if fn.endswith(".png"): render("mac", os.path.join(mac, fn), int(fn[:-4]))
+    iconset = os.path.join(tmp, "CodeRelayIcon.iconset")
+    for s in (16, 32, 128, 256, 512):
+        render("mac", os.path.join(iconset, f"icon_{s}x{s}.png"), s)
+        render("mac", os.path.join(iconset, f"icon_{s}x{s}@2x.png"), s * 2)
+    subprocess.run(["iconutil", "-c", "icns", iconset, "-o", p("CodeRelayMac/CodeRelayIcon.icns")], check=True)
+    h = 16; w = round(h * GLYPH_W / GLYPH_H)
+    open(p("CodeRelayMac/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.svg"), "w").write(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<!-- The app icon\'s folder stack as a menu bar template '
+        'image: macOS tints it for light/dark bars. Generated by Scripts/icons/make-icons.py. -->\n'
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {GLYPH_W} {GLYPH_H}">\n'
+        f'  <path fill="#000000" fill-rule="evenodd" d="{glyph_path()}"/>\n</svg>\n')
+
+    # Android: legacy + round fallbacks, adaptive foreground, Compose splash, store sources.
+    res = p("CodeRelayAndroid/app/src/main/res")
+    for d, s in (("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192)):
+        for fn in ("ic_launcher.png", "ic_launcher_round.png"):
+            render("tile", os.path.join(res, f"mipmap-{d}", fn), s, opaque=True)
+        render("fg", os.path.join(res, f"mipmap-{d}", "ic_launcher_foreground.png"), s * 9 // 4, opaque=True)
+        render("tile", p(f"AppIcons/android/mipmap-{d}/ic_launcher.png"), s, opaque=True)
+    render("stack", os.path.join(res, "drawable-nodpi", "splash_logo.png"), 512)
+    render("tile", p("AppIcons/appstore.png"), 1024, opaque=True)
+    render("tile", p("AppIcons/playstore.png"), 512, opaque=True)
+
+    # Linux: scalable source + the 512 px PNG jpackage embeds.
+    open(p("CodeRelayLinux/packaging/coderelay.svg"), "w").write(VARIANTS["mac"](True))
+    render("mac", p("CodeRelayLinux/packaging/coderelay.png"), 512)
+
+    print("glyph path (TrayIcon.kt GLYPH_PATH, 88 x 84):\n" + glyph_path())
+    shutil.rmtree(tmp)
+
+if __name__ == "__main__":
+    main()

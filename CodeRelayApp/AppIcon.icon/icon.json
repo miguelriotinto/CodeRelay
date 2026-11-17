@@ -4,8 +4,8 @@
       "layers": [
         {
           "glass": false,
-          "image-name": "glyph.svg",
-          "name": "glyph"
+          "image-name": "icon.png",
+          "name": "icon"
         }
       ],
       "shadow": {

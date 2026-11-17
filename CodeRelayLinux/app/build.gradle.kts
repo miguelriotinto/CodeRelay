@@ -156,10 +156,9 @@ compose.desktop {
                 packageName = "coderelay"
                 appCategory = "Development"
                 menuGroup = "Development"
-                // Rendered from packaging/coderelay.svg at 512 px and snapped
-                // to pure black/white (the same flat CR mark as the Apple and
-                // Android icons);
-                // jpackage copies it into the image as lib/coderelay.png, which
+                // packaging/coderelay.svg rendered at 512 px by
+                // Scripts/icons/make-icons.py (the same icon as the Apple and
+                // Android apps); jpackage copies it into the image as lib/coderelay.png, which
                 // is the path the PKGBUILD installs into hicolor.
                 iconFile.set(rootProject.file("packaging/coderelay.png"))
             }
