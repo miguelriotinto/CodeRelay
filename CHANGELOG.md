@@ -6,6 +6,14 @@ The server/CLI, iOS app, and macOS app are versioned independently. Server/CLI u
 
 ## [Unreleased]
 
+### New app icon
+
+Every client has a new icon: three stacked folders on a dark tile, the front
+folder's tab in orange. It replaces the CR mark in the iOS, macOS, Android
+and Linux app icons, both splash screens, the macOS menu bar and the Linux
+tray. All of them are generated from one vector master,
+`Scripts/icons/make-icons.py`.
+
 ### Session takeover notices
 
 Every client (iOS, macOS, Android, Linux) now tells you, once and aggregated

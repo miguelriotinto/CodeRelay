@@ -11,11 +11,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** The tray paints the app icon's CR glyph; its path is parsed at class init. */
+/** The tray paints the app icon's folder stack; its path is parsed at class init. */
 class TrayIconPainterTest {
 
     @Test
-    fun `paints the CR glyph centred, in the palette colour, inside the square`() {
+    fun `paints the folder glyph centred, in the palette colour, inside the square`() {
         val n = 64
         val image = ImageBitmap(n, n)
         CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(image), Size(n.toFloat(), n.toFloat())) {
@@ -29,11 +29,11 @@ class TrayIconPainterTest {
                 minX = minOf(minX, x); maxX = maxOf(maxX, x); minY = minOf(minY, y); maxY = maxOf(maxY, y)
             }
         }
-        // A stroked glyph covers a fair share of its box, not a dot or a filled square.
-        assertTrue(lit in (n * n / 10)..(n * n / 2), "lit=$lit")
-        // 84% of the height, aspect 0.872, centred — so nothing is clipped.
-        assertTrue(maxY - minY in 50..55, "height ${maxY - minY}")
-        assertTrue(maxX - minX in 43..49, "width ${maxX - minX}")
+        // A solid folder silhouette with gaps: most of its box, never all of it.
+        assertTrue(lit in (n * n / 4)..(n * n * 3 / 4), "lit=$lit")
+        // The wider side (88 of 88 × 84) fills 84% of the square, centred.
+        assertTrue(maxX - minX in 51..55, "width ${maxX - minX}")
+        assertTrue(maxY - minY in 49..53, "height ${maxY - minY}")
         assertTrue(minX > 0 && maxX < n - 1 && minY > 0 && maxY < n - 1, "clipped")
     }
 }
