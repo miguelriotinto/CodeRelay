@@ -64,17 +64,38 @@ def _token() -> str:
                       headers={"kid": os.environ["ASC_KEY_ID"], "typ": "JWT"})
 
 
+# App Store Connect answers GETs with intermittent HTTP 500 UNEXPECTED_ERROR (a
+# release failed on one before archiving). Reads retry; writes do not, since a
+# repeated POST could repeat its side effect.
+RETRY_DELAYS = (10, 20, 40, 60, 60)  # seconds between attempts: ~3 min in all
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def should_retry(method: str, status: Optional[int]) -> bool:
+    """status None means no HTTP answer at all (timeout, reset, DNS)."""
+    return method == "GET" and (status is None or status in RETRYABLE_STATUS)
+
+
 def _request(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    # A fresh token per call: the What-to-Test poll outlives one token's 15 minutes.
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(API + path, data=data, method=method, headers={
-        "Authorization": "Bearer " + _token(), "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            raw = resp.read()
-    except urllib.error.HTTPError as e:
-        raise SystemExit(f"{method} {path} → HTTP {e.code}: {e.read().decode(errors='replace')}")
-    return json.loads(raw) if raw else {}
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        # A fresh token per call: the What-to-Test poll outlives one token's 15 minutes.
+        req = urllib.request.Request(API + path, data=data, method=method, headers={
+            "Authorization": "Bearer " + _token(), "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                raw = resp.read()
+            return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            status, detail = e.code, f"HTTP {e.code}: {e.read().decode(errors='replace')}"
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            status, detail = None, f"no response: {e}"
+        if attempt == len(RETRY_DELAYS) or not should_retry(method, status):
+            raise SystemExit(f"{method} {path} → {detail}")
+        delay = RETRY_DELAYS[attempt]
+        print(f"{method} {path} → {detail.splitlines()[0]}; retrying in {delay}s", file=sys.stderr)
+        time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def app_id_for(apps: List[Dict[str, Any]], bundle_id: str) -> Optional[str]:
