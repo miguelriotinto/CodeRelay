@@ -78,6 +78,14 @@ final class TerminalLinkResolverTests: XCTestCase {
         XCTAssertEqual(TerminalLinkResolver.hit(forTarget: "https://plain.example", in: t).source, .implicit)
     }
 
+    /// The same target shown plainly AND hung on a label: without the click
+    /// position the label could be what was clicked, so it must ask.
+    func testHitForTargetFailsClosedWhenAnyRunHidesTheTarget() {
+        let url = "https://evil.example/x"
+        let t = terminal(cols: 60, osc8(url, url) + " " + osc8(url, "your bank"))
+        XCTAssertEqual(TerminalLinkResolver.hit(forTarget: url, in: t).decision, .confirm(URL(string: url)!))
+    }
+
     func testOutOfGridIsNil() {
         let t = terminal("https://example.com")
         XCTAssertNil(TerminalLinkResolver.link(in: t, col: -1, row: 0))

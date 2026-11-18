@@ -38,19 +38,28 @@ public enum TerminalLinkResolver {
 
     /// For a link SwiftTerm already resolved and handed over by target alone
     /// (macOS `requestOpenLink`): explicit if some on-screen cell carries it as
-    /// an OSC 8 link — then judged by that run's text — and implicit otherwise.
-    /// Needs no pointer geometry.
+    /// an OSC 8 link, implicit otherwise. Needs no pointer geometry.
+    ///
+    /// Without the click position we cannot tell WHICH run was clicked, so the
+    /// answer fails closed: every run carrying the target is judged, and any
+    /// run whose text does not show the target makes the whole answer `confirm`.
+    /// Otherwise a program could print the target once in plain sight and also
+    /// hang it on a label ("your bank"), and a click on the label would open
+    /// without asking.
     public static func hit(forTarget target: String, in terminal: Terminal) -> TerminalLinkHit {
-        for row in 0..<terminal.rows {
-            for col in 0..<terminal.cols {
-                let position = Position(col: col, row: row)
-                if terminal.link(at: .screen(position), mode: .explicitOnly) == target {
-                    return TerminalLinkHit(target: target, source: .explicit,
-                                           visibleText: visibleText(of: target, around: position, in: terminal))
-                }
-            }
+        let cols = terminal.cols
+        func carries(_ i: Int) -> Bool {
+            terminal.link(at: .screen(Position(col: i % cols, row: i / cols)), mode: .explicitOnly) == target
         }
-        return TerminalLinkHit(target: target, source: .implicit, visibleText: nil)
+        var chosen: TerminalLinkHit?
+        for i in 0..<(terminal.rows * cols) where carries(i) && (i == 0 || !carries(i - 1)) {
+            let start = Position(col: i % cols, row: i / cols)
+            let run = TerminalLinkHit(target: target, source: .explicit,
+                                      visibleText: visibleText(of: target, around: start, in: terminal))
+            guard case .open = run.decision else { return run }   // a deceptive run decides
+            chosen = chosen ?? run
+        }
+        return chosen ?? TerminalLinkHit(target: target, source: .implicit, visibleText: nil)
     }
 
     /// The contiguous run of on-screen cells carrying `target`, read in order —
