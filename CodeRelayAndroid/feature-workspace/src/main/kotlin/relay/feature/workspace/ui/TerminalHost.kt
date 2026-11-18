@@ -1,19 +1,28 @@
 package relay.feature.workspace.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.splineBasedDecay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -23,7 +32,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowInsetsCompat
@@ -32,7 +44,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import org.connectbot.terminal.Terminal
+import relay.protocol.TerminalLinkDecision
+import relay.protocol.TerminalLinkSource
 import relay.terminal.RelayTerminalController
+import relay.terminal.TerminalLinkHit
+import relay.terminal.TerminalLinkLookup
 import relay.terminal.TerminalPalette
 import relay.terminal.TerminalSessionVm
 import relay.terminal.WheelTravelBank
@@ -151,6 +167,47 @@ fun TerminalHost(
     // requester is ours to share rather than termlib's private default.
     val terminalFocus = remember(vm) { FocusRequester() }
 
+    // Links. Every activation goes through TerminalLinkPolicy: web and mail links
+    // open in the device's browser, a link whose text hides its target asks first,
+    // anything else is ignored (and, on the overlay path, falls back to a plain tap).
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var pendingLink by remember(vm) { mutableStateOf<String?>(null) }
+    val openLink: (String) -> Unit = { url ->
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            // No browser / mail app for this scheme: nothing to open it with.
+        }
+    }
+    /** True when the hit was a link the policy lets through (opened or asked). */
+    val activateLink: (TerminalLinkHit) -> Boolean = { hit ->
+        when (val decision = hit.decision) {
+            is TerminalLinkDecision.Open -> { openLink(decision.url); true }
+            is TerminalLinkDecision.Confirm -> { pendingLink = decision.url; true }
+            TerminalLinkDecision.Reject -> false
+        }
+    }
+    pendingLink?.let { url ->
+        AlertDialog(
+            onDismissRequest = { pendingLink = null },
+            title = { Text("Open link?") },
+            text = { Text(url) },
+            confirmButton = {
+                TextButton(onClick = { pendingLink = null; openLink(url) }) { Text("Open") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { pendingLink = null; clipboard.setText(AnnotatedString(url)) }) {
+                        Text("Copy link")
+                    }
+                    TextButton(onClick = { pendingLink = null }) { Text("Cancel") }
+                }
+            },
+        )
+    }
+
     // Session-name tap → force a full-grid repaint to clear rare glyph overlap.
     // We drive it through the engine's damage-based redraw (which re-emits a fresh
     // snapshot the renderer repaints from) rather than re-keying the termlib view:
@@ -220,6 +277,15 @@ fun TerminalHost(
                 // termlib focuses its ImeInputView on tap; we then force the platform IME
                 // up (it stays down on tap after a manual swipe-down otherwise — see above).
                 onTerminalTap = showKeyboard,
+                // termlib's own tap on an OSC 8 or auto-detected link (shell mode;
+                // while a program tracks the mouse the overlay below owns the tap).
+                // It hands over the target alone; the cells carrying it decide.
+                onHyperlinkClick = { url ->
+                    activateLink(
+                        engine.linkLines()?.let { TerminalLinkLookup.forTarget(it, url) }
+                            ?: TerminalLinkHit(url, TerminalLinkSource.IMPLICIT),
+                    )
+                },
                 backgroundColor = TerminalPalette.background.toComposeColor(),
                 foregroundColor = TerminalPalette.foreground.toComposeColor(),
                 modifier = Modifier
@@ -236,9 +302,15 @@ fun TerminalHost(
         if (engine.mouseTracking.value) {
             WheelSwipeOverlay(
                 engine = engine,
-                onTap = {
-                    runCatching { terminalFocus.requestFocus() }
-                    showKeyboard()
+                onTap = { col, row ->
+                    // termlib never sees this touch, so its link tap can't fire:
+                    // a link under the finger opens here; any other tap focuses
+                    // and raises the keyboard, exactly as termlib's own tap does.
+                    val hit = engine.linkLines()?.let { TerminalLinkLookup.at(it, col, row) }
+                    if (hit == null || !activateLink(hit)) {
+                        runCatching { terminalFocus.requestFocus() }
+                        showKeyboard()
+                    }
                 },
                 modifier = Modifier.matchParentSize(),
             )
@@ -293,7 +365,7 @@ fun TerminalHost(
 @Composable
 private fun WheelSwipeOverlay(
     engine: TermlibTerminalEngine,
-    onTap: () -> Unit,
+    onTap: (col: Int, row: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val currentOnTap by rememberUpdatedState(onTap)
@@ -362,7 +434,7 @@ private fun WheelSwipeOverlay(
                         // A tap. A press held past the long-press timeout is not
                         // one — termlib would have started a selection — so it
                         // does nothing rather than raise the keyboard.
-                        if (upTime - down.uptimeMillis < longPressTimeoutMillis) currentOnTap()
+                        if (upTime - down.uptimeMillis < longPressTimeoutMillis) currentOnTap(anchorCol, anchorRow)
                         return@awaitEachGesture
                     }
 
