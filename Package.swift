@@ -109,7 +109,10 @@ if buildsAppleClients {
     targets += [
         .target(
             name: "CodeRelayClient",
-            dependencies: ["CodeRelayKit"],
+            dependencies: [
+                "CodeRelayKit",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
             path: "Sources/CodeRelayClient"
         ),
         .testTarget(

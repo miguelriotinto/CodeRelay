@@ -3,6 +3,7 @@ import SwiftTerm
 import AppKit
 import os.log
 import CodeRelayClient
+import CodeRelayKit
 
 /// Diagnostic logger for the idle-no-echo bug. Filter Console.app on
 /// subsystem com.coderelay.client and category EchoDiag.
@@ -242,4 +243,45 @@ final class TerminalCoordinator: NSObject, TerminalViewDelegate {
     }
 
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+
+    /// ⌘-click on a link. SwiftTerm's default opens *any* target with
+    /// `NSWorkspace`, including `file:` and our own `coderelay:` links, so every
+    /// link goes through `TerminalLinkPolicy`: web and mail links open, a link
+    /// whose text hides its target asks first, the rest do nothing.
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        let hit = TerminalLinkResolver.hit(forTarget: link, in: source.getTerminal())
+        switch hit.decision {
+        case .open(let url):
+            NSWorkspace.shared.open(url)
+        case .confirm(let url):
+            confirmOpen(url, over: source.window)
+        case .reject:
+            NSSound.beep()
+        }
+    }
+
+    private func confirmOpen(_ url: URL, over window: NSWindow?) {
+        let alert = NSAlert()
+        alert.messageText = "Open Link?"
+        alert.informativeText = url.absoluteString
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Copy Link")
+        alert.addButton(withTitle: "Cancel")
+        let handle: (NSApplication.ModalResponse) -> Void = { response in
+            switch response {
+            case .alertFirstButtonReturn:
+                NSWorkspace.shared.open(url)
+            case .alertSecondButtonReturn:
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url.absoluteString, forType: .string)
+            default:
+                break
+            }
+        }
+        if let window {
+            alert.beginSheetModal(for: window, completionHandler: handle)
+        } else {
+            handle(alert.runModal())
+        }
+    }
 }
