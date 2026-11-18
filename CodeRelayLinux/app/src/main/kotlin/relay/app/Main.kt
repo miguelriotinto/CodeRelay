@@ -478,7 +478,15 @@ private fun runApp(
                 onSelectionCopied = { text -> environment.scope.launch { environment.clipboard.setText(text) } },
                 // xdg-open hands the URL to the desktop's default handler. An argv
                 // array, never a shell string, and off the UI thread like notify-send.
+                // Re-checked here, where the process is spawned, so no caller of the
+                // hook can hand xdg-open a non-web scheme or a `-flag` (a policy-valid
+                // link starts with a scheme letter). No `--`: xdg-open is a shell
+                // script with no option parsing and would open a file named "--".
                 openUrl = { url ->
+                    val checked = relay.protocol.TerminalLinkPolicy.decide(url, relay.protocol.TerminalLinkSource.EXPLICIT, url)
+                    // Reject only: a link the user approved in the confirm dialog
+                    // (e.g. one with userinfo) still re-evaluates to Confirm.
+                    if (checked is relay.protocol.TerminalLinkDecision.Reject) return@TerminalHooks
                     environment.scope.launch(Dispatchers.IO) {
                         runCatching { ProcessBuilder("xdg-open", url).redirectErrorStream(true).start() }
                     }
