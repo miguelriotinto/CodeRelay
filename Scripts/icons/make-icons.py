@@ -9,11 +9,12 @@ gets the right variant:
   tile   full-bleed square        iOS app icon, Android legacy, store images
   mac    824 px tile on the 1024 grid, transparent margin   macOS, Linux
   fg     opaque square, art inside the 66/108 safe zone      Android adaptive
-  logo   the macOS tile with a faint rim, no wordmark        splash logos
+  logo   the macOS tile with a faint rim                    splash logos
   glyph  one even-odd path, single colour                   menu bar, tray
 
-Sizes of 64 px and below drop the wordmark (a smudge at that size), and so
-do the splash logos, which print the app name under the mark. The wordmark
+Sizes of 64 px and below drop the wordmark (a smudge at that size). The
+splash logos keep it — the family look (Code[Whisper]'s tile carries
+"whisper" the same way) — even though the app name prints under them. The wordmark
 is Inter Regular (SIL Open Font License) baked into outlines, so rendering
 needs no font. Everything is plain paths and linear gradients, which NSImage
 renders. Run from the repo root on macOS:
@@ -138,7 +139,7 @@ def main():
 
     def render(variant, out, px, opaque=False):
         os.makedirs(os.path.dirname(out), exist_ok=True)
-        text = px > 64 and variant != "logo"
+        text = px > 64
         subprocess.run([renderer, srcs[(variant, text)], out, str(px)] + (["opaque"] if opaque else []), check=True)
 
     # iOS: every file in the asset catalog, opaque full-bleed; Icon Composer layer for iOS 26+.
