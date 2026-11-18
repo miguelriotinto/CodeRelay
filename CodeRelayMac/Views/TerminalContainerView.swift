@@ -204,10 +204,13 @@ final class TerminalCoordinator: NSObject, TerminalViewDelegate {
         self.viewModel = viewModel
     }
 
+    /// SwiftTerm calls this on the main thread, once per key, in key order.
+    /// Hand the bytes over synchronously: a `Task` hop per key carries no
+    /// ordering guarantee and shuffled fast input.
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
         let bytes = Data(data)
-        Task { @MainActor [weak self] in
-            self?.viewModel?.sendInput(bytes)
+        MainActor.assumeIsolated {
+            viewModel?.sendInput(bytes)
         }
     }
 

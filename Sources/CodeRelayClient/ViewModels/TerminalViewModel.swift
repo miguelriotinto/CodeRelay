@@ -346,10 +346,21 @@ public final class TerminalViewModel: ObservableObject {
 
     // MARK: - Input
 
+    /// Tail of the keystroke send chain. Each send awaits the one before it:
+    /// independent `Task`s carry no ordering guarantee, and a task per key
+    /// delivered a fast burst (key repeat, quick typing, automation) to
+    /// the PTY shuffled — `cd ~/Dev` arrived as `cd~ /Dve`. Callers must also
+    /// call this synchronously, in key order (see the SwiftTerm delegates).
+    private var inputSendTail: Task<Void, Never>?
+
     public func sendInput(_ data: Data) {
         guard !isSendingSuppressed else { return }
         if awaitingInput { setAwaitingInput(false) }
-        Task { try? await connection.sendBinary(data) }
+        let previous = inputSendTail
+        inputSendTail = Task { [connection] in
+            await previous?.value
+            try? await connection.sendBinary(data)
+        }
     }
 
     public func sendInput(_ string: String) {

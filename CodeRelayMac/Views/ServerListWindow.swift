@@ -155,7 +155,7 @@ private struct ServerRow: View {
                             .help("Another bookmark points at this same relay")
                     }
                 }
-                Text("\(section.config.useTLS ? "wss" : "ws")://\(section.config.host):\(section.config.port)")
+                Text(verbatim: "\(section.config.useTLS ? "wss" : "ws")://\(section.config.host):\(section.config.port)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let subtitle = model.subtitle, section.config.enabled {
