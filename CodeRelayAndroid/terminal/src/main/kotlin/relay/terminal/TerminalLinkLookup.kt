@@ -96,7 +96,23 @@ object TerminalLinkLookup {
                 if (chosen == null) chosen = run
             }
         }
-        return chosen ?: TerminalLinkHit(url, TerminalLinkSource.IMPLICIT)
+        return chosen ?: unresolved(lines, url)
+    }
+
+    /**
+     * A target no OSC 8 span carries. Implicit only if its text is on screen
+     * (what you see is the target); otherwise explicit with unknown text, which
+     * the policy confirms — never a silent open.
+     */
+    fun unresolved(lines: List<LinkLine>?, url: String): TerminalLinkHit {
+        val screen = lines?.let { rows ->
+            buildString { rows.forEachIndexed { i, r -> if (i > 0 && !r.continuesPrevious) append('\n'); append(r.text) } }
+        }
+        return if (screen != null && screen.contains(url)) {
+            TerminalLinkHit(url, TerminalLinkSource.IMPLICIT)
+        } else {
+            TerminalLinkHit(url, TerminalLinkSource.EXPLICIT, visibleText = null)
+        }
     }
 
     /** The span's text plus any same-target spans it wraps into, above and below. */

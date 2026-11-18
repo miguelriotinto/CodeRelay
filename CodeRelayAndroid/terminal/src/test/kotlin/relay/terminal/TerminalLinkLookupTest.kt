@@ -77,7 +77,8 @@ class TerminalLinkLookupTest {
         assertEquals(TerminalLinkDecision.Open(url), TerminalLinkLookup.forTarget(lines, url).decision)
         assertEquals(TerminalLinkDecision.Confirm("https://evil.example"),
             TerminalLinkLookup.forTarget(lines, "https://evil.example").decision)
-        assertEquals(TerminalLinkSource.IMPLICIT, TerminalLinkLookup.forTarget(lines, "https://plain.example").source)
+        // Not carried by a span and not on screen: unknown text, so it asks.
+        assertEquals(TerminalLinkSource.EXPLICIT, TerminalLinkLookup.forTarget(lines, "https://plain.example").source)
     }
 
     @Test fun `target handed over alone fails closed when any run hides it`() {
@@ -93,5 +94,15 @@ class TerminalLinkLookupTest {
         assertEquals(false, continuesPreviousRow("short line      ", previousSoftWrapped = false, text = "next"))
         assertEquals(false, continuesPreviousRow("full-to-the-edge", previousSoftWrapped = false, text = " indented"))
         assertEquals(false, continuesPreviousRow(null, previousSoftWrapped = false, text = "first"))
+    }
+
+    @Test fun `a target no span carries opens only if its text is on screen`() {
+        val lines = listOf(row("see https://plain.example/a"))
+        assertEquals(TerminalLinkDecision.Open("https://plain.example/a"),
+            TerminalLinkLookup.forTarget(lines, "https://plain.example/a").decision)
+        assertEquals(TerminalLinkDecision.Confirm("https://hidden.example"),
+            TerminalLinkLookup.forTarget(lines, "https://hidden.example").decision)
+        assertEquals(TerminalLinkDecision.Confirm("https://plain.example/a"),
+            TerminalLinkLookup.unresolved(null, "https://plain.example/a").decision)
     }
 }

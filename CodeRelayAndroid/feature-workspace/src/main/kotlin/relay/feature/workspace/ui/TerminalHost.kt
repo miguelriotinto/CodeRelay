@@ -45,7 +45,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import org.connectbot.terminal.Terminal
 import relay.protocol.TerminalLinkDecision
-import relay.protocol.TerminalLinkSource
 import relay.terminal.RelayTerminalController
 import relay.terminal.TerminalLinkHit
 import relay.terminal.TerminalLinkLookup
@@ -281,10 +280,9 @@ fun TerminalHost(
                 // while a program tracks the mouse the overlay below owns the tap).
                 // It hands over the target alone; the cells carrying it decide.
                 onHyperlinkClick = { url ->
-                    activateLink(
-                        engine.linkLines()?.let { TerminalLinkLookup.forTarget(it, url) }
-                            ?: TerminalLinkHit(url, TerminalLinkSource.IMPLICIT),
-                    )
+                    // No snapshot (termlib changed) → unknown text → confirm, never open.
+                    val lines = engine.linkLines()
+                    activateLink(lines?.let { TerminalLinkLookup.forTarget(it, url) } ?: TerminalLinkLookup.unresolved(null, url))
                 },
                 backgroundColor = TerminalPalette.background.toComposeColor(),
                 foregroundColor = TerminalPalette.foreground.toComposeColor(),
