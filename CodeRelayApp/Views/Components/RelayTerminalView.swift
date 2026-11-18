@@ -71,6 +71,7 @@ class RelayTerminalView: TerminalView {
         super.didMoveToWindow()
         if window != nil {
             Self.installRuntimeOverrides()
+            installLinkGestures()
         }
     }
 
@@ -217,7 +218,66 @@ class RelayTerminalView: TerminalView {
     /// the one way this method can break native scrolling.
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer === wheelPanGesture { return !hasActiveSelection }
+        if gestureRecognizer === linkTapGesture || gestureRecognizer === linkLongPressGesture {
+            return openableLink(at: gestureRecognizer.location(in: self)) != nil
+        }
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
+    // MARK: - Links: a tap on a URL opens it
+
+    /// SwiftTerm detects links (OSC 8 first, then URL-shaped text) but its tap
+    /// only opens one that is hover-highlighted, which a finger never is. So two
+    /// recognizers of our own claim a touch **only when a link the policy would
+    /// open lies under it** (`gestureRecognizerShouldBegin`); SwiftTerm's single
+    /// tap and long press wait for them to fail, so every other touch — a click
+    /// sent to the program, focus, selection, the edit menu — is untouched. A
+    /// tap opens (or asks, for a link whose text hides its target); a long press
+    /// always asks, which is where Copy Link lives.
+    private var linkTapGesture: UITapGestureRecognizer?
+    private var linkLongPressGesture: UILongPressGestureRecognizer?
+
+    func installLinkGestures() {
+        guard linkTapGesture == nil else { return }
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleLinkTap))
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(handleLinkLongPress))
+        addGestureRecognizer(tap)
+        addGestureRecognizer(press)
+        for other in gestureRecognizers ?? [] where other !== tap && other !== press {
+            if let otherTap = other as? UITapGestureRecognizer, otherTap.numberOfTapsRequired == 1 {
+                otherTap.require(toFail: tap)
+            } else if other is UILongPressGestureRecognizer {
+                other.require(toFail: press)
+            }
+        }
+        linkTapGesture = tap
+        linkLongPressGesture = press
+    }
+
+    /// The link under `point` (this view's coordinates), unless the policy
+    /// rejects it — a rejected link behaves like any other text.
+    func openableLink(at point: CGPoint) -> TerminalLinkHit? {
+        // The view is a scroll view: `point` is in content coordinates, and the
+        // resolver wants the visible grid. Within one screen the derived cell
+        // size is exact enough; see `wheelRowHeight`.
+        let col = Int(point.x / wheelColumnWidth)
+        let row = Int((point.y - bounds.minY) / wheelRowHeight)
+        guard let hit = TerminalLinkResolver.link(in: getTerminal(), col: col, row: row),
+              hit.decision != .reject else { return nil }
+        return hit
+    }
+
+    @objc private func handleLinkTap(_ gesture: UITapGestureRecognizer) {
+        guard gesture.state == .ended, let hit = openableLink(at: gesture.location(in: self)) else { return }
+        TerminalLinkPrompt.shared.handle(hit.decision)
+    }
+
+    @objc private func handleLinkLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began, let hit = openableLink(at: gesture.location(in: self)) else { return }
+        switch hit.decision {
+        case .open(let url), .confirm(let url): TerminalLinkPrompt.shared.pending = url
+        case .reject: break
+        }
     }
 
     @objc private func handleWheelPan(_ gesture: UIPanGestureRecognizer) {

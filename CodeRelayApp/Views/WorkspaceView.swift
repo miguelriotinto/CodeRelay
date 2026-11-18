@@ -316,6 +316,7 @@ struct WorkspaceAlerts: View {
             }
             // Session loss belongs to the hub, never to the focus coordinator.
             .sessionLossAlert(hub.takenAlert, isTopmost: true, onOK: { hub.dismissTakenAlert() })
+            .terminalLinkAlert(TerminalLinkPrompt.shared)
             // Its own window inherits nothing from ActiveTerminalView's.
             .preferredColorScheme(.dark)
     }
