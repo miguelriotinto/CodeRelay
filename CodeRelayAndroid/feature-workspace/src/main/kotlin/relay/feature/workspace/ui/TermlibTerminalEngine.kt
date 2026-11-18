@@ -6,6 +6,10 @@ import androidx.compose.ui.graphics.Color
 import org.connectbot.terminal.TerminalDimensions
 import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
+import kotlinx.coroutines.flow.StateFlow
+import relay.terminal.LinkLine
+import relay.terminal.LinkSpan
+import relay.terminal.continuesPreviousRow
 import relay.terminal.MouseTrackingTracker
 import relay.terminal.TerminalEngine
 import relay.terminal.TerminalPalette
@@ -92,6 +96,9 @@ class TermlibTerminalEngine(
         defaultForeground = Color(TerminalPalette.foreground),
         defaultBackground = Color(TerminalPalette.background),
         onKeyboardInput = { bytes -> onInput?.invoke(bytes) },
+        // termlib then finds URL-shaped text as well as OSC 8 links, for its own
+        // tap (`Terminal(onHyperlinkClick = …)`); [linkLines] reads both.
+        autoDetectUrls = true,
         onResize = { dims: TerminalDimensions ->
             _cols = dims.columns
             _rows = dims.rows
@@ -189,6 +196,49 @@ class TermlibTerminalEngine(
         val method = damageMethod ?: return
         runCatching { method.invoke(emulator, 0, r, 0, c) }
     }
+
+    /**
+     * The visible rows for [relay.terminal.TerminalLinkLookup], read from termlib's
+     * own snapshot — the text libvterm holds, OSC 8 links as HYPERLINK segments, and
+     * each row's soft-wrap flag. termlib 0.1.0 keeps the snapshot `internal`
+     * (`getSnapshot$lib` in bytecode) and exposes no public cell read, so it is
+     * reached the way [redraw] reaches `damage`: resolved once, by name. Null if a
+     * future termlib renames it — the link tap then simply finds nothing.
+     */
+    fun linkLines(): List<LinkLine>? = runCatching {
+        val snapshot = (snapshotMethod?.invoke(emulator) as? StateFlow<*>)?.value ?: return null
+        var previousText: String? = null
+        var previousWraps = false
+        (snapshot.call("getLines") as List<*>).map { line ->
+            val text = buildString {
+                // One char per column: a wide glyph's trailing cell is blank.
+                for (cell in line.call("getCells") as List<*>) {
+                    val ch = cell.call("getChar") as Char
+                    append(if (cell.call("getWidth") as Int == 0 || ch == '\u0000') ' ' else ch)
+                }
+            }
+            val links = (line.call("getSemanticSegments") as List<*>)
+                .filter { seg -> seg.call("getSemanticType").toString() == "HYPERLINK" }
+                .mapNotNull { seg ->
+                    (seg.call("getMetadata") as String?)?.let {
+                        LinkSpan(seg.call("getStartCol") as Int, seg.call("getEndCol") as Int, it)
+                    }
+                }
+            // termlib's `softWrapped` marks a row that wraps INTO the next one, but
+            // is lost on resize — see [continuesPreviousRow].
+            LinkLine(text, continuesPreviousRow(previousText, previousWraps, text), links).also {
+                previousText = text
+                previousWraps = line.call("getSoftWrapped") as Boolean
+            }
+        }
+    }.getOrNull()
+
+    private val snapshotMethod: java.lang.reflect.Method? by lazy {
+        runCatching { emulator.javaClass.getMethod("getSnapshot\$lib").apply { isAccessible = true } }.getOrNull()
+    }
+
+    /** termlib's snapshot types are Kotlin-`internal`, so their public bytecode getters are called by name. */
+    private fun Any?.call(getter: String): Any? = this?.javaClass?.getMethod(getter)?.invoke(this)
 
     /**
      * `TerminalEmulatorImpl.damage(int,int,int,int)`, resolved once off the live
