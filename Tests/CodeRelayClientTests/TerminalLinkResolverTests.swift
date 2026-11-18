@@ -75,7 +75,12 @@ final class TerminalLinkResolverTests: XCTestCase {
         XCTAssertEqual(TerminalLinkResolver.hit(forTarget: url, in: t).decision, .open(URL(string: url)!))
         XCTAssertEqual(TerminalLinkResolver.hit(forTarget: "https://evil.example", in: t).decision,
                        .confirm(URL(string: "https://evil.example")!))
-        XCTAssertEqual(TerminalLinkResolver.hit(forTarget: "https://plain.example", in: t).source, .implicit)
+        // Not carried by a run and not on screen: unknown text, so it asks.
+        XCTAssertEqual(TerminalLinkResolver.hit(forTarget: "https://plain.example", in: t).decision,
+                       .confirm(URL(string: "https://plain.example")!))
+        let plain = terminal("see https://plain.example/a")
+        XCTAssertEqual(TerminalLinkResolver.hit(forTarget: "https://plain.example/a", in: plain).decision,
+                       .open(URL(string: "https://plain.example/a")!))
     }
 
     /// The same target shown plainly AND hung on a label: without the click

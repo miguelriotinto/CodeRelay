@@ -59,7 +59,22 @@ public enum TerminalLinkResolver {
             guard case .open = run.decision else { return run }   // a deceptive run decides
             chosen = chosen ?? run
         }
-        return chosen ?? TerminalLinkHit(target: target, source: .implicit, visibleText: nil)
+        if let chosen { return chosen }
+        // No OSC 8 run carries it: implicit only if the text is on screen (what
+        // you see is the target); otherwise unknown text, which confirms.
+        return screenText(of: terminal).contains(target)
+            ? TerminalLinkHit(target: target, source: .implicit, visibleText: nil)
+            : TerminalLinkHit(target: target, source: .explicit, visibleText: nil)
+    }
+
+    /// The visible grid as text, rows joined with newlines.
+    static func screenText(of terminal: Terminal) -> String {
+        (0..<terminal.rows).map { row in
+            String((0..<terminal.cols).map { col -> Character in
+                guard let ch = terminal.getCharacter(col: col, row: row), ch != "\u{0}" else { return " " }
+                return ch
+            })
+        }.joined(separator: "\n")
     }
 
     /// The contiguous run of on-screen cells carrying `target`, read in order —
