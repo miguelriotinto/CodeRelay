@@ -476,6 +476,13 @@ private fun runApp(
                 pasteRequest = pasteRequest,
                 copyRequest = copyRequest,
                 onSelectionCopied = { text -> environment.scope.launch { environment.clipboard.setText(text) } },
+                // xdg-open hands the URL to the desktop's default handler. An argv
+                // array, never a shell string, and off the UI thread like notify-send.
+                openUrl = { url ->
+                    environment.scope.launch(Dispatchers.IO) {
+                        runCatching { ProcessBuilder("xdg-open", url).redirectErrorStream(true).start() }
+                    }
+                },
                 clipboard = environment.clipboard,
             )
         }

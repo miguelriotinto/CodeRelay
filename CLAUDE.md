@@ -89,6 +89,43 @@ All WebSocket messages use `MessageEnvelope`: `{"type":"<type_string>","payload"
 
 Two-way clipboard: device→host was already covered by `paste_image` (base64 PNG → `MacClipboardService`). Host→device is F11: `PTYSession.handleOutput` runs `OSC52Parser` (a pure, tested value type) over the raw PTY stream, decoding OSC 52 clipboard-write sequences (`ESC ] 52 ; <sel> ; <base64> BEL`, or `ESC \` terminator; `?` read-requests are ignored so the device clipboard never leaks into the session; 1 MB decoded cap). A match fires `clipboardHandler`, which `RelayMessageHandler` forwards as a new `clipboard_update` `ServerMessage`. The client (`RelayConnection.onClipboardUpdate` → `SharedSessionCoordinator`) writes it to the device clipboard via the cross-platform `DeviceClipboard` seam (`UIPasteboard`/`NSPasteboard`), **only for the active session** so a background session's copy can't hijack the pasteboard. Any PTY tool that already speaks OSC 52 (tmux, vim, kitty) gets clipboard-to-device sync with no per-tool integration. Host auto-provisioning (the spec's other, "exploratory" F11 half) is intentionally deferred.
 
+### Clickable Terminal Links
+
+Spec: `docs/superpowers/specs/2026-11-18-clickable-terminal-links-design.md`.
+Every client sends a link the user activates in terminal output through ONE rule,
+`TerminalLinkPolicy` (Swift `CodeRelayKit`, Kotlin `relay.protocol`; both run
+`core-protocol/src/test/resources/terminal-link-vectors.json`): only
+`http`/`https`/`mailto` open; `coderelay:` (our own pair/session deep links),
+`file:`, `javascript:`, app schemes never do; an OSC 8 link whose visible text is
+not its target, or a URL with userinfo, asks first (Open / Copy / Cancel). The RFC
+3986 character set is checked explicitly — Foundation and `java.net.URI` disagree
+on `|`/`{`, and the two policies must not. Claude Code already wraps URLs in OSC 8
+in the relay's plain `xterm-256color` PTY (probed), so no server change exists.
+
+- **iOS — tap.** SwiftTerm finds links but its tap opens only a hover-highlighted
+  one (`linkHighlightMode = .hover`; `.always` takes OSC 8 only), which a finger
+  never is. `RelayTerminalView` adds a tap + long-press pair that claim a touch only
+  when an openable link is under it; SwiftTerm's own single tap / long press
+  `require(toFail:)` them. The confirm alert goes through `TerminalLinkPrompt` into
+  `WorkspaceAlerts` (the overlay window), never a presenter that may be mid-sheet.
+- **macOS — ⌘-click** (SwiftTerm's). Its default `requestOpenLink` handed ANY
+  scheme to `NSWorkspace`; `TerminalCoordinator` now routes through the policy.
+- **Android — tap.** termlib's `autoDetectUrls` + `onHyperlinkClick` in a shell;
+  while a program tracks the mouse the wheel overlay owns the touch, so its tap
+  looks the link up first. termlib's snapshot is Kotlin-`internal` (read by
+  reflection, like `damage`), and it **drops its soft-wrap flag on every resize**
+  (the keyboard!) — `continuesPreviousRow` also joins a full row with a following
+  non-blank one.
+- **Linux — Ctrl+click** (a bare click belongs to the program or to selection).
+  Implicit links only: OSC 8 reaches the emulator as a callback at a cursor
+  position that scrolling invalidates. `xdg-open` as argv, off the UI thread.
+- **Judging a link by target alone fails closed.** macOS `requestOpenLink` and
+  termlib's `onHyperlinkClick` give no position, so `hit(forTarget:)` /
+  `forTarget` judge EVERY run carrying the target (one label hiding it ⇒ confirm),
+  and a target no run carries is implicit only if its text is on screen.
+  `TerminalLinkResolver` (Swift, CodeRelayClient — hence its SwiftTerm dependency)
+  and `TerminalLinkLookup` (Kotlin `terminal`) are the two lookups.
+
 ### Date Encoding Caveat
 
 The WebSocket server uses default `JSONEncoder` (Double timestamps). The Admin HTTP API uses `.iso8601`. Do not mix encoders between these two paths.

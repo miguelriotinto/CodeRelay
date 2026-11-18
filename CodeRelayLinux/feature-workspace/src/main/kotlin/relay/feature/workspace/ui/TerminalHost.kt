@@ -1,7 +1,11 @@
 package relay.feature.workspace.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -10,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -17,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import relay.protocol.TerminalLinkDecision
 import relay.terminal.RelayTerminalController
 import relay.terminal.TerminalSessionVm
 import relay.terminal.linux.DesktopTerminalFont
@@ -190,6 +196,27 @@ fun TerminalHost(
     val points = hooks.fontPointsOverride ?: font.points
     val sizeDp = points * 96f / 72f
 
+    // Ctrl+click on a link: open what the policy allows, ask first when the
+    // text on screen does not show the target.
+    var pendingLink by remember { mutableStateOf<String?>(null) }
+    pendingLink?.let { url ->
+        AlertDialog(
+            onDismissRequest = { pendingLink = null },
+            title = { Text("Open link?") },
+            text = { Text(url) },
+            confirmButton = { TextButton(onClick = { pendingLink = null; currentHooks.openUrl(url) }) { Text("Open") } },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        pendingLink = null
+                        hostScope.launch(Dispatchers.IO) { clipboard.setText(url) }
+                    }) { Text("Copy link") }
+                    TextButton(onClick = { pendingLink = null }) { Text("Cancel") }
+                }
+            },
+        )
+    }
+
     Box(modifier.fillMaxSize()) {
         TerminalView(
             emulator = emulator,
@@ -220,6 +247,13 @@ fun TerminalHost(
             // `pendingOutput` and stayed there — a terminal showing nothing but
             // a cursor on a session that was otherwise healthy.
             onSizeChanged = controller::reportSize,
+            onLinkActivated = { hit ->
+                when (val decision = hit.decision) {
+                    is TerminalLinkDecision.Open -> currentHooks.openUrl(decision.url)
+                    is TerminalLinkDecision.Confirm -> pendingLink = decision.url
+                    TerminalLinkDecision.Reject -> Unit
+                }
+            },
         )
     }
 }

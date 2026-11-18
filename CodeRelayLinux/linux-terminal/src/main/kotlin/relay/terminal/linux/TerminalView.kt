@@ -124,6 +124,12 @@ fun TerminalView(
     /** Middle click in a plain shell. */
     onPastePrimary: () -> Unit = {},
     /**
+     * Ctrl+click on a link the policy does not reject. Ctrl, because a bare click
+     * already belongs to the program (while it tracks the mouse) or to selection —
+     * the GNOME Terminal / foot convention.
+     */
+    onLinkActivated: (relay.terminal.TerminalLinkHit) -> Unit = {},
+    /**
      * Fired when the measured grid changes. The host forwards this to the relay
      * so the server's PTY window size follows the window — under a tiling WM
      * like Hyprland the compositor resizes without asking, so this is the normal
@@ -168,6 +174,7 @@ fun TerminalView(
     val currentOnCopy by rememberUpdatedState(onCopy)
     val currentOnPrimary by rememberUpdatedState(onPrimarySelection)
     val currentOnPastePrimary by rememberUpdatedState(onPastePrimary)
+    val currentOnLink by rememberUpdatedState(onLinkActivated)
 
     // Cursor blink phase, only ticking while the program asked for a blink.
     var blinkOn by remember { mutableStateOf(true) }
@@ -316,6 +323,13 @@ fun TerminalView(
                     val (row, col) = cellAt(change.position)
                     val shift = event.keyboardModifiers.pointerShiftPressed
                     val button = buttonOf(event)
+                    if (button == BUTTON_LEFT && event.keyboardModifiers.pointerCtrlPressed) {
+                        val hit = relay.terminal.TerminalLinkLookup.at(emulator.linkLines(), col, row)
+                        if (hit != null && hit.decision != relay.protocol.TerminalLinkDecision.Reject) {
+                            currentOnLink(hit)
+                            return@onPointerEvent
+                        }
+                    }
                     if (mouseMode != 0 && !shift) {
                         pointer.reportedButton = button
                         emulator.dispatchMouseMove(row, col, modifiersOf(event))

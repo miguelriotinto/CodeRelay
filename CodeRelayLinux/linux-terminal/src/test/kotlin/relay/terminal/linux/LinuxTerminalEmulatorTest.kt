@@ -213,4 +213,39 @@ class LinuxTerminalEmulatorTest {
             assertEquals("SPLIT", rowText(e, 0), "a split escape must not leak into the grid")
         }
     }
+
+    // ---- links (Ctrl+click) -------------------------------------------------
+
+    @Test
+    fun `linkLines finds a plain url under its cell`() {
+        emulator(rows = 4, cols = 40).use { e ->
+            e.feedOutput("see https://example.com/a for it".toByteArray())
+            e.refreshIfDirty()
+            val hit = relay.terminal.TerminalLinkLookup.at(e.linkLines(), col = 10, row = 0)
+            assertEquals("https://example.com/a", hit?.target)
+            assertEquals(null, relay.terminal.TerminalLinkLookup.at(e.linkLines(), col = 1, row = 0))
+        }
+    }
+
+    @Test
+    fun `linkLines joins a url libvterm soft-wrapped onto the next row`() {
+        val url = "https://example.com/" + "a".repeat(30)   // 50 chars on 40 columns
+        emulator(rows = 4, cols = 40).use { e ->
+            e.feedOutput(url.toByteArray())
+            e.refreshIfDirty()
+            val lines = e.linkLines()
+            assertEquals(true, lines[1].continuesPrevious, "libvterm marks the wrapped row as a continuation")
+            assertEquals(url, relay.terminal.TerminalLinkLookup.at(lines, col = 3, row = 1)?.target)
+        }
+    }
+
+    @Test
+    fun `linkLines does not join rows separated by a newline`() {
+        emulator(rows = 4, cols = 40).use { e ->
+            e.feedOutput("https://example.com/abc\r\ndef".toByteArray())
+            e.refreshIfDirty()
+            assertEquals("https://example.com/abc", relay.terminal.TerminalLinkLookup.at(e.linkLines(), col = 2, row = 0)?.target)
+            assertEquals(null, relay.terminal.TerminalLinkLookup.at(e.linkLines(), col = 1, row = 1))
+        }
+    }
 }
