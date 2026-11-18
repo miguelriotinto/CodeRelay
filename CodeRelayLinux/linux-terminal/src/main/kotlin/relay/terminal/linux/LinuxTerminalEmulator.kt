@@ -434,6 +434,23 @@ class LinuxTerminalEmulator(
         return out.toString()
     }
 
+    /**
+     * The current VIEW's rows for [relay.terminal.TerminalLinkLookup]: one char
+     * per column (the same column mapping selection uses), libvterm's own
+     * continuation flag, which this emulator reads directly and keeps across
+     * resizes. No OSC 8 spans yet — OSC 8 reaches us only as a callback at a
+     * cursor position that scrolling then invalidates — so links are found as
+     * URL-shaped text, which covers Claude Code: its OSC 8 links show their own
+     * target.
+     */
+    fun linkLines(): List<relay.terminal.LinkLine> {
+        val view = _grid.value
+        return view.lines.map { line ->
+            val text = columnsOf(line, view.cols).joinToString("") { it.firstOrNull()?.toString() ?: " " }
+            relay.terminal.LinkLine(text, continuesPrevious = line.continuation)
+        }
+    }
+
     // ---- internals ----------------------------------------------------------
 
     private fun trimScrollback() {

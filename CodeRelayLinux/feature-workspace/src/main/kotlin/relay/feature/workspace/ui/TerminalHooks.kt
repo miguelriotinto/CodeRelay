@@ -40,6 +40,11 @@ data class TerminalHooks(
     val copyRequest: Int = 0,
     /** Reports the terminal's current selection text (null = none) for the copy chord. */
     val onSelectionCopied: (text: String) -> Unit = {},
+    /**
+     * Opens a link the policy allowed in the desktop's browser / mail client.
+     * Called on the UI thread; the implementation must not block it.
+     */
+    val openUrl: (url: String) -> Unit = {},
     /** The system clipboard; one instance shared by the app and every host. */
     val clipboard: relay.platform.DesktopClipboard = relay.platform.DesktopClipboard(),
 )
