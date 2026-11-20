@@ -15,6 +15,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.ViewCompat
 import kotlinx.coroutines.Job
@@ -55,6 +57,14 @@ import kotlin.math.abs
 
 /** ARGB int (TerminalPalette) → Compose [Color]. */
 private fun Int.toComposeColor(): Color = Color(this)
+
+/**
+ * The terminal font size in sp — Settings › Terminal Font Size, provided once by
+ * the app (`RelayNavGraph`). Ambient rather than a parameter because the shared
+ * `WorkspaceScreen` calls `TerminalHost` with a fixed signature that Linux's own
+ * host also implements; Linux gets its size through `LocalTerminalHooks`.
+ */
+val LocalTerminalFontSize = compositionLocalOf { 12f }
 
 /**
  * Hosts the active session's terminal using the real VT100/xterm engine
@@ -271,6 +281,7 @@ fun TerminalHost(
         key(vm) {
             Terminal(
                 terminalEmulator = engine.emulator,
+                initialFontSize = LocalTerminalFontSize.current.sp,
                 keyboardEnabled = true,
                 focusRequester = terminalFocus,
                 // termlib focuses its ImeInputView on tap; we then force the platform IME
