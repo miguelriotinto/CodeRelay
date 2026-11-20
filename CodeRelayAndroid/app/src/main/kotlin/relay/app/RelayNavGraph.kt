@@ -1,5 +1,12 @@
 package relay.app
 
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.runtime.CompositionLocalProvider
+import relay.feature.workspace.ui.LocalTerminalFontSize
 import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
@@ -185,10 +192,18 @@ private fun ServersRoute(
             onScanPair = onScanPair,
         )
         // ServersScreen's app bar is internal to its module; the Settings gear is
-        // overlaid top-end, left of the Done action.
+        // overlaid top-end, left of the Done action. It takes the SAME insets as
+        // that TopAppBar (its default: system bars, top + horizontal), so it sits
+        // below the status bar and moves with Done when a side navigation bar
+        // (landscape, 3-button nav) pushes the actions inward. With no inset at all
+        // the gear was drawn inside the status bar, whose window takes the touch —
+        // Settings could not be opened.
         IconButton(
             onClick = onOpenSettings,
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 72.dp),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .padding(top = 4.dp, end = 72.dp),
         ) {
             Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurface)
         }
@@ -204,6 +219,7 @@ private fun WorkspaceRoute(
 ) {
     val hub = hubViewModel.hub
     val hapticsEnabled by settings.hapticFeedbackEnabled.collectAsStateWithLifecycle()
+    val terminalFontSize by settings.terminalFontSize.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { hubViewModel.onForeground() }
@@ -216,23 +232,25 @@ private fun WorkspaceRoute(
     var attachable by remember { mutableStateOf<List<AttachableGroup>?>(null) }
     var loadingAttachable by remember { mutableStateOf(false) }
 
-    WorkspaceScreen(
-        hub = hub,
-        onOpenServers = onOpenServers,
-        // Whichever server's button was tapped, offer every server's sessions.
-        onAttach = { _ ->
-            if (!loadingAttachable) {
-                loadingAttachable = true
-                scope.launch {
-                    attachable = hub.attachableSessions()
-                    loadingAttachable = false
+    CompositionLocalProvider(LocalTerminalFontSize provides terminalFontSize.toFloat()) {
+        WorkspaceScreen(
+            hub = hub,
+            onOpenServers = onOpenServers,
+            // Whichever server's button was tapped, offer every server's sessions.
+            onAttach = { _ ->
+                if (!loadingAttachable) {
+                    loadingAttachable = true
+                    scope.launch {
+                        attachable = hub.attachableSessions()
+                        loadingAttachable = false
+                    }
                 }
-            }
-        },
-        onShareQr = { ref -> shareRef = ref },
-        hapticsEnabled = hapticsEnabled,
-        modifier = Modifier.fillMaxSize(),
-    )
+            },
+            onShareQr = { ref -> shareRef = ref },
+            hapticsEnabled = hapticsEnabled,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
 
     shareRef?.let { ref ->
         val coordinator = hub.slot(ref.serverId)?.coordinator
