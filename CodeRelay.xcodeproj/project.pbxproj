@@ -34,6 +34,7 @@
 		4EF651CDC5BED64870C112F4 /* ServerListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 519C055662248EBE2FCC54F4 /* ServerListView.swift */; };
 		4F29A94546C0E93C9F4B41E4 /* TerminalScrollSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 134E10178F9FFB931A0DF690 /* TerminalScrollSyncTests.swift */; };
 		4FC3D0363147468C7CCA6BE8 /* AttachRemoteSessionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81DB257E1E21CA0D82D01A3B /* AttachRemoteSessionSheet.swift */; };
+		50C1E5530031846EE8C25965 /* TerminalHostViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C037E85CAE964D50A0D36618 /* TerminalHostViewTests.swift */; };
 		594B82B95E32F0529AC9A258 /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 032B2629F2A1D548EB620340 /* QRScannerView.swift */; };
 		5FA79A317583249F9A7D5750 /* ScrollbackClearScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */; };
 		61B865F9D79CFC959FC07A8B /* TerminalContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF37B18586BBB7B511433716 /* TerminalContainerView.swift */; };
@@ -78,6 +79,7 @@
 		DC3CC606AD220E28964BE57C /* QRCodeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C08E1E10ABEC111CA605BE4 /* QRCodeSheet.swift */; };
 		DDBD4C29C54835F8E4DDD4FA /* UptimeRuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B452CB15EAFFD6C7EAF8272B /* UptimeRuleTests.swift */; };
 		E14796A9326B97964792E6F9 /* TerminalPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 994105C8A15882C51A1E9D63 /* TerminalPalette.swift */; };
+		E445772452A040AFCE780CC6 /* TerminalHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06BFFFDF5B23E8E640FC28E8 /* TerminalHostView.swift */; };
 		E4B007465A6886711AE4ECA6 /* PairWithHostSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C01CE54946F1BF877D94BFE /* PairWithHostSheet.swift */; };
 		E4D5925EEA80E36AD808183A /* ServerListWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 822211CDC993EFDD413DDB0E /* ServerListWindow.swift */; };
 		E56E770B9D4E9803B723749F /* CodeRelayClient in Frameworks */ = {isa = PBXBuildFile; productRef = 813FEDD64E4C31122044AC88 /* CodeRelayClient */; };
@@ -112,6 +114,7 @@
 		032B2629F2A1D548EB620340 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		048DF89741F08E0FAFA2250C /* HubSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubSidebarView.swift; sourceTree = "<group>"; };
 		05446DA7A910D4397B33AFD1 /* CodeRelayMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodeRelayMac.entitlements; sourceTree = "<group>"; };
+		06BFFFDF5B23E8E640FC28E8 /* TerminalHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHostView.swift; sourceTree = "<group>"; };
 		0CA2B78194726A22344FEB41 /* AppSettingsSpeechRemovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsSpeechRemovalTests.swift; sourceTree = "<group>"; };
 		1169B69C981A52324361A485 /* QRCodePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodePopover.swift; sourceTree = "<group>"; };
 		12141808FD0F8690732DE837 /* CodeRelayMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodeRelayMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -139,9 +142,9 @@
 		4C4A4A53A54C85D2BDFE7327 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		519C055662248EBE2FCC54F4 /* ServerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListView.swift; sourceTree = "<group>"; };
 		55719C3D9366D323E70ADB6D /* HubPreviewSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubPreviewSeed.swift; sourceTree = "<group>"; };
+		E46CD949787B69852ABD4480 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		5A9C224C001A6A792F9D58C8 /* MenuBarActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarActivityTests.swift; sourceTree = "<group>"; };
 		5B33AE8EE6C033A2403B7BF3 /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
-		E46CD949787B69852ABD4480 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		60465BA09A0A9870E9E03B23 /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
 		66E9DA3201E71F50165B91F5 /* ActiveTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveTerminalView.swift; sourceTree = "<group>"; };
 		67B090224A2F32FF6AA6DCAD /* ImagePasteHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePasteHandler.swift; sourceTree = "<group>"; };
@@ -174,6 +177,7 @@
 		B452CB15EAFFD6C7EAF8272B /* UptimeRuleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UptimeRuleTests.swift; sourceTree = "<group>"; };
 		B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollbackClearScanner.swift; sourceTree = "<group>"; };
 		BFDE7B6F21D0081D0855981A /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
+		C037E85CAE964D50A0D36618 /* TerminalHostViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHostViewTests.swift; sourceTree = "<group>"; };
 		CB701804D2F0C75E2A6E124F /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		CE76025239CFE171AEC352E2 /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
 		CEF84086BF6F5841A2DC7CC4 /* WorkspaceRootTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRootTests.swift; sourceTree = "<group>"; };
@@ -321,6 +325,7 @@
 				5A9C224C001A6A792F9D58C8 /* MenuBarActivityTests.swift */,
 				6A426CD664A31774ED1A6A27 /* MenuBarGroupingTests.swift */,
 				AE5AC490671735ED0BB142CA /* SessionNavigationTests.swift */,
+				C037E85CAE964D50A0D36618 /* TerminalHostViewTests.swift */,
 			);
 			path = CodeRelayMacTests;
 			sourceTree = "<group>";
@@ -341,6 +346,7 @@
 				917DBD18EA67BBD605CA1766 /* SettingsView.swift */,
 				B40D60334B831231F0CC7991 /* StatusBarView.swift */,
 				CF37B18586BBB7B511433716 /* TerminalContainerView.swift */,
+				06BFFFDF5B23E8E640FC28E8 /* TerminalHostView.swift */,
 				4C3AABD0A1EDCDF3D99C2813 /* TerminalPalette.swift */,
 			);
 			path = Views;
@@ -612,6 +618,7 @@
 				F6D838BE9B9BC00A46A2F11C /* MenuBarActivityTests.swift in Sources */,
 				9948AD2E248DEF5CD323C4F3 /* MenuBarGroupingTests.swift in Sources */,
 				81236181959BA642708E2E5B /* SessionNavigationTests.swift in Sources */,
+				50C1E5530031846EE8C25965 /* TerminalHostViewTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -664,6 +671,7 @@
 				C9DD34A70DE6928A07B69807 /* SleepWakeObserver.swift in Sources */,
 				78DA9C0EAF191998F507A7E1 /* StatusBarView.swift in Sources */,
 				61B865F9D79CFC959FC07A8B /* TerminalContainerView.swift in Sources */,
+				E445772452A040AFCE780CC6 /* TerminalHostView.swift in Sources */,
 				C5DD1A1FBD979234C8F1AFF8 /* TerminalPalette.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

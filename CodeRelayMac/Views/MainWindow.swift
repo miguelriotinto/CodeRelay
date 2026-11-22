@@ -194,8 +194,9 @@ private struct WorkspaceView: View {
             ZStack {
                 // Single host reused across session switches so each
                 // terminal's SwiftTerm scrollback survives the swap.
+                // No padding here: TerminalHostView centres whole columns with
+                // equal left and right margins itself.
                 TerminalContainerView(coordinator: coordinator, fontSize: CGFloat(settings.terminalFontSize))
-                    .padding(.leading, 6)
                     // Black while the loading sheet is up; both lift on the first frame.
                     .terminalLoadingCover(loading.isPresented)
             }
