@@ -78,16 +78,20 @@ gh run watch "$RUN" --exit-status
 ```
 
 VERIFY:
-- The run ends `success`, including the `bottle`, `homebrew` and
-  `arch-packages` jobs.
+- The run ends `success`, including the `bottle`, `homebrew`,
+  `arch-packages` and `mac-dmg` jobs.
 - `gh release view vX.Y.Z --json assets --jq '.assets[].name'` lists
   `coderelay-vX.Y.Z-linux-x86_64.tar.gz`, `claude-relay-vX.Y.Z-linux-x86_64.tar.gz`,
-  `coderelay-vX.Y.Z-android.apk`, `checksums.txt`,
+  `coderelay-vX.Y.Z-android.apk`, `coderelay-vX.Y.Z-macos.dmg`, `checksums.txt`,
   `coderelay-X.Y.Z.<tag>.bottle.tar.gz` (single dash before the version),
   `coderelay-bin-X.Y.Z-1-x86_64.pkg.tar.zst` and
   `coderelay-server-bin-X.Y.Z-1-x86_64.pkg.tar.zst` (no `v`), and
   `checksums.txt` has a line for each `.pkg.tar.zst`.
-- `gh release view vX.Y.Z` prints the per-platform sections.
+- `gh release view vX.Y.Z` prints the per-platform sections, and the macOS
+  section names the DMG.
+- Mac DMG: download it and `spctl --assess --type open --context
+  context:primary-signature -v <dmg>` prints `accepted` / `source=Notarized
+  Developer ID`; `xcrun stapler validate <dmg>` succeeds.
 - Android: `gh release download vX.Y.Z -p '*.apk' -D /tmp/cr-apk` and
   `aapt2 dump badging` shows the expected `versionCode`/`versionName`; byte
   size is not proof. The run log's `apksigner verify --print-certs` must not
