@@ -98,7 +98,7 @@ struct TerminalContainerView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSView {
-        let host = NSView(frame: .zero)
+        let host = TerminalHostView(frame: .zero)
         host.wantsLayer = true
         host.layer?.backgroundColor = NSColor.black.cgColor
         return host
@@ -115,15 +115,12 @@ struct TerminalContainerView: NSViewRepresentable {
         let cached = cachedOrMake(for: activeId, viewModel: viewModel, host: host)
 
         // Add to view hierarchy once; subsequent swaps just toggle visibility.
+        // The host (TerminalHostView) frames it in `layout()`: whole columns,
+        // centred, equal margins left and right.
         if cached.view.superview !== host {
+            cached.view.translatesAutoresizingMaskIntoConstraints = true
             host.addSubview(cached.view)
-            cached.view.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                cached.view.topAnchor.constraint(equalTo: host.topAnchor),
-                cached.view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-                cached.view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-                cached.view.trailingAnchor.constraint(equalTo: host.trailingAnchor)
-            ])
+            host.needsLayout = true
         }
 
         // Toggle visibility instead of removing to preserve SwiftTerm's scrollback and parse state
@@ -134,6 +131,7 @@ struct TerminalContainerView: NSViewRepresentable {
         let newFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         if cached.view.font != newFont {
             cached.view.font = newFont
+            host.needsLayout = true   // the cell width, and so the centring, changed
         }
 
         cached.delegate.viewModel = viewModel
