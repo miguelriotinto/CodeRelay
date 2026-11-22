@@ -62,6 +62,10 @@ VERIFY (all must hold):
 - The run ends `success` (`gh run view "$RUN" --json conclusion`).
 - Each platform's build job log contains `UPLOAD SUCCEEDED`:
   `gh run view "$RUN" --log | grep -E "UPLOAD SUCCEEDED|archive CFBundleVersion"`.
+- macOS: the `macos-dmg` job ends `success`, and release `v<version>-<N>` of
+  `miguelriotinto/coderelay-app` holds `CodeRelay.dmg`: download it and
+  `spctl --assess --type open --context context:primary-signature -v CodeRelay.dmg`
+  prints `source=Notarized Developer ID`.
 - The tag exists: `git ls-remote --tags origin 'ios-build-*' 'mac-build-*' | tail`
   shows `ios-build-<N>` / `mac-build-<N>` at the dispatched commit, where
   `<N>` is the build number in the run summary.

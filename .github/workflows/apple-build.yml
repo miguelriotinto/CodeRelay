@@ -12,6 +12,10 @@ on:
       dry_run:
         type: boolean
         required: true
+    outputs:
+      build:
+        description: The build number archived (and, unless dry_run, uploaded)
+        value: ${{ jobs.build.outputs.build }}
 
 jobs:
   build:
