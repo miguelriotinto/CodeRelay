@@ -67,7 +67,7 @@ need re-granting after an upgrade.
 runtime (on for this build only — the App Store archive is unchanged), signed by
 hand with the team's **Developer ID Application** certificate and the checked-in
 Developer ID profile `packaging/macos/CodeRelayMac-DeveloperID.provisionprofile`
-(same entitlements as the App Store build), then the app and the DMG are each
+(the App Store build's entitlements, push included — `production`, as the Developer ID profile grants), then the app and the DMG are each
 notarized with the App Store Connect key and stapled, and Gatekeeper's verdict
 (`spctl`) is checked. The build number is the newest `mac-build-<N>` tag behind
 the release commit, so the DMG matches that TestFlight build's number. Only

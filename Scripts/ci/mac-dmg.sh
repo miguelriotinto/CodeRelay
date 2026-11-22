@@ -53,12 +53,16 @@ GOT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Contents/Info.pl
 
 echo "== entitlements"
 # The same set the App Store build is signed with: the project's entitlements
-# plus the app and team identifiers the profile grants. `aps-environment` is
-# dropped, as Xcode drops it for the App Store build — it is the iOS key; macOS
-# reads `com.apple.developer.aps-environment`.
+# plus the app and team identifiers the profile grants. Push takes the value
+# the Developer ID profile grants, `production` — the project file carries
+# `development` for Xcode's own builds, and a signed value the embedded profile
+# does not grant makes macOS refuse to launch the app. (Older trees used the iOS
+# key `aps-environment`, which macOS ignores; either is replaced.)
 ENT="$WORK/app.entitlements"
 cp "$ROOT/CodeRelayMac/CodeRelayMac.entitlements" "$ENT"
 /usr/libexec/PlistBuddy -c "Delete :aps-environment" "$ENT" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Delete :com.apple.developer.aps-environment" "$ENT" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :com.apple.developer.aps-environment string production" "$ENT"
 /usr/libexec/PlistBuddy -c "Add :com.apple.application-identifier string $TEAM.$BUNDLE_ID" "$ENT"
 /usr/libexec/PlistBuddy -c "Add :com.apple.developer.team-identifier string $TEAM" "$ENT"
 
