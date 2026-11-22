@@ -164,13 +164,21 @@ public actor PushDispatcher {
             guard reg.enabled else { continue }
             if edge == .finished, !reg.notifyOnFinished { continue }
             let result = await sender.send(
-                deviceToken: reg.token, platform: reg.platform, topic: reg.topic,
+                deviceToken: reg.token, platform: reg.platform, topic: reg.topic, sandbox: reg.sandbox,
                 title: displayTitle, body: body, deepLink: deepLink, collapseKey: collapseKey,
                 serverId: serverId)
+            // Every outcome is logged: a push that never arrives otherwise left
+            // no trace at all. The device is named by its id, never its token.
+            let target = "\(reg.platform.rawValue) \(reg.topic ?? "-")\(reg.sandbox == true ? " sandbox" : "") device \(reg.deviceId.prefix(8))"
             switch result {
-            case .delivered:    delivered = true
-            case .unregistered: onDeadToken(reg.token)
-            case .failed:       break
+            case .delivered:
+                delivered = true
+                RelayLogger.log(.info, category: "push", "delivered to \(target)")
+            case .unregistered:
+                RelayLogger.log(.info, category: "push", "dead token, purged: \(target)")
+                onDeadToken(reg.token)
+            case .failed(let reason):
+                RelayLogger.log(.error, category: "push", "failed for \(target): \(reason)")
             }
         }
         // Start the debounce window only once something was actually delivered.

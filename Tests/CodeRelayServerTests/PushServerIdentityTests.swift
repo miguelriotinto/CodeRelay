@@ -8,7 +8,7 @@ final class PushServerIdentityTests: XCTestCase {
 
     private actor Recorder: PushSending {
         private(set) var sent: [(deepLink: String, collapseKey: String, serverId: String)] = []
-        func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+        func send(deviceToken: String, platform: PushPlatform, topic: String?, sandbox: Bool?, title: String,
                   body: String, deepLink: String, collapseKey: String, serverId: String) async -> PushResult {
             sent.append((deepLink, collapseKey, serverId))
             return .delivered

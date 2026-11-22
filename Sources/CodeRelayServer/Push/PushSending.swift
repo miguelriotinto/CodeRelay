@@ -16,11 +16,13 @@ public enum PushResult: Equatable, Sendable {
 ///
 /// `topic` is the device's APNs delivery topic (its bundle id); it lets one
 /// APNs provider fan out to distinct iOS/macOS apps. `nil` means "use the
-/// configured default"; FCM ignores it.
+/// configured default"; FCM ignores it. `sandbox` picks the APNs environment
+/// the device's token belongs to (`PushRegistration.sandbox`); `nil` = the
+/// configured default; FCM ignores it too.
 public protocol PushSending: Sendable {
     /// `serverId` is the relay's instance id (multi-server spec §10); providers
     /// put it in the payload so a tap can be routed to the right relay.
-    func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+    func send(deviceToken: String, platform: PushPlatform, topic: String?, sandbox: Bool?, title: String,
               body: String, deepLink: String, collapseKey: String, serverId: String) async -> PushResult
 }
 
@@ -35,7 +37,7 @@ public struct CompositePushSender: PushSending {
         self.fcm = fcm
     }
 
-    public func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+    public func send(deviceToken: String, platform: PushPlatform, topic: String?, sandbox: Bool?, title: String,
                      body: String, deepLink: String, collapseKey: String, serverId: String) async -> PushResult {
         let sender: PushSending?
         switch platform {
@@ -43,7 +45,7 @@ public struct CompositePushSender: PushSending {
         case .fcm:  sender = fcm
         }
         guard let sender else { return .failed("no sender configured for \(platform.rawValue)") }
-        return await sender.send(deviceToken: deviceToken, platform: platform, topic: topic,
+        return await sender.send(deviceToken: deviceToken, platform: platform, topic: topic, sandbox: sandbox,
                                  title: title, body: body, deepLink: deepLink, collapseKey: collapseKey,
                                  serverId: serverId)
     }

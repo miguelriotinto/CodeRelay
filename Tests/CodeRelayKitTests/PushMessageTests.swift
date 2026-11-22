@@ -5,9 +5,9 @@ final class PushMessageTests: ProtocolTestCase {
     func testRegisterPushTokenRoundTrips() throws {
         let original = ClientMessage.registerPushToken(
             platform: .apns, token: "abc123", deviceId: "dev-1",
-            enabled: true, notifyOnFinished: false, topic: "com.singular.coderelay.mac")
+            enabled: true, notifyOnFinished: false, topic: "com.singular.coderelay.mac", sandbox: false)
         let data = try encoder.encode(MessageEnvelope.client(original))
-        guard case .client(.registerPushToken(let p, let t, let d, let en, let nf, let topic)) =
+        guard case .client(.registerPushToken(let p, let t, let d, let en, let nf, let topic, let sandbox)) =
                 try decoder.decode(MessageEnvelope.self, from: data) else {
             XCTFail("Expected registerPushToken"); return
         }
@@ -17,19 +17,21 @@ final class PushMessageTests: ProtocolTestCase {
         XCTAssertTrue(en)
         XCTAssertFalse(nf)
         XCTAssertEqual(topic, "com.singular.coderelay.mac")
+        XCTAssertEqual(sandbox, false)
     }
 
     func testRegisterPushTokenDecodesWithoutTopic() throws {
         // Older clients omit `topic`; it must decode to nil (server then falls
         // back to the configured bundle id), proving backward compatibility.
         let json = #"{"type":"register_push_token","payload":{"platform":"apns","token":"t","deviceId":"d"}}"#
-        guard case .client(.registerPushToken(_, _, _, let en, let nf, let topic)) =
+        guard case .client(.registerPushToken(_, _, _, let en, let nf, let topic, let sandbox)) =
                 try decoder.decode(MessageEnvelope.self, from: Data(json.utf8)) else {
             XCTFail("Expected registerPushToken"); return
         }
         XCTAssertTrue(en, "enabled defaults to true when omitted")
         XCTAssertFalse(nf, "notifyOnFinished defaults to false when omitted")
         XCTAssertNil(topic)
+        XCTAssertNil(sandbox, "older clients omit sandbox; the relay then uses apnsUseSandbox")
     }
 
     func testUnregisterPushTokenRoundTrips() throws {

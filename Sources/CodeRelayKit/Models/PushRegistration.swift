@@ -21,9 +21,18 @@ public struct PushRegistration: Codable, Equatable, Sendable {
     /// the device reports its own bundle id here. `nil` for FCM and for older
     /// clients — the server then falls back to the configured `apnsBundleId`.
     public var topic: String?
+    /// The APNs environment this device's token belongs to: `true` = sandbox
+    /// (a development-signed build), `false` = production (TestFlight, App
+    /// Store, Developer ID). Read by the app from its own provisioning profile.
+    /// A token sent to the wrong endpoint is answered `BadDeviceToken`, which
+    /// the relay reads as a dead token and purges — so one relay-wide switch
+    /// could serve only one kind of build. `nil` (FCM, older clients) falls back
+    /// to the configured `apnsUseSandbox`.
+    public var sandbox: Bool?
 
     public init(platform: PushPlatform, token: String, deviceId: String,
-                enabled: Bool, notifyOnFinished: Bool, updatedAt: Date, topic: String? = nil) {
+                enabled: Bool, notifyOnFinished: Bool, updatedAt: Date, topic: String? = nil,
+                sandbox: Bool? = nil) {
         self.platform = platform
         self.token = token
         self.deviceId = deviceId
@@ -31,6 +40,7 @@ public struct PushRegistration: Codable, Equatable, Sendable {
         self.notifyOnFinished = notifyOnFinished
         self.updatedAt = updatedAt
         self.topic = topic
+        self.sandbox = sandbox
     }
 
     /// Bounds untrusted input before it enters persisted maps: non-empty token

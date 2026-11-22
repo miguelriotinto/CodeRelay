@@ -33,7 +33,8 @@ public enum ClientMessage: Equatable, Sendable {
     /// Register (or update) this device's push token + per-device delivery
     /// preferences. Idempotent by `deviceId`.
     case registerPushToken(platform: PushPlatform, token: String, deviceId: String,
-                           enabled: Bool, notifyOnFinished: Bool, topic: String? = nil)
+                           enabled: Bool, notifyOnFinished: Bool, topic: String? = nil,
+                           sandbox: Bool? = nil)
     /// Remove this device's push registration (e.g. user turned push off).
     case unregisterPushToken(deviceId: String)
     /// Redeem a one-time pairing code for a freshly minted per-device token.
@@ -80,7 +81,7 @@ public enum ClientMessage: Equatable, Sendable {
 extension ClientMessage: Codable {
     private enum PayloadCodingKeys: String, CodingKey {
         case token, sessionId, cols, rows, name, data, protocolVersion, skipReplay
-        case platform, deviceId, enabled, notifyOnFinished, topic
+        case platform, deviceId, enabled, notifyOnFinished, topic, sandbox
         case code, deviceName
     }
 
@@ -124,13 +125,14 @@ extension ClientMessage: Codable {
             try container.encode(data, forKey: .data)
         case .ping:
             break
-        case .registerPushToken(let platform, let token, let deviceId, let enabled, let notifyOnFinished, let topic):
+        case .registerPushToken(let platform, let token, let deviceId, let enabled, let notifyOnFinished, let topic, let sandbox):
             try container.encode(platform, forKey: .platform)
             try container.encode(token, forKey: .token)
             try container.encode(deviceId, forKey: .deviceId)
             try container.encode(enabled, forKey: .enabled)
             try container.encode(notifyOnFinished, forKey: .notifyOnFinished)
             try container.encodeIfPresent(topic, forKey: .topic)
+            try container.encodeIfPresent(sandbox, forKey: .sandbox)
         case .unregisterPushToken(let deviceId):
             try container.encode(deviceId, forKey: .deviceId)
         case .pairRequest(let code, let deviceName, let platform):
@@ -195,7 +197,8 @@ extension ClientMessage: Codable {
                 deviceId: try container.decode(String.self, forKey: .deviceId),
                 enabled: try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true,
                 notifyOnFinished: try container.decodeIfPresent(Bool.self, forKey: .notifyOnFinished) ?? false,
-                topic: try container.decodeIfPresent(String.self, forKey: .topic))
+                topic: try container.decodeIfPresent(String.self, forKey: .topic),
+                sandbox: try container.decodeIfPresent(Bool.self, forKey: .sandbox))
         case "unregister_push_token":
             return .unregisterPushToken(deviceId: try container.decode(String.self, forKey: .deviceId))
         case "pair_request":
