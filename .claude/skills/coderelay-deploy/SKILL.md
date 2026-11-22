@@ -62,6 +62,10 @@ VERIFY (all must hold):
 - The run ends `success` (`gh run view "$RUN" --json conclusion`).
 - Each platform's build job log contains `UPLOAD SUCCEEDED`:
   `gh run view "$RUN" --log | grep -E "UPLOAD SUCCEEDED|archive CFBundleVersion"`.
+- macOS: the `macos-dmg` job ends `success`, and release `v<version>-<N>` of
+  `miguelriotinto/coderelay-app` holds `CodeRelay.dmg`: download it and
+  `spctl --assess --type open --context context:primary-signature -v CodeRelay.dmg`
+  prints `source=Notarized Developer ID`.
 - The tag exists: `git ls-remote --tags origin 'ios-build-*' 'mac-build-*' | tail`
   shows `ios-build-<N>` / `mac-build-<N>` at the dispatched commit, where
   `<N>` is the build number in the run summary.
@@ -78,20 +82,16 @@ gh run watch "$RUN" --exit-status
 ```
 
 VERIFY:
-- The run ends `success`, including the `bottle`, `homebrew`,
-  `arch-packages` and `mac-dmg` jobs.
+- The run ends `success`, including the `bottle`, `homebrew` and
+  `arch-packages` jobs.
 - `gh release view vX.Y.Z --json assets --jq '.assets[].name'` lists
   `coderelay-vX.Y.Z-linux-x86_64.tar.gz`, `claude-relay-vX.Y.Z-linux-x86_64.tar.gz`,
-  `coderelay-vX.Y.Z-android.apk`, `coderelay-vX.Y.Z-macos.dmg`, `checksums.txt`,
+  `coderelay-vX.Y.Z-android.apk`, `checksums.txt`,
   `coderelay-X.Y.Z.<tag>.bottle.tar.gz` (single dash before the version),
   `coderelay-bin-X.Y.Z-1-x86_64.pkg.tar.zst` and
   `coderelay-server-bin-X.Y.Z-1-x86_64.pkg.tar.zst` (no `v`), and
   `checksums.txt` has a line for each `.pkg.tar.zst`.
-- `gh release view vX.Y.Z` prints the per-platform sections, and the macOS
-  section names the DMG.
-- Mac DMG: download it and `spctl --assess --type open --context
-  context:primary-signature -v <dmg>` prints `accepted` / `source=Notarized
-  Developer ID`; `xcrun stapler validate <dmg>` succeeds.
+- `gh release view vX.Y.Z` prints the per-platform sections.
 - Android: `gh release download vX.Y.Z -p '*.apk' -D /tmp/cr-apk` and
   `aapt2 dump badging` shows the expected `versionCode`/`versionName`; byte
   size is not proof. The run log's `apksigner verify --print-certs` must not

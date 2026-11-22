@@ -10,7 +10,7 @@ verifies them (`/coderelay-deploy`); it does not build what ships. Design:
 |---|---|---|---|
 | iOS app | `apple-release.yml` (runner `xcode-27`) | `gh workflow run apple-release.yml -f platform=ios` | TestFlight; tag `ios-build-<N>` |
 | macOS app | `apple-release.yml` | `-f platform=macos` (or `both`) | TestFlight; tag `mac-build-<N>` |
-| macOS app, direct download | `release.yml` job `mac-dmg` (`xcode-27`) | `vX.Y.Z` tag | GitHub Release: `coderelay-vX.Y.Z-macos.dmg`, Developer ID signed, notarized, stapled |
+| macOS app, direct download | `apple-release.yml` job `macos-dmg` (`xcode-27`), after `macos` | same run | Release `v<version>-<N>` of [`coderelay-app`](https://github.com/miguelriotinto/coderelay-app): `CodeRelay.dmg`, Developer ID signed, notarized, stapled |
 | macOS server + CLI | `release.yml` job `bottle` (arm64, `xcode-27`) | `vX.Y.Z` tag | Homebrew bottle on the release; tap `miguelriotinto/homebrew-coderelay` + `Formula/` on `main` |
 | Linux server + CLI | `release.yml` | `vX.Y.Z` tag | GitHub Release: tarball + Arch package `coderelay-server-bin` (job `arch-packages`) |
 | Linux client | `release.yml` | `vX.Y.Z` tag | GitHub Release: tarball + Arch package `coderelay-bin` (job `arch-packages`) |
@@ -62,39 +62,44 @@ need re-granting after an upgrade.
 
 ### The notarized Mac app DMG
 
-`mac-dmg` runs after the release exists, like `bottle`, and
-`Scripts/ci/mac-dmg.sh` does the work: an **unsigned** archive with the hardened
-runtime (on for this build only — the App Store archive is unchanged), signed by
-hand with the team's **Developer ID Application** certificate and the checked-in
-Developer ID profile `packaging/macos/CodeRelayMac-DeveloperID.provisionprofile`
-(the App Store build's entitlements, push included — `production`, as the Developer ID profile grants), then the app and the DMG are each
-notarized with the App Store Connect key and stapled, and Gatekeeper's verdict
-(`spctl`) is checked. The build number is the newest `mac-build-<N>` tag behind
-the release commit, so the DMG matches that TestFlight build's number. Only
-after the upload does the job add the DMG's row to the release body
-(`Scripts/ci/release_notes.py`), so a failure never leaves a dead link: re-run
-the job.
+`macos-dmg` runs after each successful Mac TestFlight upload (not on a dry
+run), from the same commit with the same build number, and publishes release
+`v<MARKETING_VERSION>-<N>` of the public repo **`miguelriotinto/coderelay-app`**
+— the download page, apart from this repo's server and Android releases. The
+asset is always `CodeRelay.dmg`, so
+`https://github.com/miguelriotinto/coderelay-app/releases/latest/download/CodeRelay.dmg`
+always serves the newest. A failure never touches the TestFlight build:
+re-run the job (it replaces the asset of an existing release).
 
-Why by hand: `xcodebuild -exportArchive -method developer-id` answers "Cloud
-signing permission error" — cloud signing does not issue Developer ID
-signatures with the team key.
+`Scripts/ci/mac-dmg.sh` does the work: an **unsigned** archive with the
+hardened runtime (on for this build only — the App Store archive is
+unchanged), signed by hand with the team's **Developer ID Application**
+certificate and the checked-in Developer ID profile
+`packaging/macos/CodeRelayMac-DeveloperID.provisionprofile` (the App Store
+build's entitlements, push as `production`, which that profile grants — a
+signed value the profile does not grant stops the app from launching), then
+the app and the DMG are each notarized with the App Store Connect key and
+stapled, and Gatekeeper's verdict (`spctl`) is checked. Why by hand:
+`xcodebuild -exportArchive -method developer-id` answers "Cloud signing
+permission error" with the team key.
 
 **Renewal — both expire 2027-02-01.** The Developer ID certificate (`9N7TP59267`)
-and the profile made for it (`83U936VGGT`, "Code Relay Mac Developer ID") end
-together. After renewing the certificate: create a new `MAC_APP_DIRECT` profile
-for bundle `com.singular.coderelay.mac` with it
+and its profile (`83U936VGGT`, "Code Relay Mac Developer ID") end together.
+After renewing the certificate, create a new `MAC_APP_DIRECT` profile with it
 (`asc profiles create --profile-type MAC_APP_DIRECT --bundle X832JKP9LZ --certificate <id>`),
 commit it over the old file, and re-export the identity into
 `APPLE_DEVID_CERT_P12_B64`. Code[Whisper]'s Developer ID profile uses the same
 certificate.
 
 Break glass, on a Mac whose login keychain holds the Developer ID identity:
-`xcodegen && ASC_KEY_PATH=… ASC_KEY_ID=… ASC_ISSUER_ID=… Scripts/ci/mac-dmg.sh <build> out.dmg`,
-then `gh release upload vX.Y.Z out.dmg` under the release asset name.
+`xcodegen && ASC_KEY_PATH=… ASC_KEY_ID=… ASC_ISSUER_ID=… Scripts/ci/mac-dmg.sh <N> CodeRelay.dmg`,
+then `gh release create v<version>-<N> CodeRelay.dmg --repo miguelriotinto/coderelay-app`.
+The first release, `v1.3.0-129` (2026-11-22), was published this way, before
+the secrets existed.
 
 ## Secrets
 
-Twelve repository secrets (`gh secret list`). Rotate one with
+Thirteen repository secrets (`gh secret list`). Rotate one with
 `gh secret set <NAME>` (paste the value, or `< file`).
 
 | Secret | What | Rotate |
@@ -106,6 +111,7 @@ Twelve repository secrets (`gh secret list`). Rotate one with
 | `APPLE_DEV_CERT_PASSWORD` | The `.p12`'s export password | with the certificate |
 | `APPLE_DEVID_CERT_P12_B64` | `base64` of a `.p12` export of the **Developer ID Application** certificate + key (team T9WF95GC9T) | with the certificate — expires **2027-02-01**; see "The notarized Mac app DMG" |
 | `APPLE_DEVID_CERT_PASSWORD` | That `.p12`'s export password | with the certificate |
+| `CODERELAY_APP_TOKEN` | Fine-grained PAT: repo `miguelriotinto/coderelay-app`, Contents read/write, with an expiry | before it expires — `macos-dmg` fails loudly without it |
 | `HOMEBREW_TAP_TOKEN` | Fine-grained PAT: repo `miguelriotinto/homebrew-coderelay`, Contents read/write, with an expiry | before it expires — the `homebrew` job fails loudly without it |
 | `ANDROID_KEYSTORE_B64` | `base64` of the release keystore (`CodeRelayAndroid/RELEASE.md` §1) | **never** — a new key means every phone must uninstall first |
 | `ANDROID_KEYSTORE_PASSWORD` | Store password | with the keystore |

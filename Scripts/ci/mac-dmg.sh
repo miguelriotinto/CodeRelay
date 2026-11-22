@@ -1,7 +1,8 @@
 #!/bin/bash
 # Builds Code[Relay] for Mac as a notarized, stapled DMG for direct download
-# (GitHub Releases), next to the App Store / TestFlight build. Run by the
-# mac-dmg job in release.yml; also the break-glass path on a Mac whose login
+# (releases of miguelriotinto/coderelay-app), next to the App Store /
+# TestFlight build. Run by the macos-dmg job in apple-release.yml with the
+# build number just uploaded; also the break-glass path on a Mac whose login
 # keychain holds the Developer ID Application identity.
 #
 #   Scripts/ci/mac-dmg.sh <build-number> <out.dmg>
