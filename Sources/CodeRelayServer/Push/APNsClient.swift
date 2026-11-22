@@ -50,8 +50,9 @@ public actor APNsClient: PushSending {
         self.privateKey = try P256.Signing.PrivateKey(pemRepresentation: config.keyPEM)
     }
 
-    private var host: String {
-        config.useSandbox ? "api.sandbox.push.apple.com" : "api.push.apple.com"
+    /// The device's own environment when it reported one, else the configured default.
+    static func host(sandbox: Bool?, defaultSandbox: Bool) -> String {
+        (sandbox ?? defaultSandbox) ? "api.sandbox.push.apple.com" : "api.push.apple.com"
     }
 
     // MARK: - JWT
@@ -82,7 +83,7 @@ public actor APNsClient: PushSending {
 
     // MARK: - Send
 
-    public func send(deviceToken: String, platform: PushPlatform, topic: String?, title: String,
+    public func send(deviceToken: String, platform: PushPlatform, topic: String?, sandbox: Bool?, title: String,
                      body: String, deepLink: String, collapseKey: String, serverId: String) async -> PushResult {
         do {
             let jwt = try currentJWT()
@@ -99,7 +100,7 @@ public actor APNsClient: PushSending {
                 "serverId": serverId,
             ]
             let bodyData = try JSONSerialization.data(withJSONObject: payload)
-            let url = "https://\(host)/3/device/\(deviceToken)"
+            let url = "https://\(Self.host(sandbox: sandbox, defaultSandbox: config.useSandbox))/3/device/\(deviceToken)"
             let headers = [
                 ("authorization", "bearer \(jwt)"),
                 ("apns-topic", apnsTopic),

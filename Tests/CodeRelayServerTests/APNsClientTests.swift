@@ -67,7 +67,7 @@ final class APNsClientTests: XCTestCase {
         let http = MockHTTP()
         await http.configure(status: 200)
         let client = try APNsClient(config: config(sandbox: true), http: http)
-        let result = await client.send(deviceToken: "abc123", platform: .apns, topic: nil,
+        let result = await client.send(deviceToken: "abc123", platform: .apns, topic: nil, sandbox: nil,
                                        title: "demo", body: "1 agent blocked",
                                        deepLink: "coderelay://session/xyz", collapseKey: "ws_hash", serverId: "srv-1")
         XCTAssertEqual(result, .delivered)
@@ -108,7 +108,7 @@ final class APNsClientTests: XCTestCase {
         let http = MockHTTP()
         await http.configure(status: 410)
         let client = try APNsClient(config: config(), http: http)
-        let result = await client.send(deviceToken: "dead", platform: .apns, topic: nil, title: "t", body: "b",
+        let result = await client.send(deviceToken: "dead", platform: .apns, topic: nil, sandbox: nil, title: "t", body: "b",
                                        deepLink: "d", collapseKey: "k", serverId: "srv-1")
         XCTAssertEqual(result, .unregistered)
     }
@@ -117,11 +117,36 @@ final class APNsClientTests: XCTestCase {
         let http = MockHTTP()
         await http.configure(status: 200)
         let client = try APNsClient(config: config(sandbox: true), http: http)
-        _ = await client.send(deviceToken: "abc123", platform: .apns, topic: "com.singular.coderelay.mac",
+        _ = await client.send(deviceToken: "abc123", platform: .apns, topic: "com.singular.coderelay.mac", sandbox: nil,
                               title: "t", body: "b", deepLink: "d", collapseKey: "k", serverId: "srv-1")
         let headers = await http.headers()
         XCTAssertTrue(headers.contains { $0.0 == "apns-topic" && $0.1 == "com.singular.coderelay.mac" },
                       "a per-device topic must override the configured bundle id")
+    }
+
+    /// TestFlight / App Store builds hold PRODUCTION tokens; a relay configured
+    /// for the sandbox sent them to api.sandbox, APNs answered BadDeviceToken,
+    /// and the registration was purged as dead. The device's own environment wins.
+    func testDeviceEnvironmentOverridesTheConfiguredOne() async throws {
+        let http = MockHTTP()
+        await http.configure(status: 200)
+        let sandboxRelay = try APNsClient(config: config(sandbox: true), http: http)
+        _ = await sandboxRelay.send(deviceToken: "prod", platform: .apns, topic: nil, sandbox: false,
+                                    title: "t", body: "b", deepLink: "d", collapseKey: "k", serverId: "s")
+        let prodURL = await http.url()
+        XCTAssertEqual(prodURL, "https://api.push.apple.com/3/device/prod")
+
+        let productionRelay = try APNsClient(config: config(sandbox: false), http: http)
+        _ = await productionRelay.send(deviceToken: "dev", platform: .apns, topic: nil, sandbox: true,
+                                       title: "t", body: "b", deepLink: "d", collapseKey: "k", serverId: "s")
+        let devURL = await http.url()
+        XCTAssertEqual(devURL, "https://api.sandbox.push.apple.com/3/device/dev")
+
+        // An older client that reports nothing keeps the configured default.
+        _ = await sandboxRelay.send(deviceToken: "old", platform: .apns, topic: nil, sandbox: nil,
+                                    title: "t", body: "b", deepLink: "d", collapseKey: "k", serverId: "s")
+        let oldURL = await http.url()
+        XCTAssertEqual(oldURL, "https://api.sandbox.push.apple.com/3/device/old")
     }
 }
 

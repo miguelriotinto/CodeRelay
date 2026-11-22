@@ -465,7 +465,8 @@ open class SharedSessionCoordinator: ObservableObject, SessionCoordinating, Serv
                 try await connection.send(.registerPushToken(
                     platform: .apns, token: token, deviceId: deviceId,
                     enabled: enabled, notifyOnFinished: notify,
-                    topic: Bundle.main.bundleIdentifier))
+                    topic: Bundle.main.bundleIdentifier,
+                    sandbox: APNsEnvironment.isSandbox()))
             case .unregister:
                 try await connection.send(.unregisterPushToken(deviceId: deviceId))
             case .noop:
