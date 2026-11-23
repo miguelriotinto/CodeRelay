@@ -122,7 +122,7 @@ struct ServerListWindow: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { target in
-            Text("Are you sure you want to delete '\(target.name)'?")
+            Text("Are you sure you want to delete '\(target.title)'?")
         }
     }
 }

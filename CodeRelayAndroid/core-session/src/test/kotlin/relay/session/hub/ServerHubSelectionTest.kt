@@ -230,7 +230,7 @@ class ServerHubSelectionTest {
         h.hub.select(SessionRef(b.id, UUID.randomUUID())); advanceUntilIdle()
         assertEquals(a.id, h.hub.activeRef.value?.serverId)
         assertEquals(0, h.slot(a.id)!!.detachCount)
-        assertEquals("b has no token. Re-pair it in Servers.", h.hub.notice.value)
+        assertEquals("B has no token. Re-pair it in Servers.", h.hub.notice.value)
     }
 
     @Test fun attachableSessionsCoverEveryLiveServerInSidebarOrder() = runTest {
@@ -240,7 +240,7 @@ class ServerHubSelectionTest {
         h.slot(c[1].id)!!.attachable = listOf(onB)
         val groups = h.hub.attachableSessions()
         assertEquals(listOf(c[0].id, c[1].id), groups.map { it.serverId })
-        assertEquals(listOf("a", "b"), groups.map { it.title })
+        assertEquals(listOf("A", "B"), groups.map { it.title })
         assertEquals(listOf(listOf(onA), listOf(onB)), groups.map { it.sessions })
     }
 
@@ -270,7 +270,7 @@ class ServerHubSelectionTest {
         assertEquals(2, h.hub.sections.value.first { it.id == c[1].id }.sessions.size)
         assertTrue(h.hub.orderedRefs.none { it.serverId == c[1].id })
         h.hub.select(cached); advanceUntilIdle()
-        assertEquals("Enable b in Servers to open its sessions.", h.hub.notice.value)
+        assertEquals("Enable B in Servers to open its sessions.", h.hub.notice.value)
         assertNull(h.hub.activeRef.value)
     }
 

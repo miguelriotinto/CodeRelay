@@ -259,7 +259,7 @@ suspend fun <S : ServerSlot> ServerHub<S>.handleDeepLink(link: SessionDeepLink):
     if (named != null) {
         val ref = SessionRef(named.id, link.sessionId)
         if (!named.enabled) {
-            val title = named.displayName ?: named.name
+            val title = named.title
             if (!setEnabled(named.id, true)) return DeepLinkOutcome.NotFound(title)
             noticeFlow.value = "Enabled $title to open this session"
             selectionGeneration += 1

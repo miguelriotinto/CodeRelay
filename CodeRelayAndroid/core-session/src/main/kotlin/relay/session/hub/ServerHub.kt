@@ -239,7 +239,7 @@ class ServerHub<S : ServerSlot>(
             fresh = fresh.reversed().map { c ->
                 if (c.enabled && !slots.containsKey(c.id) && enabledNow > maxEnabled) {
                     enabledNow -= 1
-                    noticeFlow.value = "Up to $maxEnabled servers can be enabled at once. ${c.name} was added disabled."
+                    noticeFlow.value = "Up to $maxEnabled servers can be enabled at once. ${c.title} was added disabled."
                     c.copy(enabled = false)
                 } else {
                     c
@@ -515,7 +515,7 @@ class ServerHub<S : ServerSlot>(
 
     private fun collectLosses(report: SessionLossReport, serverId: UUID) {
         val config = bookmarks.firstOrNull { it.id == serverId }
-        val serverName = config?.let { it.displayName ?: it.name }.orEmpty()
+        val serverName = config?.title.orEmpty()
         fun items(lost: List<LostSession>) = lost.map { SessionLossItem(serverId, serverName, it) }
         if (report.taken.isNotEmpty()) lossCollector.report(items(report.taken), SessionLossKind.TAKEN)
         if (report.ended.isNotEmpty()) lossCollector.report(items(report.ended), SessionLossKind.ENDED)

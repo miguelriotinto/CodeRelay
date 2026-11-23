@@ -17,7 +17,9 @@ class ConnectionConfigTest {
 
     @org.junit.jupiter.api.Test fun titlePrefersTheRelaysOwnName() {
         val c = ConnectionConfig(name = "bookmark", host = "h")
-        org.junit.jupiter.api.Assertions.assertEquals("bookmark", c.title)
-        org.junit.jupiter.api.Assertions.assertEquals("studio", c.copy(displayName = "studio").title)
+        org.junit.jupiter.api.Assertions.assertEquals("BOOKMARK", c.title)
+        org.junit.jupiter.api.Assertions.assertEquals("STUDIO", c.copy(displayName = "studio").title)
+        // Display only: the stored name keeps what the user typed.
+        org.junit.jupiter.api.Assertions.assertEquals("bookmark", c.name)
     }
 }

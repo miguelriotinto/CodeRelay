@@ -158,7 +158,7 @@ final class ServerHubSelectionTests: XCTestCase {
         h.slot(cfg[1].id)!.attachable = [onB]
         let groups = await h.hub.attachableSessions()
         XCTAssertEqual(groups.map(\.serverId), [cfg[0].id, cfg[1].id])
-        XCTAssertEqual(groups.map(\.title), ["a", "b"])
+        XCTAssertEqual(groups.map(\.title), ["A", "B"])
         XCTAssertEqual(groups.map { $0.sessions.map(\.id) }, [[onA.id], [onB.id]])
     }
 

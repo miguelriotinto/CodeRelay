@@ -42,7 +42,7 @@ class HubWorkspaceLogicTest {
         assertEquals(listOf(1, 2, 3), tabs.map { it.number })
         assertEquals(listOf(a.id, a.id, b.id), tabs.map { it.ref.serverId })
         assertEquals(listOf(false, false, true), tabs.map { it.isSelected })
-        assertEquals(listOf("a", "a", "b"), tabs.map { it.serverTitle })
+        assertEquals(listOf("A", "A", "B"), tabs.map { it.serverTitle })
         val single = HubWorkspaceLogic.tabs(listOf(a.copy(sessions = a.sessions.take(1)), c), null)
         assertEquals(listOf<String?>(null), single.map { it.serverTitle }, "G8: one server, no prefix")
     }
@@ -79,7 +79,7 @@ class HubWorkspaceLogicTest {
         assertEquals("reconnecting…", ServerSectionHeaderModel.of(section("a", ServerSectionStatus.Reconnecting)).subtitle)
         val off = ServerSectionHeaderModel.of(section("a", ServerSectionStatus.Disabled, enabled = false))
         assertEquals("disabled", off.subtitle); assertEquals(HeaderDot.GRAY, off.dot); assertFalse(off.offersRetry)
-        assertEquals("a, offline", offline.accessibilityLabel)
+        assertEquals("A, offline", offline.accessibilityLabel)
     }
 
     @Test fun badgeCountsOnlyLiveAwaitingSessions() {

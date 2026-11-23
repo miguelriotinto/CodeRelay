@@ -49,7 +49,7 @@ class ServerHubRoutingTest {
             h.hub.handleDeepLink(SessionDeepLink(target, iid)),
         )
         assertEquals(1, slotA.detachCount)
-        assertEquals("Enabled b to open this session", h.hub.notice.value)
+        assertEquals("Enabled B to open this session", h.hub.notice.value)
         assertTrue(h.bookmarks.loadAll().first { it.id == b.id }.enabled)
         advanceUntilIdle()
         h.slot(b.id)!!.goLive(listOf(session(target))); advanceUntilIdle()

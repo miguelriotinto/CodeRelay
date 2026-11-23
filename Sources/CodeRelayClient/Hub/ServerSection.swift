@@ -63,8 +63,8 @@ public struct ServerSection: Identifiable, Equatable {
         self.isDuplicateInstance = isDuplicateInstance
     }
 
-    /// Header label: the relay's own name when learned, else the bookmark name.
-    public var title: String { config.displayName ?? config.name }
+    /// Header label: `ConnectionConfig.title`.
+    public var title: String { config.title }
 }
 
 /// Cross-server counts for badges and the menu bar (spec §7.6). Cached
