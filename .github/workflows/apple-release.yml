@@ -151,22 +151,24 @@ jobs:
           VERSION=$(awk '/^  CodeRelayMac:/{f=1} f&&/MARKETING_VERSION:/{gsub(/[^0-9.]/,"");print;exit}' project.yml)
           [ -n "$VERSION" ] || { echo "no MARKETING_VERSION for CodeRelayMac in project.yml"; exit 1; }
           echo "Mac app $VERSION ($BUILD)"
-          Scripts/ci/mac-dmg.sh "$BUILD" "$RUNNER_TEMP/CodeRelay.dmg"
+          DMG="CodeRelay-$VERSION.dmg"
+          Scripts/ci/mac-dmg.sh "$BUILD" "$RUNNER_TEMP/$DMG"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
 
       - name: Publish to coderelay-app
-        # The asset is always named CodeRelay.dmg, so
-        # releases/latest/download/CodeRelay.dmg is a stable download link.
+        # The asset is CodeRelay-<version>.dmg, so a downloaded file says which
+        # version it is; the stable link is the releases/latest page.
         env:
           GH_TOKEN: ${{ secrets.CODERELAY_APP_TOKEN }}
         run: |
           TAG="v$VERSION-$BUILD"
-          SHA=$(shasum -a 256 "$RUNNER_TEMP/CodeRelay.dmg" | awk '{print $1}')
-          URL="https://github.com/$APP_REPO/releases/download/$TAG/CodeRelay.dmg"
+          SHA=$(shasum -a 256 "$RUNNER_TEMP/$DMG" | awk '{print $1}')
+          URL="https://github.com/$APP_REPO/releases/download/$TAG/$DMG"
           {
             echo "**Code[Relay] for Mac $VERSION (build $BUILD)** — the same app as TestFlight build $BUILD."
             echo
-            echo "**[Download CodeRelay.dmg]($URL)** · signed with Developer ID, notarized and stapled by Apple · macOS 14+ · Apple silicon and Intel"
+            echo "**[Download $DMG]($URL)** · signed with Developer ID, notarized and stapled by Apple · macOS 14+ · Apple silicon and Intel"
             echo
             echo "Open the DMG and drag Code[Relay] to Applications. You also need the CodeRelay server on the computer you connect to: \`brew install miguelriotinto/coderelay/coderelay\`, then \`claude-relay setup\`."
             echo
@@ -176,10 +178,10 @@ jobs:
           } > "$RUNNER_TEMP/notes.md"
           if gh release view "$TAG" --repo "$APP_REPO" >/dev/null 2>&1; then
             # Re-run of this job for the same build: replace the asset.
-            gh release upload "$TAG" "$RUNNER_TEMP/CodeRelay.dmg" --clobber --repo "$APP_REPO"
+            gh release upload "$TAG" "$RUNNER_TEMP/$DMG" --clobber --repo "$APP_REPO"
             gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --repo "$APP_REPO"
           else
-            gh release create "$TAG" "$RUNNER_TEMP/CodeRelay.dmg" --repo "$APP_REPO" --target main \
+            gh release create "$TAG" "$RUNNER_TEMP/$DMG" --repo "$APP_REPO" --target main \
               --title "Code[Relay] for Mac $VERSION ($BUILD)" --notes-file "$RUNNER_TEMP/notes.md" --latest
           fi
           echo "published $TAG (sha256 $SHA)"

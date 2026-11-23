@@ -10,7 +10,7 @@ verifies them (`/coderelay-deploy`); it does not build what ships. Design:
 |---|---|---|---|
 | iOS app | `apple-release.yml` (runner `xcode-27`) | `gh workflow run apple-release.yml -f platform=ios` | TestFlight; tag `ios-build-<N>` |
 | macOS app | `apple-release.yml` | `-f platform=macos` (or `both`) | TestFlight; tag `mac-build-<N>` |
-| macOS app, direct download | `apple-release.yml` job `macos-dmg` (`xcode-27`), after `macos` | same run | Release `v<version>-<N>` of [`coderelay-app`](https://github.com/miguelriotinto/coderelay-app): `CodeRelay.dmg`, Developer ID signed, notarized, stapled |
+| macOS app, direct download | `apple-release.yml` job `macos-dmg` (`xcode-27`), after `macos` | same run | Release `v<version>-<N>` of [`coderelay-app`](https://github.com/miguelriotinto/coderelay-app): `CodeRelay-<version>.dmg`, Developer ID signed, notarized, stapled |
 | macOS server + CLI | `release.yml` job `bottle` (arm64, `xcode-27`) | `vX.Y.Z` tag | Homebrew bottle on the release; tap `miguelriotinto/homebrew-coderelay` + `Formula/` on `main` |
 | Linux server + CLI | `release.yml` | `vX.Y.Z` tag | GitHub Release: tarball + Arch package `coderelay-server-bin` (job `arch-packages`) |
 | Linux client | `release.yml` | `vX.Y.Z` tag | GitHub Release: tarball + Arch package `coderelay-bin` (job `arch-packages`) |
@@ -66,9 +66,9 @@ need re-granting after an upgrade.
 run), from the same commit with the same build number, and publishes release
 `v<MARKETING_VERSION>-<N>` of the public repo **`miguelriotinto/coderelay-app`**
 — the download page, apart from this repo's server and Android releases. The
-asset is always `CodeRelay.dmg`, so
-`https://github.com/miguelriotinto/coderelay-app/releases/latest/download/CodeRelay.dmg`
-always serves the newest. A failure never touches the TestFlight build:
+asset is `CodeRelay-<MARKETING_VERSION>.dmg` (e.g. `CodeRelay-1.3.0.dmg`), so
+there is no fixed download URL: link to
+`https://github.com/miguelriotinto/coderelay-app/releases/latest`. A failure never touches the TestFlight build:
 re-run the job (it replaces the asset of an existing release).
 
 `Scripts/ci/mac-dmg.sh` does the work: an **unsigned** archive with the
@@ -99,8 +99,8 @@ commit it over the old file, and re-export the identity into
 certificate.
 
 Break glass, on a Mac whose login keychain holds the Developer ID identity:
-`xcodegen && ASC_KEY_PATH=… ASC_KEY_ID=… ASC_ISSUER_ID=… Scripts/ci/mac-dmg.sh <N> CodeRelay.dmg`,
-then `gh release create v<version>-<N> CodeRelay.dmg --repo miguelriotinto/coderelay-app`.
+`xcodegen && ASC_KEY_PATH=… ASC_KEY_ID=… ASC_ISSUER_ID=… Scripts/ci/mac-dmg.sh <N> CodeRelay-<version>.dmg`,
+then `gh release create v<version>-<N> CodeRelay-<version>.dmg --repo miguelriotinto/coderelay-app`.
 The first release, `v1.3.0-129` (2026-11-22), was published this way, before
 the secrets existed.
 
