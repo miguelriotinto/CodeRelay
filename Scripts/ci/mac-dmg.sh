@@ -91,11 +91,8 @@ ditto -c -k --keepParent "$APP" "$WORK/app.zip"
 notarize "$WORK/app.zip"
 xcrun stapler staple "$APP"
 
-echo "== DMG"
-ln -s /Applications "$WORK/disk/Applications"
-rm -f "$OUT"
-hdiutil create -quiet -volname "Code[Relay]" -srcfolder "$WORK/disk" -fs HFS+ \
-  -format UDZO -imagekey zlib-level=9 -o "$OUT"
+echo "== DMG (designed Finder window)"
+"$ROOT/Scripts/ci/make-dmg.sh" "$APP" "$OUT" "Code[Relay]"
 codesign --force --timestamp --sign "$IDENTITY" "$OUT"
 notarize "$OUT"
 xcrun stapler staple "$OUT"
