@@ -83,6 +83,13 @@ stapled, and Gatekeeper's verdict (`spctl`) is checked. Why by hand:
 `xcodebuild -exportArchive -method developer-id` answers "Cloud signing
 permission error" with the team key.
 
+The DMG window is designed (`Scripts/ci/make-dmg.sh`, background drawn by
+`Scripts/ci/dmg-background.swift`): Finder lays it out over AppleScript on a
+browsable read-write mount, so it needs a GUI session that allows Finder
+automation — GitHub's macOS runners do. "Finder refused the window layout"
+fails the job rather than shipping a plain window. Preview the window without
+signing: `Scripts/ci/make-dmg.sh <some.app> /tmp/t.dmg "Code[Relay]" && open /tmp/t.dmg`.
+
 **Renewal — both expire 2027-02-01.** The Developer ID certificate (`9N7TP59267`)
 and its profile (`83U936VGGT`, "Code Relay Mac Developer ID") end together.
 After renewing the certificate, create a new `MAC_APP_DIRECT` profile with it
