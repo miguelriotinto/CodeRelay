@@ -42,6 +42,7 @@
 		675E01D193B0C8FA1D6AAE34 /* HubSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 048DF89741F08E0FAFA2250C /* HubSidebarView.swift */; };
 		6CF76DB5A91180967B19A9B7 /* AddEditServerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200D7FB7016273E202A9EE6A /* AddEditServerViewModel.swift */; };
 		6E9B9D3C005CE5D0E17E34FB /* SessionSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82AA3DF58773D4439629F50D /* SessionSidebarView.swift */; };
+		709456BA218FAF3B878576FD /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = C54AC3C7E4C27393C182101D /* AppIcon.icon */; };
 		737A97F8F5248D8FB46D8342 /* TerminalSwipeScrollTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF97F6314474452F10F2F8D1 /* TerminalSwipeScrollTests.swift */; };
 		75BB5A192BBB2F405FE8BE49 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB701804D2F0C75E2A6E124F /* AppSettings.swift */; };
 		78DA9C0EAF191998F507A7E1 /* StatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40D60334B831231F0CC7991 /* StatusBarView.swift */; };
@@ -133,6 +134,7 @@
 		31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CodeRelayIcon.icns; sourceTree = "<group>"; };
 		3694216ED2375FD2BA6D9CD7 /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		38421A166AFF766050FDADC2 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		E46CD949787B69852ABD4480 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		4362FA67F25B8ABD904774A9 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		46A8F378448F84CCF2F22152 /* HubPreviewSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubPreviewSeed.swift; sourceTree = "<group>"; };
 		497489DBBFD12F317E4CE312 /* CodeRelayAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CodeRelayAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -142,7 +144,6 @@
 		4C4A4A53A54C85D2BDFE7327 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		519C055662248EBE2FCC54F4 /* ServerListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListView.swift; sourceTree = "<group>"; };
 		55719C3D9366D323E70ADB6D /* HubPreviewSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubPreviewSeed.swift; sourceTree = "<group>"; };
-		E46CD949787B69852ABD4480 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		5A9C224C001A6A792F9D58C8 /* MenuBarActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarActivityTests.swift; sourceTree = "<group>"; };
 		5B33AE8EE6C033A2403B7BF3 /* AddEditServerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServerViewModel.swift; sourceTree = "<group>"; };
 		60465BA09A0A9870E9E03B23 /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
@@ -178,6 +179,7 @@
 		B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollbackClearScanner.swift; sourceTree = "<group>"; };
 		BFDE7B6F21D0081D0855981A /* ServerListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListViewModel.swift; sourceTree = "<group>"; };
 		C037E85CAE964D50A0D36618 /* TerminalHostViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHostViewTests.swift; sourceTree = "<group>"; };
+		C54AC3C7E4C27393C182101D /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		CB701804D2F0C75E2A6E124F /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		CE76025239CFE171AEC352E2 /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
 		CEF84086BF6F5841A2DC7CC4 /* WorkspaceRootTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRootTests.swift; sourceTree = "<group>"; };
@@ -356,6 +358,7 @@
 			isa = PBXGroup;
 			children = (
 				6AA229F172065DCCAABD4EE1 /* AppDelegate.swift */,
+				C54AC3C7E4C27393C182101D /* AppIcon.icon */,
 				4362FA67F25B8ABD904774A9 /* Assets.xcassets */,
 				31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */,
 				05446DA7A910D4397B33AFD1 /* CodeRelayMac.entitlements */,
@@ -467,6 +470,7 @@
 				7E161BACAB65C884ABD05E2B /* Sources */,
 				CD76F80C39D1E0462B50849C /* Resources */,
 				FFEC155CD35F06A0C0AADE10 /* Frameworks */,
+				676BE69BE084EA88A5BC90B3 /* Use the full .icns on macOS 14-15 */,
 			);
 			buildRules = (
 			);
@@ -599,12 +603,37 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				709456BA218FAF3B878576FD /* AppIcon.icon in Resources */,
 				3AD2C7ED0F0C4903F9541B7A /* Assets.xcassets in Resources */,
 				B730C7991753987697101B78 /* CodeRelayIcon.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		676BE69BE084EA88A5BC90B3 /* Use the full .icns on macOS 14-15 */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Assets.car",
+			);
+			name = "Use the full .icns on macOS 14-15";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/full-icns.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nPLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\n/usr/libexec/PlistBuddy -c \"Set :CFBundleIconFile CodeRelayIcon\" \"$PLIST\"\nrm -f \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/AppIcon.icns\"\ntouch \"${DERIVED_FILE_DIR}/full-icns.stamp\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		207C51108D7AFA12721A0B5D /* Sources */ = {
@@ -728,7 +757,7 @@
 		132095BEEA2E12C54572148D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = CodeRelayMac/CodeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 121;
@@ -938,7 +967,7 @@
 		8BC692C2B8D2F10A30F01714 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = CodeRelayMac/CodeRelayMac.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 121;
