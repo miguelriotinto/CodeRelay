@@ -206,7 +206,7 @@ fun AddEditServerSheet(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("Delete Server") },
             text = {
-                Text("Are you sure you want to delete \"${existing.name}\"? This cannot be undone.")
+                Text("Are you sure you want to delete \"${existing.title}\"? This cannot be undone.")
             },
             confirmButton = {
                 TextButton(

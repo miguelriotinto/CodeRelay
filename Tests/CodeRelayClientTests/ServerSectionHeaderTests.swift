@@ -11,8 +11,8 @@ final class ServerSectionHeaderTests: XCTestCase {
     }
 
     func testTitlePrefersTheRelaysOwnName() {
-        XCTAssertEqual(ServerSectionHeaderModel(section: section(.live, displayName: "studio-mac")).title, "studio-mac")
-        XCTAssertEqual(ServerSectionHeaderModel(section: section(.live)).title, "Studio")
+        XCTAssertEqual(ServerSectionHeaderModel(section: section(.live, displayName: "studio-mac")).title, "STUDIO-MAC")
+        XCTAssertEqual(ServerSectionHeaderModel(section: section(.live)).title, "STUDIO")
     }
 
     func testSubtitlesAndColours() {

@@ -81,8 +81,9 @@ final class AddEditServerViewModel: ObservableObject, TLSPortForm {
         return config
     }
 
+    /// The server as the delete prompt names it (`ConnectionConfig.title`).
     var serverName: String {
-        if case .edit(let config) = mode { return config.name }
+        if case .edit(let config) = mode { return config.title }
         return ""
     }
 }

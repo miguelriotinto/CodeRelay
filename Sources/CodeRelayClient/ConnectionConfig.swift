@@ -17,6 +17,11 @@ public struct ConnectionConfig: Codable, Identifiable, Sendable, Equatable {
     /// The relay's own `serverName`, learned alongside `instanceId`.
     public var displayName: String?
 
+    /// How the server is named in every UI: the relay's own name when
+    /// learned, else the bookmark name, always in capitals. Display only —
+    /// the stored `name` keeps what the user typed, so the edit field shows it.
+    public var title: String { (displayName ?? name).uppercased() }
+
     /// Constructs the WebSocket URL from the configuration properties.
     /// Returns `nil` if the stored host contains characters that RFC 3986
     /// forbids in a URL (a corrupted bookmark, for instance).

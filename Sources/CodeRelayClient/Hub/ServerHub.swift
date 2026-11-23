@@ -203,7 +203,7 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
             for i in fresh.indices.reversed() where fresh[i].enabled && slots[fresh[i].id] == nil && enabledNow > maxEnabled {
                 fresh[i].enabled = false
                 enabledNow -= 1
-                notice = "Up to \(maxEnabled) servers can be enabled at once. \(fresh[i].name) was added disabled."
+                notice = "Up to \(maxEnabled) servers can be enabled at once. \(fresh[i].title) was added disabled."
             }
             bookmarkStore.saveAll(fresh)
         }
@@ -461,7 +461,7 @@ public final class ServerHub<Slot: ServerSlotCoordinating>: ObservableObject {
 
     private func collectLosses(_ report: SessionLossReport, serverId: UUID) {
         let config = bookmarks.first(where: { $0.id == serverId })
-        let serverName = config.map { $0.displayName ?? $0.name } ?? ""
+        let serverName = config?.title ?? ""
         func items(_ lost: [LostSession]) -> [SessionLossItem] {
             lost.map { SessionLossItem(serverId: serverId, serverName: serverName, session: $0) }
         }

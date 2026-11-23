@@ -26,6 +26,10 @@ data class ConnectionConfig(
     val wsUrl: String
         get() = "${if (useTLS) "wss" else "ws"}://$host:$port"
 
-    /** Section / row title: the relay's own name when learned, else the bookmark name. */
-    val title: String get() = displayName ?: name
+    /**
+     * How the server is named in every UI: the relay's own name when learned, else the
+     * bookmark name, always in capitals. Display only — the stored [name] keeps what the
+     * user typed, so the edit field shows it.
+     */
+    val title: String get() = (displayName ?: name).uppercase()
 }

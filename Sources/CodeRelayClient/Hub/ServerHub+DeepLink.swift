@@ -32,9 +32,9 @@ extension ServerHub {
             let ref = SessionRef(serverId: config.id, sessionId: link.sessionId)
             if !config.enabled {
                 guard setEnabled(config.id, true) else {
-                    return .notFound(serverName: config.displayName ?? config.name)
+                    return .notFound(serverName: config.title)
                 }
-                notice = "Enabled \(config.displayName ?? config.name) to open this session"
+                notice = "Enabled \(config.title) to open this session"
                 selectionGeneration &+= 1
                 selectionsInFlight += 1
                 defer { selectionsInFlight -= 1 }

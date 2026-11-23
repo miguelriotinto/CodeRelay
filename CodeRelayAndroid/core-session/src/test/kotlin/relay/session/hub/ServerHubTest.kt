@@ -98,7 +98,7 @@ class ServerHubTest {
         h.hub.reloadBookmarks(); advanceUntilIdle()
         assertFalse(h.bookmarks.loadAll().first { it.id == c.id }.enabled)
         assertNull(h.slot(c.id))
-        assertEquals("Up to 2 servers can be enabled at once. c was added disabled.", h.hub.notice.value)
+        assertEquals("Up to 2 servers can be enabled at once. C was added disabled.", h.hub.notice.value)
     }
 
     @Test fun reloadBuildsNewAndRebuildsEditedAndRetiresRemoved() = runTest {
@@ -175,7 +175,7 @@ class ServerHubTest {
         advanceUntilIdle()
         assertTrue(h.bookmarks.loadAll().all { it.instanceId == iid && it.displayName == "studio" })
         assertTrue(h.hub.sections.value.all { it.isDuplicateInstance })
-        assertEquals("studio", h.hub.sections.value[0].title)
+        assertEquals("STUDIO", h.hub.sections.value[0].title)
     }
 
     @Test fun foregroundFansOutToEveryEnabledSlotWithAStagger() = runTest {

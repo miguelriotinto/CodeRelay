@@ -69,7 +69,7 @@ final class ServerHubRoutingTests: XCTestCase {
         let outcome = await h.hub.handleDeepLink(SessionDeepLink(sessionId: target, serverInstanceId: identity.id))
         XCTAssertEqual(outcome, .enabledAndSelected(SessionRef(serverId: b.id, sessionId: target)))
         XCTAssertTrue(h.bookmarks.loadAll()[1].enabled)
-        XCTAssertEqual(h.hub.notice, "Enabled b to open this session")
+        XCTAssertEqual(h.hub.notice, "Enabled B to open this session")
         XCTAssertEqual(h.hub.activeRef, SessionRef(serverId: b.id, sessionId: target), "shown as a pending selection until b lists it")
     }
 
