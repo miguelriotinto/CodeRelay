@@ -96,13 +96,12 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.singular.coderelay.mac
         PRODUCT_NAME: "Code[Relay]"
-        # Do NOT let actool own the app icon. Its generated AppIcon.icns is
-        # truncated at 256px and it force-sets CFBundleIconFile=AppIcon, which
-        # makes Finder composite onto its default rounded platter (light frame).
-        # Instead we ship a complete prebuilt CodeRelayIcon.icns (16–1024) and
-        # point CFBundleIconFile at it (see info.properties), matching how
-        # Cursor.app does it.
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        # The icon is CodeRelayMac/AppIcon.icon (Icon Composer), compiled into
+        # Assets.car as CFBundleIconName = AppIcon. macOS 26 draws an app whose
+        # icon comes only from an .icns small inside a light frame; this gives
+        # it the full Liquid Glass tile, like Code[Whisper]. macOS 14-15 keep
+        # reading CFBundleIconFile (the prebuilt CodeRelayIcon.icns, 16-1024).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_FILE: CodeRelayMac/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: "Code[Relay]"
         INFOPLIST_KEY_NSCameraUsageDescription: "Code[Relay] uses the camera to scan QR codes for session sharing."
@@ -125,11 +124,10 @@ targets:
         # User-facing app name (Dock, menu bar, Finder). The build-setting
         # form is ignored because this target ships a real Info.plist.
         CFBundleDisplayName: "Code[Relay]"
-        # Ship a complete prebuilt .icns (all sizes 16–1024). actool's
-        # generated AppIcon.icns is truncated at 256px, which makes Finder
-        # composite the icon onto its default rounded-app platter (a light
-        # frame). Pointing CFBundleIconFile at a full-size .icns avoids that.
+        # macOS 14-15: a complete prebuilt .icns (16-1024). macOS 26 uses
+        # CFBundleIconName = AppIcon from Assets.car instead (see above).
         CFBundleIconFile: "CodeRelayIcon"
+        CFBundleIconName: "AppIcon"
         # See iOS note — exempt because the app only uses Apple-provided crypto.
         ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: "public.app-category.developer-tools"
@@ -141,6 +139,26 @@ targets:
           - CFBundleURLName: "com.singular.coderelay.mac"
             CFBundleURLSchemes:
               - coderelay
+    postBuildScripts:
+      # actool writes CFBundleIconFile = AppIcon and an AppIcon.icns that stops
+      # at 256 px. macOS 26 ignores both (it reads CFBundleIconName from
+      # Assets.car); macOS 14-15 would show that 256 px icon. Point them at the
+      # complete prebuilt .icns instead. Runs before code signing, so the
+      # signature covers the edit.
+      - name: Use the full .icns on macOS 14-15
+        # Declared inputs order this after Info.plist processing and actool;
+        # without them the build system ran it before the plist existed.
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Assets.car
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/full-icns.stamp
+        script: |
+          set -e
+          PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile CodeRelayIcon" "$PLIST"
+          rm -f "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/AppIcon.icns"
+          touch "${DERIVED_FILE_DIR}/full-icns.stamp"
   CodeRelayMacTests:
     type: bundle.unit-test
     platform: macOS

@@ -7,7 +7,7 @@ an orange status dot and the "relay" wordmark in the black. Each surface
 gets the right variant:
 
   tile   full-bleed square        iOS app icon, Android legacy, store images
-  mac    824 px tile on the 1024 grid, transparent margin   macOS, Linux
+  mac    824 px tile on the 1024 grid, transparent margin   macOS 14-15 .icns, Linux
   fg     opaque square, art inside the 66/108 safe zone      Android adaptive
   logo   the macOS tile with a faint rim                    splash logos
   glyph  one even-odd path, single colour                   menu bar, tray
@@ -152,10 +152,28 @@ def main():
     for s, sfx in ((240, ""), (480, "@2x"), (720, "@3x")):
         render("logo", p(f"CodeRelayApp/Assets.xcassets/SplashLogo.imageset/SplashLogo{sfx}.png"), s)
 
-    # macOS: asset catalog + the prebuilt .icns the app actually ships + menu bar template.
-    mac = p("CodeRelayMac/Assets.xcassets/AppIcon.appiconset")
-    for fn in os.listdir(mac):
-        if fn.endswith(".png"): render("mac", os.path.join(mac, fn), int(fn[:-4]))
+    # macOS: an Icon Composer file for macOS 26+, compiled by Xcode into
+    # Assets.car (CFBundleIconName). Without it macOS 26 draws the app small
+    # inside a light frame, because an app whose icon comes only from an .icns
+    # does not get the full Liquid Glass tile. Full-bleed art, like iOS: the
+    # system applies the Mac shape, edge and lighting; the shadow matches
+    # Code[Whisper]'s so the family reads the same in the Dock.
+    mac_icon = p("CodeRelayMac/AppIcon.icon")
+    shutil.rmtree(os.path.join(mac_icon, "Assets"), ignore_errors=True)
+    render("tile", os.path.join(mac_icon, "Assets", "icon.png"), 1024, opaque=True)
+    with open(os.path.join(mac_icon, "icon.json"), "w") as fh:
+        json.dump({
+            "fill": {"solid": "srgb:0.07000,0.07000,0.07000,1.00000"},
+            "groups": [{
+                "layers": [{"glass": False, "image-name": "icon.png", "name": "icon"}],
+                "shadow": {"kind": "neutral", "opacity": 0.4},
+                "translucency": {"enabled": False, "value": 0},
+            }],
+            "supported-platforms": {"squares": "shared"},
+        }, fh, indent=2)
+        fh.write("\n")
+    # The prebuilt .icns stays as the icon for macOS 14 and 15 (CFBundleIconFile),
+    # complete from 16 to 1024 px.
     iconset = os.path.join(tmp, "CodeRelayIcon.iconset")
     for s in (16, 32, 128, 256, 512):
         render("mac", os.path.join(iconset, f"icon_{s}x{s}.png"), s)
