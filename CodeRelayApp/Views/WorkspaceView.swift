@@ -128,6 +128,16 @@ struct WorkspaceView: View {
                     .sheet(isPresented: $showSidebarSheet) {
                         NavigationStack {
                             SessionSidebarView(hub: hub)
+                                // iPhone Duo's status bar column is a horizontal
+                                // safe-area inset the sheet inherits, so the
+                                // inset-grouped rows stopped short of one edge.
+                                // The rows span the sheet with even margins; the
+                                // navigation bar (Done) stays inset, like the
+                                // terminal's top bar, so no control sits under
+                                // the clock or the camera. Inset-grouped margins
+                                // derive from the safe area, so they are set here.
+                                .ignoresSafeArea(.container, edges: .horizontal)
+                                .contentMargins(.horizontal, 20, for: .scrollContent)
                                 .toolbar {
                                     ToolbarItem(placement: .topBarTrailing) {
                                         Button("Done") { showSidebarSheet = false }
