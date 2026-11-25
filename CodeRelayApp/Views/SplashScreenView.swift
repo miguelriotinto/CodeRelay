@@ -37,6 +37,11 @@ struct SplashScreenView: View {
                     .foregroundStyle(.white.opacity(0.6))
                     .opacity(textOpacity)
             }
+            // Centred on the physical display, not the safe area: on iPhone Duo
+            // the status bar is a column on one side (a horizontal inset), which
+            // pushed the logo off centre. Nothing here is a control.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea()
         }
         .opacity(finished ? 0 : 1)
         .task {
