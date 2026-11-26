@@ -45,6 +45,7 @@ struct WorkspaceView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
     @State private var showSidebarSheet = false
+    @State private var sidebarDetent: PresentationDetent = .medium
     /// A pairing link handed to the management sheet (see `onChange(of: pendingPairing)`).
     @State private var managementPairing: PairingURL?
     /// Kept alive for the view's lifetime so `connectivityRestored` posts; the
@@ -128,23 +129,18 @@ struct WorkspaceView: View {
                     .sheet(isPresented: $showSidebarSheet) {
                         NavigationStack {
                             SessionSidebarView(hub: hub)
-                                // iPhone Duo's status bar column is a horizontal
-                                // safe-area inset the sheet inherits, so the
-                                // inset-grouped rows stopped short of one edge.
-                                // The rows span the sheet with even margins; the
-                                // navigation bar (Done) stays inset, like the
-                                // terminal's top bar, so no control sits under
-                                // the clock or the camera. Inset-grouped margins
-                                // derive from the safe area, so they are set here.
-                                .ignoresSafeArea(.container, edges: .horizontal)
-                                .contentMargins(.horizontal, 20, for: .scrollContent)
+                                // At half height the rows span iPhone Duo's status
+                                // bar column (the clock is above the sheet); at
+                                // full height the sheet reaches the clock, so they
+                                // stay inset. Done stays inset either way.
+                                .listSpansStatusColumn(sidebarDetent == .medium)
                                 .toolbar {
                                     ToolbarItem(placement: .topBarTrailing) {
                                         Button("Done") { showSidebarSheet = false }
                                     }
                                 }
                         }
-                        .presentationDetents([.medium, .large])
+                        .presentationDetents([.medium, .large], selection: $sidebarDetent)
                     }
             } else {
                 // iPad: full split view
@@ -172,7 +168,7 @@ struct WorkspaceView: View {
                 return
             }
             #endif
-            if WorkspaceRoot.shouldPresentManagement(aggregate: hub.aggregate) {
+                        if WorkspaceRoot.shouldPresentManagement(aggregate: hub.aggregate) {
                 hub.isShowingServerList = true
             } else if hub.activeRef == nil {
                 if sizeClass == .compact { showSidebarSheet = true } else { columnVisibility = .all }
@@ -250,7 +246,7 @@ struct WorkspaceView: View {
                     // Full width, not the safe area: on iPhone Duo the status
                     // bar column is carved out of a sheet's safe area, which
                     // put a safe-area-centred stack ~85 pt off centre.
-                    .ignoresSafeArea(.container, edges: .horizontal)
+                    .spansStatusColumn()
             }
         }
         .overlay(alignment: .top) {
@@ -260,6 +256,8 @@ struct WorkspaceView: View {
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .background(.ultraThinMaterial, in: Capsule())
                     .padding(.top, 8)
+                    .frame(maxWidth: .infinity)
+                    .spansStatusColumn()
                     .transition(.move(edge: .top).combined(with: .opacity))
                     // The 4 s start only once the session-loss alert is gone,
                     // or the pill would expire unseen behind it.
