@@ -127,19 +127,15 @@ struct WorkspaceView: View {
                 ActiveTerminalView(hub: hub, columnVisibility: sidebarSheetBinding, loading: loading,
                                    onDiagnose: showPresentationDump)
                     .sheet(isPresented: $showSidebarSheet) {
-                        NavigationStack {
-                            SessionSidebarView(hub: hub)
-                                // At half height the rows span iPhone Duo's status
-                                // bar column (the clock is above the sheet); at
-                                // full height the sheet reaches the clock, so they
-                                // stay inset. Done stays inset either way.
-                                .listSpansStatusColumn(sidebarDetent == .medium)
-                                .toolbar {
-                                    ToolbarItem(placement: .topBarTrailing) {
-                                        Button("Done") { showSidebarSheet = false }
-                                    }
-                                }
-                        }
+                        // No NavigationStack: the list draws its own title row
+                        // (aligned with the rows on iPhone Duo; nothing here
+                        // pushes a screen).
+                        SessionSidebarView(hub: hub, onDone: { showSidebarSheet = false })
+                            // At half height the rows (Done included) span iPhone
+                            // Duo's status bar column (the clock is above the
+                            // sheet); at full height the sheet reaches the clock,
+                            // so they stay inset and Done keeps clear of it.
+                            .listSpansStatusColumn(sidebarDetent == .medium)
                         .presentationDetents([.medium, .large], selection: $sidebarDetent)
                     }
             } else {
@@ -353,5 +349,31 @@ private struct FocusCoordinatorAlerts: View {
             } message: {
                 Text(coordinator.sessionAttachError ?? "Unable to attach to this session.")
             }
+    }
+}
+
+/// The iPhone sessions sheet's title row: a large "Sessions" and Done. Drawn as
+/// an unpadded list row, so its edges line up with the cards below it.
+struct SessionsSheetHeader: View {
+    let onDone: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center) {
+            Text("Sessions")
+                .font(.largeTitle.bold())
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+            doneButton
+        }
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder private var doneButton: some View {
+        let button = Button("Done", action: onDone).font(.body.weight(.medium))
+        if #available(iOS 26.0, *) {
+            button.buttonStyle(.glass).controlSize(.large)
+        } else {
+            button.buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.large)
+        }
     }
 }
