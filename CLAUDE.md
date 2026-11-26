@@ -45,11 +45,15 @@ On Duo the status bar column is a horizontal safe-area inset on both displays
 bar bleed under it on purpose — Netflix-style, ~8 more columns for a few
 unreadable cells under the frosted status pill and, when closed, the camera —
 while its custom top bar stays inside the safe area so no control can land
-under the camera. Two more views ignore it: the splash (centred on the
-physical display) and the iPhone sessions sheet's list (rows span the sheet
-with explicit 20 pt margins — inset-grouped margins are derived from the safe
-area — while its navigation bar and Done stay inset). Every other view
-honours the inset.
+under the camera. `StatusColumnInset.swift` holds the only other exceptions,
+gated on a regular vertical size class (in iPhone landscape the inset is the
+notch / Dynamic Island and is always honoured): centred messages and empty
+states (`centredOnDisplay`), the loading sheet and notice pill
+(`spansStatusColumn`), and the sessions sheet's list at its half-height detent
+only (`listSpansStatusColumn`, explicit 20 pt margins). The splash ignores all
+safe areas. Sheets with toolbar items keep the inset: at full height the iOS
+27.1 SDK lays their toolbar out vertically IN the status column, and spanning
+rows slide under those buttons. Every other view honours the inset.
 
 **Launchd**: Plist at `~/Library/LaunchAgents/com.claude.relay.plist`. The `load` command locates the server binary via a fallback chain: sibling of the CLI binary, `/opt/homebrew/bin/`, `/usr/local/bin/`, `~/.claude-relay/bin/`.
 

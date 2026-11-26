@@ -53,6 +53,7 @@ struct QRCodeOverlay: View {
                     .font(.system(.subheadline, design: .rounded, weight: .medium))
                     .foregroundStyle(.white)
             }
+            .centredOnDisplay()
         }
     }
 }

@@ -174,7 +174,7 @@ struct ActiveTerminalView: View {
                         Button("Servers") { hub.isShowingServerList = true }
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .centredOnDisplay()
                 .overlay(alignment: .leading) { edgeSwipeStrip }
             }
         }

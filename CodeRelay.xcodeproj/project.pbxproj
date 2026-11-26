@@ -21,6 +21,7 @@
 		1EB6A9EDD3096D6DFF7992CA /* QRCodeComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD79B7A885914DFF752D2179 /* QRCodeComponents.swift */; };
 		22E9C3DC9FB07A2985640660 /* SelectAllOnBeginEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */; };
 		29E42E9BE2B5383AA5137A26 /* AppSettingsSpeechRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA2B78194726A22344FEB41 /* AppSettingsSpeechRemovalTests.swift */; };
+		32DA13E03A0028AA19776BDA /* StatusColumnInset.swift in Sources */ = {isa = PBXBuildFile; fileRef = E340BF60CFB90BF92C05FA33 /* StatusColumnInset.swift */; };
 		377425D89A5D4F801F053F88 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 91C67EB7E180478C971D296B /* SwiftTerm */; };
 		3AD2C7ED0F0C4903F9541B7A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4362FA67F25B8ABD904774A9 /* Assets.xcassets */; };
 		3BF3D4E1966454FDBC693F3E /* CodeRelayClient in Frameworks */ = {isa = PBXBuildFile; productRef = C73B67C3B1302EB50D05397D /* CodeRelayClient */; };
@@ -134,7 +135,6 @@
 		31934E65D66FC0191EE893C8 /* CodeRelayIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = CodeRelayIcon.icns; sourceTree = "<group>"; };
 		3694216ED2375FD2BA6D9CD7 /* PairWithHostSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairWithHostSheet.swift; sourceTree = "<group>"; };
 		38421A166AFF766050FDADC2 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
-		E46CD949787B69852ABD4480 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		4362FA67F25B8ABD904774A9 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		46A8F378448F84CCF2F22152 /* HubPreviewSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HubPreviewSeed.swift; sourceTree = "<group>"; };
 		497489DBBFD12F317E4CE312 /* CodeRelayAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = CodeRelayAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -159,6 +159,7 @@
 		81DB257E1E21CA0D82D01A3B /* AttachRemoteSessionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachRemoteSessionSheet.swift; sourceTree = "<group>"; };
 		822211CDC993EFDD413DDB0E /* ServerListWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerListWindow.swift; sourceTree = "<group>"; };
 		82AA3DF58773D4439629F50D /* SessionSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSidebarView.swift; sourceTree = "<group>"; };
+		E46CD949787B69852ABD4480 /* CodeRelay */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeRelay; path = .; sourceTree = SOURCE_ROOT; };
 		8B851351A44A2F35CF7A6802 /* CodeRelayApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = CodeRelayApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8EC6DB3C97F9D884F7FA21ED /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		917DBD18EA67BBD605CA1766 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -190,6 +191,7 @@
 		DA2E1F5AF84C6C21754F2B59 /* SleepWakeObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepWakeObserver.swift; sourceTree = "<group>"; };
 		DF4AE82B37372BCDEC01BEE7 /* AlertFieldSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertFieldSelectionTests.swift; sourceTree = "<group>"; };
 		DF9B94C1561AD623837857C0 /* AlertOverlayWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertOverlayWindowTests.swift; sourceTree = "<group>"; };
+		E340BF60CFB90BF92C05FA33 /* StatusColumnInset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusColumnInset.swift; sourceTree = "<group>"; };
 		EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectAllOnBeginEditing.swift; sourceTree = "<group>"; };
 		EF2A47966BF7049A7B54EE51 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F070B78556144927C4A84E00 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -303,6 +305,7 @@
 				932D11B48F0BE56805CBE758 /* RelayTerminalView.swift */,
 				B79022C76038A88B6D8F9DB7 /* ScrollbackClearScanner.swift */,
 				EA55B33A0DA53D357C897B22 /* SelectAllOnBeginEditing.swift */,
+				E340BF60CFB90BF92C05FA33 /* StatusColumnInset.swift */,
 				A634A95EB9F7849A1F44403D /* TerminalLinkPrompt.swift */,
 				994105C8A15882C51A1E9D63 /* TerminalPalette.swift */,
 			);
@@ -732,6 +735,7 @@
 				FF96BA9FE9609DA88A14EF05 /* SessionSidebarView.swift in Sources */,
 				B1E5AF4AD4DF9F246EFC5C05 /* SettingsView.swift in Sources */,
 				F7065C1D6A48FC570B4C3F5A /* SplashScreenView.swift in Sources */,
+				32DA13E03A0028AA19776BDA /* StatusColumnInset.swift in Sources */,
 				0687F418A4B7563DFFD0A75B /* TerminalLinkPrompt.swift in Sources */,
 				E14796A9326B97964792E6F9 /* TerminalPalette.swift in Sources */,
 				0A2F13A1616D3539C4F3BF83 /* WorkspaceView.swift in Sources */,
