@@ -50,7 +50,10 @@ gated on a regular vertical size class (in iPhone landscape the inset is the
 notch / Dynamic Island and is always honoured): centred messages and empty
 states (`centredOnDisplay`), the loading sheet and notice pill
 (`spansStatusColumn`), and the sessions sheet's list at its half-height detent
-only (`listSpansStatusColumn`, explicit 20 pt margins). The splash ignores all
+only (`listSpansStatusColumn`, explicit 20 pt margins); that sheet has no
+navigation bar — its "Sessions"/Done title is an unpadded list row
+(`SessionsSheetHeader`), because the system bar stays in the safe area and
+left Done short of the rows. The splash ignores all
 safe areas. Sheets with toolbar items keep the inset: at full height the iOS
 27.1 SDK lays their toolbar out vertically IN the status column, and spanning
 rows slide under those buttons. Every other view honours the inset.

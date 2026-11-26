@@ -7,6 +7,9 @@ import CodeRelayKit
 /// rows of that server. Tapping a row calls `hub.select(ref)`.
 struct SessionSidebarView: View {
     @ObservedObject var hub: IOSServerHub
+    /// Set in the iPhone sheet: the list draws its own "Sessions" / Done title
+    /// row (see `SessionsSheetHeader`). nil in the iPad split view's sidebar.
+    var onDone: (() -> Void)? = nil
     @State private var showAttachSheet = false
     @State private var attachableGroups: [AttachableGroup] = []
     @State private var isLoadingAttachable = false
@@ -47,6 +50,17 @@ struct SessionSidebarView: View {
 
     var body: some View {
         List {
+            if let onDone {
+                // A row, not a navigation bar: the system bar stays inside the
+                // safe area whatever the list does, so on iPhone Duo Done sat
+                // short of the rows' trailing edge. As an unpadded clear row its
+                // edges ARE the cards' edges, whichever margins the list uses.
+                SessionsSheetHeader(onDone: onDone)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listSectionSpacing(8)
+            }
             Section {
                 if hub.focusCoordinator != nil {
                     Button {
